@@ -15,6 +15,7 @@ import 'chat_models.dart';
 import 'composer/composer_draft.dart';
 import 'mock_conversation.dart';
 import 'review/change_review.dart';
+import 'review/change_reviews.dart';
 import 'review/review_store.dart';
 
 /// Opens the review of a project's changes (see [ChangeReview.open]).
@@ -160,16 +161,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   final ChangeReviewOpener? _openReview;
 
   /// The review of the changes, while it opens; null when there is none.
-  Future<ChangeReview?>? _reviewOpening;
-  ChangeReview? _review;
-  bool _reviewDisabled = false;
-
-  /// Opening every workspace folder and taking the baseline share one
-  /// budget: change tracking must not keep the composer waiting forever.
-  static const _reviewSendWait = Duration(seconds: 30);
-
-  /// Messages wait on the snapshot before them, and go in order.
-  Future<void> _sending = Future.value();
+  Future<ChangeReviews?>? _reviewOpening;
+  ChangeReviews? _review;
 
   /// Gives the edits reported a moment to settle before a look.
   Timer? _lookTimer;
@@ -182,70 +175,39 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   /// The review, while it holds: null before it opened, or once it failed
   /// (the changes are then those the kernel reported).
-  ChangeReview? get _activeReview => switch (_review) {
+  ChangeReviews? get _activeReview => switch (_review) {
     final review? when review.failure == null => review,
     _ => null,
   };
 
-  /// Opens the review of the project, the first time; and snapshots it,
-  /// so that the first message need not wait. A workspace's folders are
-  /// snapshotted with its own directory: an agent there edits those, not
-  /// the empty folder it starts in.
+  /// Opens the review of the project (each of its folders, in a
+  /// multi-folder workspace), the first time; and snapshots it, so that
+  /// the first message need not wait.
   void _startReview() {
     if (_reviewOpening != null) return;
     final open = _openReview;
     final root = kernelContext.cwd;
     if (open == null || root == null) return;
-    // Keep ownership of a late result: Future.timeout does not cancel the
-    // opener, and a review arriving after a send must not take a baseline
-    // that already includes the agent's edits.
-    final opening = () async {
-      final folders = kernelContext.workspace?.call()?.folders ?? const [];
-      final review = folders.isEmpty
-          ? await open(root, session: kernelContext.resume?.id)
-          : await ChangeReview.openAll(
-              [root, ...folders],
-              session: kernelContext.resume?.id,
-              openReview: open,
-            );
-      if (review == null) return null;
-      if (_disposed || _reviewDisabled) {
-        review.dispose();
-        return null;
-      }
-      _review = review
-        ..session = sessionId
-        ..addListener(_reviewChanged);
-      unawaited(
-        review.begin().catchError((Object error) {
-          _disableReview('$error');
-        }),
-      );
-      notifyListeners();
-      return review;
-    }();
-    _reviewOpening = () async {
-      try {
-        return await opening;
-      } on Object catch (error) {
-        _disableReview('$error');
-        return null;
-      }
-    }();
-  }
-
-  void _disableReview(String reason) {
-    _reviewDisabled = true;
-    _review
-      ?..working = false
-      ..abandon(reason);
-  }
-
-  Future<void> _prepareReview(Future<ChangeReview?> opening) async {
-    final review = await opening;
-    if (review == null || _disposed || _reviewDisabled) return;
-    review.working = true;
-    await review.begin();
+    _reviewOpening =
+        ChangeReviews.open(
+          [root, ...?kernelContext.workspace?.call()?.folders],
+          open: open,
+          session: kernelContext.resume?.id,
+        ).then((review) {
+          if (review == null) return null;
+          if (_disposed) {
+            review.dispose();
+            return null;
+          }
+          _review = review
+            ..session = sessionId
+            // A message sent while it opened.
+            ..working = isStreaming
+            ..addListener(_reviewChanged);
+          unawaited(review.begin());
+          notifyListeners();
+          return review;
+        }, onError: (Object _) => null);
   }
 
   void _reviewChanged() {
@@ -254,7 +216,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   void _reviewEvent(KernelEvent event) {
     final review = _review;
-    if (review == null || _reviewDisabled) return;
+    if (review == null) return;
     review.session = sessionId;
     switch (event) {
       case TurnStarted():
@@ -523,6 +485,26 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   bool get canQueue => _kernel is QueuesMessages;
 
   bool get canRename => _kernel is RenamesSession;
+
+  /// Whether the conversation can be copied into a new one (see [fork]).
+  bool get canFork => switch (_kernel) {
+    final ForksConversation kernel => kernel.canFork,
+    _ => false,
+  };
+
+  /// Copies the conversation into a new session titled [title] (see
+  /// [ForksConversation.fork]): all of it but a turn under way; null when
+  /// it could not.
+  Future<SessionRecord?> fork({required String title}) async {
+    if (_kernel case final ForksConversation kernel when kernel.canFork) {
+      final before = switch (_transcript.activeTurn) {
+        final turn? when _transcript.indexOf(turn) != null => turn,
+        _ => null,
+      };
+      return kernel.fork(before: before, title: title);
+    }
+    return null;
+  }
 
   // --- Projections ------------------------------------------------------------
 
@@ -874,27 +856,23 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       images: acceptsImages ? message.images : const [],
       now: now,
     );
-    final opening = _reviewOpening;
-    if (opening == null) {
-      _kernel.send(turn);
-      return;
-    }
     // A turn about to start, not one queued behind another: the project
-    // is snapshotted first, so that what the agent does is told apart.
-    final snapshot = !isStreaming;
-    _sending = _sending.then((_) async {
-      if (snapshot && !_disposed && !_reviewDisabled) {
-        try {
-          await _prepareReview(opening).timeout(_reviewSendWait);
-        } on Object catch (error) {
-          // A late baseline would include the agent's work. Give way to
-          // kernel-reported changes, and keep later messages moving even
-          // if opening or snapshotting threw instead of timing out.
-          _disableReview('$error');
-        }
-      }
-      if (!_disposed) _kernel.send(turn);
-    });
+    // is snapshotted, so that what the agent does is told apart. Not
+    // waited on: the agent takes a while before it edits anything, and
+    // the looks its edits bring on are queued behind this one. (A review
+    // still opening takes its own snapshot as it opens.)
+    if (_review case final review? when !isStreaming) {
+      review.working = true;
+      // Taken late, it would count some of the agent's work as what was
+      // there: the review gives way to what the kernel reports.
+      unawaited(
+        review.begin().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => review.abandon('The snapshot took too long.'),
+        ),
+      );
+    }
+    _kernel.send(turn);
   }
 
   static final _random = math.Random.secure();

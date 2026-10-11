@@ -128,7 +128,7 @@ void main() {
     expect(right.left - left.right, ChatGridView.gap);
     expect(left.height, grid.height);
     // As the sidebar's border.
-    expect(lineColor(tester), AppColors.border);
+    expect(lineColor(tester), AppColors.partBorder);
     final drawn = tester.getRect(line());
     expect(drawn.width, 1);
     expect(drawn.height, grid.height);
@@ -257,6 +257,49 @@ void main() {
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
     expect(workspace.current!.title, second);
     expect(tester.widget<ChatScreen>(pane(first)).focused, isFalse);
+    // The one not focused in the sidebar's color, set apart: the whole of
+    // its place, up to the line between the two.
+    bool setApart(String title) {
+      final rect = tester.getRect(pane(title));
+      return find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is ColoredBox &&
+                widget.color == AppColors.unfocusedConversationSurface,
+          )
+          .evaluate()
+          .map(
+            (element) =>
+                tester.getRect(find.byElementPredicate((e) => e == element)),
+          )
+          .any(
+            (backdrop) =>
+                backdrop.contains(rect.center) &&
+                backdrop.top <= rect.top &&
+                backdrop.bottom >= rect.bottom &&
+                (backdrop.left < rect.left || backdrop.right > rect.right),
+          );
+    }
+
+    expect(
+      AppColors.unfocusedConversationSurface,
+      isNot(AppColors.conversationSurface),
+    );
+    expect(setApart(first), isTrue);
+    expect(setApart(second), isFalse);
+    // The focused one outlined in the drop preview's line.
+    final frame = find.byWidgetPredicate(
+      (widget) =>
+          widget is DecoratedBox &&
+          widget.decoration is BoxDecoration &&
+          (widget.decoration as BoxDecoration).border ==
+              Border.all(color: ChatGridView.frameColor),
+    );
+    // One frame, inside the pane and off its edges.
+    bool framed(String title) =>
+        tester.getRect(frame) == tester.getRect(pane(title)).deflate(4);
+    expect(framed(second), isTrue);
+    expect(framed(first), isFalse);
 
     // Clicked in the sidebar, one shown already is focused where it is.
     final left = tester.getRect(pane(first));
@@ -267,6 +310,10 @@ void main() {
     expect(workspace.current!.title, first);
     expect(tester.widget<ChatScreen>(pane(first)).focused, isTrue);
     expect(tester.widget<ChatScreen>(pane(second)).focused, isFalse);
+    expect(setApart(first), isFalse);
+    expect(setApart(second), isTrue);
+    expect(framed(first), isTrue);
+    expect(framed(second), isFalse);
 
     await tester.tapAt(tester.getRect(pane(second)).center);
     await tester.pump();
@@ -407,7 +454,7 @@ void main() {
     expect(tester.getSize(line()).width, IdeModernUI.gap);
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(lineColor(tester), AppColors.border);
+    expect(lineColor(tester), AppColors.partBorder);
     expect(tester.getSize(line()).width, 1);
     expect(tester.getRect(pane(first)).width, before.width - 100);
     expect(tester.getRect(pane(third)).width, before.width - 100);

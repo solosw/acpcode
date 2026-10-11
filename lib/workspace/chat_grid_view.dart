@@ -36,6 +36,8 @@ class ChatGridView extends StatefulWidget {
     required this.onFocus,
     required this.paneBuilder,
     this.onLinesMoved,
+    this.paneBackground,
+    this.focused,
   });
 
   final ChatGrid<AgentThread> grid;
@@ -53,6 +55,22 @@ class ChatGridView extends StatefulWidget {
 
   /// A line dragged and let go, or put back in the middle.
   final VoidCallback? onLinesMoved;
+
+  /// Behind an agent's pane, of several (none: the view's own): the whole
+  /// of its place, up to the lines either side and the view's edges, so
+  /// no gap shows between it and them.
+  final Color? Function(AgentThread thread)? paneBackground;
+
+  /// The focused agent: of several, its pane outlined in the drop
+  /// preview's line (see [frameColor]).
+  final AgentThread? focused;
+
+  /// The focused pane's outline: `focusBorder`, a little faded, as the
+  /// drop preview's (see [_DropBox]).
+  static Color get frameColor {
+    final color = themeColors['focusBorder'];
+    return color.withValues(alpha: color.a * .8);
+  }
 
   /// Between two panes: the line in the middle, and the sash over it.
   static const gap = 5.0;
@@ -244,6 +262,7 @@ class _ChatGridViewState extends State<ChatGridView> {
   @override
   Widget build(BuildContext context) {
     final grid = widget.grid;
+    final background = grid.panes.length > 1 ? widget.paneBackground : null;
     return CustomMultiChildLayout(
       delegate: _GridLayout(
         grid,
@@ -251,6 +270,14 @@ class _ChatGridViewState extends State<ChatGridView> {
         relayout: _moved,
       ),
       children: [
+        // Under the panes, and the lines over them.
+        if (background != null)
+          for (final thread in grid.panes)
+            if (background(thread) case final color?)
+              LayoutId(
+                id: _backdrop(thread),
+                child: ColoredBox(color: color),
+              ),
         for (final thread in grid.panes)
           LayoutId(
             id: thread,
@@ -260,7 +287,10 @@ class _ChatGridViewState extends State<ChatGridView> {
                   widget.onFocus(thread);
                 }
               },
-              child: widget.paneBuilder(context, thread, _place(grid, thread)),
+              child: _framed(
+                identical(thread, widget.focused) && grid.panes.length > 1,
+                widget.paneBuilder(context, thread, _place(grid, thread)),
+              ),
             ),
           ),
         if (grid.columnsSplit)
@@ -284,6 +314,29 @@ class _ChatGridViewState extends State<ChatGridView> {
   }
 }
 
+/// [child], outlined over it while [framed]: inset from its edges as the
+/// drop preview is (see [_DropPreview]), off the window's.
+Widget _framed(bool framed, Widget child) => Stack(
+  fit: StackFit.passthrough,
+  children: [
+    child,
+    if (framed)
+      Positioned.fill(
+        child: IgnorePointer(
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: ChatGridView.frameColor),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+          ),
+        ),
+      ),
+  ],
+);
+
 /// Where a press does not focus the pane it is in: the window's own tools
 /// in the top right pane's title bar (which act on the focused agent, not
 /// that pane's), and a pane's close button.
@@ -303,7 +356,11 @@ class KeepPaneFocus extends StatelessWidget {
   );
 }
 
-enum _GridPart { columnLine, rowLine, preview }
+enum _GridPart { columnLine, rowLine, preview, backdrop }
+
+/// Behind [thread]'s pane (see [ChatGridView.paneBackground]).
+(_GridPart, AgentThread) _backdrop(AgentThread thread) =>
+    (_GridPart.backdrop, thread);
 
 /// The panes on [grid]'s rectangles (see [ChatGrid.layout]); the sashes on
 /// the gaps between them; the drop preview over it all.
@@ -329,6 +386,18 @@ class _GridLayout extends MultiChildLayoutDelegate {
     for (final MapEntry(key: pane, value: rect)
         in grid.layout(size, gap: _gap, minPane: _min).entries) {
       if (hasChild(pane)) _place(pane, rect);
+      // Out to the middle of each gap, where the line is, or to the edge.
+      if (hasChild(_backdrop(pane))) {
+        _place(
+          _backdrop(pane),
+          Rect.fromLTRB(
+            rect.left > 0 ? rect.left - _gap / 2 : 0,
+            rect.top > 0 ? rect.top - _gap / 2 : 0,
+            rect.right < size.width ? rect.right + _gap / 2 : size.width,
+            rect.bottom < size.height ? rect.bottom + _gap / 2 : size.height,
+          ),
+        );
+      }
     }
     final x = ChatGrid.line(
       grid.columnRatio,
@@ -532,7 +601,7 @@ class _GridSashState extends State<_GridSash> {
             duration: const Duration(milliseconds: 100),
             width: _horizontal ? (_dragging ? IdeModernUI.gap : 1) : null,
             height: _horizontal ? null : (_dragging ? IdeModernUI.gap : 1),
-            color: _dragging ? IdeModernUI.sashHover : AppColors.border,
+            color: _dragging ? IdeModernUI.sashHover : AppColors.partBorder,
           ),
         ),
       ),
@@ -589,7 +658,7 @@ class _DragChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: AppColors.surfaceRaised,
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppColors.partBorder),
         borderRadius: BorderRadius.circular(6),
         boxShadow: [
           BoxShadow(color: themeColors['widget.shadow'], blurRadius: 12),

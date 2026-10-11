@@ -111,6 +111,7 @@
     }
   },
   "cmdCategoryChat": "Chat",
+  "cmdCategoryTasks": "Tasks",
   "@cmdCategoryChat": {
     "description": "Command category: the chat window's commands."
   },
@@ -456,6 +457,14 @@
   "cmdFocusNextTerminal": "Focus Next Terminal Group",
   "cmdFocusPreviousTerminal": "Focus Previous Terminal Group",
   "cmdFocusTerminal": "Focus Terminal",
+  "cmdRunTask": "Run Task",
+  "cmdRunBuildTask": "Run Build Task",
+  "cmdRunTestTask": "Run Test Task",
+  "cmdRerunTask": "Rerun Last Task",
+  "cmdRestartTask": "Restart Running Task",
+  "cmdTerminateTask": "Terminate Task",
+  "cmdShowTaskLog": "Show Task Log",
+  "cmdConfigureTask": "Configure Task",
   "cmdShowExplorer": "Show Explorer",
   "cmdShowSearch": "Show Search",
   "cmdShowSourceControl": "Show Source Control",
@@ -917,6 +926,10 @@
   "@sidebarCopySessionId": {
     "description": "An agent's menu in the sidebar: copies the id of its session, which Claude Code finds the conversation by."
   },
+  "sidebarFork": "Fork",
+  "@sidebarFork": {
+    "description": "An agent's menu in the sidebar: copies its conversation into a new agent, which opens."
+  },
   "sidebarShowMore": "Show more ({count})",
   "@sidebarShowMore": {
     "placeholders": {
@@ -937,6 +950,17 @@
   },
   "sidebarSortByTime": "Sort by Time",
   "sidebarArchiveAll": "Archive All",
+  "sidebarUnarchiveAll": "Unarchive All",
+  "sidebarDeleteArchived": "Delete All Archived…",
+  "sidebarDeleteArchivedTitle": "Delete archived agents?",
+  "sidebarDeleteArchivedMessage": "{count, plural, =1{The archived agent and its conversation will be deleted} other{The {count} archived agents and their conversations will be deleted}}, from their kernels too. This cannot be undone.",
+  "@sidebarDeleteArchivedMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "sidebarRemoveFromList": "Remove from List",
   "sidebarDropToPin": "Drop here to pin",
   "sidebarMoreActions": "More Actions…",
@@ -1340,11 +1364,6 @@
   "@chatSubagent": {
     "description": "Breadcrumb for a subagent without a description."
   },
-  "chatEmptyTitle": "Plan, build, anything",
-  "@chatEmptyTitle": {
-    "description": "Shown in an empty conversation."
-  },
-  "chatEmptyHint": "@ to add context · / for commands",
   "activityCompacting": "Compacting conversation",
   "activityPlanning": "Planning next move",
   "activityMusings": "Pondering\nNoodling\nPercolating\nCogitating\nSimmering\nMarinating\nTinkering\nGrokking\nMulling it over\nConnecting the dots\nChasing a hunch\nBrewing a plan\nHatching a plan\nWeighing the options\nUntangling threads\nHerding tokens\nSummoning context\nReticulating splines\nAsking the rubber duck\nReading the tea leaves\nSketching on a napkin\nDoodling in the margins\nSquinting at the diff\nCounting parentheses\nBefriending the compiler\nNegotiating with types\nWrangling edge cases\nTracing the stack\nFlipping through the docs\nSpelunking the codebase\nLining up the ducks\nShaking the magic 8-ball\nWarming up the neurons\nFolding thoughts\nTuning the vibes\nBinding the monad\nLifting into the monad\nAsking the oracle\nStirring the pot\nPolishing the plan",
@@ -1377,7 +1396,7 @@
   "composerApprovalDontAsk": "Don't ask",
   "composerApprovalDontAskDetail": "Deny whatever is not pre-approved",
   "composerApprovalFullAccess": "Full access",
-  "composerApprovalFullAccessDetail": "No checks, and no questions while it works",
+  "composerApprovalFullAccessDetail": "No checks: edits and commands run without asking",
   "composerContextUsage": "Context usage",
   "composerSend": "Send  ↵",
   "composerStop": "Stop",
@@ -4019,6 +4038,129 @@
       }
     }
   },
+  "modelsAccounts": "Accounts",
+  "modelsAccountsDescription": "Sign in with ChatGPT to use Codex models on your plan's quota. With several accounts, requests are spread across them by the load balancing below, and one out of quota gives way to the next.",
+  "modelsAccountsNone": "No account yet",
+  "modelsAccountCount": "{count, plural, =0{no accounts} =1{1 account} other{{count} accounts}}",
+  "@modelsAccountCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsAddAccount": "Add Account",
+  "modelsAddAccountDescription": "Opens ChatGPT's sign-in page in the browser.",
+  "modelsAccountSigningIn": "Waiting for sign-in…",
+  "modelsAccountSigningInDetail": "Finish signing in in the browser. If it did not open, copy the link into it.",
+  "modelsAccountCopyLink": "Copy Link",
+  "modelsAccountSignInFailed": "Sign-in failed: {error}",
+  "@modelsAccountSignInFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsRefreshQuota": "Refresh Quota",
+  "modelsAccountRemove": "Remove account",
+  "modelsAccountRemoveConfirm": "Remove “{name}”?",
+  "@modelsAccountRemoveConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsAccountRemoveDetail": "Its sign-in is deleted from this machine.",
+  "modelsAccountEnable": "Use {name}",
+  "@modelsAccountEnable": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsAccountLimited": "Out of quota",
+  "modelsAccountQuotaUnknown": "Quota not known yet",
+  "modelsQuotaWeek": "Weekly",
+  "modelsQuotaHours": "{count}h",
+  "@modelsQuotaHours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsQuotaDays": "{count}d",
+  "@modelsQuotaDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsQuotaUsed": "{percent}% used",
+  "@modelsQuotaUsed": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsQuotaResetsIn": "resets in {time}",
+  "@modelsQuotaResetsIn": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsQuotaResetsAt": "resets {time}",
+  "@modelsQuotaResetsAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsQuotaCredits": "Credits: {credits}",
+  "@modelsQuotaCredits": {
+    "placeholders": {
+      "credits": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsDurationMinutes": "{count} min",
+  "@modelsDurationMinutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsDurationHours": "{hours} h {minutes} min",
+  "@modelsDurationHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "modelsBalance": "Load Balancing",
+  "modelsBalanceRoundRobin": "Round Robin",
+  "modelsBalanceRoundRobinDescription": "Each new conversation goes to the next account, and stays on it (its cache is there).",
+  "modelsBalanceFillFirst": "Fill First",
+  "modelsBalanceFillFirstDescription": "Uses the first account until it is out of quota, then the next.",
+  "modelsBalanceMostRemaining": "Most Remaining",
+  "modelsBalanceMostRemainingDescription": "Each new conversation goes to the account with the most quota left.",
+  "modelsAccountPortBusy": "Port 1455, which sign-in comes back to, is used by another program (a proxy in Docker, or the Codex CLI signing in). Sign in in the browser all the same: the page it ends on will fail to load or show something else. Copy that page's full address and paste it below.",
+  "modelsAccountCallback": "Address after sign-in",
+  "modelsAccountCallbackDetail": "If the browser does not come back by itself, paste the address it ended on.",
   "modelsProtocolAnthropic": "Anthropic-compatible",
   "modelsConnection": "Connection",
   "modelsName": "Name",
@@ -4080,6 +4222,25 @@
   "modelsEdit": "Edit…",
   "modelsRemove": "Remove",
   "modelsMore": "More Actions",
+  "modelsTestModel": "Test",
+  "modelsTestModels": "Test All",
+  "modelsTestModelFailed": "Failed",
+  "modelsTestFirstText": "First token {seconds}s",
+  "@modelsTestFirstText": {
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsTestTotal": "Total {seconds}s",
+  "@modelsTestTotal": {
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
   "modelsEnableModel": "Offer {name}",
   "@modelsEnableModel": {
     "placeholders": {
@@ -4112,6 +4273,8 @@
   "modelsPreserveThinkingDescription": "Replays the model's reasoning (reasoning_content) in later requests, as DeepSeek and others want.",
   "modelsPromptCacheKey": "Prompt Cache Key",
   "modelsPromptCacheKeyDescription": "Sends each conversation's own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.",
+  "modelsCodexVersion": "Codex Version",
+  "modelsCodexVersionDescription": "The Codex CLI version requests are made as. The backend only lists models that version supports, so if new models are missing, enter a newer version and refresh the model list. Leave empty to use the app's default.",
   "modelsEnv": "Extra Environment",
   "modelsEnvDescription": "One KEY=VALUE a line, given to Claude Code after the settings above.",
   "modelsDelete": "Delete Upstream",
@@ -4378,6 +4541,18 @@
       }
     }
   },
+  "appearanceSettingsUserMessageStyle": "Your Messages",
+  "appearanceSettingsUserMessageStyleDescription": "How the messages you send show in the conversation: as wide as it, the one you are reading under staying at the top as you scroll; or as chat bubbles at the right that scroll away.",
+  "appearanceSettingsUserMessageStyleSticky": "Full width, sticks to the top",
+  "appearanceSettingsUserMessageStyleBubble": "Chat bubbles",
+  "appearanceSettingsUserMessageStyleLabel": "Your messages: {style}",
+  "@appearanceSettingsUserMessageStyleLabel": {
+    "placeholders": {
+      "style": {
+        "type": "String"
+      }
+    }
+  },
   "appearanceSettingsCodeFont": "Code Font",
   "appearanceSettingsCodeFontDescription": "The font code is drawn in: in the editor, the terminal, the chat and the previews. Family names in order, separated by commas, or a preset.",
   "appearanceSettingsCodeFontDefault": "Default",
@@ -4391,7 +4566,7 @@
     }
   },
   "appearanceSettingsCodeSize": "Code Size",
-  "appearanceSettingsCodeSizeDescription": "The size of code in the IDE editor and the side panel's file and changes views. The terminal and chat follow the interface text size.",
+  "appearanceSettingsCodeSizeDescription": "The size of code in the IDE editor and the side panel's file and changes views. Code in the chat follows the interface text size; the terminal has its own size.",
   "appearanceSettingsCodeSizeLabel": "Code size: {size}",
   "@appearanceSettingsCodeSizeLabel": {
     "placeholders": {
@@ -4403,11 +4578,24 @@
   "appearanceSettingsLigatures": "Font Ligatures",
   "appearanceSettingsLigaturesDescription": "Draws sequences such as => and != as one glyph where the font has one. The terminal does not.",
   "appearanceSettingsUiScale": "Interface Text Size",
-  "appearanceSettingsUiScaleDescription": "The size of interface text, code in the chat, and terminal text. Code in the IDE editor and side panel files and changes keeps its own size.",
+  "appearanceSettingsUiScaleDescription": "The size of interface text, code in the chat, and terminal text while the terminal size follows it. Code in the IDE editor and side panel files and changes keeps its own size.",
   "appearanceSettingsUiScaleLabel": "Interface text size: {percent}%",
   "@appearanceSettingsUiScaleLabel": {
     "placeholders": {
       "percent": {
+        "type": "String"
+      }
+    }
+  },
+  "appearanceSettingsTerminalSize": "Terminal Font Size",
+  "appearanceSettingsTerminalSizeDescription": "The size of terminal text. By default it follows the interface text size; it can be set on its own.",
+  "appearanceSettingsTerminalSizeFollow": "Follow Interface Text Size",
+  "appearanceSettingsTerminalSizeCustom": "Custom",
+  "appearanceSettingsTerminalSizeValue": "Custom Size",
+  "appearanceSettingsTerminalSizeLabel": "Terminal font size: {size}",
+  "@appearanceSettingsTerminalSizeLabel": {
+    "placeholders": {
+      "size": {
         "type": "String"
       }
     }
@@ -4904,5 +5092,182 @@
   "networkFailureOther": "Couldn't connect",
   "networkTestHintRefused": "Nothing answers at the proxy's address: check that Clash (or the proxy) is running.",
   "networkTestHintOffline": "No site answers: check this computer's network connection and the proxy.",
-  "networkTestHintBlocked": "Only Baidu answers: the proxy isn't getting the others through. Check the proxy above, or Clash's mode and rules."
+  "networkTestHintBlocked": "Only Baidu answers: the proxy isn't getting the others through. Check the proxy above, or Clash's mode and rules.",
+  "extsCapabilityFull": "Fully supported",
+  "extsCapabilityFullDetail": "Its color or file icon themes all apply.",
+  "extsCapabilityPartial": "Partly supported",
+  "extsCapabilityPartialDetail": "Its themes apply; the rest of it does nothing in BaoCode.",
+  "extsEngineIncompatible": "Needs VS Code {requested}; this is {current}.",
+  "@extsEngineIncompatible": {
+    "placeholders": {
+      "current": {
+        "type": "String"
+      },
+      "requested": {
+        "type": "String"
+      }
+    }
+  },
+  "extsEngineMissing": "It does not say which VS Code it needs.",
+  "extsEngineInvalid": "Invalid engine '{requested}'.",
+  "@extsEngineInvalid": {
+    "placeholders": {
+      "requested": {
+        "type": "String"
+      }
+    }
+  },
+  "extsEngineCompatible": "Requires VS Code {engine}.",
+  "@extsEngineCompatible": {
+    "placeholders": {
+      "engine": {
+        "type": "String"
+      }
+    }
+  },
+  "extsTitleUpdates": "Updates",
+  "extsTitleOpenVsx": "Open VSX",
+  "extsUpdates": "Updates",
+  "extsCheckForUpdates": "Check for Updates",
+  "extsMoreActions": "More Actions...",
+  "extsInstallFromVsix": "Install from VSIX...",
+  "extsSearchPlaceholder": "Search Open VSX Extensions",
+  "extsSearchFailed": "Could not search Open VSX: {error}",
+  "@extsSearchFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "extsLoadMore": "Load More",
+  "extsUpdateTo": "Update to {version}",
+  "@extsUpdateTo": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extsUpdating": "Updating...",
+  "extsEnable": "Enable",
+  "extsDisable": "Disable",
+  "extsDisabled": "Disabled",
+  "extsSwitchToPreRelease": "Switch to Pre-Release Version",
+  "extsSwitchToRelease": "Switch to Release Version",
+  "extsInstallPreRelease": "Install Pre-Release Version",
+  "extsInstallVersion": "Install {version}",
+  "@extsInstallVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extsPreRelease": "Pre-Release",
+  "extsVerifiedPublisher": "Verified publisher",
+  "extsDownloads": "{count} downloads",
+  "@extsDownloads": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "extsLoadFailed": "Could not load it: {error}",
+  "@extsLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "extsVersion": "Version",
+  "extsPreReleaseToggle": "Pre-Release",
+  "extsLatestVersion": "Latest",
+  "extsTabDetails": "Details",
+  "extsTabFeatures": "Features",
+  "extsTabChangelog": "Changelog",
+  "extsNoReadme": "This extension has no README.",
+  "extsNoChangelog": "This extension has no changelog.",
+  "extsContributions": "Contributions",
+  "extsNoContributions": "This extension contributes nothing.",
+  "extsActivationEvents": "Activation Events",
+  "extsApiProposals": "API Proposals",
+  "extsCompatibility": "Compatibility",
+  "extsInformation": "Information",
+  "extsInfoIdentifier": "Identifier",
+  "extsInfoVersion": "Version",
+  "extsInfoLatest": "Latest",
+  "extsInfoLastUpdated": "Last Updated",
+  "extsInfoEngine": "VS Code",
+  "extsInfoPlatform": "Platform",
+  "extsInfoLicense": "License",
+  "extsInfoRepository": "Repository",
+  "extsInfoCategories": "Categories",
+  "extsInfoLocation": "Location",
+  "extsVsixTitle": "Install Extension VSIX",
+  "extsVsixInvalid": "{name} is not a valid VSIX: {error}",
+  "@extsVsixInvalid": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "extsVsixPlatformMismatch": "It is built for {platform}, not for {current}.",
+  "@extsVsixPlatformMismatch": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      },
+      "current": {
+        "type": "String"
+      }
+    }
+  },
+  "extsVsixReplaces": "It replaces version {version}.",
+  "@extsVsixReplaces": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extsPlatformCompatible": "Platform: {platform}",
+  "@extsPlatformCompatible": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "extsPlatformUniversal": "universal",
+  "extsPageTitle": "Extension: {name}",
+  "@extsPageTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "themeSelectIconThemePlaceholder": "Select File Icon Theme (Up/Down Keys to Preview)",
+  "themeIconThemeBuiltIn": "Built-in",
+  "extsCapabilityUnsupported": "Not supported",
+  "extsCapabilityUnsupportedDetail": "It has no color or file icon theme: BaoCode only uses themes from extensions.",
+  "extsFindingCode": "Its code does not run.",
+  "extsFindingContribution": "Not used: {name}",
+  "@extsFindingContribution": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "extsPopularThemes": "Popular Themes",
+  "extsTabThemes": "Themes",
+  "extsTabLanguageServers": "Language Servers"
 }

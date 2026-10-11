@@ -117,6 +117,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdCategoryChat => 'Chat';
 
   @override
+  String get cmdCategoryTasks => 'Tasks';
+
+  @override
   String get cmdChatNewAgent => 'New Chat';
 
   @override
@@ -1076,6 +1079,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdFocusTerminal => 'Focus Terminal';
 
   @override
+  String get cmdRunTask => 'Run Task';
+
+  @override
+  String get cmdRunBuildTask => 'Run Build Task';
+
+  @override
+  String get cmdRunTestTask => 'Run Test Task';
+
+  @override
+  String get cmdRerunTask => 'Rerun Last Task';
+
+  @override
+  String get cmdRestartTask => 'Restart Running Task';
+
+  @override
+  String get cmdTerminateTask => 'Terminate Task';
+
+  @override
+  String get cmdShowTaskLog => 'Show Task Log';
+
+  @override
+  String get cmdConfigureTask => 'Configure Task';
+
+  @override
   String get cmdShowExplorer => 'Show Explorer';
 
   @override
@@ -1697,6 +1724,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarCopySessionId => 'Copy session ID';
 
   @override
+  String get sidebarFork => 'Fork';
+
+  @override
   String sidebarShowMore(int count) {
     return 'Show more ($count)';
   }
@@ -1717,6 +1747,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarArchiveAll => 'Archive All';
+
+  @override
+  String get sidebarUnarchiveAll => 'Unarchive All';
+
+  @override
+  String get sidebarDeleteArchived => 'Delete All Archived…';
+
+  @override
+  String get sidebarDeleteArchivedTitle => 'Delete archived agents?';
+
+  @override
+  String sidebarDeleteArchivedMessage(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'The $count archived agents and their conversations will be deleted',
+      one: 'The archived agent and its conversation will be deleted',
+    );
+    return '$_temp0, from their kernels too. This cannot be undone.';
+  }
 
   @override
   String get sidebarRemoveFromList => 'Remove from List';
@@ -2237,12 +2288,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatSubagent => 'Subagent';
 
   @override
-  String get chatEmptyTitle => 'Plan, build, anything';
-
-  @override
-  String get chatEmptyHint => '@ to add context · / for commands';
-
-  @override
   String get activityCompacting => 'Compacting conversation';
 
   @override
@@ -2299,7 +2344,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get composerApprovalFullAccessDetail =>
-      'No checks, and no questions while it works';
+      'No checks: edits and commands run without asking';
 
   @override
   String get composerContextUsage => 'Context usage';
@@ -5707,6 +5752,154 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get modelsAccounts => 'Accounts';
+
+  @override
+  String get modelsAccountsDescription =>
+      'Sign in with ChatGPT to use Codex models on your plan\'s quota. With several accounts, requests are spread across them by the load balancing below, and one out of quota gives way to the next.';
+
+  @override
+  String get modelsAccountsNone => 'No account yet';
+
+  @override
+  String modelsAccountCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count accounts',
+      one: '1 account',
+      zero: 'no accounts',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get modelsAddAccount => 'Add Account';
+
+  @override
+  String get modelsAddAccountDescription =>
+      'Opens ChatGPT\'s sign-in page in the browser.';
+
+  @override
+  String get modelsAccountSigningIn => 'Waiting for sign-in…';
+
+  @override
+  String get modelsAccountSigningInDetail =>
+      'Finish signing in in the browser. If it did not open, copy the link into it.';
+
+  @override
+  String get modelsAccountCopyLink => 'Copy Link';
+
+  @override
+  String modelsAccountSignInFailed(String error) {
+    return 'Sign-in failed: $error';
+  }
+
+  @override
+  String get modelsRefreshQuota => 'Refresh Quota';
+
+  @override
+  String get modelsAccountRemove => 'Remove account';
+
+  @override
+  String modelsAccountRemoveConfirm(String name) {
+    return 'Remove “$name”?';
+  }
+
+  @override
+  String get modelsAccountRemoveDetail =>
+      'Its sign-in is deleted from this machine.';
+
+  @override
+  String modelsAccountEnable(String name) {
+    return 'Use $name';
+  }
+
+  @override
+  String get modelsAccountLimited => 'Out of quota';
+
+  @override
+  String get modelsAccountQuotaUnknown => 'Quota not known yet';
+
+  @override
+  String get modelsQuotaWeek => 'Weekly';
+
+  @override
+  String modelsQuotaHours(int count) {
+    return '${count}h';
+  }
+
+  @override
+  String modelsQuotaDays(int count) {
+    return '${count}d';
+  }
+
+  @override
+  String modelsQuotaUsed(int percent) {
+    return '$percent% used';
+  }
+
+  @override
+  String modelsQuotaResetsIn(String time) {
+    return 'resets in $time';
+  }
+
+  @override
+  String modelsQuotaResetsAt(String time) {
+    return 'resets $time';
+  }
+
+  @override
+  String modelsQuotaCredits(String credits) {
+    return 'Credits: $credits';
+  }
+
+  @override
+  String modelsDurationMinutes(int count) {
+    return '$count min';
+  }
+
+  @override
+  String modelsDurationHours(int hours, int minutes) {
+    return '$hours h $minutes min';
+  }
+
+  @override
+  String get modelsBalance => 'Load Balancing';
+
+  @override
+  String get modelsBalanceRoundRobin => 'Round Robin';
+
+  @override
+  String get modelsBalanceRoundRobinDescription =>
+      'Each new conversation goes to the next account, and stays on it (its cache is there).';
+
+  @override
+  String get modelsBalanceFillFirst => 'Fill First';
+
+  @override
+  String get modelsBalanceFillFirstDescription =>
+      'Uses the first account until it is out of quota, then the next.';
+
+  @override
+  String get modelsBalanceMostRemaining => 'Most Remaining';
+
+  @override
+  String get modelsBalanceMostRemainingDescription =>
+      'Each new conversation goes to the account with the most quota left.';
+
+  @override
+  String get modelsAccountPortBusy =>
+      'Port 1455, which sign-in comes back to, is used by another program (a proxy in Docker, or the Codex CLI signing in). Sign in in the browser all the same: the page it ends on will fail to load or show something else. Copy that page\'s full address and paste it below.';
+
+  @override
+  String get modelsAccountCallback => 'Address after sign-in';
+
+  @override
+  String get modelsAccountCallbackDetail =>
+      'If the browser does not come back by itself, paste the address it ended on.';
+
+  @override
   String get modelsProtocolAnthropic => 'Anthropic-compatible';
 
   @override
@@ -5822,6 +6015,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsMore => 'More Actions';
 
   @override
+  String get modelsTestModel => 'Test';
+
+  @override
+  String get modelsTestModels => 'Test All';
+
+  @override
+  String get modelsTestModelFailed => 'Failed';
+
+  @override
+  String modelsTestFirstText(String seconds) {
+    return 'First token ${seconds}s';
+  }
+
+  @override
+  String modelsTestTotal(String seconds) {
+    return 'Total ${seconds}s';
+  }
+
+  @override
   String modelsEnableModel(String name) {
     return 'Offer $name';
   }
@@ -5908,6 +6120,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get modelsPromptCacheKeyDescription =>
       'Sends each conversation\'s own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.';
+
+  @override
+  String get modelsCodexVersion => 'Codex Version';
+
+  @override
+  String get modelsCodexVersionDescription =>
+      'The Codex CLI version requests are made as. The backend only lists models that version supports, so if new models are missing, enter a newer version and refresh the model list. Leave empty to use the app\'s default.';
 
   @override
   String get modelsEnv => 'Extra Environment';
@@ -6249,6 +6468,25 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get appearanceSettingsUserMessageStyle => 'Your Messages';
+
+  @override
+  String get appearanceSettingsUserMessageStyleDescription =>
+      'How the messages you send show in the conversation: as wide as it, the one you are reading under staying at the top as you scroll; or as chat bubbles at the right that scroll away.';
+
+  @override
+  String get appearanceSettingsUserMessageStyleSticky =>
+      'Full width, sticks to the top';
+
+  @override
+  String get appearanceSettingsUserMessageStyleBubble => 'Chat bubbles';
+
+  @override
+  String appearanceSettingsUserMessageStyleLabel(String style) {
+    return 'Your messages: $style';
+  }
+
+  @override
   String get appearanceSettingsCodeFont => 'Code Font';
 
   @override
@@ -6271,7 +6509,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appearanceSettingsCodeSizeDescription =>
-      'The size of code in the IDE editor and the side panel\'s file and changes views. The terminal and chat follow the interface text size.';
+      'The size of code in the IDE editor and the side panel\'s file and changes views. Code in the chat follows the interface text size; the terminal has its own size.';
 
   @override
   String appearanceSettingsCodeSizeLabel(String size) {
@@ -6290,11 +6528,33 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appearanceSettingsUiScaleDescription =>
-      'The size of interface text, code in the chat, and terminal text. Code in the IDE editor and side panel files and changes keeps its own size.';
+      'The size of interface text, code in the chat, and terminal text while the terminal size follows it. Code in the IDE editor and side panel files and changes keeps its own size.';
 
   @override
   String appearanceSettingsUiScaleLabel(String percent) {
     return 'Interface text size: $percent%';
+  }
+
+  @override
+  String get appearanceSettingsTerminalSize => 'Terminal Font Size';
+
+  @override
+  String get appearanceSettingsTerminalSizeDescription =>
+      'The size of terminal text. By default it follows the interface text size; it can be set on its own.';
+
+  @override
+  String get appearanceSettingsTerminalSizeFollow =>
+      'Follow Interface Text Size';
+
+  @override
+  String get appearanceSettingsTerminalSizeCustom => 'Custom';
+
+  @override
+  String get appearanceSettingsTerminalSizeValue => 'Custom Size';
+
+  @override
+  String appearanceSettingsTerminalSizeLabel(String size) {
+    return 'Terminal font size: $size';
   }
 
   @override
@@ -6819,4 +7079,246 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get networkTestHintBlocked =>
       'Only Baidu answers: the proxy isn\'t getting the others through. Check the proxy above, or Clash\'s mode and rules.';
+
+  @override
+  String get extsCapabilityFull => 'Fully supported';
+
+  @override
+  String get extsCapabilityFullDetail =>
+      'Its color or file icon themes all apply.';
+
+  @override
+  String get extsCapabilityPartial => 'Partly supported';
+
+  @override
+  String get extsCapabilityPartialDetail =>
+      'Its themes apply; the rest of it does nothing in BaoCode.';
+
+  @override
+  String extsEngineIncompatible(String current, String requested) {
+    return 'Needs VS Code $requested; this is $current.';
+  }
+
+  @override
+  String get extsEngineMissing => 'It does not say which VS Code it needs.';
+
+  @override
+  String extsEngineInvalid(String requested) {
+    return 'Invalid engine \'$requested\'.';
+  }
+
+  @override
+  String extsEngineCompatible(String engine) {
+    return 'Requires VS Code $engine.';
+  }
+
+  @override
+  String get extsTitleUpdates => 'Updates';
+
+  @override
+  String get extsTitleOpenVsx => 'Open VSX';
+
+  @override
+  String get extsUpdates => 'Updates';
+
+  @override
+  String get extsCheckForUpdates => 'Check for Updates';
+
+  @override
+  String get extsMoreActions => 'More Actions...';
+
+  @override
+  String get extsInstallFromVsix => 'Install from VSIX...';
+
+  @override
+  String get extsSearchPlaceholder => 'Search Open VSX Extensions';
+
+  @override
+  String extsSearchFailed(String error) {
+    return 'Could not search Open VSX: $error';
+  }
+
+  @override
+  String get extsLoadMore => 'Load More';
+
+  @override
+  String extsUpdateTo(String version) {
+    return 'Update to $version';
+  }
+
+  @override
+  String get extsUpdating => 'Updating...';
+
+  @override
+  String get extsEnable => 'Enable';
+
+  @override
+  String get extsDisable => 'Disable';
+
+  @override
+  String get extsDisabled => 'Disabled';
+
+  @override
+  String get extsSwitchToPreRelease => 'Switch to Pre-Release Version';
+
+  @override
+  String get extsSwitchToRelease => 'Switch to Release Version';
+
+  @override
+  String get extsInstallPreRelease => 'Install Pre-Release Version';
+
+  @override
+  String extsInstallVersion(String version) {
+    return 'Install $version';
+  }
+
+  @override
+  String get extsPreRelease => 'Pre-Release';
+
+  @override
+  String get extsVerifiedPublisher => 'Verified publisher';
+
+  @override
+  String extsDownloads(String count) {
+    return '$count downloads';
+  }
+
+  @override
+  String extsLoadFailed(String error) {
+    return 'Could not load it: $error';
+  }
+
+  @override
+  String get extsVersion => 'Version';
+
+  @override
+  String get extsPreReleaseToggle => 'Pre-Release';
+
+  @override
+  String get extsLatestVersion => 'Latest';
+
+  @override
+  String get extsTabDetails => 'Details';
+
+  @override
+  String get extsTabFeatures => 'Features';
+
+  @override
+  String get extsTabChangelog => 'Changelog';
+
+  @override
+  String get extsNoReadme => 'This extension has no README.';
+
+  @override
+  String get extsNoChangelog => 'This extension has no changelog.';
+
+  @override
+  String get extsContributions => 'Contributions';
+
+  @override
+  String get extsNoContributions => 'This extension contributes nothing.';
+
+  @override
+  String get extsActivationEvents => 'Activation Events';
+
+  @override
+  String get extsApiProposals => 'API Proposals';
+
+  @override
+  String get extsCompatibility => 'Compatibility';
+
+  @override
+  String get extsInformation => 'Information';
+
+  @override
+  String get extsInfoIdentifier => 'Identifier';
+
+  @override
+  String get extsInfoVersion => 'Version';
+
+  @override
+  String get extsInfoLatest => 'Latest';
+
+  @override
+  String get extsInfoLastUpdated => 'Last Updated';
+
+  @override
+  String get extsInfoEngine => 'VS Code';
+
+  @override
+  String get extsInfoPlatform => 'Platform';
+
+  @override
+  String get extsInfoLicense => 'License';
+
+  @override
+  String get extsInfoRepository => 'Repository';
+
+  @override
+  String get extsInfoCategories => 'Categories';
+
+  @override
+  String get extsInfoLocation => 'Location';
+
+  @override
+  String get extsVsixTitle => 'Install Extension VSIX';
+
+  @override
+  String extsVsixInvalid(String name, String error) {
+    return '$name is not a valid VSIX: $error';
+  }
+
+  @override
+  String extsVsixPlatformMismatch(String platform, String current) {
+    return 'It is built for $platform, not for $current.';
+  }
+
+  @override
+  String extsVsixReplaces(String version) {
+    return 'It replaces version $version.';
+  }
+
+  @override
+  String extsPlatformCompatible(String platform) {
+    return 'Platform: $platform';
+  }
+
+  @override
+  String get extsPlatformUniversal => 'universal';
+
+  @override
+  String extsPageTitle(String name) {
+    return 'Extension: $name';
+  }
+
+  @override
+  String get themeSelectIconThemePlaceholder =>
+      'Select File Icon Theme (Up/Down Keys to Preview)';
+
+  @override
+  String get themeIconThemeBuiltIn => 'Built-in';
+
+  @override
+  String get extsCapabilityUnsupported => 'Not supported';
+
+  @override
+  String get extsCapabilityUnsupportedDetail =>
+      'It has no color or file icon theme: BaoCode only uses themes from extensions.';
+
+  @override
+  String get extsFindingCode => 'Its code does not run.';
+
+  @override
+  String extsFindingContribution(String name) {
+    return 'Not used: $name';
+  }
+
+  @override
+  String get extsPopularThemes => 'Popular Themes';
+
+  @override
+  String get extsTabThemes => 'Themes';
+
+  @override
+  String get extsTabLanguageServers => 'Language Servers';
 }

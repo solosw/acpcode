@@ -1,32 +1,81 @@
 import 'package:flutter/material.dart';
 
 import '../../chat/chat_width.dart';
+import '../../chat/widgets/scroll_edge_fade.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
+
+/// The settings pages' colors, as Cursor's settings have them: the editor's
+/// foreground at a strength for each part, over the editor's background
+/// (the page). Its `--cursor-text-*`, `--cursor-icon-*`, `--cursor-bg-*`
+/// and `--cursor-stroke-*` (workbench.desktop.main.css); stronger text and
+/// the inputs' border for the lines in high contrast themes.
+abstract final class SettingsColors {
+  static Color get _foreground => themeColors['editor.foreground'];
+
+  static Color _at(double strength) =>
+      _foreground.withValues(alpha: _foreground.a * strength);
+
+  /// Titles, labels: the foreground.
+  static Color get textPrimary => _foreground;
+
+  /// Descriptions, group headings.
+  static Color get textSecondary => _at(themeColors.highContrast ? 0.84 : 0.74);
+
+  /// A group's description.
+  static Color get textTertiary => _at(themeColors.highContrast ? 0.72 : 0.6);
+
+  /// What is faint: a host by its name, a dash for no result yet.
+  static Color get textQuaternary => _at(themeColors.highContrast ? 0.6 : 0.36);
+
+  /// An icon not selected.
+  static Color get iconTertiary => _at(0.52);
+
+  /// What is selected or under the pointer in a list.
+  static Color get hover => _at(0.06);
+
+  /// Around a field.
+  static Color get stroke =>
+      themeColors.highContrast ? themeColors['input.border'] : _at(0.08);
+
+  /// A card, over the page.
+  static Color get card => Color.alphaBlend(_at(0.04), AppColors.code);
+
+  /// Between a card's rows.
+  static Color get divider =>
+      themeColors.highContrast ? themeColors['input.border'] : _at(0.04);
+}
 
 /// The settings pages' text: one size and weight for each part.
 abstract final class SettingsText {
   static TextStyle get title => TextStyle(
-    color: AppColors.textPrimary,
+    color: SettingsColors.textPrimary,
     fontSize: 18,
     fontWeight: FontWeight.w600,
   );
 
+  /// Under the page's title.
+  static TextStyle get lead => description;
+
   /// A group's heading, over its card.
   static TextStyle get heading => TextStyle(
-    color: AppColors.textMuted,
+    color: SettingsColors.textSecondary,
     fontSize: 12.5,
     fontWeight: FontWeight.w500,
   );
 
+  /// Under a group's heading.
+  static TextStyle get headingDescription =>
+      description.copyWith(color: SettingsColors.textTertiary);
+
   static TextStyle get label =>
-      TextStyle(color: AppColors.textPrimary, fontSize: 13, height: 1.4);
+      TextStyle(color: SettingsColors.textPrimary, fontSize: 13, height: 1.4);
 
   static TextStyle get description =>
-      TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.5);
+      TextStyle(color: SettingsColors.textSecondary, fontSize: 12, height: 1.5);
 
   static TextStyle get path => TextStyle(
-    color: AppColors.text,
+    color: SettingsColors.textPrimary,
     fontSize: 12,
     height: 1.5,
     fontFamily: AppFonts.mono,
@@ -53,12 +102,21 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SettingsColumn(
     children: [
-      Text(title, style: SettingsText.title),
-      if (description case final description?) ...[
-        const SizedBox(height: 4),
-        Text(description, style: SettingsText.description),
-      ],
-      for (final child in children) ...[const SizedBox(height: 16), child],
+      // Its title and description in as far as the groups' headings.
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: SettingsText.title),
+            if (description case final description?) ...[
+              const SizedBox(height: 4),
+              Text(description, style: SettingsText.lead),
+            ],
+          ],
+        ),
+      ),
+      for (final child in children) ...[const SizedBox(height: 20), child],
     ],
   );
 }
@@ -81,9 +139,16 @@ class SettingsColumn extends StatelessWidget {
                 SettingsPage.inset,
                 double.infinity,
               );
-        return ListView(
-          padding: EdgeInsets.fromLTRB(side, 40, side, 40),
-          children: children,
+        // Fading out towards an edge it is scrolled past, over about two
+        // lines of a description.
+        return ScrollEdgeFade(
+          fadeLength: 56,
+          child: ListView(
+            // Under the window's draggable strip already: the title near the
+            // nav's back button.
+            padding: EdgeInsets.fromLTRB(side, 16, side, 48),
+            children: children,
+          ),
         );
       },
     ),
@@ -108,19 +173,20 @@ class SettingsGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
+    // 28 between groups, as Cursor's sections.
     padding: const EdgeInsets.only(top: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          padding: const EdgeInsets.fromLTRB(8, 0, 4, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: SettingsText.heading),
               if (description case final description?) ...[
                 const SizedBox(height: 2),
-                Text(description, style: SettingsText.description),
+                Text(description, style: SettingsText.headingDescription),
               ],
             ],
           ),
@@ -139,16 +205,13 @@ class SettingsCard extends StatelessWidget {
   final List<Widget> children;
 
   /// The card: the text's color over the page's, faintly.
-  static Color get background => Color.alphaBlend(
-    AppColors.textPrimary.withValues(alpha: 0.04),
-    AppColors.code,
-  );
+  static Color get background => SettingsColors.card;
 
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(
       color: background,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       border: switch (themeColors.get('contrastBorder')) {
         final border? => Border.all(color: border),
         null => null,
@@ -162,7 +225,7 @@ class SettingsCard extends StatelessWidget {
             Container(
               height: 1,
               margin: const EdgeInsets.symmetric(horizontal: 12),
-              color: AppColors.border,
+              color: SettingsColors.divider,
             ),
           child,
         ],
@@ -201,15 +264,15 @@ class SettingsRow extends StatelessWidget {
       children: [
         Text(label, style: SettingsText.label),
         if (description case final description?) ...[
-          const SizedBox(height: 2),
+          const SizedBox(height: 1),
           Text(description, style: SettingsText.description),
         ],
-        for (final widget in below) ...[const SizedBox(height: 4), widget],
+        for (final widget in below) ...[const SizedBox(height: 8), widget],
       ],
     );
     final trailing = this.trailing;
     final row = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: trailing == null
           ? text
           : LayoutBuilder(
@@ -219,7 +282,7 @@ class SettingsRow extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         text,
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         Align(
                           alignment: AlignmentDirectional.centerEnd,
                           child: trailing,
@@ -229,7 +292,7 @@ class SettingsRow extends StatelessWidget {
                   : Row(
                       children: [
                         Expanded(child: text),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 20),
                         trailing,
                       ],
                     ),
@@ -248,8 +311,8 @@ class SettingsRow extends StatelessWidget {
   }
 }
 
-/// A setting that is on or off, as a row's control: a switch, green when
-/// on.
+/// A setting that is on or off, as a row's control: a switch, in the
+/// theme's button colors when on.
 class SettingsSwitch extends StatelessWidget {
   const SettingsSwitch({
     super.key,
@@ -264,12 +327,22 @@ class SettingsSwitch extends StatelessWidget {
   final String semanticLabel;
   final bool enabled;
 
-  /// On: green, whatever the theme, as the system's switches.
-  static const onColor = Color(0xFF3DA35D);
-
   @override
   Widget build(BuildContext context) {
-    final off = AppColors.textFaint.withValues(alpha: 0.45);
+    final colors = themeColors;
+    // On: `button.background` under a `button.foreground` knob. Off: a faint
+    // track under a knob in the descriptions' color.
+    final track = value
+        ? colors['button.background']
+        : AppColors.textFaint.withValues(alpha: 0.45);
+    final knob = value
+        ? colors['button.foreground']
+        : SettingsColors.textSecondary;
+    // As tall as its label's letters, with the interface's font size.
+    final height = MediaQuery.textScalerOf(
+      context,
+    ).scale(SettingsText.label.fontSize! * 1.2).roundToDouble();
+    final knobSize = height - 4;
     return Semantics(
       toggled: value,
       enabled: enabled,
@@ -285,21 +358,23 @@ class SettingsSwitch extends StatelessWidget {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
               curve: Curves.easeOut,
-              width: 34,
-              height: 20,
+              width: (height * 1.75).roundToDouble(),
+              height: height,
               padding: const EdgeInsets.all(2),
               alignment: value ? Alignment.centerRight : Alignment.centerLeft,
               decoration: BoxDecoration(
-                color: value ? onColor : off,
-                borderRadius: BorderRadius.circular(10),
+                color: track,
+                borderRadius: BorderRadius.circular(height / 2),
               ),
-              child: Container(
-                width: 16,
-                height: 16,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOut,
+                width: knobSize,
+                height: knobSize,
+                decoration: BoxDecoration(
+                  color: knob,
                   shape: BoxShape.circle,
-                  boxShadow: [
+                  boxShadow: const [
                     BoxShadow(color: Color(0x33000000), blurRadius: 2),
                   ],
                 ),

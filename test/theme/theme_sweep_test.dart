@@ -62,7 +62,7 @@ void main() {
   testWidgets('every bundled theme paints the workbench and the chat', (
     tester,
   ) async {
-    expect(themes, hasLength(17));
+    expect(themes, hasLength(13));
     // Monarch highlights: a TextMate worker would outlive each editor here.
     final launcher = textMateWorkerLauncher;
     textMateWorkerLauncher = () async => null;
@@ -101,10 +101,10 @@ void main() {
         shift: true,
       );
       expect(tester.takeException(), isNull, reason: theme.settingsId);
-      final panel = tester.widget<IdeCard>(
+      final panel = tester.widget<IdePart>(
         find.ancestor(
           of: find.byType(IdeBottomPanel),
-          matching: find.byType(IdeCard),
+          matching: find.byType(IdePart),
         ),
       );
       expect(

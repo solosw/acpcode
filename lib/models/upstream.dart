@@ -1,14 +1,27 @@
 import 'dart:convert';
 
+import 'codex/codex_api.dart';
 import 'model_provider.dart';
 
 /// What an upstream lists of its models (`GET /v1/models`).
 class RemoteModel {
-  const RemoteModel(this.id, {this.label, this.contextWindow});
+  const RemoteModel(
+    this.id, {
+    this.label,
+    this.contextWindow,
+    this.efforts,
+    this.images,
+  });
 
   final String id;
   final String? label;
   final int? contextWindow;
+
+  /// The efforts it takes, where the upstream says (Codex's).
+  final List<String>? efforts;
+
+  /// Whether it takes images, where the upstream says.
+  final bool? images;
 }
 
 /// How [ModelProvider.baseUrl] is read, as each protocol's SDK has it:
@@ -59,6 +72,9 @@ abstract final class UpstreamUrls {
   /// rest still after: should they move it, or list at the endpoint.
   static List<Uri> models(ModelProvider provider) =>
       switch (provider.protocol) {
+        ProviderProtocol.codex => [
+          const CodexEndpoints().models(codexVersionOf(provider)),
+        ],
         ProviderProtocol.anthropic => switch (anthropicBase(provider.baseUrl)) {
           final base? => _anthropicModels(Uri.parse(base)),
           null => const [],
@@ -105,14 +121,16 @@ abstract final class UpstreamUrls {
   /// Where [provider] takes a conversation: Chat Completions or
   /// Responses (Anthropic's is Claude Code's to call).
   static Uri? conversation(ModelProvider provider) =>
-      switch (openaiBase(provider.baseUrl)) {
-        final base? => switch (provider.protocol) {
-          ProviderProtocol.openaiChat => Uri.parse('$base/chat/completions'),
-          ProviderProtocol.openaiResponses => Uri.parse('$base/responses'),
-          ProviderProtocol.anthropic => null,
-        },
-        null => null,
-      };
+      provider.protocol == ProviderProtocol.codex
+      ? const CodexEndpoints().responses
+      : switch (openaiBase(provider.baseUrl)) {
+          final base? => switch (provider.protocol) {
+            ProviderProtocol.openaiChat => Uri.parse('$base/chat/completions'),
+            ProviderProtocol.openaiResponses => Uri.parse('$base/responses'),
+            ProviderProtocol.anthropic || ProviderProtocol.codex => null,
+          },
+          null => null,
+        };
 }
 
 /// Whether [provider]'s key goes as `x-api-key`: asked for, or left to
@@ -125,8 +143,16 @@ bool sendsApiKeyHeader(ModelProvider provider) => switch (provider.auth) {
         provider.host.endsWith('anthropic.com'),
 };
 
+/// Claude Code's user agent. Some relays serve only clients that look
+/// like it, to every protocol: without this (any [HttpClient] default
+/// included) agentrouter.org answers 401 "unauthorized client detected".
+/// The gate wants a `claude-cli/` version followed by `external`; which
+/// version it is, it leaves to us.
+const claudeCodeUserAgent = 'claude-cli/2.0.1 (external, cli)';
+
 /// The headers [provider] is asked with, [key] in them.
 Map<String, String> upstreamHeaders(ModelProvider provider, String? key) => {
+  'user-agent': claudeCodeUserAgent,
   if (provider.protocol == ProviderProtocol.anthropic)
     'anthropic-version': '2023-06-01',
   if (key != null && key.isNotEmpty)
@@ -203,6 +229,9 @@ List<ProviderModel> mergeModelList(
               ? () => remote.contextWindow
               : null,
           label: (model.label ?? '').isEmpty ? () => remote.label : null,
+          efforts: model.efforts == null && remote.efforts != null
+              ? () => remote.efforts
+              : null,
           enabled: enable.contains(model.id) ? true : null,
         )
       else if (model.custom)
@@ -218,6 +247,8 @@ List<ProviderModel> mergeModelList(
         id: remote.id,
         label: remote.label,
         contextWindow: remote.contextWindow,
+        efforts: remote.efforts,
+        images: remote.images ?? true,
         enabled: enable.contains(remote.id),
       ),
     );

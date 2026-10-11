@@ -33,6 +33,7 @@ import 'ide_dialog.dart';
 import 'ide_input.dart';
 import 'ide_list.dart';
 import 'ide_menu.dart';
+import 'save_copy.dart';
 
 /// One visible row of the explorer tree.
 @immutable
@@ -521,9 +522,13 @@ class IdeExplorer extends StatefulWidget {
     this.repositories = const [],
     this.onAddFolder,
     this.onRemoveFolder,
+    this.background,
   });
 
   final IdeExplorerController controller;
+
+  /// What it is on; the side bar's by default.
+  final Color? background;
 
   /// A multi-folder workspace's repositories, for the rows' colors and
   /// letters in place of [git]'s: each path's, that of the folder it is in.
@@ -1386,6 +1391,17 @@ class IdeExplorerState extends State<IdeExplorer> {
                 }
               },
             ),
+          // To this machine, from a remote project's host too.
+          if (!isFolder && !multiple && canSaveFileCopy)
+            IdeMenuAction(
+              l10n.cmdSaveAs,
+              onSelected: () => unawaited(
+                saveFileCopyAs(
+                  _controller.files,
+                  path,
+                ).then<void>((_) {}, onError: _report),
+              ),
+            ),
         ],
         [
           if (isFolder && !multiple && widget.onFindInFolder != null)
@@ -1560,7 +1576,7 @@ class IdeExplorerState extends State<IdeExplorer> {
 
     return ColoredBox(
       // Modern UI: the panes are the side bar's.
-      color: themeColors['sideBar.background'],
+      color: widget.background ?? themeColors['sideBar.background'],
       child: Focus(
         focusNode: _focusNode,
         onKeyEvent: _onKey,

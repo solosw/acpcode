@@ -8,7 +8,6 @@ import 'dart:typed_data';
 
 import 'package:bao_remote/client.dart';
 import 'package:bao_remote/terminal.dart' show generateShellIntegrationNonce;
-import 'package:path/path.dart' as p;
 
 import '../ide/file_service.dart';
 import '../ide/git/git_service.dart';
@@ -157,7 +156,7 @@ class RemoteIdeFileService implements IdeHostFiles {
 /// The Git of the project at [root] on [host]: its commands run there.
 IdeGitService remoteGitService(SshHost host, String root) => IdeGitService(
   root,
-  paths: p.posix,
+  pathContext: host.paths,
   runner: (arguments, {required workingDirectory, limit}) async =>
       (await host.ready).git(arguments, cwd: workingDirectory, limit: limit),
   watcher: (repository) => resilientStream(
@@ -168,17 +167,20 @@ IdeGitService remoteGitService(SshHost host, String root) => IdeGitService(
 );
 
 /// The terminals of [host]'s projects: the user's shell there, on a pseudo
-/// terminal of the server's, with shell integration.
+/// terminal of the server's, with shell integration; in the server's
+/// environment (an extension's `env`, and the environment variable
+/// collections, do not reach it).
 TerminalBackend remoteTerminalBackend(SshHost host) => TerminalBackend(
-  launch: (root, {columns = 80, rows = 24, shell}) async => PtyLaunch(
-    executable: shell?.executable ?? '',
-    arguments: shell?.arguments ?? const [],
-    workingDirectory: root,
-    // What the shell integration trusts, given to the shell there.
-    environment: {'VSCODE_NONCE': generateShellIntegrationNonce()},
-    columns: columns,
-    rows: rows,
-  ),
+  launch: (root, {columns = 80, rows = 24, shell, environment}) async =>
+      PtyLaunch(
+        executable: shell?.executable ?? '',
+        arguments: shell?.arguments ?? const [],
+        workingDirectory: root,
+        // What the shell integration trusts, given to the shell there.
+        environment: {'VSCODE_NONCE': generateShellIntegrationNonce()},
+        columns: columns,
+        rows: rows,
+      ),
   start: (launch) async {
     final client = await host.ready;
     final pty = await client.startPty(

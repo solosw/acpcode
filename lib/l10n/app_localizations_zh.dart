@@ -116,6 +116,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdCategoryChat => '聊天';
 
   @override
+  String get cmdCategoryTasks => '任务';
+
+  @override
   String get cmdChatNewAgent => '新对话';
 
   @override
@@ -1045,6 +1048,30 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdFocusTerminal => '聚焦到终端';
 
   @override
+  String get cmdRunTask => '运行任务';
+
+  @override
+  String get cmdRunBuildTask => '运行生成任务';
+
+  @override
+  String get cmdRunTestTask => '运行测试任务';
+
+  @override
+  String get cmdRerunTask => '重新运行上一个任务';
+
+  @override
+  String get cmdRestartTask => '重启正在运行的任务';
+
+  @override
+  String get cmdTerminateTask => '终止任务';
+
+  @override
+  String get cmdShowTaskLog => '显示任务日志';
+
+  @override
+  String get cmdConfigureTask => '配置任务';
+
+  @override
   String get cmdShowExplorer => '显示资源管理器';
 
   @override
@@ -1641,6 +1668,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarCopySessionId => '复制会话 ID';
 
   @override
+  String get sidebarFork => 'Fork 对话';
+
+  @override
   String sidebarShowMore(int count) {
     return '显示更多（$count）';
   }
@@ -1661,6 +1691,20 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sidebarArchiveAll => '全部归档';
+
+  @override
+  String get sidebarUnarchiveAll => '全部取消归档';
+
+  @override
+  String get sidebarDeleteArchived => '删除全部已归档…';
+
+  @override
+  String get sidebarDeleteArchivedTitle => '删除已归档的智能体？';
+
+  @override
+  String sidebarDeleteArchivedMessage(int count) {
+    return '$count 个已归档的智能体及其对话将被删除，内核中的记录也会一并删除。此操作无法撤销。';
+  }
 
   @override
   String get sidebarRemoveFromList => '从列表移除';
@@ -2169,12 +2213,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatSubagent => '子智能体';
 
   @override
-  String get chatEmptyTitle => '规划、构建，无所不能';
-
-  @override
-  String get chatEmptyHint => '@ 添加上下文 · / 使用命令';
-
-  @override
   String get activityCompacting => '正在压缩对话';
 
   @override
@@ -2226,7 +2264,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get composerApprovalFullAccess => '完全访问';
 
   @override
-  String get composerApprovalFullAccessDetail => '不做任何检查，执行时也不提问';
+  String get composerApprovalFullAccessDetail => '不做任何检查，编辑和命令直接执行';
 
   @override
   String get composerContextUsage => '上下文用量';
@@ -5349,6 +5387,141 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get modelsAccounts => '账号';
+
+  @override
+  String get modelsAccountsDescription =>
+      '用 ChatGPT 账号登录，按套餐额度使用 Codex 模型。添加多个账号时，请求按下方的负载模式分配，额度用尽的账号会自动让给下一个。';
+
+  @override
+  String get modelsAccountsNone => '还没有账号';
+
+  @override
+  String modelsAccountCount(int count) {
+    return '$count 个账号';
+  }
+
+  @override
+  String get modelsAddAccount => '添加账号';
+
+  @override
+  String get modelsAddAccountDescription => '在浏览器中打开 ChatGPT 登录页。';
+
+  @override
+  String get modelsAccountSigningIn => '等待登录…';
+
+  @override
+  String get modelsAccountSigningInDetail => '请在浏览器中完成登录；如果浏览器没有打开，可复制链接手动打开。';
+
+  @override
+  String get modelsAccountCopyLink => '复制链接';
+
+  @override
+  String modelsAccountSignInFailed(String error) {
+    return '登录失败：$error';
+  }
+
+  @override
+  String get modelsRefreshQuota => '刷新额度';
+
+  @override
+  String get modelsAccountRemove => '移除账号';
+
+  @override
+  String modelsAccountRemoveConfirm(String name) {
+    return '移除“$name”？';
+  }
+
+  @override
+  String get modelsAccountRemoveDetail => '将从本机删除它的登录凭据。';
+
+  @override
+  String modelsAccountEnable(String name) {
+    return '使用 $name';
+  }
+
+  @override
+  String get modelsAccountLimited => '额度已用尽';
+
+  @override
+  String get modelsAccountQuotaUnknown => '额度尚未获取';
+
+  @override
+  String get modelsQuotaWeek => '每周';
+
+  @override
+  String modelsQuotaHours(int count) {
+    return '$count 小时';
+  }
+
+  @override
+  String modelsQuotaDays(int count) {
+    return '$count 天';
+  }
+
+  @override
+  String modelsQuotaUsed(int percent) {
+    return '已用 $percent%';
+  }
+
+  @override
+  String modelsQuotaResetsIn(String time) {
+    return '$time后重置';
+  }
+
+  @override
+  String modelsQuotaResetsAt(String time) {
+    return '$time 重置';
+  }
+
+  @override
+  String modelsQuotaCredits(String credits) {
+    return '额外点数：$credits';
+  }
+
+  @override
+  String modelsDurationMinutes(int count) {
+    return '$count 分钟';
+  }
+
+  @override
+  String modelsDurationHours(int hours, int minutes) {
+    return '$hours 小时 $minutes 分钟';
+  }
+
+  @override
+  String get modelsBalance => '负载模式';
+
+  @override
+  String get modelsBalanceRoundRobin => '轮询';
+
+  @override
+  String get modelsBalanceRoundRobinDescription =>
+      '每个新会话轮流分给下一个账号，之后一直留在该账号上（保留缓存）。';
+
+  @override
+  String get modelsBalanceFillFirst => '用完再换';
+
+  @override
+  String get modelsBalanceFillFirstDescription => '优先使用排在前面的账号，额度用尽后再换下一个。';
+
+  @override
+  String get modelsBalanceMostRemaining => '剩余优先';
+
+  @override
+  String get modelsBalanceMostRemainingDescription => '每个新会话分给剩余额度最多的账号。';
+
+  @override
+  String get modelsAccountPortBusy =>
+      '登录回调用的 1455 端口被其他程序占用了（例如 Docker 里的代理，或正在登录的 Codex CLI）。照常在浏览器里登录即可：登录后的页面会打不开或显示别的内容，把地址栏里的完整地址复制粘贴到下面。';
+
+  @override
+  String get modelsAccountCallback => '登录后的地址';
+
+  @override
+  String get modelsAccountCallbackDetail => '如果浏览器没有自动跳回，把登录后地址栏里的地址粘贴到这里。';
+
+  @override
   String get modelsProtocolAnthropic => 'Anthropic 兼容';
 
   @override
@@ -5458,6 +5631,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsMore => '更多操作';
 
   @override
+  String get modelsTestModel => '测试';
+
+  @override
+  String get modelsTestModels => '批量测试';
+
+  @override
+  String get modelsTestModelFailed => '失败';
+
+  @override
+  String modelsTestFirstText(String seconds) {
+    return '首字 ${seconds}s';
+  }
+
+  @override
+  String modelsTestTotal(String seconds) {
+    return '总耗时 ${seconds}s';
+  }
+
+  @override
   String modelsEnableModel(String name) {
     return '启用 $name';
   }
@@ -5541,6 +5733,13 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get modelsPromptCacheKeyDescription =>
       '为每个对话发送独立的 prompt_cache_key，让上游（或背后有多个后端的中转站）把同一对话的请求路由到已缓存的位置。上游不接受该字段时请关闭。';
+
+  @override
+  String get modelsCodexVersion => 'Codex 版本';
+
+  @override
+  String get modelsCodexVersionDescription =>
+      '以哪个版本的 Codex CLI 身份发起请求。后端只列出该版本支持的模型，缺少新模型时可填更新的版本号，再刷新模型列表。留空使用应用默认值。';
 
   @override
   String get modelsEnv => '额外环境变量';
@@ -5870,6 +6069,24 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get appearanceSettingsUserMessageStyle => '用户消息样式';
+
+  @override
+  String get appearanceSettingsUserMessageStyleDescription =>
+      '你发出的消息在对话中的样子：整宽显示，滚动时当前这轮的消息停在顶部；或者像聊天一样靠右显示为气泡，随内容滚走。';
+
+  @override
+  String get appearanceSettingsUserMessageStyleSticky => '整宽滚动吸顶';
+
+  @override
+  String get appearanceSettingsUserMessageStyleBubble => '用户对话风格';
+
+  @override
+  String appearanceSettingsUserMessageStyleLabel(String style) {
+    return '用户消息样式：$style';
+  }
+
+  @override
   String get appearanceSettingsCodeFont => '代码字体';
 
   @override
@@ -5892,7 +6109,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceSettingsCodeSizeDescription =>
-      'Fast IDE 编辑器及侧边栏文件、变更视图中源码的字号。终端和对话中的代码跟随界面文字大小。';
+      'Fast IDE 编辑器及侧边栏文件、变更视图中源码的字号。对话中的代码跟随界面文字大小，终端使用终端字号。';
 
   @override
   String appearanceSettingsCodeSizeLabel(String size) {
@@ -5911,11 +6128,32 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceSettingsUiScaleDescription =>
-      '缩放界面文字、对话中的代码和终端文字。Fast IDE 编辑器及侧边栏文件、变更中的源码使用代码字号。';
+      '缩放界面文字、对话中的代码，以及终端字号为“跟随界面文字大小”时的终端文字。Fast IDE 编辑器及侧边栏文件、变更中的源码使用代码字号。';
 
   @override
   String appearanceSettingsUiScaleLabel(String percent) {
     return '界面文字大小：$percent%';
+  }
+
+  @override
+  String get appearanceSettingsTerminalSize => '终端字号';
+
+  @override
+  String get appearanceSettingsTerminalSizeDescription =>
+      '终端文字的字号。默认跟随界面文字大小，也可单独设定。';
+
+  @override
+  String get appearanceSettingsTerminalSizeFollow => '跟随界面文字大小';
+
+  @override
+  String get appearanceSettingsTerminalSizeCustom => '自定义';
+
+  @override
+  String get appearanceSettingsTerminalSizeValue => '自定义字号';
+
+  @override
+  String appearanceSettingsTerminalSizeLabel(String size) {
+    return '终端字号：$size';
   }
 
   @override
@@ -6423,4 +6661,243 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get networkTestHintBlocked =>
       '只有百度能访问：其他网站没有经过代理。请检查上面的代理设置，或 Clash 的模式和规则。';
+
+  @override
+  String get extsCapabilityFull => '完全支持';
+
+  @override
+  String get extsCapabilityFullDetail => '它的颜色主题或文件图标主题都能使用。';
+
+  @override
+  String get extsCapabilityPartial => '部分支持';
+
+  @override
+  String get extsCapabilityPartialDetail => '主题可以使用；其余部分在 BaoCode 中不起作用。';
+
+  @override
+  String extsEngineIncompatible(String current, String requested) {
+    return '需要 VS Code $requested，当前为 $current。';
+  }
+
+  @override
+  String get extsEngineMissing => '它没有说明需要哪个版本的 VS Code。';
+
+  @override
+  String extsEngineInvalid(String requested) {
+    return '无效的引擎“$requested”。';
+  }
+
+  @override
+  String extsEngineCompatible(String engine) {
+    return '需要 VS Code $engine。';
+  }
+
+  @override
+  String get extsTitleUpdates => '更新';
+
+  @override
+  String get extsTitleOpenVsx => 'Open VSX';
+
+  @override
+  String get extsUpdates => '更新';
+
+  @override
+  String get extsCheckForUpdates => '检查更新';
+
+  @override
+  String get extsMoreActions => '更多操作...';
+
+  @override
+  String get extsInstallFromVsix => '从 VSIX 安装...';
+
+  @override
+  String get extsSearchPlaceholder => '搜索 Open VSX 扩展';
+
+  @override
+  String extsSearchFailed(String error) {
+    return '无法搜索 Open VSX：$error';
+  }
+
+  @override
+  String get extsLoadMore => '加载更多';
+
+  @override
+  String extsUpdateTo(String version) {
+    return '更新到 $version';
+  }
+
+  @override
+  String get extsUpdating => '正在更新...';
+
+  @override
+  String get extsEnable => '启用';
+
+  @override
+  String get extsDisable => '禁用';
+
+  @override
+  String get extsDisabled => '已禁用';
+
+  @override
+  String get extsSwitchToPreRelease => '切换到预发布版本';
+
+  @override
+  String get extsSwitchToRelease => '切换到正式版本';
+
+  @override
+  String get extsInstallPreRelease => '安装预发布版本';
+
+  @override
+  String extsInstallVersion(String version) {
+    return '安装 $version';
+  }
+
+  @override
+  String get extsPreRelease => '预发布';
+
+  @override
+  String get extsVerifiedPublisher => '已验证的发布者';
+
+  @override
+  String extsDownloads(String count) {
+    return '$count 次下载';
+  }
+
+  @override
+  String extsLoadFailed(String error) {
+    return '无法加载：$error';
+  }
+
+  @override
+  String get extsVersion => '版本';
+
+  @override
+  String get extsPreReleaseToggle => '预发布';
+
+  @override
+  String get extsLatestVersion => '最新';
+
+  @override
+  String get extsTabDetails => '详情';
+
+  @override
+  String get extsTabFeatures => '功能';
+
+  @override
+  String get extsTabChangelog => '更新日志';
+
+  @override
+  String get extsNoReadme => '此扩展没有 README。';
+
+  @override
+  String get extsNoChangelog => '此扩展没有更新日志。';
+
+  @override
+  String get extsContributions => '贡献点';
+
+  @override
+  String get extsNoContributions => '此扩展没有任何贡献点。';
+
+  @override
+  String get extsActivationEvents => '激活事件';
+
+  @override
+  String get extsApiProposals => 'API 提案';
+
+  @override
+  String get extsCompatibility => '兼容性';
+
+  @override
+  String get extsInformation => '信息';
+
+  @override
+  String get extsInfoIdentifier => '标识符';
+
+  @override
+  String get extsInfoVersion => '版本';
+
+  @override
+  String get extsInfoLatest => '最新';
+
+  @override
+  String get extsInfoLastUpdated => '最后更新';
+
+  @override
+  String get extsInfoEngine => 'VS Code';
+
+  @override
+  String get extsInfoPlatform => '平台';
+
+  @override
+  String get extsInfoLicense => '许可证';
+
+  @override
+  String get extsInfoRepository => '仓库';
+
+  @override
+  String get extsInfoCategories => '分类';
+
+  @override
+  String get extsInfoLocation => '位置';
+
+  @override
+  String get extsVsixTitle => '安装扩展 VSIX';
+
+  @override
+  String extsVsixInvalid(String name, String error) {
+    return '$name 不是有效的 VSIX：$error';
+  }
+
+  @override
+  String extsVsixPlatformMismatch(String platform, String current) {
+    return '它是为 $platform 构建的，不适用于 $current。';
+  }
+
+  @override
+  String extsVsixReplaces(String version) {
+    return '它将替换版本 $version。';
+  }
+
+  @override
+  String extsPlatformCompatible(String platform) {
+    return '平台：$platform';
+  }
+
+  @override
+  String get extsPlatformUniversal => '通用';
+
+  @override
+  String extsPageTitle(String name) {
+    return '扩展: $name';
+  }
+
+  @override
+  String get themeSelectIconThemePlaceholder => '选择文件图标主题（按上下箭头键预览）';
+
+  @override
+  String get themeIconThemeBuiltIn => '内置';
+
+  @override
+  String get extsCapabilityUnsupported => '不支持';
+
+  @override
+  String get extsCapabilityUnsupportedDetail =>
+      '它没有颜色主题或文件图标主题：BaoCode 只使用扩展中的主题。';
+
+  @override
+  String get extsFindingCode => '它的代码不会运行。';
+
+  @override
+  String extsFindingContribution(String name) {
+    return '未使用：$name';
+  }
+
+  @override
+  String get extsPopularThemes => '热门主题';
+
+  @override
+  String get extsTabThemes => '主题';
+
+  @override
+  String get extsTabLanguageServers => '语言服务器';
 }

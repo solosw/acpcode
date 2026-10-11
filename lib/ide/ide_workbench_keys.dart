@@ -584,7 +584,11 @@ extension _WorkbenchKeys on IdeWorkbenchState {
     'auxiliaryBarVisible' => _chatShown,
     'auxiliaryBarFocus' => _chatFocus.hasFocus,
     'focusedView' => _focusedView ?? '',
-    'inDebugMode' || 'inDebugRepl' => false,
+    'inDebugMode' =>
+      (_debug?.state ?? DebugState.inactive) != DebugState.inactive,
+    'inDebugRepl' =>
+      _panelFocus.hasFocus &&
+          (_panel ?? _lastPanel) == IdePanelTab.debugConsole,
     _ => null,
   };
 
@@ -596,6 +600,7 @@ extension _WorkbenchKeys on IdeWorkbenchState {
         IdeSideView.explorer => 'outline',
         IdeSideView.search => 'workbench.view.search',
         IdeSideView.sourceControl => 'workbench.scm',
+        IdeSideView.debug => 'workbench.debug.viewlet',
         IdeSideView.extensions => 'workbench.views.extensions.installed',
       };
     }
@@ -610,7 +615,8 @@ extension _SearchAndListKeys on IdeWorkbenchState {
   /// Find in Files (upstream `findInFilesCommand` with the view): the
   /// Search view shown with [args]' options (`query`, `replace`,
   /// `triggerSearch`, `filesToInclude`, `isRegex`…), its search input
-  /// focused; the replace input shows when [args] has `replace`.
+  /// focused; the replace input shows, with it, when [args] has `replace`,
+  /// and is left as it is when not.
   void _findInFiles([Object? args]) {
     final session = _search;
     final options = args is Map ? args : const {};
@@ -619,7 +625,10 @@ extension _SearchAndListKeys on IdeWorkbenchState {
       _ => null,
     };
     final replace = option<String>('replace');
-    session.replaceShown = replace != null;
+    if (replace != null) {
+      session.replaceShown = true;
+      session.replace.text = replace;
+    }
     if (option<bool>('isCaseSensitive') case final value?) {
       session.matchCase = value;
     }
@@ -634,7 +643,6 @@ extension _SearchAndListKeys on IdeWorkbenchState {
       session.excludes.text = value;
     }
     if (option<String>('query') case final value?) session.query.text = value;
-    session.replace.text = replace ?? '';
     if (option<bool>('preserveCase') case final value?) {
       session.preserveCase = value;
     }
@@ -1315,6 +1323,7 @@ extension on IdeSideView {
     IdeSideView.explorer => 'workbench.view.explorer',
     IdeSideView.search => 'workbench.view.search',
     IdeSideView.sourceControl => 'workbench.view.scm',
+    IdeSideView.debug => 'workbench.view.debug',
     IdeSideView.extensions => 'workbench.view.extensions',
   };
 }
@@ -1324,6 +1333,7 @@ extension on IdePanelTab {
   String get panelId => switch (this) {
     IdePanelTab.problems => 'workbench.panel.markers',
     IdePanelTab.references => 'workbench.panel.referenceSearch',
+    IdePanelTab.debugConsole => 'workbench.panel.repl',
     IdePanelTab.terminal => 'terminal',
   };
 
@@ -1331,6 +1341,7 @@ extension on IdePanelTab {
   String get viewId => switch (this) {
     IdePanelTab.problems => 'workbench.panel.markers.view',
     IdePanelTab.references => 'workbench.panel.referenceSearch',
+    IdePanelTab.debugConsole => 'workbench.panel.repl',
     IdePanelTab.terminal => 'terminal',
   };
 }

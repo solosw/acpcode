@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../chat/widgets/hover_builder.dart';
 import '../ide/ide_fuzzy.dart';
-import '../ide/ide_quick_input.dart' show IdeKeycap;
+import '../ide/ide_quick_input.dart' show IdeKeycap, IdeQuickInput;
 import '../ide/ide_quick_open.dart';
 import '../l10n/l10n.dart';
 import '../platform/app_platform.dart';
@@ -628,9 +628,8 @@ class _SearchPaletteState extends State<SearchPalette> {
                 shadowColor: colors['widget.shadow'],
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: BorderSide(
-                    color: colors.get('widget.border') ?? AppColors.border,
-                  ),
+                  // The command palette's: seen on every theme's editor.
+                  side: BorderSide(color: IdeQuickInput.border),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: SizedBox(
@@ -792,7 +791,7 @@ class _SearchPaletteState extends State<SearchPalette> {
       height: 30,
       padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: AppColors.border)),
+        border: Border(top: BorderSide(color: AppColors.partBorder)),
       ),
       child: Row(
         children: [
@@ -861,8 +860,23 @@ class _PaletteRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = themeColors;
-    final foreground = selected ? AppColors.textPrimary : AppColors.text;
-    final faint = TextStyle(color: AppColors.textFaint, fontSize: 11.5);
+    // The selected row in the quick input's focus colors, as the command
+    // palette's ([IdeQuickInput]); what is fainter on it is its foreground,
+    // faded, to read on a focus color as strong as Dark 2026's.
+    final foreground = selected
+        ? colors.get('quickInputList.focusForeground') ?? AppColors.textPrimary
+        : AppColors.text;
+    Color faded(double strength) =>
+        foreground.withValues(alpha: foreground.a * strength);
+    final muted = selected ? faded(0.8) : AppColors.textMuted;
+    final faint = TextStyle(
+      color: selected ? faded(0.7) : AppColors.textFaint,
+      fontSize: 11.5,
+    );
+    final highlight =
+        colors[selected
+            ? 'quickInputList.focusHighlightForeground'
+            : 'list.highlightForeground'];
     final snippet = entry.snippet;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -875,9 +889,8 @@ class _PaletteRow extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 6),
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
-            // A shade, not the list's focus color: as Cursor's palette.
             color: selected
-                ? AppColors.textPrimary.withValues(alpha: 0.08)
+                ? colors['quickInputList.focusBackground']
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
           ),
@@ -892,7 +905,11 @@ class _PaletteRow extends StatelessWidget {
                 }
               : null,
           child: IconTheme.merge(
-            data: IconThemeData(color: AppColors.textMuted),
+            data: IconThemeData(
+              color: selected
+                  ? colors.get('quickInputList.focusIconForeground') ?? muted
+                  : AppColors.textMuted,
+            ),
             child: Row(
               children: [
                 if (entry.leading case final leading?) ...[
@@ -908,17 +925,23 @@ class _PaletteRow extends StatelessWidget {
                         entry.title,
                         entry.titleMatches,
                         TextStyle(color: foreground, fontSize: 13),
+                        highlight,
                       ),
                       if (snippet != null) ...[
                         const SizedBox(height: 2),
-                        _highlighted(snippet.snippet, [
-                          for (
-                            var i = snippet.matchStart;
-                            i < snippet.matchStart + snippet.matchLength;
-                            i++
-                          )
-                            i,
-                        ], TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                        _highlighted(
+                          snippet.snippet,
+                          [
+                            for (
+                              var i = snippet.matchStart;
+                              i < snippet.matchStart + snippet.matchLength;
+                              i++
+                            )
+                              i,
+                          ],
+                          TextStyle(color: muted, fontSize: 12),
+                          highlight,
+                        ),
                       ],
                     ],
                   ),
@@ -947,8 +970,13 @@ class _PaletteRow extends StatelessWidget {
     );
   }
 
-  /// [text] with the characters at [matches] in bold and the link color.
-  static Widget _highlighted(String text, List<int> matches, TextStyle style) {
+  /// [text] with the characters at [matches] in bold and [highlight].
+  static Widget _highlighted(
+    String text,
+    List<int> matches,
+    TextStyle style,
+    Color highlight,
+  ) {
     if (matches.isEmpty) {
       return Text(
         text,
@@ -969,10 +997,7 @@ class _PaletteRow extends StatelessWidget {
         marked.contains(start)
             ? TextSpan(
                 text: part,
-                style: TextStyle(
-                  color: themeColors['list.highlightForeground'],
-                  fontWeight: FontWeight.w600,
-                ),
+                style: TextStyle(color: highlight, fontWeight: FontWeight.w600),
               )
             : TextSpan(text: part),
       );

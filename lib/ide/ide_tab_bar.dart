@@ -13,6 +13,7 @@ import '../workspace/window_controls.dart';
 import 'ide_hover.dart';
 import 'ide_menu.dart';
 import 'ide_workspace.dart';
+import 'save_copy.dart';
 import 'tab_strip_scroll.dart';
 
 /// The actions of a tab's context menu.
@@ -24,6 +25,7 @@ enum IdeTabAction {
   closeAll,
   copyPath,
   copyRelativePath,
+  saveAs,
   revealInFileManager,
   openInDefaultApp,
   revealInExplorer,
@@ -96,9 +98,14 @@ class IdeTabBar extends StatefulWidget {
     this.local = true,
     this.markdownPreview,
     this.onMarkdownPreview,
+    this.page,
   });
 
   final List<IdeDocument> documents;
+
+  /// A tab after the files' that is not a file's (an extension's page):
+  /// the one in front while [active] is null.
+  final Widget? page;
 
   /// Whether the files are this machine's: a remote project's are neither
   /// shown in the file manager nor opened in another app.
@@ -116,7 +123,7 @@ class IdeTabBar extends StatefulWidget {
   /// Shows the active markdown file's preview (true) or source (false).
   final ValueChanged<bool>? onMarkdownPreview;
 
-  static const height = 35.0;
+  static const height = IdeTabStrip.height;
 
   @override
   State<IdeTabBar> createState() => _IdeTabBarState();
@@ -125,6 +132,7 @@ class IdeTabBar extends StatefulWidget {
 class _IdeTabBarState extends State<IdeTabBar> {
   final ScrollController _scroll = ScrollController();
   final Map<IdeDocument, GlobalKey> _keys = {};
+  final GlobalKey _pageKey = GlobalKey();
 
   @override
   void initState() {
@@ -136,7 +144,8 @@ class _IdeTabBarState extends State<IdeTabBar> {
   void didUpdateWidget(IdeTabBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.active, widget.active) ||
-        oldWidget.documents.length != widget.documents.length) {
+        oldWidget.documents.length != widget.documents.length ||
+        oldWidget.page?.key != widget.page?.key) {
       _scheduleReveal();
     }
     _keys.removeWhere((doc, _) => !widget.documents.contains(doc));
@@ -152,7 +161,9 @@ class _IdeTabBarState extends State<IdeTabBar> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final active = widget.active;
-      final context = active == null ? null : _keys[active]?.currentContext;
+      final context = active == null
+          ? _pageKey.currentContext
+          : _keys[active]?.currentContext;
       if (context == null) return;
       Scrollable.ensureVisible(
         context,
@@ -230,6 +241,14 @@ class _IdeTabBarState extends State<IdeTabBar> {
           ),
         ],
         [
+          // The editor's Save As; a picture's or binary file's is copied.
+          // Not a revision's.
+          if (canSaveFileCopy && doc.readRevision == null && doc.label == null)
+            item(
+              IdeTabAction.saveAs,
+              l10n.cmdSaveAs,
+              command: 'workbench.action.files.saveAs',
+            ),
           // Not a revision's tab, whose file may be gone.
           if (widget.local &&
               WindowControls.canRevealInFileManager &&
@@ -267,9 +286,7 @@ class _IdeTabBarState extends State<IdeTabBar> {
       widget.root,
       names: [for (final doc in docs) doc.title],
     );
-    return Container(
-      height: IdeTabBar.height,
-      color: themeColors['editorGroupHeader.tabsBackground'],
+    return IdeTabStrip(
       child: Row(
         children: [
           Expanded(
@@ -292,6 +309,8 @@ class _IdeTabBarState extends State<IdeTabBar> {
                             _showMenu(doc, position: position),
                       ),
                     ),
+                  if (widget.page case final page?)
+                    KeyedSubtree(key: _pageKey, child: page),
                 ],
               ),
             ),
@@ -398,7 +417,9 @@ class _TabBarAction extends StatelessWidget {
   }
 }
 
-class _Tab extends StatefulWidget {
+/// An editor's tab: [IdeEditorTab] with its file's icon and name, a dot
+/// while it has unsaved changes.
+class _Tab extends StatelessWidget {
   const _Tab({
     super.key,
     required this.doc,
@@ -417,19 +438,154 @@ class _Tab extends StatefulWidget {
   final ValueChanged<Offset> onMenu;
 
   @override
-  State<_Tab> createState() => _TabState();
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return IdeEditorTab(
+      icon: FileIcon(doc.path, size: 16),
+      label: doc.deleted ? l10n.tabDeleted(doc.title) : doc.title,
+      description: description,
+      // Upstream strikes a deleted file's label through.
+      labelStyle: doc.deleted
+          ? const TextStyle(decoration: TextDecoration.lineThrough)
+          : null,
+      active: active,
+      mark: doc.dirty
+          ? (color) => Center(
+              child: Container(
+                key: const ValueKey('dirty'),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+              ),
+            )
+          : null,
+      // Close Editor's keys, on the active tab's only: they close that one
+      // (a deviation: upstream's `redrawTabAction`,
+      // multiEditorTabsControl.ts, has them on every tab's).
+      closeTooltip: active
+          ? KeybindingService.instance.titleWithKeybinding(
+              l10n.tabCloseNamed(doc.title),
+              'workbench.action.closeActiveEditor',
+            )
+          : l10n.tabCloseNamed(doc.title),
+      onSelect: onSelect,
+      onClose: onClose,
+      onMenu: onMenu,
+    );
+  }
 }
 
-class _TabState extends State<_Tab> {
+/// A strip of [IdeEditorTab]s, [height] high: `editorGroupHeader.*`, its
+/// `tabsBorder` along the bottom where the theme has one (the tabs draw
+/// it over themselves, so the active one's `tab.activeBorder` is on top,
+/// as upstream's `.tabs-border-bottom::after`).
+class IdeTabStrip extends StatelessWidget {
+  const IdeTabStrip({super.key, required this.child, this.line});
+
+  final Widget child;
+
+  /// The line under the tabs where the theme has none ([border]).
+  final Color? line;
+
+  static const height = 35.0;
+
+  /// `editorGroupHeader.tabsBorder`, none by default.
+  static Color? get border => themeColors.get('editorGroupHeader.tabsBorder');
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: height,
+    // Not a Container: its border would inset the tabs.
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: themeColors['editorGroupHeader.tabsBackground'],
+        border: switch (border ?? line) {
+          final color? => Border(bottom: BorderSide(color: color)),
+          null => null,
+        },
+      ),
+      child: child,
+    ),
+  );
+}
+
+/// A tab as the editor's (multiEditorTabsControl.ts, in the theme's
+/// `tab.*` colors): [icon], [label] and its [description], [trailing],
+/// then a close button while it is hovered, or active without a [mark];
+/// else [mark] in its place. The IDE's chat tabs and the side panel's are
+/// these too.
+class IdeEditorTab extends StatefulWidget {
+  const IdeEditorTab({
+    super.key,
+    required this.icon,
+    required this.active,
+    required this.onSelect,
+    this.label,
+    this.description,
+    this.labelStyle,
+    this.trailing,
+    this.mark,
+    this.closeTooltip,
+    this.onClose,
+    this.onMenu,
+    this.tooltip,
+    this.minWidth = 80,
+    this.borderTop = true,
+  });
+
+  /// In 16px, in the tab's color unless it has its own.
+  final Widget icon;
+  final bool active;
+  final VoidCallback onSelect;
+
+  /// None: the icon alone.
+  final String? label;
+  final String? description;
+
+  /// Over the label's (a deleted file's strike, a change's color).
+  final TextStyle? labelStyle;
+
+  /// After the label: a count, a change's letter.
+  final Widget? trailing;
+
+  /// Where the close button goes while the pointer is not over the tab, in
+  /// the tab's color: an editor's dirty dot.
+  final Widget Function(Color color)? mark;
+  final String? closeTooltip;
+
+  /// None: it does not close, and has no close button.
+  final VoidCallback? onClose;
+
+  /// A right click at its global position.
+  final ValueChanged<Offset>? onMenu;
+
+  /// On hover; what screen readers say too.
+  final String? tooltip;
+  final double minWidth;
+
+  /// Whether the active one has `tab.activeBorderTop` above it.
+  final bool borderTop;
+
+  /// Its padding at the left, and at the right without a close button.
+  static const padding = 10.0;
+  static const iconSize = 16.0;
+  static const gap = 6.0;
+  static const labelStyleBase = TextStyle(fontSize: 12.5);
+
+  @override
+  State<IdeEditorTab> createState() => _IdeEditorTabState();
+}
+
+class _IdeEditorTabState extends State<IdeEditorTab> {
   bool _hover = false;
   bool _closeHover = false;
 
   @override
   Widget build(BuildContext context) {
-    final doc = widget.doc;
     final active = widget.active;
-    final dirty = doc.dirty;
-    final showClose = _hover || (active && !dirty);
+    final mark = widget.mark;
+    final onClose = widget.onClose;
+    final showClose = _hover || (active && mark == null);
     final colors = themeColors;
     // The active tab is selected: hovering it changes nothing.
     final hovered = _hover && !active;
@@ -437,40 +593,53 @@ class _TabState extends State<_Tab> {
         ? colors['tab.activeForeground']
         : (hovered ? colors.get('tab.hoverForeground') : null) ??
               colors['tab.inactiveForeground'];
-    final bottom = active ? colors.get('tab.activeBorder') : null;
+    // The strip's line, over every tab; the active one's own over it.
+    final bottom =
+        (active ? colors.get('tab.activeBorder') : null) ?? IdeTabStrip.border;
     final right = colors.get('tab.border') ?? colors.get('contrastBorder');
     // `activeContrastBorder`: high contrast themes outline the active tab
     // and a hovered one (5px inside it, and dashed on hover, upstream).
     final outline = active || _hover
         ? colors.get('contrastActiveBorder')
         : null;
-    return MouseRegion(
+    final label = widget.label;
+    Widget tab = MouseRegion(
+      cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: Listener(
         onPointerDown: (event) {
-          if (event.buttons & kMiddleMouseButton != 0) widget.onClose();
+          if (event.buttons & kMiddleMouseButton != 0) onClose?.call();
         },
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onSelect,
-          onSecondaryTapUp: (details) => widget.onMenu(details.globalPosition),
+          onSecondaryTapUp: switch (widget.onMenu) {
+            final onMenu? => (details) => onMenu(details.globalPosition),
+            null => null,
+          },
           child: Container(
-            constraints: const BoxConstraints(minWidth: 80, maxWidth: 260),
-            padding: const EdgeInsets.only(left: 10, right: 5),
+            constraints: BoxConstraints(
+              minWidth: widget.minWidth,
+              maxWidth: 260,
+            ),
+            padding: EdgeInsets.only(
+              left: IdeEditorTab.padding,
+              right: onClose == null ? IdeEditorTab.padding : 5,
+            ),
             decoration: BoxDecoration(
-              // The active tab wears the same selection color as the side
-              // bar's rows and the chat tabs, rather than the theme's
-              // `tab.activeBackground` (a deviation: upstream's active tab
-              // is the editor's own color, so that it merges with it).
+              // The active tab in the editor's own color (by default),
+              // merging with it.
               color: active
-                  ? colors['list.activeSelectionBackground']
+                  ? colors['tab.activeBackground']
                   : (hovered ? colors.get('tab.hoverBackground') : null) ??
                         colors['tab.inactiveBackground'],
               border: Border(
                 top: BorderSide(
                   color:
-                      (active ? colors.get('tab.activeBorderTop') : null) ??
+                      (active && widget.borderTop
+                          ? colors.get('tab.activeBorderTop')
+                          : null) ??
                       Colors.transparent,
                 ),
                 right: BorderSide(color: right ?? Colors.transparent),
@@ -487,100 +656,99 @@ class _TabState extends State<_Tab> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                FileIcon(doc.path, size: 16),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text.rich(
-                    TextSpan(
-                      text: doc.deleted
-                          ? context.l10n.tabDeleted(doc.title)
-                          : doc.title,
-                      // Upstream strikes a deleted file's label through.
-                      style: doc.deleted
-                          ? const TextStyle(
-                              decoration: TextDecoration.lineThrough,
-                            )
-                          : null,
-                      children: [
-                        if (widget.description case final description?)
-                          TextSpan(
-                            text: '  $description',
-                            // `.label-description`: 70% opaque.
-                            style: TextStyle(
-                              color: foreground.withValues(
-                                alpha: foreground.a * .7,
-                              ),
-                              fontSize: 11,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12.5, color: foreground),
+                IconTheme.merge(
+                  data: IconThemeData(
+                    size: IdeEditorTab.iconSize,
+                    color: foreground,
+                  ),
+                  child: SizedBox.square(
+                    dimension: IdeEditorTab.iconSize,
+                    child: Center(child: widget.icon),
                   ),
                 ),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: showClose
-                      ? MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          onEnter: (_) => setState(() => _closeHover = true),
-                          onExit: (_) => setState(() => _closeHover = false),
-                          // Close Editor's keys, on the active tab's only:
-                          // they close that one (a deviation: upstream's
-                          // `redrawTabAction`, multiEditorTabsControl.ts,
-                          // has them on every tab's).
-                          child: IdeHover(
-                            message: active
-                                ? KeybindingService.instance
-                                      .titleWithKeybinding(
-                                        context.l10n.tabCloseNamed(doc.title),
-                                        'workbench.action.closeActiveEditor',
-                                      )
-                                : context.l10n.tabCloseNamed(doc.title),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: widget.onClose,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: _closeHover
-                                      ? colors['toolbar.hoverBackground']
-                                      : Colors.transparent,
-                                  borderRadius: BorderRadius.circular(4),
+                if (label != null) ...[
+                  const SizedBox(width: IdeEditorTab.gap),
+                  Flexible(
+                    child: Text.rich(
+                      TextSpan(
+                        text: label,
+                        style: widget.labelStyle,
+                        children: [
+                          if (widget.description case final description?)
+                            TextSpan(
+                              text: '  $description',
+                              // `.label-description`: 70% opaque.
+                              style: TextStyle(
+                                color: foreground.withValues(
+                                  alpha: foreground.a * .7,
                                 ),
-                                // The tab's color (`inherit`).
-                                child: Icon(
-                                  Codicons.close,
-                                  size: 14,
-                                  color: foreground,
+                                fontSize: 11,
+                                decoration: TextDecoration.none,
+                              ),
+                            ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: IdeEditorTab.labelStyleBase.copyWith(
+                        color: foreground,
+                      ),
+                    ),
+                  ),
+                ],
+                if (widget.trailing case final trailing?) ...[
+                  const SizedBox(width: IdeEditorTab.gap),
+                  trailing,
+                ],
+                if (onClose != null) ...[
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: showClose
+                        ? MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            onEnter: (_) => setState(() => _closeHover = true),
+                            onExit: (_) => setState(() => _closeHover = false),
+                            child: IdeHover(
+                              message: widget.closeTooltip,
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: onClose,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: _closeHover
+                                        ? colors['toolbar.hoverBackground']
+                                        : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  // The tab's color (`inherit`).
+                                  child: Icon(
+                                    Codicons.close,
+                                    size: 14,
+                                    color: foreground,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        )
-                      : dirty
-                      ? Center(
-                          child: Container(
-                            key: const ValueKey('dirty'),
-                            width: 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: foreground,
-                            ),
-                          ),
-                        )
-                      : null,
-                ),
+                          )
+                        : mark?.call(foreground),
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
+    );
+    if (widget.tooltip case final tooltip?) {
+      tab = IdeHover(message: tooltip, child: tab);
+    }
+    return Semantics(
+      button: true,
+      selected: active,
+      label: widget.tooltip,
+      child: tab,
     );
   }
 }

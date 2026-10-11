@@ -1279,6 +1279,23 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
+  /// Unarchives every archived agent.
+  void unarchiveAll() {
+    for (final thread in _threads) {
+      if (!thread.archived) continue;
+      thread.archived = false;
+      _keepMarks(thread);
+    }
+    notifyListeners();
+  }
+
+  /// Deletes every archived agent, each as [delete] does.
+  void deleteArchived() {
+    for (final thread in [..._threads]) {
+      if (thread.archived) delete(thread);
+    }
+  }
+
   // --- Workspaces -------------------------------------------------------------
 
   /// Where workspaces' folders are made.
@@ -2225,6 +2242,49 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _add(thread);
     _listen(thread); // Opens it.
     return thread;
+  }
+
+  /// Copies [thread]'s conversation into a new agent of its project (see
+  /// [ChatSession.fork]): listed, with [thread]'s settings, not shown. Null
+  /// when it could not be (its conversation says why).
+  Future<AgentThread?> fork(AgentThread thread) async {
+    final session = thread.session;
+    final title = '${thread.localizedTitle(l10n())} (fork)';
+    final record = await session.fork(title: title);
+    if (record == null || _disposed) return null;
+    final settings = {
+      for (final kind in KernelChoiceKind.values)
+        kind.name: ?session.selected(kind),
+    };
+    if (settings.isNotEmpty) {
+      _agentSettings[record.id] = settings;
+      while (_agentSettings.length > _keptAgents) {
+        _agentSettings.remove(_agentSettings.keys.first);
+      }
+    }
+    final kernel = thread.kernel;
+    final forked = AgentThread._(
+      project: thread.project,
+      kernel: kernel,
+      record: record,
+      title: title,
+      updatedAt: record.updatedAt,
+      open: () => ChatSession(
+        kernel: kernel,
+        kernels: kernels,
+        kernelContext: KernelContext(
+          cwd: record.cwd,
+          resume: record,
+          settings: {..._preferredSettings, ...?_agentSettings[record.id]},
+          workspace: () => _kernelWorkspace(record.cwd),
+        ),
+        historyCount: 0,
+      ),
+    );
+    _add(forked);
+    _save();
+    notifyListeners();
+    return forked;
   }
 
   static bool _isUntouched(AgentThread thread) => thread.untouched;

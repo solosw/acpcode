@@ -9,6 +9,18 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../chat/chat_keys.dart';
+import '../debug/common/debug_types.dart';
+import '../debug/service/debug_service.dart';
+import '../debug/ui/debug_strings.dart';
+import '../debug/ui/debug_toolbar.dart';
+import '../debug/ui/debug_view.dart';
+import '../debug/ui/run_and_debug_view.dart';
+import '../extensions/theme_extensions.dart';
+import '../extensions/ui/extension_detail.dart';
+import '../extensions/ui/extensions_model.dart';
+import '../extensions/ui/extensions_view.dart';
+import '../extensions/ui/vsix_drop.dart';
+import '../platform/data_dir.dart';
 import '../chat/composer/composer_files.dart' show ComposerFile;
 import '../chat/composer/file_drop.dart';
 import '../keybindings/default_keybindings.dart'
@@ -18,6 +30,7 @@ import '../l10n/l10n.dart';
 import '../keybindings/keybinding_service.dart';
 import '../settings/user_settings.dart';
 import '../theme/codicons.dart';
+import '../theme/file_icon_theme.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../workspace/back_to_chat_button.dart';
@@ -54,6 +67,7 @@ import 'ide_color_theme_picker.dart';
 import 'ide_columns.dart';
 import 'ide_rows.dart';
 import 'ide_commands.dart';
+import 'ide_debug_host.dart';
 import 'ide_dialog.dart';
 import 'ide_editor.dart';
 import 'ide_editor_placeholder.dart';
@@ -82,8 +96,10 @@ import 'lsp_ui/lsp_convert.dart';
 import 'lsp_ui/problems_panel.dart';
 import 'lsp_ui/workspace_edit.dart';
 import 'project_tools.dart';
+import 'save_copy.dart';
 import 'search/ide_search_view.dart';
 import 'search/text_search.dart';
+import 'tab_strip_scroll.dart';
 import 'terminal/links/terminal_links.dart';
 import 'terminal/terminal_instance.dart';
 import 'terminal/terminal_panel.dart';
@@ -91,6 +107,7 @@ import 'terminal/terminal_profile_service.dart';
 import 'terminal/terminal_profiles.dart';
 import 'terminal/terminal_service.dart';
 
+part 'ide_workbench_extensions.dart';
 part 'ide_workbench_keys.dart';
 
 /// The IDE shell is kept mounted when the user returns to the conversation.
@@ -113,6 +130,8 @@ class IdeWorkbench extends StatefulWidget {
     this.onIgnoreRecommendation,
     this.textSearch = ideSearchText,
     this.extensions,
+    this.themeExtensions,
+    this.debugService,
     this.commitMessage = ideClaudeCommitMessage,
     this.pinned = false,
     this.onPinnedChanged,
@@ -183,9 +202,17 @@ class IdeWorkbench extends StatefulWidget {
   /// The Search view's engine (a fake in widget tests).
   final IdeTextSearch textSearch;
 
-  /// What the Extensions view lists; the standard catalog's language
-  /// servers when null.
+  /// What the Extensions view's Language Servers lists; the standard
+  /// catalog's language servers when null.
   final IdeExtensions? extensions;
+
+  /// The color and file icon themes installed, which the Extensions view's
+  /// Themes lists and installs; that tab is not there without them.
+  final ThemeExtensions? themeExtensions;
+
+  /// The debugger; the workbench makes the workspace's when null (a fake
+  /// in widget tests).
+  final DebugService? debugService;
 
   /// Writes the Source Control view's commit messages (Claude Haiku; a
   /// fake in widget tests).
@@ -277,8 +304,12 @@ class IdeWorkbench extends StatefulWidget {
 }
 
 /// The side views of the activity bar. The outline is a pane of the
-/// explorer, as in VS Code; there is no Run and Debug view.
-enum IdeSideView { explorer, search, sourceControl, extensions }
+/// explorer, as in VS Code.
+enum IdeSideView { explorer, search, sourceControl, debug, extensions }
+
+/// Whether Run and Debug is offered: its activity bar item and its
+/// commands. Off until the debugger is ready to ship.
+const _debugEntryShown = false;
 
 /// A navigation history entry (Go Back / Go Forward).
 typedef _NavigationEntry = ({String path, LspPosition position});
@@ -289,6 +320,8 @@ typedef _Chord = ({String label, List<KeyChord> chords, String message});
 
 class IdeWorkbenchState extends State<IdeWorkbench> {
   final _editorKey = GlobalKey<IdeEditorState>();
+  final _runAndDebugKey = GlobalKey<RunAndDebugViewState>();
+  DebugService? _listenedDebug;
 
   /// The markdown files shown as their source rather than their preview,
   /// the last switched last (a few hundred kept, with the window's state).
@@ -370,7 +403,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// The panel's height, and the room for it, when its sash's drag began.
   ({IdeRows rows, double room})? _panelDragStart;
   IdeSideView _view = IdeSideView.explorer;
-  final IdeNotifications _notifications = IdeNotifications();
+
+  /// The workspace's notifications (the debugger's go there too).
+  IdeNotifications get _notifications => widget.workspace.notifications;
 
   /// Servers whose install was recommended in this session.
   final Set<String> _recommended = {};
@@ -413,8 +448,27 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   final _scmKey = GlobalKey<IdeScmViewState>();
   IdeGitRepository? _git;
 
-  /// The Extensions view's list and search, made when it first shows.
+  /// The Extensions view's language servers and search, made when it
+  /// first shows them.
   IdeExtensionsSession? _extensions;
+
+  /// What the Extensions view shows: the themes or the language servers.
+  _ExtensionsTab _extensionsTab = _ExtensionsTab.themes;
+
+  /// The theme extension whose page has a tab among the editors', as
+  /// VS Code's extension editor.
+  ExtensionEntry? _extensionPage;
+
+  /// Whether its tab is the one in front: another selected, it stays.
+  bool _extensionPageShown = false;
+
+  /// Editors close: the one in front changing for it does not put the
+  /// extension page behind.
+  bool _closingEditors = false;
+
+  /// The workspace's debugger, when [IdeWorkbench.debugService] is not
+  /// given: made as the workbench attaches to it.
+  IdeDebug? _ideDebug;
 
   /// What the activity bar and the status bar show of [_git], rebuilt
   /// only when these change.
@@ -465,6 +519,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   IdePanelTab? get _panel => _layout.panel;
   set _panel(IdePanelTab? tab) => _layout.panel = tab;
 
+  DebugService? get _debug => widget.debugService ?? _ideDebug?.service;
+
   /// The tab the panel shows again when toggled back.
   IdePanelTab get _lastPanel => _layout.lastPanel;
 
@@ -480,6 +536,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// The panel's terminals; none where they cannot run (the web).
   TerminalService? _terminals;
+  List<StreamSubscription<Object?>> _terminalRequests = const [];
   IdeReferences? _references;
 
   /// The Problems and References lists' focused rows and collapsed files.
@@ -884,14 +941,26 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     FocusManager.instance.addLateKeyEventHandler(_onLateKey);
     KeybindingService.instance.addListener(_keybindingsChanged);
     _registerCommandKeybindings();
-    _notifications.addListener(_notificationsChanged);
     widget.settings?.addListener(_settingsChanged);
     widget.remote?.addListener(_remoteChanged);
     if (widget.terminalBackend.supported) {
-      _terminals = TerminalService(
+      final terminals = _terminals = TerminalService(
         root: widget.workspace.root,
         backend: widget.terminalBackend,
       )..addListener(_terminalsChanged);
+      // An extension's `Terminal.show()` and `hide()`.
+      _terminalRequests = [
+        terminals.onDidRequestShow.listen((preserveFocus) {
+          if (!mounted) return;
+          setState(() => _panel = IdePanelTab.terminal);
+          if (!preserveFocus) _focusTerminalSoon();
+        }),
+        terminals.onDidRequestHide.listen((_) {
+          if (mounted && _panel == IdePanelTab.terminal) {
+            setState(() => _panel = null);
+          }
+        }),
+      ];
     }
     _restoreView();
     _attach();
@@ -919,6 +988,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   void _attach() {
     final workspace = widget.workspace;
+    workspace.notifications.addListener(_notificationsChanged);
     workspace.layout.terminals = _terminals != null;
     _explorer = IdeExplorerController(
       files: workspace.files,
@@ -971,6 +1041,74 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     // New terminals start in the project (a workspace's first folder);
     // those running stay where they are.
     _terminals?.root = workspace.roots.firstOrNull ?? workspace.root;
+    _attachDebug();
+  }
+
+  /// Makes the workspace's debugger once the display language can be
+  /// read, unless one is given ([IdeWorkbench.debugService]).
+  void _attachDebug() {
+    _syncDebugListener();
+    if (widget.debugService != null) return;
+    final workspace = widget.workspace;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || widget.workspace != workspace) return;
+      final l10n = context.l10n;
+      final debug = await IdeDebug.open(
+        workspace: workspace,
+        userDirectory: DataDirectory.current.userDir,
+        settings: widget.settings,
+        language: Localizations.localeOf(context).languageCode,
+        pick: (model) {
+          if (mounted) _showQuickModel(model);
+        },
+        confirm: (message) async {
+          if (!mounted) return false;
+          final pick = await showIdeDialog(
+            context,
+            message: message,
+            buttons: [l10n.commonOk],
+          );
+          return pick == 0;
+        },
+        selection: () => switch (_editor?.selection) {
+          final selection? when selection.isValid => (
+            start: selection.start,
+            end: selection.end,
+          ),
+          _ => null,
+        },
+        reveal: (doc, range, {required focus}) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !identical(widget.workspace.active, doc)) return;
+            _layout.showEditor();
+            if (range != null) _revealRange(range, select: true);
+            if (focus) _focusEditor();
+          });
+          WidgetsBinding.instance.scheduleFrame();
+        },
+      );
+      if (!mounted ||
+          widget.workspace != workspace ||
+          widget.debugService != null ||
+          _ideDebug != null) {
+        await debug.dispose();
+        return;
+      }
+      debug.host
+        ..onOpenDebugView = (() => _showView(IdeSideView.debug))
+        ..onOpenRepl = (() => _selectPanel(IdePanelTab.debugConsole));
+      workspace.onSaved = debug.saved;
+      setState(() => _ideDebug = debug);
+      _syncDebugListener();
+    });
+  }
+
+  void _detachDebug(IdeWorkspace workspace) {
+    workspace.onSaved = null;
+    final debug = _ideDebug;
+    _ideDebug = null;
+    _syncDebugListener();
+    if (debug != null) unawaited(debug.dispose());
   }
 
   /// A multi-folder workspace's folders, or the repository shown (of a
@@ -998,6 +1136,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   final Map<IdeGitRepository?, IdeScmSession> _scmSessions = {};
 
   void _detach(IdeWorkspace workspace) {
+    workspace.notifications.removeListener(_notificationsChanged);
+    _detachDebug(workspace);
     workspace.removeListener(_workspaceChanged);
     for (final watch in _editWatches.values) {
       unawaited(watch.cancel());
@@ -1118,6 +1258,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       oldWidget.remote?.removeListener(_remoteChanged);
       widget.remote?.addListener(_remoteChanged);
     }
+    if (oldWidget.debugService != widget.debugService) {
+      _syncDebugListener();
+    }
     if (oldWidget.workspace != widget.workspace) {
       _detach(oldWidget.workspace);
       _attach();
@@ -1144,13 +1287,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     // themes one applies the theme it started with again).
     _quickModel?.onDidHide?.call();
     _detach(widget.workspace);
+    _extensions?.dispose();
     _workbenchFocus.dispose();
     _explorerFocus.dispose();
     _timeline.dispose();
     _search.dispose();
-    _extensions?.dispose();
-    _notifications.dispose();
     _scm.dispose();
+    for (final subscription in _terminalRequests) {
+      unawaited(subscription.cancel());
+    }
     _terminals
       ?..removeListener(_terminalsChanged)
       ..dispose();
@@ -1214,6 +1359,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     // maximizing, and has the side bar give way to it rather than it to
     // the side bar.
     _layout.showEditor();
+    if (!_closingEditors) _extensionPageShown = false;
     _recommendServers();
     _recentFiles.add(path);
     unawaited(_explorer.reveal(path));
@@ -1278,6 +1424,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       await _flushEditor();
       await widget.workspace.open(path);
       if (!mounted) return;
+      // The one in front opened again puts the extension page behind too.
+      _extensionPageShown = false;
       // The active one opened again changes nothing [_workspaceChanged]
       // follows, but is asked for all the same.
       _layout.showEditor();
@@ -1378,6 +1526,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     setState(() => _busy = true);
     try {
       await _flushEditor();
+      _extensionPageShown = false;
       widget.workspace.select(doc.key);
     } catch (error) {
       _report(error);
@@ -1406,6 +1555,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   Future<void> _closeDocs(List<IdeDocument> docs) async {
     if (_busy || docs.isEmpty) return;
     setState(() => _busy = true);
+    _closingEditors = true;
     try {
       await _flushEditor();
       for (final doc in docs) {
@@ -1433,6 +1583,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     } catch (error) {
       _report(error);
     } finally {
+      _closingEditors = false;
       if (mounted) {
         setState(() => _busy = false);
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1445,6 +1596,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   Future<void> _close(IdeDocument doc) => _closeDocs([doc]);
 
   void _closeActive() {
+    if (_extensionPageShown && _extensionPage != null) {
+      _closeExtensionPage();
+      return;
+    }
     if (widget.workspace.active case final doc?) unawaited(_close(doc));
   }
 
@@ -1497,13 +1652,18 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     unawaited(_select(doc));
   }
 
-  /// Save As: the active editor's text to a file asked for, its tab then
-  /// that file's.
-  Future<void> _saveAs() async {
-    final doc = widget.workspace.active;
+  /// Save As: the editor's text ([doc]'s, else the active one's) to a file
+  /// asked for, its tab then that file's. A picture's or a file not shown
+  /// as text is copied instead.
+  Future<void> _saveAs([IdeDocument? doc]) async {
+    doc ??= widget.workspace.active;
     if (doc == null) return;
     try {
-      await _flushEditor();
+      if (!doc.isFile && !doc.isUntitled) {
+        await saveFileCopyAs(widget.workspace.files, doc.path);
+        return;
+      }
+      if (identical(doc, widget.workspace.active)) await _flushEditor();
       final saved = await widget.workspace.saveAs(doc);
       if (saved != null && mounted) _focusSoon();
     } catch (error) {
@@ -1567,6 +1727,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         unawaited(Clipboard.setData(ClipboardData(text: doc.path)));
       case IdeTabAction.copyRelativePath:
         unawaited(Clipboard.setData(ClipboardData(text: _relative(doc.path))));
+      case IdeTabAction.saveAs:
+        unawaited(_saveAs(doc));
       case IdeTabAction.revealInFileManager:
         unawaited(WindowControls.revealInFileManager(doc.path));
       case IdeTabAction.openInDefaultApp:
@@ -1782,6 +1944,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   void _togglePanel(IdePanelTab tab) =>
       setState(() => _panel = _panel == tab ? null : tab);
+
+  void _toggleDebugConsole() {
+    _togglePanel(IdePanelTab.debugConsole);
+    if (_panel == IdePanelTab.debugConsole) _focusPanel();
+  }
 
   void _selectPanel(IdePanelTab tab) => setState(() => _panel = tab);
 
@@ -2328,6 +2495,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     return KeybindingService.instance.resolveEvent(
       event,
       pending: pending,
+      // The extensions' keys (`setContext`) over the workbench's.
       context: keyContext,
       canRun: (item) => byId[item.command]?.enabled ?? false,
     );
@@ -2955,9 +3123,126 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     ];
   }
 
+  void _runAndDebugAction(
+    Future<void> Function(RunAndDebugViewState view) action,
+  ) {
+    _showView(IdeSideView.debug);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final view = _runAndDebugKey.currentState;
+      if (view != null) unawaited(action(view));
+    });
+  }
+
+  List<IdeCommand> _debugCommands() {
+    final service = _debug;
+    if (!_debugEntryShown || service == null) return const [];
+    final session = service.viewModel.focusedSession;
+    final thread = debugActionThread(service);
+    return [
+      IdeCommand(
+        id: 'workbench.view.debug',
+        category: 'View',
+        label: DebugStrings.of(context).runAndDebug,
+        run: () => _showView(IdeSideView.debug),
+      ),
+      IdeCommand(
+        id: 'debug.start',
+        category: 'Debug',
+        label: 'Start Debugging',
+        run: () => _runAndDebugAction((view) => view.start()),
+      ),
+      IdeCommand(
+        id: 'debug.startFromConfig',
+        category: 'Debug',
+        label: 'Start Debugging from Configuration',
+        run: () => _runAndDebugAction((view) => view.start()),
+        runWithArgs: (args) {
+          final config = args is Map ? args.cast<String, Object?>() : null;
+          _runAndDebugAction((view) => view.start(config: config));
+        },
+      ),
+      IdeCommand(
+        id: 'debug.addConfiguration',
+        category: 'Debug',
+        label: 'Add Configuration...',
+        run: () => _runAndDebugAction((view) => view.addConfiguration()),
+      ),
+      IdeCommand(
+        id: 'debug.openConfigFile',
+        category: 'Debug',
+        label: 'Open launch.json',
+        run: () => _runAndDebugAction((view) => view.openConfigFile()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.run',
+        category: 'Debug',
+        label: 'Run Without Debugging',
+        run: () => _runAndDebugAction((view) => view.runWithoutDebugging()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.toggleRepl',
+        category: 'Debug',
+        label: 'Toggle Debug Console',
+        run: _toggleDebugConsole,
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.stop',
+        category: 'Debug',
+        label: 'Stop Debugging',
+        run: () => unawaited(service.stopSession(null)),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.restart',
+        category: 'Debug',
+        label: 'Restart Debugging',
+        enabled: session != null,
+        run: () {
+          if (session != null) unawaited(service.restartSession(session));
+        },
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.continue',
+        category: 'Debug',
+        label: 'Continue',
+        enabled: thread != null,
+        run: () => unawaited(thread?.continue_()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.pause',
+        category: 'Debug',
+        label: 'Pause',
+        enabled: thread != null,
+        run: () => unawaited(thread?.pause()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.stepOver',
+        category: 'Debug',
+        label: 'Step Over',
+        enabled: thread != null,
+        run: () => unawaited(thread?.next()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.stepInto',
+        category: 'Debug',
+        label: 'Step Into',
+        enabled: thread != null,
+        run: () => unawaited(thread?.stepIn()),
+      ),
+      IdeCommand(
+        id: 'workbench.action.debug.stepOut',
+        category: 'Debug',
+        label: 'Step Out',
+        enabled: thread != null,
+        run: () => unawaited(thread?.stepOut()),
+      ),
+    ];
+  }
+
   /// The workbench's commands, then the editor's, then [IdeWorkbench.commands].
   List<IdeCommand> _allCommands() => [
     ..._workbenchCommands(),
+    ..._debugCommands(),
     ..._editorCommands(),
     ..._layoutCommands(),
     ..._searchCommands(),
@@ -2966,7 +3251,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     ..._scmCommands(),
     ...?_editor?.editorCommands,
     ...widget.commands,
+    ..._extensionCommands(),
   ];
+
+  /// Takes the .vsix files and extension folders among [paths] dropped on
+  /// the window: false when there are none.
+  bool dropExtensions(List<String> paths) => _dropExtensions(paths);
 
   /// The commands for the current state, for the palette and for tests.
   @visibleForTesting
@@ -2979,12 +3269,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   // --- Widgets -------------------------------------------------------------
 
-  /// The activity bar's card, [joined] to the side bar beside it when that
-  /// is showing (their seam is this card's border).
-  Widget _activityBar({required bool joined}) {
+  /// The activity bar; its view's item is selected when [sidebarShowing].
+  Widget _activityBar({required bool sidebarShowing}) {
     Widget item(IdeSideView view, IconData icon, String label, {int? badge}) {
       // The side bar as it shows: one given way to the chat opens.
-      final selected = _view == view && joined;
+      final selected = _view == view && sidebarShowing;
       return _ActivityItem(
         icon: icon,
         label: label,
@@ -3006,9 +3295,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     // (compositeBarActions.ts), then its badge's description.
     final keys = KeybindingService.instance;
     final l10n = context.l10n;
-    const radius = Radius.circular(IdeModernUI.radius);
-    // Half the lane each side, less the border already there.
-    const inset = IdeModernUI.activityLane / 2 - 1;
     final items = [
       item(
         IdeSideView.explorer,
@@ -3033,6 +3319,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
             (_gitCount > 0 ? ' - ${l10n.wbPendingChanges(_gitCount)}' : ''),
         badge: _gitCount,
       ),
+      if (_debugEntryShown)
+        item(
+          IdeSideView.debug,
+          Codicons.debugAlt,
+          keys.titleWithKeybinding(
+            DebugStrings.of(context).runAndDebug,
+            'workbench.view.debug',
+          ),
+        ),
       item(
         IdeSideView.extensions,
         Codicons.extensions,
@@ -3041,13 +3336,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     ];
     return SizedBox(
       width: IdeModernUI.activityBarWidth,
-      child: IdeCard(
+      child: IdePart(
         color: IdeModernUI.activityBarBackground,
-        radius: joined
-            ? const BorderRadius.horizontal(left: radius)
-            : const BorderRadius.all(radius),
+        border: Border(right: IdePart.side('activityBar.border')),
         child: Padding(
-          padding: const EdgeInsets.all(inset),
+          // Half the lane above; the items centered across.
+          padding: const EdgeInsets.only(top: IdeModernUI.activityLane / 2),
           child: Column(
             children: [
               for (final (index, item) in items.indexed) ...[
@@ -3062,17 +3356,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     );
   }
 
-  /// The side bar's card, joined to the activity bar's on its left.
-  Widget _sidebarCard() => IdeCard(
-    color: IdeModernUI.surface,
-    radius: const BorderRadius.horizontal(
-      right: Radius.circular(IdeModernUI.radius),
-    ),
-    border: Border(
-      top: BorderSide(color: IdeModernUI.border),
-      right: BorderSide(color: IdeModernUI.border),
-      bottom: BorderSide(color: IdeModernUI.border),
-    ),
+  /// The side bar, its border on its right.
+  Widget _sidebarPart() => IdePart(
+    color: themeColors['sideBar.background'],
+    border: Border(right: _sideBarBorder),
     child: Focus(focusNode: _sidebarFocus, child: _sidePanel()),
   );
 
@@ -3098,14 +3385,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       trash: WindowControls.canMoveToTrash ? WindowControls.moveToTrash : null,
       commitMessage: widget.commitMessage,
     ),
-    IdeSideView.extensions => IdeExtensionsView(
-      session: _extensions ??= IdeExtensionsSession(
-        widget.extensions ?? IdeLanguageServerExtensions(),
+    IdeSideView.debug => switch (_debug) {
+      final debug? => DebugView(
+        service: debug,
+        runAndDebugKey: _runAndDebugKey,
       ),
-      recommended: _recommendedServers(),
-      onInstalled: _startServer,
-      onError: _report,
-    ),
+      null => const SizedBox.shrink(),
+    },
+    IdeSideView.extensions => _extensionsView(),
   };
 
   /// Starts the open files' servers named [id], and those limited to some
@@ -3320,27 +3607,35 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   Widget _editorArea(List<IdeCommand> commands) {
     final active = widget.workspace.active;
-    return IdeCard(
+    final page = widget.themeExtensions == null ? null : _extensionPage;
+    final pageShown = page != null && _extensionPageShown;
+    final debug = _debug;
+    final dockedToolbar =
+        debug != null && debug.settings().toolBarLocation == 'docked';
+    return IdePart(
       color: themeColors['editor.background'],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (widget.workspace.documents.isNotEmpty) ...[
+          if (dockedToolbar) DebugToolbar(service: debug),
+          if (widget.workspace.documents.isNotEmpty || page != null) ...[
             IdeTabBar(
               documents: widget.workspace.documents,
-              active: active,
+              active: pageShown ? null : active,
               root: widget.workspace.root,
               onSelect: (doc) => unawaited(_select(doc)),
               onClose: (doc) => unawaited(_close(doc)),
               onAction: _tabAction,
               local: _local,
-              markdownPreview: active != null && _hasPreview(active)
+              markdownPreview:
+                  !pageShown && active != null && _hasPreview(active)
                   ? _previewing(active)
                   : null,
               onMarkdownPreview: (preview) =>
                   unawaited(_setMarkdownPreview(preview)),
+              page: page == null ? null : _extensionPageTab(page),
             ),
-            if (active != null && !active.isUntitled)
+            if (!pageShown && active != null && !active.isUntitled)
               IdeBreadcrumbs(
                 root: widget.workspace.root,
                 path: active.path,
@@ -3350,94 +3645,124 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
               ),
           ],
           Expanded(
-            child: _markdownDrops(
-              active,
-              active == null && !widget.workspace.hasFolder
-                  ? IdeStartPage(
-                      actions: [
-                        for (final id in const [
-                          'workbench.action.files.openFolder',
-                          'baocode.remote.openFolder',
-                          IdeWorkbench.createWorkspaceCommandId,
-                          'workbench.action.files.openFile',
-                          'workbench.action.files.newUntitledFile',
-                        ])
-                          ...commands.where((command) => command.id == id),
-                      ],
-                      recent: widget.recentFolders,
-                      onOpenRecent: widget.onOpenRecent,
-                      workspaceOf: widget.recentWorkspaceOf,
-                      onShowAllRecent: commands
-                          .where((c) => c.id == 'workbench.action.openRecent')
-                          .firstOrNull
-                          ?.run,
-                    )
-                  : active == null
-                  ? IdeWelcome(
-                      commands: [
-                        for (final id in const [
-                          'workbench.action.showCommands',
-                          'workbench.action.quickOpen',
-                          // Upstream's watermark: Show Search has no key of
-                          // its own, Find in Files takes its ⇧⌘F.
-                          'workbench.action.findInFiles',
-                          'actions.find',
-                          'workbench.action.gotoLine',
-                          'workbench.action.toggleSidebarVisibility',
-                          'workbench.action.toggleAuxiliaryBar',
-                        ])
-                          ...commands.where((command) => command.id == id),
-                      ],
-                    )
-                  : active.isMedia
-                  ? IdeImagePreview(
-                      key: ValueKey(active),
-                      path: active.path,
-                      read: switch (widget.workspace.files) {
-                        final IdeHostFiles files => files.readBytes,
-                        _ => null,
-                      },
-                      onOpenInDefaultApp:
-                          _local && WindowControls.canOpenInDefaultApp
-                          ? () => unawaited(_openInDefaultApp(active.path))
-                          : null,
-                    )
-                  : active.openError != null
-                  ? IdeEditorPlaceholder(
-                      key: ValueKey(active),
-                      error: active.openError!,
-                      onOpenAnyway: () => unawaited(
-                        widget.workspace.reopen(active, force: true),
-                      ),
-                      onRetry: () => unawaited(widget.workspace.reopen(active)),
-                      onOpenInDefaultApp:
-                          _local &&
-                              WindowControls.canOpenInDefaultApp &&
-                              active.readRevision == null
-                          ? () => unawaited(_openInDefaultApp(active.path))
-                          : null,
-                    )
-                  : _previewing(active)
-                  ? _markdownPreview(active)
-                  : widget.editorBuilder?.call(context, widget.workspace) ??
-                        IdeEditor(
-                          nativeEditorEnabled: widget.nativeEditorEnabled,
-                          key: _editorKey,
-                          workspace: widget.workspace,
-                          active: active,
-                          onError: _report,
-                          onLspStatus: (status) {
-                            if (mounted) setState(() => _lspStatus = status);
-                          },
-                          onPositionChanged: _positionChanged,
-                          onOpenLocation: _openLocation,
-                          onShowReferences: _showReferences,
-                          onShowCommands: () => _showQuickInput('>'),
-                          formatOnSave: _formatOnSave,
-                          gitBlame: _gitBlame,
-                          keyResolver: _resolveEditorKey,
-                          onPaste: _pasteInEditor,
-                        ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // The editors stay built under an extension's page.
+                Offstage(
+                  offstage: pageShown,
+                  child: _markdownDrops(
+                    active,
+                    active == null && !widget.workspace.hasFolder
+                        ? IdeStartPage(
+                            actions: [
+                              for (final id in const [
+                                'workbench.action.files.openFolder',
+                                'baocode.remote.openFolder',
+                                IdeWorkbench.createWorkspaceCommandId,
+                                'workbench.action.files.openFile',
+                                'workbench.action.files.newUntitledFile',
+                              ])
+                                ...commands.where(
+                                  (command) => command.id == id,
+                                ),
+                            ],
+                            recent: widget.recentFolders,
+                            onOpenRecent: widget.onOpenRecent,
+                            workspaceOf: widget.recentWorkspaceOf,
+                            onShowAllRecent: commands
+                                .where(
+                                  (c) => c.id == 'workbench.action.openRecent',
+                                )
+                                .firstOrNull
+                                ?.run,
+                          )
+                        : active == null
+                        ? IdeWelcome(
+                            commands: [
+                              for (final id in const [
+                                'workbench.action.showCommands',
+                                'workbench.action.quickOpen',
+                                // Upstream's watermark: Show Search has no key of
+                                // its own, Find in Files takes its ⇧⌘F.
+                                'workbench.action.findInFiles',
+                                'actions.find',
+                                'workbench.action.gotoLine',
+                                'workbench.action.toggleSidebarVisibility',
+                                'workbench.action.toggleAuxiliaryBar',
+                              ])
+                                ...commands.where(
+                                  (command) => command.id == id,
+                                ),
+                            ],
+                          )
+                        : active.isMedia
+                        ? IdeImagePreview(
+                            key: ValueKey(active),
+                            path: active.path,
+                            read: switch (widget.workspace.files) {
+                              final IdeHostFiles files => files.readBytes,
+                              _ => null,
+                            },
+                            onOpenInDefaultApp:
+                                _local && WindowControls.canOpenInDefaultApp
+                                ? () =>
+                                      unawaited(_openInDefaultApp(active.path))
+                                : null,
+                          )
+                        : active.openError != null
+                        ? IdeEditorPlaceholder(
+                            key: ValueKey(active),
+                            error: active.openError!,
+                            onOpenAnyway: () => unawaited(
+                              widget.workspace.reopen(active, force: true),
+                            ),
+                            onRetry: () =>
+                                unawaited(widget.workspace.reopen(active)),
+                            onOpenInDefaultApp:
+                                _local &&
+                                    WindowControls.canOpenInDefaultApp &&
+                                    active.readRevision == null
+                                ? () =>
+                                      unawaited(_openInDefaultApp(active.path))
+                                : null,
+                          )
+                        : _previewing(active)
+                        ? _markdownPreview(active)
+                        : widget.editorBuilder?.call(
+                                context,
+                                widget.workspace,
+                              ) ??
+                              IdeEditor(
+                                nativeEditorEnabled: widget.nativeEditorEnabled,
+                                key: _editorKey,
+                                workspace: widget.workspace,
+                                active: active,
+                                onError: _report,
+                                onLspStatus: (status) {
+                                  if (mounted) {
+                                    setState(() => _lspStatus = status);
+                                  }
+                                },
+                                onPositionChanged: _positionChanged,
+                                onOpenLocation: _openLocation,
+                                onShowReferences: _showReferences,
+                                onShowCommands: () => _showQuickInput('>'),
+                                gitBlame: _gitBlame,
+                                keyResolver: _resolveEditorKey,
+                                onPaste: _pasteInEditor,
+                                formatOnSave: _formatOnSave,
+                                debug: _debug,
+                              ),
+                  ),
+                ),
+                // And it under them, while another tab is in front.
+                if (page != null)
+                  Offstage(
+                    offstage: !pageShown,
+                    child: _extensionPageView(page),
+                  ),
+              ],
             ),
           ),
         ],
@@ -3474,20 +3799,27 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           offstage: !shown,
           child: TickerMode(
             enabled: shown,
-            child: ExcludeFocus(excluding: !shown, child: _chatCard()),
+            child: ExcludeFocus(excluding: !shown, child: _chatPart()),
           ),
         ),
       ),
     );
   }
 
-  /// The chat's card, which keeps its state as it moves to the editor's
-  /// place, maximized, and back.
-  Widget _chatCard() => IdeCard(
+  /// The chat, which keeps its state as it moves to the editor's place,
+  /// maximized, and back. Beside the editor, it is the secondary side bar,
+  /// the side bar's border on its left.
+  Widget _chatPart() => IdePart(
     key: _chatKey,
+    border: _layout.editorVisible ? Border(left: _sideBarBorder) : null,
     child: Focus(focusNode: _chatFocus, child: widget.chat),
   );
   final _chatKey = GlobalKey(debugLabel: 'ide chat');
+
+  /// Between the side bars and the editor: `sideBar.border`, else the
+  /// Modern UI's `surface.border`, so every theme has the line.
+  static BorderSide get _sideBarBorder =>
+      IdePart.side('sideBar.border', fallback: 'surface.border');
 
   /// What [IdeLayout.roomForBoth] and [IdeLayout.roomForSides] are to be,
   /// from the last layout: the layout's listeners build, so it is told
@@ -3514,35 +3846,20 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   final _sidebarKey = GlobalKey(debugLabel: 'ide side bar');
   final _sidebarSashKey = GlobalKey(debugLabel: 'ide side bar sash');
 
-  /// The Modern UI's cards on the shell: 4px apart, and 4px from the
-  /// window's sides and the status bar. The chat stays on the right however
-  /// narrow the window (see [IdeColumns.fit]). With the editor hidden
-  /// ([IdeLayout.editorHidden]), the chat has its place, beside the side bar
-  /// if that shows, the panel below the two.
+  /// The parts, flush and square: the activity bar, the side bar, the
+  /// editor (the panel below it) and the chat, each sash over the line
+  /// between two (VS Code's `sash-size`, half on either side). The chat
+  /// stays on the right however narrow the window (see [IdeColumns.fit]).
+  /// With the editor hidden ([IdeLayout.editorHidden]), the chat has its
+  /// place, beside the side bar if that shows, the panel below the two.
   Widget _split(Size size, List<IdeCommand> commands) {
-    const gap = IdeModernUI.gap;
-    // Hidden, the chat leaves a gap at the window's side, its sash's width
-    // but no sash: there it would take the window's own resizing edge. The
-    // gap above the status bar is each column's: the panel's sash, hidden.
-    final outside = EdgeInsets.fromLTRB(gap, 0, _chatShown ? gap : 0, 0);
-    // Keyed, so a sash keeps its drag as the columns change about it.
-    Widget above(Widget column, String slot) => Padding(
-      key: ValueKey('ide-row-$slot'),
-      padding: const EdgeInsets.only(bottom: gap),
-      child: column,
-    );
-    // The editor hidden, there is a sash less, but the chat is sized as
-    // though both were there: dragged back, the editor comes out where the
-    // pointer is.
-    final room =
-        size.width -
-        outside.horizontal -
-        IdeModernUI.activityBarWidth -
-        2 * _sashWidth;
-    final withChat = room - (_chatShown ? 0 : gap);
+    const bar = IdeModernUI.activityBarWidth;
+    // The editor hidden, the chat is sized as though it were there: dragged
+    // back, the editor comes out where the pointer is.
+    final room = size.width - bar;
     _noteRoom((
-      both: IdeColumns.roomForBoth(withChat),
-      sides: IdeColumns.roomForSides(withChat),
+      both: IdeColumns.roomForBoth(room),
+      sides: IdeColumns.roomForSides(room),
     ));
     final editorHidden = !_layout.editorVisible;
     final columns = IdeColumns.fit(
@@ -3556,15 +3873,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     final sidebar = SizedBox(
       key: const ValueKey('ide-sidebar'),
       width: columns.sidebar,
-      child: KeyedSubtree(key: _sidebarKey, child: _sidebarCard()),
+      child: KeyedSubtree(key: _sidebarKey, child: _sidebarPart()),
     );
-    // With the side bar hidden, the gap by the activity bar: dragged out, it
-    // opens the side bar.
+    // With the side bar hidden, by the activity bar: dragged out, it opens
+    // the side bar.
     final sidebarSash = KeyedSubtree(
       key: _sidebarSashKey,
       child: _Sash(
         key: const ValueKey('ide-sidebar-sash'),
-        grip: sidebarVisible,
         canMoveBack: sidebarVisible,
         canMoveForward: columns.canGrowSidebar(room),
         onStart: () => _dragStart = (columns: columns, room: room),
@@ -3575,82 +3891,99 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         }),
       ),
     );
-    final chatSash = above(
-      _Sash(
-        key: const ValueKey('ide-chat-sash'),
-        grip: chatVisible,
-        canMoveBack: columns.canGrowChat(room),
-        canMoveForward: chatVisible,
-        onStart: () {
-          _dragStart = (columns: columns, room: room);
-          _chatSashDragging = true;
-        },
-        onEnd: () {
-          if (mounted) setState(() => _chatSashDragging = false);
-        },
-        onDrag: (dx) => _dragTo((start, room) => start.dragChat(room, dx)),
-        onReset: () => setState(() {
-          _layout
-            ..showChat()
-            ..showEditor();
-          _chatWidth = IdeColumns.defaultChat;
-        }),
-      ),
-      'chat-sash',
+    final chatSash = _Sash(
+      key: const ValueKey('ide-chat-sash'),
+      canMoveBack: columns.canGrowChat(room),
+      canMoveForward: chatVisible,
+      onStart: () {
+        _dragStart = (columns: columns, room: room);
+        _chatSashDragging = true;
+      },
+      onEnd: () {
+        if (mounted) setState(() => _chatSashDragging = false);
+      },
+      onDrag: (dx) => _dragTo((start, room) => start.dragChat(room, dx)),
+      onReset: () => setState(() {
+        _layout
+          ..showChat()
+          ..showEditor();
+        _chatWidth = IdeColumns.defaultChat;
+      }),
     );
     final chat = KeyedSubtree(
       key: const ValueKey('ide-chat'),
-      child: _chatCard(),
+      child: _chatPart(),
     );
-    return Padding(
-      padding: outside,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          above(_activityBar(joined: sidebarVisible), 'activity-bar'),
-          if (!editorHidden) ...[
-            if (sidebarVisible) above(sidebar, 'sidebar'),
-            above(sidebarSash, 'sidebar-sash'),
-          ] else if (!sidebarVisible)
-            // The chat maximized: its sash is by the activity bar, and
-            // dragged back, the editor comes out.
-            chatSash,
-          Expanded(
-            key: const ValueKey('ide-editor-column'),
-            child: _editorColumn(
-              size.height,
-              commands,
-              inPlace: !editorHidden
-                  ? null
-                  : sidebarVisible
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        sidebar,
-                        sidebarSash,
-                        Expanded(child: chat),
-                      ],
-                    )
-                  : chat,
-            ),
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              KeyedSubtree(
+                key: const ValueKey('ide-activity-bar'),
+                child: _activityBar(sidebarShowing: sidebarVisible),
+              ),
+              if (!editorHidden && sidebarVisible) sidebar,
+              Expanded(
+                key: const ValueKey('ide-editor-column'),
+                child: _editorColumn(
+                  size.height,
+                  commands,
+                  inPlace: !editorHidden
+                      ? null
+                      : sidebarVisible
+                      ? Stack(
+                          children: [
+                            Positioned.fill(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  sidebar,
+                                  Expanded(child: chat),
+                                ],
+                              ),
+                            ),
+                            _sashAt(columns.sidebar, room, sidebarSash),
+                          ],
+                        )
+                      : chat,
+                ),
+              ),
+              if (!editorHidden) _chatSlot(columns.chat),
+            ],
           ),
-          if (!editorHidden) ...[
-            if (chatVisible || _chatSashDragging)
-              chatSash
-            else
-              const SizedBox(key: ValueKey('ide-chat-gap'), width: _sashWidth),
-            above(_chatSlot(columns.chat), 'chat'),
-          ],
-        ],
-      ),
+        ),
+        if (!editorHidden)
+          _sashAt(bar + columns.sidebar, size.width, sidebarSash),
+        if (!editorHidden && (chatVisible || _chatSashDragging))
+          _sashAt(size.width - columns.chat, size.width, chatSash)
+        else if (editorHidden && !sidebarVisible)
+          // The chat maximized: its sash is by the activity bar, and
+          // dragged back, the editor comes out.
+          _sashAt(bar, size.width, chatSash),
+      ],
     );
   }
 
+  /// [sash] over the line [x] across a row [width] wide, inside it: at the
+  /// row's edge, all of it on the near side.
+  static Widget _sashAt(double x, double width, Widget sash) => Positioned(
+    key: ValueKey(sash.key),
+    left: (x - _sashWidth / 2)
+        .clamp(0.0, math.max(0.0, width - _sashWidth))
+        .toDouble(),
+    top: 0,
+    bottom: 0,
+    width: _sashWidth,
+    child: sash,
+  );
+
   /// The editor, and below it the panel (the terminal), as VS Code's panel
   /// at the bottom, centered: under the editor only. Hidden, the panel
-  /// leaves its sash as the gap above the status bar. [inPlace] has the
-  /// editor's place where it is hidden (the chat, and the side bar beside
-  /// it), above the panel; the editor is kept, as the chat hidden is.
+  /// leaves its sash at the bottom. [inPlace] has the editor's place where
+  /// it is hidden (the chat, and the side bar beside it), above the panel;
+  /// the editor is kept, as the chat hidden is.
   Widget _editorColumn(
     double height,
     List<IdeCommand> commands, {
@@ -3658,7 +3991,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }) {
     final hidden = inPlace != null;
     final shown = _panel != null;
-    final room = height - _sashWidth - (shown ? IdeModernUI.gap : 0);
+    final room = height;
     final rows = IdeRows.fit(
       room,
       panel: !shown
@@ -3669,56 +4002,64 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       minAbove: hidden ? IdeRows.minChat : IdeRows.minEditor,
     );
     final panelVisible = rows.panel > 0;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final debug = _debug;
+    final editor = KeyedSubtree(
+      key: const ValueKey('ide-editor'),
+      child: _editorArea(commands),
+    );
+    final toolbarLocation = debug?.settings().toolBarLocation;
+    final sashTop = (height - rows.panel - _sashWidth / 2)
+        .clamp(0.0, math.max(0.0, height - _sashWidth))
+        .toDouble();
+    return Stack(
       children: [
-        Expanded(
-          child: Stack(
-            fit: StackFit.expand,
+        Positioned.fill(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Offstage(
-                offstage: hidden,
-                child: TickerMode(
-                  enabled: !hidden,
-                  child: ExcludeFocus(
-                    excluding: hidden,
-                    child: KeyedSubtree(
-                      key: const ValueKey('ide-editor'),
-                      child: _editorArea(commands),
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Offstage(
+                      offstage: hidden,
+                      child: TickerMode(
+                        enabled: !hidden,
+                        child: ExcludeFocus(
+                          excluding: hidden,
+                          child: toolbarLocation == 'floating' && debug != null
+                              ? FloatingDebugToolbar(
+                                  service: debug,
+                                  child: editor,
+                                )
+                              : editor,
+                        ),
+                      ),
                     ),
-                  ),
+                    ?inPlace,
+                  ],
                 ),
               ),
-              ?inPlace,
+              _panelSlot(rows.panel),
             ],
           ),
         ),
-        // Under the side bar too, it keeps clear of the activity bar the
-        // side bar is joined to.
-        Padding(
-          padding: EdgeInsets.only(
-            left: hidden && _layout.sidebarVisible ? IdeModernUI.gap : 0,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Sash(
-                key: const ValueKey('ide-panel-sash'),
-                axis: Axis.vertical,
-                grip: panelVisible,
-                canMoveBack: rows.canGrowPanel(room),
-                canMoveForward: panelVisible,
-                onStart: () => _panelDragStart = (rows: rows, room: room),
-                onDrag: _dragPanel,
-                onReset: () => setState(() {
-                  _panel ??= _lastPanel;
-                  _panelHeight = null;
-                }),
-              ),
-              _panelSlot(rows.panel),
-              if (shown) const SizedBox(height: IdeModernUI.gap),
-            ],
+        Positioned(
+          left: 0,
+          right: 0,
+          top: sashTop,
+          height: _sashWidth,
+          child: _Sash(
+            key: const ValueKey('ide-panel-sash'),
+            axis: Axis.vertical,
+            canMoveBack: rows.canGrowPanel(room),
+            canMoveForward: panelVisible,
+            onStart: () => _panelDragStart = (rows: rows, room: room),
+            onDrag: _dragPanel,
+            onReset: () => setState(() {
+              _panel ??= _lastPanel;
+              _panelHeight = null;
+            }),
           ),
         ),
       ],
@@ -3791,9 +4132,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
               child: Focus(
                 focusNode: _panelFocus,
                 // panelPart.ts' `panel.background` (the editor's by
-                // default), not the shell's.
-                child: IdeCard(
+                // default), `panel.border` above.
+                child: IdePart(
                   color: themeColors['panel.background'],
+                  border: Border(top: IdePart.side('panel.border')),
                   child: IdeBottomPanel(
                     tab: _panel ?? _lastPanel,
                     root: widget.workspace.root,
@@ -3819,6 +4161,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         shouldSkipShell: _terminalSkipsShell,
                         resolveKey: _terminalFindKey,
                       ),
+                      null => null,
+                    },
+                    debugConsole: switch (_debug) {
+                      final debug? => DebugConsolePanel(service: debug),
                       null => null,
                     },
                     terminalActions: switch (_terminals) {
@@ -4248,8 +4594,8 @@ class _CommandCenterState extends State<_CommandCenter> {
   }
 }
 
-/// A draggable border between two panes, highlighted while hovered or
-/// dragged. Its cursor says which ways it can go (`.monaco-sash.minimum`,
+/// A draggable line between two parts, over it: invisible at rest,
+/// `sash.hoverBorder` while hovered or dragged. Its cursor says which ways it can go (`.monaco-sash.minimum`,
 /// `.maximum`), and stays while dragged past where it stops; a double click
 /// resets what it sizes.
 class _Sash extends StatefulWidget {
@@ -4260,7 +4606,6 @@ class _Sash extends StatefulWidget {
     required this.onReset,
     this.onEnd,
     this.axis = Axis.horizontal,
-    this.grip = true,
     this.canMoveBack = true,
     this.canMoveForward = true,
   });
@@ -4274,10 +4619,6 @@ class _Sash extends StatefulWidget {
 
   /// Which way it moves: between columns, or (vertical) between rows.
   final Axis axis;
-
-  /// The Modern UI's grip dots at rest: not for a sash that stands for a
-  /// hidden part.
-  final bool grip;
 
   /// Whether it can go left (or up), and right (or down).
   final bool canMoveBack;
@@ -4374,46 +4715,15 @@ class _SashState extends State<_Sash> {
         onVerticalDragEnd: horizontal ? null : (_) => _end(),
         onVerticalDragCancel: horizontal ? null : _end,
         onDoubleTap: widget.onReset,
-        // At rest, the Modern UI's three grip dots; hovered or dragged,
-        // the `sash.hoverBorder` filling the gap.
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 100),
           width: horizontal ? IdeWorkbenchState._sashWidth : null,
           height: horizontal ? null : IdeWorkbenchState._sashWidth,
           color: active ? IdeModernUI.sashHover : Colors.transparent,
-          child: active || !widget.grip
-              ? null
-              : CustomPaint(painter: _SashGripPainter(widget.axis)),
         ),
       ),
     );
   }
-}
-
-/// `.modern-ui .monaco-sash.vertical::after`: a 2px dot at the middle and
-/// one 5px above and below it.
-class _SashGripPainter extends CustomPainter {
-  const _SashGripPainter(this.axis);
-
-  final Axis axis;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = IdeModernUI.sashGrip;
-    final center = size.center(Offset.zero);
-    for (final d in const [-5.0, 0.0, 5.0]) {
-      canvas.drawCircle(
-        axis == Axis.horizontal
-            ? center.translate(0, d)
-            : center.translate(d, 0),
-        1,
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_SashGripPainter oldDelegate) => oldDelegate.axis != axis;
 }
 
 /// An activity bar item: a 24px codicon in a 36px square; the active and

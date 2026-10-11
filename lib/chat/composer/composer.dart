@@ -27,8 +27,8 @@ import '../floating/floating_placement.dart';
 import '../floating/floating_registry.dart';
 import '../../workspace/window_controls.dart';
 import '../widgets/hover_builder.dart';
-import '../widgets/image_thumbnails.dart';
 import 'composer_caret.dart';
+import 'composer_controller.dart';
 import 'composer_draft.dart';
 import 'composer_embeds.dart';
 import 'composer_files.dart';
@@ -130,7 +130,7 @@ class ChatComposerState extends State<ChatComposer>
   static const _maxEditorLines = 10;
   static const _plainTextEmbed = '￼';
 
-  late final QuillController _controller = _createController();
+  late final ComposerController _controller = _createController();
   final FocusNode _focusNode = FocusNode(debugLabel: 'Composer');
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<EditorState> _editorKey = GlobalKey();
@@ -183,7 +183,7 @@ class ChatComposerState extends State<ChatComposer>
     return pool;
   }
 
-  QuillController _createController() {
+  ComposerController _createController() {
     final config = QuillControllerConfig(
       // Quill's only hook for taking over paste; experimental in 11.x.
       // ignore: experimental_member_use
@@ -192,7 +192,7 @@ class ChatComposerState extends State<ChatComposer>
     if (widget.draft case final draft? when draft.saved) {
       final document = Document.fromDelta(draft.content!);
       final end = document.length - 1;
-      return QuillController(
+      return ComposerController(
         document: document,
         selection: TextSelection(
           baseOffset: draft.selection.baseOffset.clamp(0, end),
@@ -212,7 +212,7 @@ class ChatComposerState extends State<ChatComposer>
     if (unreferred.isNotEmpty) {
       text = [unreferred.map(imageReference).join(' '), text].join(' ');
     }
-    if (text.isEmpty) return QuillController.basic(config: config);
+    if (text.isEmpty) return ComposerController.basic(config: config);
     final document = Document.fromDelta(
       composerDeltaFromText(
         text,
@@ -220,7 +220,7 @@ class ChatComposerState extends State<ChatComposer>
         images: numbers,
       ),
     );
-    return QuillController(
+    return ComposerController(
       document: document,
       selection: TextSelection.collapsed(offset: document.length - 1),
       config: config,
@@ -475,27 +475,6 @@ class ChatComposerState extends State<ChatComposer>
     _focusNode.requestFocus();
   }
 
-  /// Takes the image at [index] out: its references in the text become
-  /// words (`[Image 2]`), the text otherwise as it was. One edit, undone
-  /// as one, the image coming back with its references.
-  void _removeImage(int index) {
-    final number = _images[index].number;
-    final words = context.l10n.imageReferenceRemoved(number ?? 0);
-    final delta = Delta();
-    var at = 0;
-    for (final reference in _references()) {
-      if (reference.number != number) continue;
-      delta
-        ..retain(reference.offset - at)
-        ..delete(1)
-        ..insert(words);
-      at = reference.offset + 1;
-    }
-    if (delta.isEmpty) return;
-    _controller.compose(delta, _controller.selection, ChangeSource.local);
-    _focusNode.requestFocus();
-  }
-
   bool get _canSend => _hasContent || _images.isNotEmpty;
 
   // --- Suggested prompt ----------------------------------------------------
@@ -675,10 +654,15 @@ class ChatComposerState extends State<ChatComposer>
   /// the conversations. Answers to older queries are dropped.
   Future<void> _lookUpFiles(
     _Trigger trigger,
-    Future<List<FileSuggestion>> Function(String query) suggest,
+    Future<List<Suggestion>> Function(String query) suggest,
   ) async {
     final lookup = ++_lookups;
-    final files = await suggest(trigger.query);
+    final List<Suggestion> files;
+    try {
+      files = await suggest(trigger.query);
+    } on Object {
+      return;
+    }
     final current = _trigger;
     if (!mounted ||
         lookup != _lookups ||
@@ -689,7 +673,7 @@ class ChatComposerState extends State<ChatComposer>
     }
     setState(() {
       _matches = [
-        for (final suggestion in files.map(fileSuggestion))
+        for (final suggestion in files)
           SuggestionMatch(
             suggestion,
             fuzzyMatch(suggestion.label, trigger.query)?.indexes ?? const [],
@@ -1255,7 +1239,6 @@ class ChatComposerState extends State<ChatComposer>
   }
 
   Widget _buildBox({required bool focused}) {
-    final colors = themeColors;
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: _focusNode.requestFocus,
@@ -1263,30 +1246,17 @@ class ChatComposerState extends State<ChatComposer>
         key: _boxKey,
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
-          // The agents window's chat input; editing a sent message, its
-          // bubble (as upstream), over the page: it floats when stuck.
-          color: widget.onSubmit == null
-              ? colors['agentsChatInput.background']
-              : Color.alphaBlend(
-                  colors['chat.requestBubbleBackground'],
-                  colors['editor.background'],
-                ),
+          // The agents window's chat input, editing a sent message too:
+          // the color of every bubble, and their line; typed into, the line
+          // turns a little towards the accent.
+          color: AppColors.bubbleFill,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: focused
-                ? colors['agentsChatInput.focusBorder']
-                : colors['agentsChatInput.border'],
-          ),
+          border: Border.all(color: AppColors.bubbleBorder(focused: focused)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_images.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: ImageThumbnails(images: _images, onRemove: _removeImage),
-              ),
             ComposerImages(
               images: _pool,
               child: _editor ??= _buildEditor(context),

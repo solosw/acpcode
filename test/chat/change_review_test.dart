@@ -1,54 +1,13 @@
 @TestOn('vm')
 library;
 
-import 'dart:async';
 import 'dart:io';
 
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/review/change_review.dart';
-import 'package:baocode/chat/review/review_store.dart';
 import 'package:baocode/chat/review/review_store_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-
-/// No snapshots are taken while testing the folder opener.
-class _UnusedStore implements ReviewStore {
-  _UnusedStore(this.root);
-
-  @override
-  final String root;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
-}
-
-class _DelayedStore extends _UnusedStore {
-  _DelayedStore() : super('/delayed');
-
-  final pending = Completer<String>();
-  final calls = <String>[];
-
-  @override
-  Future<String> snapshot({Iterable<String>? paths}) {
-    calls.add('snapshot');
-    return pending.future;
-  }
-
-  @override
-  Future<void> forget(String session) async => calls.add('forget');
-}
-
-class _OpeningReview extends ChangeReview {
-  _OpeningReview(String root) : super(_UnusedStore(root));
-
-  bool disposed = false;
-
-  @override
-  void dispose() {
-    disposed = true;
-    super.dispose();
-  }
-}
 
 /// Runs local Git (no network) on a project in a temporary folder, its
 /// snapshots in another.
@@ -312,129 +271,6 @@ void main() {
     ]);
   }, skip: !hasGit);
 
-  testWidgets(
-    'openAll isolates failed and hung folders and disposes late opens',
-    (tester) async {
-      final good = _OpeningReview('/good');
-      final late = _OpeningReview('/hung');
-      addTearDown(good.dispose);
-      final hang = Completer<ChangeReview?>();
-      final calls = <String>[];
-      final opening = ChangeReview.openAll(
-        ['/hung', '/throws', '/rejects', '/good', '/good'],
-        session: 'session-1',
-        openReview: (root, {session}) {
-          calls.add(root);
-          expect(session, 'session-1');
-          return switch (root) {
-            '/hung' => hang.future,
-            '/throws' => throw StateError('cannot open'),
-            '/rejects' => Future.error(StateError('cannot resume')),
-            _ => Future.value(good),
-          };
-        },
-      );
-      await tester.pump();
-      // All distinct roots open at once, even though the first is hung.
-      expect(calls, ['/hung', '/throws', '/rejects', '/good']);
-      await tester.pump(const Duration(seconds: 20));
-      expect(await opening, same(good));
-      expect(good.disposed, isFalse);
-
-      hang.complete(late);
-      await tester.pump();
-      expect(late.disposed, isTrue);
-    },
-  );
-
-  testWidgets('an abandoned review does not persist a late baseline', (
-    tester,
-  ) async {
-    final store = _DelayedStore();
-    final review = ChangeReview(store)..session = 'session-1';
-    addTearDown(review.dispose);
-    final beginning = review.begin();
-    await tester.pump();
-    expect(store.calls, ['snapshot']);
-
-    review.abandon('send wait expired');
-    store.pending.complete('late-tree');
-    await tester.pump();
-    await beginning;
-    expect(store.calls, ['snapshot']);
-    expect(review.changes, isEmpty);
-  });
-
-  testWidgets('openAll handles an error arriving after its timeout', (
-    tester,
-  ) async {
-    final hang = Completer<ChangeReview?>();
-    final opening = ChangeReview.openAll([
-      '/hung',
-    ], openReview: (root, {session}) => hang.future);
-    await tester.pump(const Duration(seconds: 20));
-    expect(await opening, isNull);
-    hang.completeError(StateError('late open failure'));
-    await tester.pump();
-    expect(tester.takeException(), isNull);
-  });
-
-  test(
-    'a workspace lists a change in an added folder, not only its own',
-    () async {
-      final added = p.join(p.dirname(root), 'added');
-      final addedCheckpoints = p.join(
-        p.dirname(checkpoints),
-        'added-checkpoints',
-      );
-      Directory(added).createSync();
-      File(p.join(added, 'note.txt')).writeAsStringSync('old\n');
-      final own = (await GitReviewStore.open(root, checkpoints: checkpoints))!;
-      final folder = (await GitReviewStore.open(
-        added,
-        checkpoints: addedCheckpoints,
-      ))!;
-      final review = WorkspaceChangeReview.of([
-        ChangeReview(own),
-        ChangeReview(folder),
-      ]);
-      addTearDown(review.dispose);
-
-      void timedOut() => fail('workspace review operation timed out');
-      Future<void> checked(Future<void> operation) =>
-          operation.timeout(const Duration(seconds: 30), onTimeout: timedOut);
-
-      review.session = 'workspace-session';
-      await checked(review.begin());
-      write('a.txt', 'one\n');
-      File(p.join(added, 'note.txt')).writeAsStringSync('new\n');
-      await checked(review.observe());
-
-      expect(
-        review.changes.map((change) => change.path),
-        unorderedEquals([path('a.txt'), p.join(added, 'note.txt')]),
-      );
-
-      await checked(review.undo([p.join(added, 'note.txt')]));
-      expect(review.changes.map((change) => change.path), [path('a.txt')]);
-      expect(File(p.join(added, 'note.txt')).readAsStringSync(), 'old\n');
-      expect(review.failure, isNull);
-
-      await checked(review.undoAll());
-      expect(read('a.txt'), '1\n2\n3\n4\n5\n');
-      expect(review.changes, isEmpty);
-
-      write('a.txt', 'kept\n');
-      await checked(review.observe());
-      await checked(review.keepAll());
-      expect(read('a.txt'), 'kept\n');
-      expect(review.changes, isEmpty);
-      await checked(review.discard());
-      expect(review.failure, isNull);
-    },
-    skip: !hasGit,
-  );
-
   test("leaves the project's own repository alone", () async {
     Future<String> git(List<String> arguments) async {
       final result = await Process.run(
@@ -459,4 +295,81 @@ void main() {
     expect(await git(['for-each-ref']), isEmpty);
     expect(await git(['stash', 'list']), isEmpty);
   }, skip: !hasGit);
+
+  test(
+    'looks into repositories inside the project, leaving them alone',
+    () async {
+      // A folder of projects opened as one, each its own repository; one in
+      // another.
+      write('web/pages/a.vue', 'one\n');
+      write('web/.gitignore', 'dist/\n');
+      write('web/vendor/lib/c.js', 'c\n');
+      Future<String> git(String repo, List<String> arguments) async {
+        final result = await Process.run(
+          'git',
+          arguments,
+          workingDirectory: path(repo),
+        );
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+        return '${result.stdout}';
+      }
+
+      for (final repo in ['web/vendor/lib', 'web']) {
+        await git(repo, ['init', '-q']);
+        await git(repo, ['add', '-A']);
+        await git(repo, [
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@t',
+          'commit',
+          '-qm',
+          'i',
+        ]);
+      }
+      final status = await git('web', ['status', '--porcelain']);
+
+      final review = await open();
+      await review.begin();
+      write('a.txt', 'one\n');
+      write('web/pages/a.vue', 'one\ntwo\n');
+      write('web/vendor/lib/c.js', 'see\n');
+      write('web/dist/out.js', 'built\n');
+      for (final file in ['a.txt', 'web/pages/a.vue', 'web/vendor/lib/c.js']) {
+        review.report(FileChange(path: path(file), added: 1, removed: 0));
+      }
+      // Only the files reported, then all.
+      await review.observe(full: false);
+      expect(review.failure, isNull);
+      expect(
+        changesOf(review).keys,
+        unorderedEquals(['a.txt', 'web/pages/a.vue', 'web/vendor/lib/c.js']),
+      );
+      await review.observe();
+      expect(review.failure, isNull);
+      final changes = changesOf(review);
+      expect(
+        changes.keys,
+        unorderedEquals(['a.txt', 'web/pages/a.vue', 'web/vendor/lib/c.js']),
+      );
+      expect(changes['web/pages/a.vue']!.tracked, isTrue);
+      expect(
+        (
+          changes['web/pages/a.vue']!.added,
+          changes['web/pages/a.vue']!.removed,
+        ),
+        (1, 0),
+      );
+      expect(await review.original(path('web/pages/a.vue'))!(), 'one\n');
+      expect(await review.original(path('web/vendor/lib/c.js'))!(), 'c\n');
+
+      await review.undo([path('web/pages/a.vue'), path('web/vendor/lib/c.js')]);
+      expect(read('web/pages/a.vue'), 'one\n');
+      expect(read('web/vendor/lib/c.js'), 'c\n');
+      expect(changesOf(review).keys, ['a.txt']);
+      File(path('web/dist/out.js')).deleteSync();
+      expect(await git('web', ['status', '--porcelain']), status);
+    },
+    skip: !hasGit,
+  );
 }

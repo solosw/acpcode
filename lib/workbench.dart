@@ -17,6 +17,7 @@ import 'chat/chat_session.dart' show ChatSession;
 import 'chat/composer/composer_files.dart' show ComposerFile;
 import 'chat/composer/composer_mock_data.dart' show Suggestion;
 import 'chat/composer/file_drop.dart';
+import 'chat/composer/file_mentions.dart';
 import 'chat/panels/interaction_panel.dart';
 import 'chat/side_panel/file_open.dart';
 import 'chat/side_panel/side_panel_controller.dart';
@@ -24,6 +25,7 @@ import 'chat/side_panel/side_panel_view.dart';
 import 'customize/customization_store.dart';
 import 'customize/customizations.dart';
 import 'customize/customize_view.dart';
+import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
 import 'ide/file_service.dart' show IdeFileService, IdeHostFiles, readFileBytes;
@@ -115,6 +117,7 @@ class Workbench extends StatefulWidget {
     required this.workspace,
     this.ideEditorBuilder,
     this.languagesFor,
+    this.themeExtensions,
     this.gitFor,
     this.repositoriesIn,
     this.terminalBackend,
@@ -147,6 +150,10 @@ class Workbench extends StatefulWidget {
   /// The language servers for the project at a root, when the IDE opens it;
   /// none when null.
   final LanguageFeatures Function(String root)? languagesFor;
+
+  /// The installed theme extensions, which the IDE's Extensions view lists
+  /// and installs; no Extensions view when null.
+  final ThemeExtensions? themeExtensions;
 
   /// The Git repository of the project at a root, when the IDE opens it;
   /// none when null.
@@ -544,6 +551,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Files dropped on the window where nothing in it takes them: opened
   /// as the `code` command opens them.
   bool _dropped(List<ComposerFile> files) {
+    // Theme extensions (.vsix) dropped on the IDE install there.
+    if (_showsIde &&
+        (_ide?.dropExtensions([for (final file in files) file.path]) ??
+            false)) {
+      return true;
+    }
     final opened = _windows?.dropped(_viewId, files) ?? false;
     // Opened as a project in the IDE: no agent's answer to wait for.
     if (opened && files.any((file) => file.directory)) {
@@ -967,6 +980,36 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Each project's files, for the palette: listed again as it opens.
   final Map<String, IdeFileIndex> _fileIndexes = {};
 
+  /// [project]'s files, for the palette and `@` alike: listed once, then
+  /// again as either opens.
+  IdeFileIndex _fileIndexOf(Project project) => _fileIndexes.putIfAbsent(
+    project.path,
+    () => IdeFileIndex(
+      ProjectHost.of(project.path).files(project.root),
+      project.root,
+      pathContext: ProjectHost.of(project.path).paths,
+    ),
+  )..roots = _workspace.workspaceOf(project)?.folders;
+
+  final Map<String, FileMentions> _fileMentions = {};
+
+  /// Where `@` in [project]'s conversations looks files up.
+  FileMentions _fileMentionsOf(Project project) {
+    final index = _fileIndexOf(project);
+    final mentions = _fileMentions[project.path];
+    if (mentions != null && identical(mentions.index, index)) return mentions;
+    final location = project.path;
+    final host = ProjectHost.of(location);
+    return _fileMentions[location] = FileMentions(
+      files: _projectFileServices[location] ??= host.files(
+        host.pathOf(location),
+      ),
+      paths: host.paths,
+      index: index,
+      home: project.host == null ? homeDirectory : null,
+    );
+  }
+
   /// The project the palette's files are of: the window's agent's, or the
   /// current agent's, else the first listed.
   Project? get _paletteProject =>
@@ -982,16 +1025,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     try {
       _closeDrawer();
       final project = _paletteProject;
-      final files = project == null
-          ? null
-          : (_fileIndexes.putIfAbsent(
-              project.path,
-              () => IdeFileIndex(
-                ProjectHost.of(project.path).files(project.root),
-                project.root,
-                pathContext: ProjectHost.of(project.path).paths,
-              ),
-            )..roots = _workspace.workspaceOf(project)?.folders);
+      final files = project == null ? null : _fileIndexOf(project);
       await showSearchPalette(
         context,
         agents: [
@@ -1768,11 +1802,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Asks where to save [doc] of [space] (Save As…, an untitled file's
   /// first save): where it is, or in the folder; noted among the recent.
   Future<String?> _askSavePath(IdeWorkspace space, IdeDocument doc) async {
+    // A remote project's folders are not this machine's, where the panel is.
+    final local = space.files is! IdeHostFiles;
     final path = await WindowControls.pickSaveFile(
-      directory: doc.isUntitled
+      directory: !local
+          ? null
+          : doc.isUntitled
           ? (space.hasFolder ? space.root : null)
           : p.dirname(doc.path),
-      name: doc.isUntitled ? doc.path : p.basename(doc.path),
+      name: doc.isUntitled
+          ? doc.path
+          : local
+          ? p.basename(doc.path)
+          : p.posix.basename(doc.path),
     );
     if (path != null) _workspace.addRecentFile(path);
     return path;
@@ -2018,6 +2060,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           child: IdeWorkbench(
             key: _ideKeys.putIfAbsent(path, GlobalKey.new),
             workspace: space,
+            themeExtensions: widget.themeExtensions,
             project: path == _noFolder
                 ? Project.at(space.root)
                 : _workspace.projectAt(path),
@@ -2064,7 +2107,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             commitMessage: (prompt, {cancel}) =>
                 ideClaudeCommitMessage(prompt, cancel: cancel, location: path),
             chat: shown
-                ? _conversation(_buildIdeChat(path))
+                ? _ideConversation(_buildIdeChat(path))
                 : const SizedBox.shrink(),
           ),
         ),
@@ -2099,12 +2142,20 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           // width), would each half cover the pixel there, and the material
           // would show through the seam.
           Expanded(
+            // The handle over the conversations' edge, its line alone
+            // beside them: nothing between a pane's color and the line.
             child: _conversation(
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+              Stack(
+                fit: StackFit.expand,
                 children: [
-                  if (_sidebarDocked) _buildResizeHandle(),
-                  Expanded(child: panes),
+                  Positioned.fill(left: _sidebarDocked ? 1 : 0, child: panes),
+                  if (_sidebarDocked)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: _buildResizeHandle(),
+                    ),
                 ],
               ),
             ),
@@ -2216,6 +2267,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   static Widget _conversation(Widget child) =>
       ColoredBox(color: AppColors.conversationSurface, child: child);
+
+  /// The IDE's chat: the editor's color, opaque, as the editor beside it.
+  static Widget _ideConversation(Widget child) =>
+      ColoredBox(color: AppColors.code, child: child);
 
   Widget _buildSidebar({VoidCallback? onOpened}) {
     // An agent's window shows what is picked or made here in its place;
@@ -2467,7 +2522,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 100),
             width: _dragging ? IdeModernUI.gap : 1,
-            color: _dragging ? IdeModernUI.sashHover : AppColors.border,
+            color: _dragging ? IdeModernUI.sashHover : AppColors.partBorder,
           ),
         ),
       ),
@@ -2784,6 +2839,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       },
       paneBuilder: (context, thread, place) =>
           _buildChat(showToggle: showToggle, pane: thread, place: place),
+      // Those not focused in the sidebar's color, set apart.
+      paneBackground: (thread) => identical(thread, _workspace.current)
+          ? null
+          : AppColors.unfocusedConversationSurface,
+      focused: _workspace.current,
       onLinesMoved: _workspace.keepGridLines,
     );
   }
@@ -2971,6 +3031,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           _ => null,
         },
         sessions: () => _mentionable(thread),
+        fileMentions: _fileMentionsOf(thread.project),
       ),
     );
     // The side panel's rail is over the top right pane alone.

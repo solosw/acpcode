@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 import 'package:bao_editor/monaco/vs/workbench/services/themes/common/color_theme_data.dart';
-import 'package:bao_editor/textmate/textmate_manifest.dart';
+import 'package:bao_editor/monaco/vs/workbench/services/themes/common/workbench_theme_service.dart';
+import 'package:bao_editor/textmate/textmate_manifest.dart' show textMateAssetRoot;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
 import 'package:bao_editor/textmate/textmate_worker.dart';
+import 'package:baocode/chat/user_message_style.dart';
 import 'package:baocode/ide/lsp/packs/language_packs.dart';
 import 'package:baocode/kernel/kernel_registry.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
@@ -22,8 +24,10 @@ import 'semantics_tree.dart';
 /// accessibility tree. Editors tokenize TextMate grammars in the test's
 /// isolate, on its fake clock. Each test reads assets afresh: the bundle
 /// caches futures, which answer in the zone of the test that made them.
-/// Each test starts in [testColorTheme], restored as the app
-/// restores a kept theme, without reading assets. The `code` command and
+/// Each test starts in [testColorTheme], from its data as the app keeps
+/// it, without reading assets, and with the user's
+/// messages [UserMessageStyle.sticky], which the chat's tests were written
+/// for, not the app's default. The `code` command and
 /// the context menu are stand-ins, never installed: none looks at the
 /// machine's own.
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
@@ -34,13 +38,12 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   final defaultTheme = await _defaultColorTheme();
   setUp(() {
     rootBundle.clear();
+    UserMessageStyle.current.value = UserMessageStyle.sticky;
     ShellCommand.debugInstaller = _NoShellCommand();
     ContextMenu.debugInstaller = _NoContextMenu();
-    WorkbenchThemeService.instance = WorkbenchThemeService()
-      ..restore(
-        setting: testColorTheme,
-        data: defaultTheme,
-      );
+    WorkbenchThemeService.instance = WorkbenchThemeService(
+      initial: ColorThemeData.fromStorageData(defaultTheme)!..isLoaded = true,
+    );
   });
   await testMain();
 }
@@ -74,19 +77,24 @@ class _NoContextMenu implements ContextMenuInstaller {
 }
 
 /// The theme tests start in: upstream's default dark theme, which their
-/// colors were written for, not the app's ([ThemeSettingDefaults]).
+/// colors were written for, not the app's ([ThemeSettingDefaults]). Not
+/// listed (the Bao themes include its file), so no setting picks it.
 const testColorTheme = 'Dark 2026';
 
 /// [testColorTheme]'s storage data, read from the assets on disk.
 Future<String> _defaultColorTheme() async {
   Future<String> read(String path) async =>
       File('$textMateAssetRoot/$path').readAsStringSync();
-  final manifest = await TextMateManifest.load(read);
-  final contribution = manifest.themeById(testColorTheme)!;
+  const path = 'themes/theme-defaults/themes/2026-dark.json';
   final theme = ColorThemeData.fromExtensionTheme(
-    contribution,
-    contribution.assetPath,
-    extensionId: contribution.extensionId,
+    const IThemeExtensionPoint(
+      id: testColorTheme,
+      label: testColorTheme,
+      path: path,
+      uiTheme: 'vs-dark',
+    ),
+    path,
+    extensionId: 'vscode.theme-defaults',
   );
   await theme.ensureLoaded(read);
   return theme.toStorage();

@@ -36,8 +36,7 @@ abstract final class AppColors {
 
   /// How much of the theme color covers the material. macOS's sidebar
   /// material is already a heavy frost (80%). Windows 11 acrylic is a
-  /// thinner blur, so the sidebar — and the IDE shell, which uses this
-  /// same tint — covers 96% of it.
+  /// thinner blur, so the sidebar covers 96% of it.
   static double get _sidebarTint => AppPlatform.isWindows11 ? 0.96 : 0.8;
 
   /// Denser than [_sidebarTint]: the conversation covers more of the material
@@ -58,6 +57,13 @@ abstract final class AppColors {
         : color;
   }
 
+  /// An unfocused conversation's, of several side by side, to tell them
+  /// apart: [background] (`sideBar.background`), over
+  /// [conversationSurface] as dense as that is over the material.
+  static Color get unfocusedConversationSurface => usesSystemMaterial
+      ? background.withValues(alpha: background.a * _conversationTint)
+      : background;
+
   /// `editorWidget.background`: cards and panels.
   static Color get surface => _colors['editorWidget.background'];
 
@@ -69,6 +75,53 @@ abstract final class AppColors {
 
   /// `panel.border`.
   static Color get border => _colors['panel.border'];
+
+  /// Between the window's parts, the IDE's line between its side bar, editor
+  /// and chat: `sideBar.border`, else the Modern UI's `surface.border`
+  /// (which every theme has). Sashes and dividers, not cards' outlines.
+  ///
+  /// Many themes' `surface.border` is no line without Modern UI's gaps:
+  /// transparent (Red, Kimbie Dark…) or a background's own color (Dark+).
+  /// Then the editor's foreground, faintly, as Cursor's strokes.
+  static Color get partBorder {
+    final line = _first(['sideBar.border', 'surface.border', 'panel.border']);
+    if (_stands(line, background) && _stands(line, code)) return line;
+    final foreground = _colors['editor.foreground'];
+    return foreground.withValues(alpha: foreground.a * 0.1);
+  }
+
+  /// The chat's message bubbles and its input: their own color
+  /// (`agentsChatInput.background`, over [code]) a step towards the
+  /// editor's text, so it stands out from them however far they are from
+  /// the page, tinged with [accent]; the input's when typed into, a step on
+  /// towards [accent].
+  static Color bubbleBorder({bool focused = false}) {
+    final line = Color.lerp(
+      _towardsText(bubbleFill, 0.12),
+      accent.withValues(alpha: 1),
+      0.03,
+    )!;
+    return focused ? Color.lerp(line, accent.withValues(alpha: 1), 0.2)! : line;
+  }
+
+  /// The chat's message bubbles and its input, typed into or not:
+  /// `agentsChatInput.background` over [code].
+  static Color get bubbleFill => _bubble;
+
+  static Color get _bubble =>
+      Color.alphaBlend(_colors['agentsChatInput.background'], code);
+
+  static Color _towardsText(Color color, double t) =>
+      Color.lerp(color, _colors['editor.foreground'].withValues(alpha: 1), t)!;
+
+  /// Whether [line] over [background] can be told from it.
+  static bool _stands(Color line, Color background) {
+    final over = Color.alphaBlend(line, background).computeLuminance();
+    final under = background.computeLuminance();
+    final (light, dark) = over > under ? (over, under) : (under, over);
+    // Contrast ratio: Light 2026's line on its side bar is 1.08.
+    return (light + 0.05) / (dark + 0.05) >= 1.05;
+  }
 
   /// `input.border`, else `dropdown.border`.
   static Color get borderStrong => _first(['input.border', 'dropdown.border']);
@@ -90,7 +143,8 @@ abstract final class AppColors {
 
   /// The theme's own `textLink.foreground`, else its `focusBorder`: links
   /// in the theme's color, not the registry's blue, in a theme that sets
-  /// none (Monokai, Quiet Light). The registry's link color in neither.
+  /// none (Kimbie Dark, Solarized Light). The registry's link color in
+  /// neither.
   static Color get accent {
     final colors = _colors;
     for (final id in const ['textLink.foreground', 'focusBorder']) {
@@ -267,7 +321,7 @@ ThemeData buildAppTheme() {
       brightness: brightness,
       surface: AppColors.surface,
     ),
-    dividerColor: AppColors.border,
+    dividerColor: AppColors.partBorder,
     visualDensity: VisualDensity.compact,
     textSelectionTheme: TextSelectionThemeData(
       selectionColor: AppColors.textSelection,
@@ -279,6 +333,9 @@ ThemeData buildAppTheme() {
       trackBorderColor: const WidgetStatePropertyAll(Colors.transparent),
       thickness: const WidgetStatePropertyAll(7),
       radius: const Radius.circular(4),
+      // Against the edge, as VS Code's (Material's desktop default is 2px
+      // in).
+      crossAxisMargin: 0,
       minThumbLength: 48,
     ),
   );

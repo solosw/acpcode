@@ -49,6 +49,7 @@ import '../../ide/ide_input.dart';
 import '../../ide/ide_list.dart';
 import '../../ide/ide_menu.dart';
 import '../../ide/ide_quick_input.dart' show IdeKeycap;
+import '../../chat/widgets/scroll_edge_fade.dart';
 import '../../keybindings/default_keybindings.dart';
 import '../../keybindings/key_chord.dart';
 
@@ -63,6 +64,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import '../jsonc_file.dart' show JsoncFileException;
 import 'settings_dropdown.dart';
+import 'settings_widgets.dart' show SettingsColors;
 
 /// A keymap [KeybindingsSettingsPage] offers.
 typedef KeymapChoice = ({String id, String name});
@@ -795,11 +797,11 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
         children: [
           // Room at the right for the dialog's close button.
           Padding(
-            padding: const EdgeInsets.fromLTRB(_inset, 20, 48, 0),
+            padding: const EdgeInsets.fromLTRB(_inset, 16, 48, 0),
             child: Text(
               context.l10n.settingsSectionKeyboard,
               style: TextStyle(
-                color: AppColors.textPrimary,
+                color: SettingsColors.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
@@ -852,7 +854,10 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
           children: [
             Text(
               l10n.kbKeymap,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              style: TextStyle(
+                color: SettingsColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
             const SizedBox(width: 8),
             SettingsDropdown(
@@ -923,7 +928,7 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: AppColors.textMuted,
+          color: SettingsColors.textSecondary,
           fontSize: 12,
           fontWeight: FontWeight.w600,
         ),
@@ -932,7 +937,7 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
     return Container(
       height: 26,
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.border)),
+        border: Border(bottom: BorderSide(color: AppColors.partBorder)),
       ),
       child: Row(
         children: [
@@ -965,23 +970,25 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
         padding: const EdgeInsets.all(_inset),
         child: Text(
           context.l10n.kbNoneFound,
-          style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          style: TextStyle(color: SettingsColors.textSecondary, fontSize: 12),
         ),
       );
     }
     return Focus(
       focusNode: _listFocus,
-      child: ListView.builder(
-        controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(
-          _inset - IdeListColors.inset,
-          4,
-          _inset - IdeListColors.inset,
-          12,
+      child: ScrollEdgeFade(
+        child: ListView.builder(
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(
+            _inset - IdeListColors.inset,
+            4,
+            _inset - IdeListColors.inset,
+            12,
+          ),
+          itemExtent: KeybindingsSettingsPage.rowHeight,
+          itemCount: _shown.length,
+          itemBuilder: (context, index) => _rowAt(index, columns),
         ),
-        itemExtent: KeybindingsSettingsPage.rowHeight,
-        itemCount: _shown.length,
-        itemBuilder: (context, index) => _rowAt(index, columns),
       ),
     );
   }
@@ -1244,12 +1251,12 @@ class _NotSupportedTag extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 5),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppColors.partBorder),
       ),
       child: Text(
         context.l10n.kbNotSupported,
         style: TextStyle(
-          color: AppColors.textMuted,
+          color: SettingsColors.textSecondary,
           fontSize: 10.5,
           height: 15 / 10.5,
         ),
@@ -1412,7 +1419,8 @@ class _DefineKeybindingDialogState extends State<DefineKeybindingDialog> {
               color: colors['editorWidget.background'],
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: colors.get('editorWidget.border') ?? AppColors.border,
+                color:
+                    colors.get('editorWidget.border') ?? AppColors.partBorder,
               ),
               boxShadow: [
                 BoxShadow(
