@@ -171,7 +171,8 @@ class MockAcpTransport implements AcpTransport {
           },
         });
       case 'session/cancel':
-        _respond(id, {});
+        // A notification has no response of its own.
+        return;
       case 'session/set_mode':
         _respond(id, {});
     }

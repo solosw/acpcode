@@ -26,6 +26,7 @@ class AcpKernel
   final KernelDescriptor descriptor;
   final KernelContext _context;
   final AcpTransportFactory _transportFactory;
+
   /// Local session index for this agent; null in tests that omit it.
   final AcpCatalog? _catalog;
   AcpTransport? _transport;
@@ -48,6 +49,7 @@ class AcpKernel
   bool _initialized = false;
   bool _starting = false;
   bool _disposed = false;
+  bool _cancelling = false;
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
   final Map<String, String> _messages = {};
   final Set<String> _todoToolIds = {};
@@ -195,6 +197,7 @@ class AcpKernel
       await _ensureSession();
       final sessionId = _sessionId!;
       _turnId = turn.id;
+      _cancelling = false;
       _turnStarted = DateTime.now();
       _turnCount++;
       _closeAssistantStream();
@@ -300,15 +303,47 @@ class AcpKernel
   @override
   void cancel() {
     final sessionId = _sessionId;
-    if (sessionId == null) return;
-    unawaited(
-      _request('session/cancel', {'sessionId': sessionId}).then((_) {}),
-    );
+    if (_disposed || sessionId == null) return;
+    if (_turnId == null && _permissionRpcIds.isEmpty) return;
+    _cancelling = true;
+    try {
+      // ACP cancellation is a notification, not a request. SDK-based
+      // agents dispatch it only without an id; no cancel response is due.
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'method': 'session/cancel',
+        'params': {'sessionId': sessionId},
+      });
+      // Unblock every permission the agent is awaiting. The original
+      // session/prompt response, not this notification, ends the turn.
+      for (final requestId in _permissionRpcIds.keys.toList()) {
+        final rpcId = _permissionRpcIds.remove(requestId)!;
+        _permissionOptions.remove(requestId);
+        _permissionKinds.remove(requestId);
+        _commandInteractionIds.remove(requestId);
+        _replyCancelled(rpcId);
+        emit(InteractionResolved(nextSeq, requestId));
+      }
+    } on Object catch (error) {
+      _fail(error);
+    }
+  }
+
+  void _replyCancelled(Object rpcId) {
+    _transport?.write({
+      'jsonrpc': '2.0',
+      'id': rpcId,
+      'result': {
+        'outcome': {'outcome': 'cancelled'},
+      },
+    });
   }
 
   @override
   void answer(String requestId, InteractionAnswer answer) {
-    final rpcId = _permissionRpcIds.remove(requestId) ?? requestId;
+    final rpcId = _permissionRpcIds.remove(requestId);
+    // The user may answer just as cancellation resolves the request.
+    if (rpcId == null) return;
     final optionId = _permissionOptionId(requestId, answer);
     _permissionOptions.remove(requestId);
     _permissionKinds.remove(requestId);
@@ -441,6 +476,12 @@ class AcpKernel
         'id': rpcId,
         'error': {'code': -32601, 'message': 'method not found: $method'},
       });
+      return;
+    }
+    // A permission can race with session/cancel. Until prompt completes,
+    // it must be cancelled as well, without opening another interaction.
+    if (_cancelling) {
+      _replyCancelled(rpcId);
       return;
     }
     final toolCall =
@@ -901,6 +942,7 @@ class AcpKernel
     emit(TurnEnded(nextSeq, turn, interrupted: interrupted, worked: worked));
     _turnId = null;
     _turnStarted = null;
+    _cancelling = false;
     _closeAssistantStream();
   }
 
@@ -925,6 +967,7 @@ class AcpKernel
     _initialized = false;
     _starting = false;
     _turnCount = 0;
+    _cancelling = false;
     _closeAssistantStream();
     _messages.clear();
     _todoToolIds.clear();
