@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../remote/remote_location.dart';
 import '../chat_models.dart';
 import 'change_review.dart';
 
@@ -25,15 +26,19 @@ class ChangeReviews extends ChangeNotifier {
     required Future<ChangeReview?> Function(String root, {String? session})
     open,
     String? session,
+    p.Context? paths,
   }) async {
+    final context =
+        paths ??
+        (roots.isEmpty ? p.context : RemoteLocation.pathsOf(roots.first));
     final distinct = <String>[];
     for (final root in roots) {
-      if (distinct.any((other) => p.equals(other, root))) continue;
+      if (distinct.any((other) => context.equals(other, root))) continue;
       distinct.add(root);
     }
     final outermost = [
       for (final root in distinct)
-        if (!distinct.any((other) => p.isWithin(other, root))) root,
+        if (!distinct.any((other) => context.isWithin(other, root))) root,
     ];
     final opened = await Future.wait([
       for (final root in outermost)
@@ -48,6 +53,8 @@ class ChangeReviews extends ChangeNotifier {
 
   /// The first folder's (the agent's directory, where it has one).
   String get root => _parts.first.root;
+
+  p.Context get paths => _parts.first.paths;
 
   List<FileChange> get changes => [for (final part in _parts) ...part.changes];
 
@@ -121,12 +128,13 @@ class ChangeReviews extends ChangeNotifier {
 
   /// [path] absolute: one relative is the agent's directory's.
   String _absolute(String path) =>
-      p.isAbsolute(path) ? path : p.join(root, path);
+      paths.isAbsolute(path) ? path : paths.join(root, path);
 
   ChangeReview _partOf(String path) {
     final absolute = _absolute(path);
     for (final part in _parts) {
-      if (p.equals(part.root, absolute) || p.isWithin(part.root, absolute)) {
+      if (part.paths.equals(part.root, absolute) ||
+          part.paths.isWithin(part.root, absolute)) {
         return part;
       }
     }

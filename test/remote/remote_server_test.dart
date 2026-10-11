@@ -13,6 +13,8 @@ import 'package:bao_remote/local.dart'
 import 'package:bao_remote/lsp.dart';
 import 'package:bao_remote/search.dart';
 import 'package:bao_remote/server.dart' show ServerClaude;
+import 'package:baocode/chat/review/change_review.dart';
+import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -504,6 +506,45 @@ printf '%s\n' "$line"
         isTrue,
       );
     });
+
+    test(
+      'reviewed files open through the remote client, also after resume',
+      () async {
+        final path = at('lib/main.dart');
+        File(path)
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync('before\n');
+        final store = (await client().openReview(root))!;
+        final review = ChangeReview(store);
+        addTearDown(review.dispose);
+        expect(review.paths, same(p.posix));
+        await review.begin();
+        review.session = 'remote-review';
+        File(path).writeAsStringSync('after\n');
+        await review.observe();
+
+        Future<void> check(ChangeReview review) async {
+          final change = review.changes.single;
+          final request = FileOpenRequest(
+            change.path,
+            diff: true,
+            original: review.original(change.path),
+          );
+          expect(request.path, path);
+          expect(await client().read(root, request.path), 'after\n');
+          expect(await request.original!(), 'before\n');
+        }
+
+        await check(review);
+        final resumed = await ChangeReview.resume(store, 'remote-review');
+        addTearDown(resumed.dispose);
+        expect(resumed.paths, same(p.posix));
+        await check(resumed);
+        await resumed.undo([path]);
+        expect(await client().read(root, path), 'before\n');
+        expect(resumed.changes, isEmpty);
+      },
+    );
 
     test('no store for a folder that is not there', () async {
       expect(await client().openReview(at('missing')), isNull);

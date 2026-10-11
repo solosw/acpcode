@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:bao_remote/client.dart' show RemoteReviewStore;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
@@ -59,7 +60,12 @@ class _Entry {
 /// Kept, a change is only no longer listed: nothing is written, staged or
 /// committed. Undone, the file is put back.
 class ChangeReview extends ChangeNotifier {
-  ChangeReview(this._store);
+  ChangeReview(this._store, {p.Context? paths})
+    : paths = paths ?? (_store is RemoteReviewStore ? p.posix : p.context);
+
+  /// How the project's host spells paths, not the machine showing the
+  /// review. Remote stores are on Linux or macOS, even on a Windows client.
+  final p.Context paths;
 
   /// The review of the project at [root], continuing what [session] left;
   /// null where there can be none (see [openReviewStore]).
@@ -71,8 +77,12 @@ class ChangeReview extends ChangeNotifier {
   }
 
   /// The review over [store], with the changes [session] left pending.
-  static Future<ChangeReview> resume(ReviewStore store, String session) async {
-    final review = ChangeReview(store);
+  static Future<ChangeReview> resume(
+    ReviewStore store,
+    String session, {
+    p.Context? paths,
+  }) async {
+    final review = ChangeReview(store, paths: paths);
     await review._load(session);
     return review;
   }
@@ -458,12 +468,12 @@ class ChangeReview extends ChangeNotifier {
   /// `/`; null outside it.
   String? _relative(String path) {
     final absolute = _absolute(path);
-    if (!p.isWithin(root, absolute)) return null;
-    return p.split(p.relative(absolute, from: root)).join('/');
+    if (!paths.isWithin(root, absolute)) return null;
+    return paths.split(paths.relative(absolute, from: root)).join('/');
   }
 
-  String _absolute(String path) => p.normalize(
-    p.isAbsolute(path) ? path : p.joinAll([root, ...path.split('/')]),
+  String _absolute(String path) => paths.normalize(
+    paths.isAbsolute(path) ? path : paths.joinAll([root, ...path.split('/')]),
   );
 
   /// Drops what it kept between runs, once what is under way is done: the
