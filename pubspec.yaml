@@ -89,6 +89,9 @@ flutter:
     # Icons of the chat's own, not in Material's or the codicons (each says
     # where it is from).
     - assets/icons/
+    # Models' and their makers' logos, in one color (lib/icons/brand_logos.dart;
+    # each says where it is from).
+    - assets/model_icons/
     # The app's icon (macos/Runner/Assets.xcassets' 128 px one), for About.
     - assets/branding/
     # Built-in keymaps: VS Code keymap extensions' keybindings (lib/keybindings/keymap.dart).

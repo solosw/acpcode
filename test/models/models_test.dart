@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/kernel/claude_code/claude_environment.dart';
+import 'package:baocode/icons/project_icon.dart';
 import 'package:baocode/models/launch_environment.dart';
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/model_providers.dart';
@@ -55,12 +56,22 @@ void main() {
         promptCacheKey: false,
         env: {'A': '1'},
         clientVersion: '0.170.0',
+        icon: BrandIcon('deepseek'),
       );
       final back = ModelProvider.fromJson(provider.toJson())!;
       expect(back.toJson(), provider.toJson());
       expect(back.models.single, provider.models.single);
       expect(back.roles, provider.roles);
       expect(back.clientVersion, '0.170.0');
+      expect(back.icon, const BrandIcon('deepseek'));
+      // A logo this version does not have is none.
+      expect(
+        ModelProvider.fromJson({
+          'id': 'p',
+          'icon': {'type': 'brand', 'name': 'nobody'},
+        })!.icon,
+        isNull,
+      );
     });
 
     test('a Codex version that is not one is read as none', () {
@@ -499,6 +510,8 @@ void main() {
         'ANTHROPIC_DEFAULT_SONNET_MODEL': 'big',
         'ANTHROPIC_DEFAULT_HAIKU_MODEL': 'small',
         'CLAUDE_CODE_SUBAGENT_MODEL': 'sub',
+        // Over what a subagent's definition or the agent's call names.
+        'CLAUDE_CODE_SUBAGENT_MODEL_FORCE': '1',
         'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT': '1',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
         'API_TIMEOUT_MS': '600000',
@@ -518,6 +531,7 @@ void main() {
       expect(env['ANTHROPIC_API_KEY'], 'sk-ant');
       expect(env['ANTHROPIC_AUTH_TOKEN'], '');
       expect(env.containsKey('CLAUDE_CODE_SUBAGENT_MODEL'), isFalse);
+      expect(env.containsKey('CLAUDE_CODE_SUBAGENT_MODEL_FORCE'), isFalse);
     });
 
     test('an OpenAI upstream goes through the proxy, never through the '

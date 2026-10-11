@@ -44,6 +44,24 @@ class ComposerDraft extends ChangeNotifier {
     return files;
   }
 
+  /// A message to put back in, to be edited (a queued one taken back),
+  /// taken by the composer that shows the draft, or by the next to.
+  ({String text, List<ImageAttachment> images})? get pendingMessage =>
+      _pendingMessage;
+  ({String text, List<ImageAttachment> images})? _pendingMessage;
+
+  void restore(String text, List<ImageAttachment> images) {
+    _pendingMessage = (text: text, images: images);
+    notifyListeners();
+  }
+
+  /// [pendingMessage], no longer pending.
+  ({String text, List<ImageAttachment> images})? takeMessage() {
+    final message = _pendingMessage;
+    _pendingMessage = null;
+    return message;
+  }
+
   void save(
     Delta content,
     TextSelection selection,

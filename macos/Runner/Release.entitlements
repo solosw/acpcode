@@ -6,5 +6,10 @@
 	     its sessions in ~/.claude, which a sandboxed app cannot. -->
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<!-- Signed for release the app has the hardened runtime, which blocks
+	     Apple Events, its children's too, unless this is on; see
+	     NSAppleEventsUsageDescription in Info.plist. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

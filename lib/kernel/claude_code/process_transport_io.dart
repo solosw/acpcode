@@ -11,7 +11,7 @@ import '../../platform/child_process_registry.dart';
 import 'claude_code_transport.dart';
 import 'claude_environment.dart';
 import 'claude_settings_file.dart';
-import 'cli_locator.dart';
+import 'local_claude_io.dart';
 
 /// Claude Code as a child process, over its stdin and stdout.
 class ProcessTransport implements ClaudeCodeTransport {
@@ -86,7 +86,7 @@ class ProcessTransport implements ClaudeCodeTransport {
     // Left over from a run that ended without stopping them: gone first, so
     // two processes never go on with one session.
     await registry.reaped;
-    final cli = await CliLocator.locate();
+    final cli = await LocalClaude.locate();
     if (!Directory(launch.cwd).existsSync()) {
       throw ClaudeUnavailable('The project folder is gone: ${launch.cwd}');
     }
@@ -130,9 +130,6 @@ class ProcessTransport implements ClaudeCodeTransport {
       return ProcessTransport._(process, executable: cli.executable);
     } on ProcessException catch (error) {
       if (settingsFile != null) await ClaudeSettingsFile.delete(settingsFile);
-      // Found again on a retry: the user may have mended it, or removed it
-      // for another.
-      CliLocator.forget();
       // Which file: Windows' own words for it leave `%1` in its place.
       throw ClaudeUnavailable(
         'Claude Code could not start',
@@ -140,6 +137,10 @@ class ProcessTransport implements ClaudeCodeTransport {
       );
     }
   }
+
+  /// See [LocalClaude.rejectTooOld].
+  static Future<bool> rejectTooOld(String executable) =>
+      LocalClaude.rejectTooOld(executable);
 
   /// [ClaudeEnvironment.essentialTrafficVariable], if the CLI runs with it
   /// set: it then sends no request for the plan usage.

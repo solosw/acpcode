@@ -94,6 +94,36 @@ void main() {
       );
     });
 
+    test('what the user may not read or write fails as such', () async {
+      Directory(at('locked')).createSync();
+      File(at('secret.txt')).writeAsStringSync('no');
+      Process.runSync('chmod', ['000', at('locked'), at('secret.txt')]);
+      addTearDown(
+        () => Process.runSync('chmod', ['755', at('locked'), at('secret.txt')]),
+      );
+      // Root reads anything: nothing to test.
+      try {
+        Directory(at('locked')).listSync();
+        return;
+      } on FileSystemException {
+        // Refused, as it is to the user.
+      }
+      await expectLater(
+        client().list(root, at('locked')),
+        throwsA(
+          isA<IdeFileAccessDeniedException>().having(
+            (e) => e.path,
+            'path',
+            endsWith('locked'),
+          ),
+        ),
+      );
+      await expectLater(
+        client().read(root, at('secret.txt')),
+        throwsA(isA<IdeFileAccessDeniedException>()),
+      );
+    });
+
     test('bytes written to a new file, never over one', () async {
       final bytes = List.generate(300000, (i) => i % 256);
       await client().writeBytes(root, at('shot.png'), bytes);

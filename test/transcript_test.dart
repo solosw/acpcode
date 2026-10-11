@@ -186,6 +186,90 @@ void main() {
     expect(describe(transcript), startsWith('text:one\ntext:TWO\n'));
   });
 
+  test('a queued message waits apart, and joins the conversation after all '
+      'before it once taken up', () {
+    final transcript = Transcript()
+      ..apply(const ItemUpserted(1, 'u1', UserMessageItem(text: 'one')))
+      ..apply(
+        const ItemUpserted(2, 'u2', UserMessageItem(text: 'two', queued: true)),
+      )
+      ..apply(
+        const ItemUpserted(
+          3,
+          'u3',
+          UserMessageItem(text: 'three', queued: true),
+        ),
+      )
+      ..apply(const ItemUpserted(4, 'a', AssistantTextItem('answer')));
+    expect(transcript.length, 2);
+    expect([for (final (id, _) in transcript.queued) id], ['u2', 'u3']);
+
+    expect(transcript.apply(const ItemRemoved(5, 'u3')), isTrue);
+    transcript.apply(const ItemUpserted(6, 'u2', UserMessageItem(text: 'two')));
+    expect(transcript.queued, isEmpty);
+    expect(transcript.indexOf('u2'), 2);
+    expect(describe(transcript), startsWith('user:one\ntext:answer\nuser:two'));
+  });
+
+  test('explicit insertion preserves item indexes and subsequent updates', () {
+    final transcript = Transcript()
+      ..apply(const ItemUpserted(1, 'u', UserMessageItem(text: 'question')))
+      ..apply(const ItemUpserted(2, 'tool', AssistantTextItem('tool result')))
+      ..apply(
+        const ItemUpserted(
+          3,
+          'reply',
+          AssistantTextItem('before tool'),
+          before: 'tool',
+        ),
+      );
+    expect(transcript.liveItems.map((entry) => entry.$1), [
+      'u',
+      'reply',
+      'tool',
+    ]);
+    expect(transcript.indexOf('reply'), 1);
+    expect(transcript.indexOf('tool'), 2);
+    transcript.apply(
+      const ItemUpserted(4, 'tool', AssistantTextItem('updated tool result')),
+    );
+    expect(
+      (transcript.itemAt(2) as AssistantTextItem).text,
+      'updated tool result',
+    );
+  });
+
+  test('a queued item honors explicit placement only when taken up', () {
+    final transcript = Transcript()
+      ..apply(const ItemUpserted(1, 'u', UserMessageItem(text: 'question')))
+      ..apply(const ItemUpserted(2, 'reply', AssistantTextItem('answer')))
+      ..apply(
+        const ItemUpserted(
+          3,
+          'queued',
+          UserMessageItem(text: 'next', queued: true),
+          before: 'reply',
+        ),
+      );
+    expect(transcript.liveItems.map((entry) => entry.$1), ['u', 'reply']);
+    expect(transcript.queued.single.$1, 'queued');
+    transcript.apply(
+      const ItemUpserted(
+        4,
+        'queued',
+        UserMessageItem(text: 'next'),
+        before: 'reply',
+      ),
+    );
+    expect(transcript.queued, isEmpty);
+    expect(transcript.liveItems.map((entry) => entry.$1), [
+      'u',
+      'queued',
+      'reply',
+    ]);
+    expect(transcript.indexOf('reply'), 2);
+  });
+
   test('a turn done is timed on its message; a stopped one is not', () {
     const worked = Duration(minutes: 4, seconds: 32);
     Duration? workedOn(Transcript transcript) =>

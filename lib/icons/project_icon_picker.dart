@@ -18,29 +18,65 @@ import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
+import 'brand_logos.dart';
 import 'emoji_catalog.dart';
 import 'emoji_sheet.dart';
 import 'icon_library.dart';
 import 'project_icon.dart';
 import 'project_icon_view.dart';
+import 'site_icon.dart';
 
-enum IconPickerTab { emoji, icons, custom }
+enum IconPickerTab { emoji, icons, brands, custom }
 
-/// A project's icon picker, as Notion's: emoji, VS Code's icons in a theme
-/// color, and pictures the user uploads. Floats under what opened it, in
-/// an overlay entry of its own (not an OverlayPortal under the sidebar's
+/// What an icon is picked for: a project, an upstream of models.
+class IconPickerTarget {
+  const IconPickerTarget({
+    required this.icon,
+    required this.setIcon,
+    this.changes,
+    this.site,
+    this.brands = false,
+  });
+
+  /// [project]'s, kept by [workspace].
+  factory IconPickerTarget.project(Workspace workspace, Project project) =>
+      IconPickerTarget(
+        icon: () => workspace.iconOf(project),
+        setIcon: (icon) => workspace.setIcon(project, icon, remember: false),
+      );
+
+  /// Its icon now; null for none.
+  final ProjectIcon? Function() icon;
+
+  /// Gives it an icon, or none (null).
+  final ValueChanged<ProjectIcon?> setIcon;
+
+  /// Tells of its icon changing, other than the workspace.
+  final Listenable? changes;
+
+  /// A site whose icon it may take (an upstream's base URL).
+  final Uri? site;
+
+  /// Offers the logos of models' makers ([BrandLogos]), first.
+  final bool brands;
+}
+
+/// The icon picker, as Notion's: emoji, VS Code's icons in a theme color,
+/// models' makers' logos (for an upstream of models), and pictures the
+/// user uploads (or a site's icon). Floats under what opened it, in an
+/// overlay entry of its own (not an OverlayPortal under the sidebar's
 /// menus, which the desktop semantics bridge does not take).
 class ProjectIconPicker extends StatefulWidget {
   const ProjectIconPicker({
     super.key,
     required this.workspace,
-    required this.project,
+    required this.target,
     required this.onClose,
     this.onDisposed,
   });
 
   final Workspace workspace;
-  final Project project;
+  final IconPickerTarget target;
   final VoidCallback onClose;
 
   /// Gone: closed, or its overlay with the app.
@@ -64,11 +100,17 @@ class ProjectIconPicker extends StatefulWidget {
       WindowControls.readPasteboardFiles;
 
   static OverlayEntry? _entry;
-  static Project? _shownFor;
+  static Object? _shownFor;
   static final Object _owner = Object();
 
   /// The project whose picker shows; null when none does.
-  static Project? get shownFor => _shownFor;
+  static Project? get shownFor => switch (_shownFor) {
+    final Project project => project,
+    _ => null,
+  };
+
+  /// Whether the picker of [of] (see [toggleFor]) shows.
+  static bool showsFor(Object of) => _shownFor == of;
 
   /// Shows [project]'s picker under [anchor] (global), or closes it when it
   /// shows already.
@@ -77,8 +119,24 @@ class ProjectIconPicker extends StatefulWidget {
     required Workspace workspace,
     required Project project,
     required Rect anchor,
+  }) => toggleFor(
+    context,
+    workspace: workspace,
+    target: IconPickerTarget.project(workspace, project),
+    of: project,
+    anchor: anchor,
+  );
+
+  /// Shows [target]'s picker under [anchor] (global), or closes it when
+  /// the picker of [of] (what [target] is) shows already.
+  static void toggleFor(
+    BuildContext context, {
+    required Workspace workspace,
+    required IconPickerTarget target,
+    required Object of,
+    required Rect anchor,
   }) {
-    if (_shownFor == project) return close();
+    if (_shownFor == of) return close();
     close();
     final overlay = Overlay.of(context);
     late final OverlayEntry entry;
@@ -98,14 +156,14 @@ class ProjectIconPicker extends StatefulWidget {
           onTapOutside: (_) => close(),
           child: ProjectIconPicker(
             workspace: workspace,
-            project: project,
+            target: target,
             onClose: close,
             onDisposed: gone,
           ),
         ),
       ),
     );
-    _shownFor = project;
+    _shownFor = of;
     overlay.insert(entry);
     FloatingRegistry.openPopover(_owner, close);
   }
@@ -203,13 +261,17 @@ class _Below extends SingleChildLayoutDelegate {
       oldDelegate.anchor != anchor || oldDelegate.top != top;
 }
 
-/// One choice of the grid: [icon], or uploading one when null.
+/// What a cell without an icon does.
+enum _Action { upload, site }
+
+/// One choice of the grid: [icon], or [action] when null.
 @immutable
 class _Cell {
-  const _Cell(this.icon, this.label);
+  const _Cell(this.icon, this.label, [this.action = _Action.upload]);
 
   final ProjectIcon? icon;
   final String label;
+  final _Action action;
 }
 
 class _Section {
@@ -243,12 +305,16 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
 
   bool _dropping = false;
   bool _uploading = false;
+
+  /// Its site's icon is being fetched.
+  bool _fetching = false;
   String? _error;
 
   /// A right click on an uploaded picture: where, and which.
   ({Offset at, IconImage image})? _menu;
 
   Workspace get _workspace => widget.workspace;
+  IconPickerTarget get _target => widget.target;
   IconLibrary get _library => _workspace.icons;
 
   static final List<_Codicon> _codicons = () {
@@ -268,16 +334,20 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
   @override
   void initState() {
     super.initState();
-    if (_workspace.iconOf(widget.project) case final CodiconIcon icon) {
+    final current = _target.icon();
+    if (current case final CodiconIcon icon) {
       _tab = IconPickerTab.icons;
       _color = icon.color;
-    } else if (_workspace.iconOf(widget.project) is LibraryIcon) {
+    } else if (current is LibraryIcon) {
       _tab = IconPickerTab.custom;
+    } else if (_target.brands && current is! EmojiIcon) {
+      _tab = IconPickerTab.brands;
     } else if (EmojiSheet.loaded.value == null) {
       _tab = IconPickerTab.icons;
     }
     _query.addListener(_queryChanged);
     _workspace.addListener(_changed);
+    _target.changes?.addListener(_changed);
     EmojiSheet.loaded.addListener(_changed);
     EmojiSheet.fetched.addListener(_changed);
     EmojiSheet.style.addListener(_changed);
@@ -304,6 +374,7 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
   void dispose() {
     widget.onDisposed?.call();
     _workspace.removeListener(_changed);
+    _target.changes?.removeListener(_changed);
     EmojiSheet.loaded.removeListener(_changed);
     EmojiSheet.fetched.removeListener(_changed);
     EmojiSheet.style.removeListener(_changed);
@@ -345,6 +416,7 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
     _sections = switch (_tab) {
       IconPickerTab.emoji => _emojiSections(l10n, query),
       IconPickerTab.icons => _iconSections(l10n, query),
+      IconPickerTab.brands => _brandSections(l10n, query),
       IconPickerTab.custom => _customSections(l10n, query),
     };
     _cells = [for (final section in _sections) ...section.cells];
@@ -422,6 +494,22 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
     ];
   }
 
+  List<_Section> _brandSections(AppLocalizations l10n, String query) {
+    final cells = [
+      for (final MapEntry(key: name, value: label) in BrandLogos.names.entries)
+        if (name.contains(query) || label.toLowerCase().contains(query))
+          _Cell(BrandIcon(name), label),
+    ];
+    if (query.isNotEmpty) return [_Section(null, cells)];
+    final recent = _recent<BrandIcon>(
+      (icon) => BrandLogos.names[icon.name] ?? icon.name,
+    );
+    return [
+      if (recent.isNotEmpty) _Section(l10n.iconPickerRecent, recent),
+      _Section(l10n.iconPickerBrands, cells),
+    ];
+  }
+
   List<_Section> _customSections(AppLocalizations l10n, String query) {
     final images = [
       for (final image in _library.images)
@@ -432,6 +520,8 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
     return [
       _Section(l10n.iconPickerUploaded, [
         _Cell(null, l10n.iconPickerUpload),
+        if (_target.site != null)
+          _Cell(null, l10n.iconPickerSiteIcon, _Action.site),
         ...images,
       ]),
     ];
@@ -442,15 +532,24 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
   void _pick(_Cell cell) {
     final icon = cell.icon;
     if (icon == null) {
-      unawaited(_uploadPicked());
+      unawaited(switch (cell.action) {
+        _Action.upload => _uploadPicked(),
+        _Action.site => _fetchSiteIcon(),
+      });
       return;
     }
-    _workspace.setIcon(widget.project, icon);
+    _set(icon);
     widget.onClose();
   }
 
+  /// Gives the target [icon]; [remember] notes it among the recent ones.
+  void _set(ProjectIcon? icon, {bool remember = true}) {
+    _target.setIcon(icon);
+    if (remember && icon != null) _workspace.rememberIcon(icon);
+  }
+
   void _remove() {
-    _workspace.setIcon(widget.project, null);
+    _set(null);
     widget.onClose();
   }
 
@@ -465,10 +564,35 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
     ];
     if (cells.isEmpty) return;
     final cell = cells[math.Random().nextInt(cells.length)];
-    _workspace.setIcon(widget.project, cell.icon, remember: false);
+    _set(cell.icon, remember: false);
   }
 
   // --- Uploading -----------------------------------------------------------
+
+  /// The target's site's icon, into the library: the target takes it and
+  /// the picker closes, or it says none was found.
+  Future<void> _fetchSiteIcon() async {
+    final site = _target.site;
+    if (site == null || _fetching) return;
+    setState(() {
+      _fetching = true;
+      _error = null;
+    });
+    final image = await fetchSiteIcon(
+      site,
+      (bytes) => _library.add(bytes, name: site.host),
+    );
+    if (!mounted) return;
+    if (image != null) {
+      _set(LibraryIcon(image.id));
+      widget.onClose();
+      return;
+    }
+    setState(() {
+      _fetching = false;
+      _error = context.l10n.iconPickerSiteIconNone(site.host);
+    });
+  }
 
   Future<void> _uploadPicked() async {
     final files = await ProjectIconPicker.pickFiles();
@@ -497,7 +621,7 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
     }
     if (!mounted) return;
     if (first != null) {
-      _workspace.setIcon(widget.project, LibraryIcon(first.id));
+      _set(LibraryIcon(first.id));
       widget.onClose();
       return;
     }
@@ -684,7 +808,7 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final colors = themeColors;
-    final current = _workspace.iconOf(widget.project);
+    final current = _target.icon();
     final panel = Container(
       width: ProjectIconPicker.width,
       decoration: BoxDecoration(
@@ -756,6 +880,8 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
                   if (EmojiSheet.loaded.value != null)
                     tab(IconPickerTab.emoji, l10n.iconPickerEmoji),
                   tab(IconPickerTab.icons, l10n.iconPickerIcons),
+                  if (_target.brands)
+                    tab(IconPickerTab.brands, l10n.iconPickerBrands),
                   tab(IconPickerTab.custom, l10n.iconPickerCustom),
                 ],
               ),
@@ -953,7 +1079,7 @@ class _ProjectIconPickerState extends State<ProjectIconPicker>
               ),
             );
           }
-          if (_uploading) {
+          if (_uploading || _fetching) {
             return const Align(
               alignment: Alignment.centerLeft,
               child: SizedBox.square(
@@ -1111,7 +1237,11 @@ class _CellView extends StatelessWidget {
   Widget build(BuildContext context) {
     final icon = cell.icon;
     final glyph = switch (icon) {
-      null => Icon(Icons.add_rounded, size: 20, color: AppColors.textMuted),
+      null => Icon(
+        cell.action == _Action.site ? Icons.public_rounded : Icons.add_rounded,
+        size: 20,
+        color: AppColors.textMuted,
+      ),
       _ => ProjectIconView(
         icon: icon,
         library: library,

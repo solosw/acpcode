@@ -10,6 +10,8 @@ import 'package:flutter/foundation.dart';
 
 import 'package:bao_editor/monaco/flutter/editor_keybindings.dart';
 
+import '../ide/explorer_history.dart'
+    show explorerRedoCommandId, explorerUndoCommandId;
 import 'chat_keybindings.dart';
 import 'key_chord.dart';
 
@@ -27,6 +29,10 @@ const openKeybindingsCommandId = 'workbench.action.openGlobalKeybindings';
 /// Shell Command: Install / Uninstall the `code` command in PATH.
 const installShellCommandId = 'workbench.action.installCommandLine';
 const uninstallShellCommandId = 'workbench.action.uninstallCommandLine';
+
+/// Toggle Auto Save: `files.autoSave` between `off` and `afterDelay`, as
+/// VS Code's File menu Auto Save does.
+const toggleAutoSaveCommandId = 'workbench.action.toggleAutoSave';
 
 /// Check for Updates...: looks for a new version of the app now.
 const checkForUpdatesCommandId = 'update.checkForUpdate';
@@ -84,6 +90,11 @@ final Map<String, CommandInfo> commandCatalog = {
     const CommandInfo(
       'workbench.action.files.saveAs',
       'Save As...',
+      category: 'File',
+    ),
+    const CommandInfo(
+      toggleAutoSaveCommandId,
+      'Toggle Auto Save',
       category: 'File',
     ),
     const CommandInfo(
@@ -392,6 +403,8 @@ final Map<String, CommandInfo> commandCatalog = {
     const CommandInfo('filesExplorer.copy', 'Copy', category: 'File'),
     const CommandInfo('filesExplorer.cut', 'Cut', category: 'File'),
     const CommandInfo('filesExplorer.paste', 'Paste', category: 'File'),
+    const CommandInfo(explorerUndoCommandId, 'Undo', category: 'File'),
+    const CommandInfo(explorerRedoCommandId, 'Redo', category: 'File'),
     const CommandInfo(
       'filesExplorer.openFilePreserveFocus',
       'Open File, Keeping the Focus',
@@ -808,6 +821,24 @@ final List<KeybindingEntry> defaultKeybindings = List.unmodifiable([
     when:
         'filesExplorerFocus && foldersViewVisible && '
         '!explorerResourceReadonly && !inputFocus',
+  ),
+  const KeybindingEntry(
+    key: 'ctrl+z',
+    mac: 'cmd+z',
+    command: explorerUndoCommandId,
+    when: _explorer,
+  ),
+  const KeybindingEntry(
+    key: 'ctrl+y',
+    mac: 'shift+cmd+z',
+    command: explorerRedoCommandId,
+    when: _explorer,
+  ),
+  const KeybindingEntry(
+    win: 'ctrl+shift+z',
+    linux: 'ctrl+shift+z',
+    command: explorerRedoCommandId,
+    when: _explorer,
   ),
   for (final MapEntry(key: id, value: chords)
       in editorCommandDefaultChords.entries)

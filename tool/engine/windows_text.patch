@@ -1,0 +1,459 @@
+diff --git a/engine/src/flutter/impeller/entity/contents/text_contents.cc b/engine/src/flutter/impeller/entity/contents/text_contents.cc
+index 1161af1..b8cbe0f 100644
+--- a/engine/src/flutter/impeller/entity/contents/text_contents.cc
++++ b/engine/src/flutter/impeller/entity/contents/text_contents.cc
+@@ -8,6 +8,7 @@
+ #include <optional>
+ #include <utility>
+ 
++#include "flutter/fml/build_config.h"
+ #include "impeller/core/buffer_view.h"
+ #include "impeller/core/formats.h"
+ #include "impeller/core/sampler_descriptor.h"
+@@ -16,6 +17,7 @@
+ #include "impeller/geometry/point.h"
+ #include "impeller/renderer/render_pass.h"
+ #include "impeller/typographer/glyph_atlas.h"
++#include "impeller/typographer/windows_text_tuning.h"
+ 
+ namespace impeller {
+ namespace {
+@@ -27,12 +29,18 @@ namespace {
+ // correction. To compensate, we calculate a contrast/gamma correction
+ // factor based on the text color's luminance, which is used in the shader
+ // to adjust the glyph's coverage.
+-constexpr bool kPlatformGammaCorrectionDefault =
+-#if FML_OS_LINUX || FML_OS_WIN
+-    true;
++//
++// On Windows, Skia's mask preblend corrects glyphs for their luminance
++// instead, unless GetWindowsTextTuning turns that off.
++bool PlatformGammaCorrectionDefault() {
++#if FML_OS_WIN
++  return GetWindowsTextTuning().shader_gamma;
++#elif FML_OS_LINUX
++  return true;
+ #else
+-    false;
++  return false;
+ #endif
++}
+ 
+ Point SizeToPoint(Size size) {
+   return Point(size.width, size.height);
+@@ -280,7 +288,7 @@ bool TextContents::Render(const ContentContext& renderer,
+   frag_info.text_color = ToVector(color.Premultiply());
+   frag_info.is_color_glyph = type == GlyphAtlas::Type::kColorBitmap;
+   bool enable_gamma_correction = frame_->GetEnableGammaCorrection().value_or(
+-      kPlatformGammaCorrectionDefault);
++      PlatformGammaCorrectionDefault());
+   if (enable_gamma_correction) {
+     // Calculate relative luminance using Rec. 709 luma coefficients.
+     Scalar luma =
+diff --git a/engine/src/flutter/impeller/typographer/BUILD.gn b/engine/src/flutter/impeller/typographer/BUILD.gn
+index 8e1c404..bdf46f1 100644
+--- a/engine/src/flutter/impeller/typographer/BUILD.gn
++++ b/engine/src/flutter/impeller/typographer/BUILD.gn
+@@ -26,6 +26,8 @@ impeller_component("typographer") {
+     "typeface.h",
+     "typographer_context.cc",
+     "typographer_context.h",
++    "windows_text_tuning.cc",
++    "windows_text_tuning.h",
+   ]
+ 
+   public_deps = [
+diff --git a/engine/src/flutter/impeller/typographer/backends/skia/typographer_context_skia.cc b/engine/src/flutter/impeller/typographer/backends/skia/typographer_context_skia.cc
+index 0b4b53f..ea8d344 100644
+--- a/engine/src/flutter/impeller/typographer/backends/skia/typographer_context_skia.cc
++++ b/engine/src/flutter/impeller/typographer/backends/skia/typographer_context_skia.cc
+@@ -11,6 +11,7 @@
+ #include <utility>
+ #include <vector>
+ 
++#include "flutter/fml/build_config.h"
+ #include "flutter/fml/logging.h"
+ #include "flutter/fml/trace_event.h"
+ #include "fml/closure.h"
+@@ -32,6 +33,7 @@
+ #include "impeller/typographer/glyph_atlas.h"
+ #include "impeller/typographer/rectangle_packer.h"
+ #include "impeller/typographer/typographer_context.h"
++#include "impeller/typographer/windows_text_tuning.h"
+ 
+ #include "third_party/abseil-cpp/absl/status/statusor.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+@@ -42,6 +44,7 @@
+ #include "third_party/skia/include/core/SkPaint.h"
+ #include "third_party/skia/include/core/SkSize.h"
+ #include "third_party/skia/include/core/SkSurface.h"
++#include "third_party/skia/include/core/SkSurfaceProps.h"
+ 
+ namespace impeller {
+ 
+@@ -105,6 +108,19 @@ absl::StatusOr<SkBitmap> ToA8Bitmap(const SkBitmap& src) {
+   return a8_bitmap;
+ }
+ 
++// The surface properties glyphs are rasterized with. Skia derives the
++// mask's gamma preblend from their text contrast and gamma.
++SkSurfaceProps GlyphSurfaceProps() {
++  SkSurfaceProps props;
++#if FML_OS_WIN
++  const WindowsTextTuning& tuning = GetWindowsTextTuning();
++  props = SkSurfaceProps(0, kUnknown_SkPixelGeometry,
++                         tuning.contrast.value_or(props.textContrast()),
++                         tuning.gamma.value_or(props.textGamma()));
++#endif
++  return props;
++}
++
+ }  // namespace
+ 
+ std::shared_ptr<TypographerContext> TypographerContextSkia::Make() {
+@@ -326,7 +342,8 @@ static bool BulkUpdateAtlasBitmap(const GlyphAtlas& atlas,
+     return false;
+   }
+ 
+-  auto surface = SkSurfaces::WrapPixels(bitmap.pixmap());
++  SkSurfaceProps props = GlyphSurfaceProps();
++  auto surface = SkSurfaces::WrapPixels(bitmap.pixmap(), &props);
+   if (!surface) {
+     return false;
+   }
+@@ -413,7 +430,8 @@ static bool UpdateAtlasBitmap(const GlyphAtlas& atlas,
+       return false;
+     }
+ 
+-    auto surface = SkSurfaces::WrapPixels(bitmap.pixmap());
++    SkSurfaceProps props = GlyphSurfaceProps();
++    auto surface = SkSurfaces::WrapPixels(bitmap.pixmap(), &props);
+     if (!surface) {
+       return false;
+     }
+diff --git a/engine/src/flutter/impeller/typographer/font_glyph_pair.h b/engine/src/flutter/impeller/typographer/font_glyph_pair.h
+index 7bbc38e..82bca29 100644
+--- a/engine/src/flutter/impeller/typographer/font_glyph_pair.h
++++ b/engine/src/flutter/impeller/typographer/font_glyph_pair.h
+@@ -8,12 +8,14 @@
+ #include <optional>
+ #include <variant>
+ 
++#include "flutter/fml/build_config.h"
+ #include "impeller/geometry/color.h"
+ #include "impeller/geometry/rational.h"
+ #include "impeller/geometry/scalar.h"
+ #include "impeller/geometry/stroke_parameters.h"
+ #include "impeller/typographer/font.h"
+ #include "impeller/typographer/glyph.h"
++#include "impeller/typographer/windows_text_tuning.h"
+ 
+ namespace impeller {
+ 
+@@ -39,11 +41,18 @@ struct GlyphProperties {
+   // Computes a Tone from a color. Use to set `tone_or_color` for an alpha-only
+   // Glyph.
+   //
+-  // kLight is only used for macOS, where Apple's CoreText renders dark and
+-  // light text differently, requiring different glyphs for each. On other
+-  // platforms, this always returns kDark.
++  // kLight is used for macOS, where Apple's CoreText renders dark and
++  // light text differently, requiring different glyphs for each, and for
++  // Windows, where Skia's mask preblend thins or thickens glyphs by the
++  // text's luminance (see GetWindowsTextTuning). On other platforms, this
++  // always returns kDark.
+   static Tone ComputeTone(const Color& c) {
+-#if FML_OS_MACOSX && !FML_OS_IOS
++#if (FML_OS_MACOSX && !FML_OS_IOS) || FML_OS_WIN
++#if FML_OS_WIN
++    if (!GetWindowsTextTuning().light_glyphs) {
++      return Tone::kDark;
++    }
++#endif
+     // Uses BT.709 luma coefficients
+     // (https://en.wikipedia.org/wiki/Rec._709#Luma_coefficients) to determine
+     // whether a color is light or dark.
+diff --git a/engine/src/flutter/impeller/typographer/typographer_unittests.cc b/engine/src/flutter/impeller/typographer/typographer_unittests.cc
+index c0579bb..7411c22 100644
+--- a/engine/src/flutter/impeller/typographer/typographer_unittests.cc
++++ b/engine/src/flutter/impeller/typographer/typographer_unittests.cc
+@@ -13,6 +13,7 @@
+ #include "impeller/typographer/font_glyph_pair.h"
+ #include "impeller/typographer/lazy_glyph_atlas.h"
+ #include "impeller/typographer/rectangle_packer.h"
++#include "impeller/typographer/windows_text_tuning.h"
+ #include "third_party/skia/include/core/SkFont.h"
+ #include "third_party/skia/include/core/SkFontMgr.h"
+ #include "third_party/skia/include/core/SkRect.h"
+@@ -403,6 +404,10 @@ TEST_P(TypographerTest, GlyphIsLightIsPartOfCacheKey) {
+ #if defined(FML_OS_MACOSX)
+   // On Apple platforms, they should be separated into 2 entries
+   EXPECT_EQ(next_atlas->GetGlyphCount(), 2u);
++#elif defined(FML_OS_WIN)
++  // On Windows, they're separated unless light glyphs are turned off.
++  EXPECT_EQ(next_atlas->GetGlyphCount(),
++            GetWindowsTextTuning().light_glyphs ? 2u : 1u);
+ #else
+   // On other platforms, both are classified as "dark" (false) and share 1 entry
+   EXPECT_EQ(next_atlas->GetGlyphCount(), 1u);
+diff --git a/engine/src/flutter/impeller/typographer/windows_text_tuning.cc b/engine/src/flutter/impeller/typographer/windows_text_tuning.cc
+new file mode 100644
+index 0000000..d734d15
+--- /dev/null
++++ b/engine/src/flutter/impeller/typographer/windows_text_tuning.cc
+@@ -0,0 +1,199 @@
++// Copyright 2013 The Flutter Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "impeller/typographer/windows_text_tuning.h"
++
++#include "flutter/fml/build_config.h"
++
++#if FML_OS_WIN
++#include <windows.h>
++
++#include <dwrite.h>
++
++#include <cmath>
++#include <cstdlib>
++#include <cstring>
++#include <cwchar>
++#include <string>
++
++#include "flutter/fml/logging.h"
++#endif
++
++namespace impeller {
++
++#if FML_OS_WIN
++
++namespace {
++
++// SkSurfaceProps' accepted ranges: contrast in [0, 1], gamma in [0, 4).
++float ClampContrast(float value) {
++  if (!(value >= 0.0f)) {
++    return 0.0f;
++  }
++  return value > 1.0f ? 1.0f : value;
++}
++
++float ClampGamma(float value) {
++  if (!(value >= 0.0f)) {
++    return 0.0f;
++  }
++  const float limit = std::nextafter(4.0f, 0.0f);
++  return value > limit ? limit : value;
++}
++
++std::optional<std::string> ReadEnv(const char* name) {
++  char buffer[64];
++  DWORD length = ::GetEnvironmentVariableA(name, buffer, sizeof(buffer));
++  if (length == 0 || length >= sizeof(buffer)) {
++    return std::nullopt;
++  }
++  return std::string(buffer, length);
++}
++
++std::optional<bool> ReadEnvBool(const char* name) {
++  std::optional<std::string> value = ReadEnv(name);
++  if (!value.has_value()) {
++    return std::nullopt;
++  }
++  const char* text = value->c_str();
++  if (std::strcmp(text, "1") == 0 || _stricmp(text, "on") == 0 ||
++      _stricmp(text, "true") == 0) {
++    return true;
++  }
++  if (std::strcmp(text, "0") == 0 || _stricmp(text, "off") == 0 ||
++      _stricmp(text, "false") == 0) {
++    return false;
++  }
++  return std::nullopt;
++}
++
++std::optional<float> ReadEnvFloat(const char* name) {
++  std::optional<std::string> value = ReadEnv(name);
++  if (!value.has_value()) {
++    return std::nullopt;
++  }
++  const char* text = value->c_str();
++  char* end = nullptr;
++  float result = std::strtof(text, &end);
++  if (end == text || *end != '\0' || !std::isfinite(result)) {
++    return std::nullopt;
++  }
++  return result;
++}
++
++// Whether the user ran the ClearType Text Tuner, which keeps its choices
++// under a key named after the primary display. Like Chrome, only then are
++// DirectWrite's rendering params used: their defaults don't match Skia's.
++bool HasClearTypeTuning() {
++  DISPLAY_DEVICEW device = {};
++  device.cb = sizeof(device);
++  for (DWORD i = 0; ::EnumDisplayDevicesW(nullptr, i, &device, 0); ++i) {
++    if (!(device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)) {
++      continue;
++    }
++    // DeviceName reads like "\\.\DISPLAY1"; the key is "DISPLAY1".
++    const wchar_t* name = device.DeviceName;
++    if (const wchar_t* slash = std::wcsrchr(name, L'\\')) {
++      name = slash + 1;
++    }
++    std::wstring path = L"SOFTWARE\\Microsoft\\Avalon.Graphics\\";
++    path += name;
++    HKEY key = nullptr;
++    if (::RegOpenKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, KEY_READ, &key) !=
++        ERROR_SUCCESS) {
++      return false;
++    }
++    ::RegCloseKey(key);
++    return true;
++  }
++  return false;
++}
++
++// The primary display's DirectWrite contrast and gamma. dwrite.dll is
++// loaded at runtime so the engine's link inputs stay as they are.
++bool ReadDirectWriteParams(float* contrast, float* gamma) {
++  HMODULE dwrite = ::LoadLibraryW(L"dwrite.dll");
++  if (!dwrite) {
++    return false;
++  }
++  using CreateFactory =
++      HRESULT(WINAPI*)(DWRITE_FACTORY_TYPE, REFIID, IUnknown**);
++  auto create = reinterpret_cast<CreateFactory>(reinterpret_cast<void*>(
++      ::GetProcAddress(dwrite, "DWriteCreateFactory")));
++  bool read = false;
++  IDWriteFactory* factory = nullptr;
++  if (create &&
++      SUCCEEDED(create(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
++                       reinterpret_cast<IUnknown**>(&factory)))) {
++    IDWriteRenderingParams* params = nullptr;
++    if (SUCCEEDED(factory->CreateRenderingParams(&params))) {
++      *contrast = params->GetEnhancedContrast();
++      *gamma = params->GetGamma();
++      params->Release();
++      read = true;
++    }
++    factory->Release();
++  }
++  // dwrite.dll stays loaded: Skia's font manager uses it all along.
++  return read;
++}
++
++WindowsTextTuning ComputeTuning() {
++  WindowsTextTuning tuning;
++
++  std::optional<bool> enabled = ReadEnvBool("FLUTTER_WIN_TEXT");
++  if (enabled.value_or(true)) {
++    tuning.light_glyphs = true;
++    tuning.shader_gamma = false;
++    // Chrome's SK_GAMMA_CONTRAST on Windows; the gamma stays Skia's (sRGB).
++    tuning.contrast = 1.0f;
++    float contrast = 0.0f;
++    float gamma = 0.0f;
++    if (HasClearTypeTuning() && ReadDirectWriteParams(&contrast, &gamma)) {
++      tuning.contrast = ClampContrast(contrast);
++      tuning.gamma = ClampGamma(gamma);
++    }
++  }
++
++  if (auto value = ReadEnvBool("FLUTTER_WIN_TEXT_LIGHT_GLYPHS")) {
++    tuning.light_glyphs = *value;
++  }
++  if (auto value = ReadEnvBool("FLUTTER_WIN_TEXT_SHADER_GAMMA")) {
++    tuning.shader_gamma = *value;
++  }
++  if (auto value = ReadEnvFloat("FLUTTER_WIN_TEXT_CONTRAST")) {
++    tuning.contrast = ClampContrast(*value);
++  }
++  if (auto value = ReadEnvFloat("FLUTTER_WIN_TEXT_GAMMA")) {
++    tuning.gamma = ClampGamma(*value);
++  }
++
++  FML_LOG(INFO) << "Windows text: light_glyphs=" << tuning.light_glyphs
++                << " shader_gamma=" << tuning.shader_gamma << " contrast="
++                << (tuning.contrast.has_value()
++                        ? std::to_string(*tuning.contrast)
++                        : std::string("default"))
++                << " gamma="
++                << (tuning.gamma.has_value() ? std::to_string(*tuning.gamma)
++                                             : std::string("default"));
++  return tuning;
++}
++
++}  // namespace
++
++const WindowsTextTuning& GetWindowsTextTuning() {
++  static const WindowsTextTuning tuning = ComputeTuning();
++  return tuning;
++}
++
++#else
++
++const WindowsTextTuning& GetWindowsTextTuning() {
++  static const WindowsTextTuning tuning;
++  return tuning;
++}
++
++#endif  // FML_OS_WIN
++
++}  // namespace impeller
+diff --git a/engine/src/flutter/impeller/typographer/windows_text_tuning.h b/engine/src/flutter/impeller/typographer/windows_text_tuning.h
+new file mode 100644
+index 0000000..a886ef7
+--- /dev/null
++++ b/engine/src/flutter/impeller/typographer/windows_text_tuning.h
+@@ -0,0 +1,50 @@
++// Copyright 2013 The Flutter Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef FLUTTER_IMPELLER_TYPOGRAPHER_WINDOWS_TEXT_TUNING_H_
++#define FLUTTER_IMPELLER_TYPOGRAPHER_WINDOWS_TEXT_TUNING_H_
++
++#include <optional>
++
++namespace impeller {
++
++/// How alpha-only glyphs are rasterized and blended on Windows.
++///
++/// The defaults follow Chrome on Windows: glyphs drawn as light text get
++/// their own atlas entries, so Skia's mask preblend sees the text's real
++/// luminance, and the glyph contrast comes from the user's ClearType tuning
++/// (or 1.0) instead of Skia's 0.5. The shader's luminance-based gamma
++/// approximation is then turned off, since the preblend already did that
++/// work.
++///
++/// Every field can be overridden with an environment variable, read once
++/// per process, to compare renderings without rebuilding:
++///
++///   FLUTTER_WIN_TEXT=off                 stock Flutter behavior
++///   FLUTTER_WIN_TEXT_LIGHT_GLYPHS=0|1
++///   FLUTTER_WIN_TEXT_SHADER_GAMMA=0|1
++///   FLUTTER_WIN_TEXT_CONTRAST=<0..1>     Skia text contrast
++///   FLUTTER_WIN_TEXT_GAMMA=<0..4)        Skia text gamma, 0 is sRGB
++///
++/// On other platforms the values are the stock ones and are unused.
++struct WindowsTextTuning {
++  /// Whether light text gets light glyphs, as on macOS.
++  bool light_glyphs = false;
++
++  /// Whether the glyph shader applies its luminance-based gamma.
++  bool shader_gamma = true;
++
++  /// Skia's text contrast for glyph rasterization; Skia's default if unset.
++  std::optional<float> contrast;
++
++  /// Skia's text gamma for glyph rasterization; Skia's default if unset.
++  std::optional<float> gamma;
++};
++
++/// The process's tuning, computed on first use.
++const WindowsTextTuning& GetWindowsTextTuning();
++
++}  // namespace impeller
++
++#endif  // FLUTTER_IMPELLER_TYPOGRAPHER_WINDOWS_TEXT_TUNING_H_

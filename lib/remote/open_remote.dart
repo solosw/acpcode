@@ -26,10 +26,17 @@ class OpenRemoteFlow {
     required this.show,
     required this.l10n,
     required this.onOpen,
+    this.onConnected,
+    this.added = const [],
+    String Function(String host)? labelOf,
+    this.iconOf,
     SshHosts? hosts,
     Future<List<String>> Function()? configHosts,
   }) : hosts = hosts ?? SshHosts.instance,
+       labelOf = labelOf ?? _itself,
        _configHosts = configHosts ?? defaultConfigHosts;
+
+  static String _itself(String host) => host;
 
   /// Where the hosts to pick from come from when not given: `~/.ssh/config`;
   /// replaceable under test.
@@ -39,6 +46,15 @@ class OpenRemoteFlow {
   final void Function(IdeQuickPick pick) show;
   final AppLocalizations l10n;
   final ValueChanged<String> onOpen;
+
+  /// A host connected to, before a folder there is picked (or not).
+  final ValueChanged<String>? onConnected;
+
+  /// The hosts the user added (see `Workspace.sshHosts`): listed first, by
+  /// the names ([labelOf]) and icons ([iconOf]) given them.
+  final List<String> added;
+  final String Function(String host) labelOf;
+  final Widget? Function(String host)? iconOf;
   final SshHosts hosts;
   final Future<List<String>> Function() _configHosts;
 
@@ -60,20 +76,36 @@ class OpenRemoteFlow {
         if (seen.add(host)) host,
     ];
     final connected = {for (final host in hosts.connected) host.host};
-    IdeQuickPickItem hostItem(String host) => IdeQuickPickItem(
-      label: host,
-      icon: const Icon(Codicons.remote),
-      description: connected.contains(host) ? l10n.remoteStatus(host) : null,
-      onAccept: () => _connect(host),
-    );
+    final added = [...this.added];
+    final config = [
+      for (final host in known)
+        if (!added.contains(host)) host,
+    ];
+    IdeQuickPickItem hostItem(String host) {
+      final label = labelOf(host);
+      final description = [
+        if (label != host) host,
+        if (connected.contains(host)) l10n.sidebarHostConnected,
+      ].join(' · ');
+      return IdeQuickPickItem(
+        label: label,
+        icon: iconOf?.call(host) ?? const Icon(Codicons.remote),
+        description: description.isEmpty ? null : description,
+        onAccept: () => _connect(host),
+      );
+    }
+
     show(
       IdeQuickPick(
         placeholder: l10n.remoteHostPlaceholder,
         sortByLabel: false,
+        matchOnDescription: true,
         itemsFor: (value) {
           final typed = value.trim();
           return [
-            if (typed.isNotEmpty && !known.contains(typed))
+            if (typed.isNotEmpty &&
+                !known.contains(typed) &&
+                !added.contains(typed))
               SshTarget.isValid(typed)
                   ? IdeQuickPickItem(
                       label: l10n.remoteConnectTo(typed),
@@ -85,9 +117,16 @@ class OpenRemoteFlow {
                       label: l10n.remoteInvalidHost,
                       alwaysShow: true,
                     ),
-            if (known.isEmpty && typed.isEmpty)
+            if (known.isEmpty && added.isEmpty && typed.isEmpty)
               IdeQuickPickItem(label: l10n.remoteNoHosts),
-            for (final host in known) hostItem(host),
+            if (added.isNotEmpty) ...[
+              IdeQuickPickSeparator(l10n.remoteAddedHosts),
+              for (final host in added) hostItem(host),
+            ],
+            if (config.isNotEmpty) ...[
+              const IdeQuickPickSeparator('~/.ssh/config'),
+              for (final host in config) hostItem(host),
+            ],
           ];
         },
         onDidAccept: (item) => item?.onAccept?.call(),
@@ -95,10 +134,14 @@ class OpenRemoteFlow {
     );
   }
 
+  /// Opens a folder of [host], known already: connects (its progress
+  /// shown), then browses its home.
+  void startAt(String host) => _connect(host, now: true);
+
   /// Connects to [host] (its progress shown), then browses its home.
-  void _connect(String host) {
+  void _connect(String host, {bool now = false}) {
     final ssh = hosts[host];
-    _next(
+    (now ? show : _next)(
       IdeQuickPick(
         placeholder: l10n.remoteConnecting(host),
         items: [
@@ -142,6 +185,7 @@ class OpenRemoteFlow {
         );
         return;
       }
+      onConnected?.call(host);
       final home = client.hello?.home;
       await _browse(host, client, home == null || home.isEmpty ? '/' : home);
     }());

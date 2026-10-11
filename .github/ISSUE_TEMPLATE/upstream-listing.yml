@@ -1,0 +1,85 @@
+name: Let BaoCode list my site / 通知 BaoCode 收录我的站点
+description: Your site added BaoCode's one-click import; let us know, and it shows in Settings → Models. 你的站点已接入一键导入，通知我们后即在 设置 → 模型 中展示。
+title: "[Upstream] "
+labels: ["upstream-listing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for adding the one-click import! How it works: https://baocode.dev/upstreams
+        感谢接入一键导入！接入说明：https://baocode.dev/zh/upstreams
+
+        Listing is free, and so is staying listed for as long as the import keeps working. Once we've seen the import work, your card shows at once; we'll get in touch about your logo and anything else needed.
+        收录免费，只要导入一直可用就一直展示。我们确认导入可用后，您的卡片立刻上线；我们会联系您确认 Logo 等素材。
+  - type: input
+    id: name
+    attributes:
+      label: Site name / 站点名称
+      description: As the card shows it, at most 24 characters. 卡片上显示的名称，不超过 24 个字符。
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Card link / 卡片链接
+      description: Where a click on the card goes. Promotion parameters (aff, ref…) are allowed. 点击卡片打开的地址，可以带推广参数（aff、ref 等）。
+      placeholder: https://example.com/register?aff=xxxx
+    validations:
+      required: true
+  - type: input
+    id: hosts
+    attributes:
+      label: API hosts / API 域名
+      description: The hosts your base URLs are at, comma-separated. An import from them shows as listed. Base URL 所在的域名，用逗号分隔；从这些域名导入时会显示“已收录”。
+      placeholder: api.example.com, example.com
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: One line about it / 一句话介绍
+      description: In English and/or Chinese, at most about 30 characters each. 中文和/或英文，每种不超过约 30 字。
+      placeholder: |
+        en: Claude and GPT at cost price
+        zh: Claude、GPT 成本价直供
+    validations:
+      required: true
+  - type: dropdown
+    id: software
+    attributes:
+      label: What your site runs / 站点系统
+      options:
+        - new-api
+        - sub2api
+        - one-api
+        - Other / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: import
+    attributes:
+      label: Where the import is / 一键导入的位置
+      description: Where a user finds the "Import to BaoCode" button or link, and a screenshot of it. 用户在哪里能找到“导入到 BaoCode”的按钮或链接，并附截图。
+    validations:
+      required: true
+  - type: textarea
+    id: logo
+    attributes:
+      label: Logo
+      description: Square, PNG at least 256×256 (best on a transparent background) or SVG; drag it in here. 正方形，PNG 至少 256×256（透明背景最好）或 SVG，拖进这里上传。
+  - type: input
+    id: contact
+    attributes:
+      label: Contact / 联系方式
+      description: How we can reach you about the logo and the rest (email, Telegram, WeChat…). 我们联系您确认 Logo 等素材的方式（邮箱、Telegram、微信等）。
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Rules / 规则
+      options:
+        - label: The one-click import works on my site for any signed-in user. 登录用户都能在我的站点使用一键导入。
+          required: true
+        - label: I understand a listing is not an endorsement, the order of the cards is random, and a site whose import stops working, or that misleads users, is taken off. 我了解收录不代表担保，卡片顺序随机；导入失效或误导用户的站点会被下架。
+          required: true

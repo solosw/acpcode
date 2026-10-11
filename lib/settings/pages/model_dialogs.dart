@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_input.dart';
+import '../../ide/ide_spinning.dart';
 import '../../l10n/l10n.dart';
 import '../../models/model_provider.dart';
 import '../../models/upstream.dart';
@@ -73,8 +74,9 @@ class ModelCheckbox extends StatelessWidget {
 
 /// The dialogs' frame: [title] over [child], [actions] under it, as the
 /// IDE's own dialogs look.
-class _ModelDialogFrame extends StatelessWidget {
-  const _ModelDialogFrame({
+class ModelDialogFrame extends StatelessWidget {
+  const ModelDialogFrame({
+    super.key,
     required this.title,
     required this.child,
     required this.actions,
@@ -188,20 +190,39 @@ TextStyle _muted(BuildContext context) =>
 
 /// Asks [provider]'s upstream for its models and lets the user check those
 /// to offer; completes with its models merged with the list
-/// ([mergeModelList]), or null when dismissed.
+/// ([mergeModelList]), or null when dismissed. [apply] is what its button
+/// says; Apply when null. With [skip], what a button says that, where the
+/// upstream lists none or cannot be asked, completes with its models as
+/// they are. [loading] is what it says while it asks, under [loadingLead];
+/// for at least [minLoading], however soon the upstream answers.
 Future<List<ProviderModel>?> showFetchModelsDialog(
   BuildContext context, {
   required ModelProvider provider,
   required Future<String?> Function() key,
   required ModelLister list,
+  String? apply,
+  String? skip,
+  String? loading,
+  Widget? loadingLead,
+  Duration minLoading = Duration.zero,
 }) => showGeneralDialog<List<ProviderModel>>(
   context: context,
-  barrierDismissible: true,
+  // Closed by its buttons, Escape or the close button: a click beside it
+  // would lose the models checked.
+  barrierDismissible: false,
   barrierLabel: context.l10n.commonDismiss,
   barrierColor: const Color(0x80000000),
   transitionDuration: Duration.zero,
-  pageBuilder: (context, _, _) =>
-      FetchModelsDialog(provider: provider, keyOf: key, list: list),
+  pageBuilder: (context, _, _) => FetchModelsDialog(
+    provider: provider,
+    keyOf: key,
+    list: list,
+    apply: apply,
+    skip: skip,
+    loading: loading,
+    loadingLead: loadingLead,
+    minLoading: minLoading,
+  ),
 );
 
 class FetchModelsDialog extends StatefulWidget {
@@ -210,11 +231,32 @@ class FetchModelsDialog extends StatefulWidget {
     required this.provider,
     required this.keyOf,
     required this.list,
+    this.apply,
+    this.skip,
+    this.loading,
+    this.loadingLead,
+    this.minLoading = Duration.zero,
   });
 
   final ModelProvider provider;
   final Future<String?> Function() keyOf;
   final ModelLister list;
+
+  /// What the button that takes the checked ones says; Apply when null.
+  final String? apply;
+
+  /// What a button says that, where none are listed or they cannot be,
+  /// takes the provider's models as they are; none when null.
+  final String? skip;
+
+  /// What it says while it asks the upstream; that it does when null.
+  final String? loading;
+
+  /// Above [loading], while it asks.
+  final Widget? loadingLead;
+
+  /// How long it says so at least.
+  final Duration minLoading;
 
   @override
   State<FetchModelsDialog> createState() => _FetchModelsDialogState();
@@ -249,12 +291,15 @@ class _FetchModelsDialogState extends State<FetchModelsDialog> {
       _listed = null;
       _error = null;
     });
+    final shown = Future<void>.delayed(widget.minLoading);
     try {
       final listed = [
         ...await widget.list(widget.provider, await widget.keyOf()),
       ]..sort((a, b) => a.id.compareTo(b.id));
+      await shown;
       if (mounted) setState(() => _listed = listed);
     } on Object catch (error) {
+      await shown;
       if (mounted) setState(() => _error = error);
     }
   }
@@ -304,9 +349,34 @@ class _FetchModelsDialogState extends State<FetchModelsDialog> {
         ),
       );
     } else if (listed == null) {
+      final saying = Row(
+        children: [
+          IdeSpinning(
+            Icon(
+              Codicons.loading,
+              size: 14,
+              color: themeColors['descriptionForeground'],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              widget.loading ?? l10n.modelsFetchLoading,
+              style: _muted(context),
+            ),
+          ),
+        ],
+      );
       body = Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Text(l10n.modelsFetchLoading, style: _muted(context)),
+        child: switch (widget.loadingLead) {
+          final lead? => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [lead, const SizedBox(height: 12), saying],
+          ),
+          null => saying,
+        },
       );
     } else if (listed.isEmpty) {
       body = Padding(
@@ -427,7 +497,7 @@ class _FetchModelsDialogState extends State<FetchModelsDialog> {
         ],
       );
     }
-    return _ModelDialogFrame(
+    return ModelDialogFrame(
       title: l10n.modelsFetchTitle(widget.provider.name),
       onSubmit: listed == null ? null : _apply,
       actions: [
@@ -435,8 +505,15 @@ class _FetchModelsDialogState extends State<FetchModelsDialog> {
           IdeButton(label: l10n.modelsRetry, onPressed: _fetch)
         else
           IdeButton(
-            label: l10n.modelsFetchApply,
+            label: widget.apply ?? l10n.modelsFetchApply,
             onPressed: listed == null || listed.isEmpty ? null : _apply,
+          ),
+        if (widget.skip case final skip?
+            when error != null || (listed != null && listed.isEmpty))
+          IdeButton(
+            label: skip,
+            secondary: true,
+            onPressed: () => Navigator.pop(context, widget.provider.models),
           ),
         IdeButton(
           label: l10n.commonCancel,
@@ -675,7 +752,7 @@ class _ModelEditDialogState extends State<ModelEditDialog> {
     final contextError = _tried && parseTokens(_context.text) == -1
         ? l10n.modelsContextInvalid
         : null;
-    return _ModelDialogFrame(
+    return ModelDialogFrame(
       title: _adding ? l10n.modelsAddTitle : l10n.modelsEditTitle,
       onSubmit: _save,
       actions: [

@@ -57,6 +57,7 @@ class Customization {
     this.removePath,
     this.detail,
     this.enabled,
+    this.server,
   });
 
   final CustomizationKind kind;
@@ -84,8 +85,13 @@ class Customization {
   /// file starts as if not there yet (a settings file opened for hooks).
   final String? detail;
 
-  /// A plugin's: whether settings enable it.
+  /// A plugin's: whether settings enable it. An MCP server's: false where
+  /// the project has it turned off (`/mcp`'s Disable), else null.
   final bool? enabled;
+
+  /// An MCP server's entry (`command`, `args`, `env`, or `url`): what is
+  /// started to ask whether it answers. Null for a claude.ai connector's.
+  final Map<String, Object?>? server;
 }
 
 /// The front matter of a markdown file (`---` lines around `key: value`
@@ -163,8 +169,31 @@ String describeMarkdown(String text) {
 }
 
 /// A name a new skill, subagent, command or rule can take: its file's or
-/// folder's name too.
-final RegExp customizationName = RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$');
+/// folder's name too, so nothing a file name cannot hold on any platform,
+/// and no whitespace (what follows a space in `/name args` is arguments).
+/// It starts with a letter or digit, which also keeps it a plain YAML
+/// scalar in the template's `name:`. Up to 64 characters, Chinese included:
+/// Claude Code finds and runs them all by such a name.
+bool isCustomizationName(String name) =>
+    name.runes.length <= 64 &&
+    RegExp(
+      r'^[\p{L}\p{N}][^\s/\\:*?"<>|\p{Cc}]*$',
+      unicode: true,
+    ).hasMatch(name) &&
+    !name.endsWith('.');
+
+/// Whether [name] keeps to the official naming of [kind]'s: lowercase
+/// letters, digits and hyphens for a skill or subagent (the Agent Skills
+/// spec; claude.ai may refuse a skill named otherwise). Claude Code itself
+/// does not hold to it, so a name that does not is let through, with a
+/// note.
+bool followsOfficialNaming(CustomizationKind kind, String name) =>
+    switch (kind) {
+      CustomizationKind.skills || CustomizationKind.subagents => RegExp(
+        r'^[a-z0-9][a-z0-9-]*$',
+      ).hasMatch(name),
+      _ => true,
+    };
 
 /// What a new one of [kind] named [name] starts as.
 String template(CustomizationKind kind, String name) => switch (kind) {

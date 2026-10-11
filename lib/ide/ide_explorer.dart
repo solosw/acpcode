@@ -15,16 +15,19 @@ import 'package:path/path.dart' as p;
 
 import '../chat/composer/composer_files.dart';
 import '../chat/composer/file_drag.dart';
+import '../chat/composer/file_drop.dart';
 import '../keybindings/keybinding_service.dart';
 import '../l10n/l10n.dart';
 import '../platform/app_paths.dart';
 import '../theme/codicons.dart';
+import 'ide_hover.dart';
 import '../theme/material_file_icons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import '../workspace/window_controls.dart';
 
 import 'package:bao_editor/monaco/vs/base/common/labels.dart';
 
+import 'explorer_history.dart';
 import 'file_service.dart';
 import 'git/git_model.dart';
 import 'git/git_repository.dart';
@@ -33,6 +36,7 @@ import 'ide_dialog.dart';
 import 'ide_input.dart';
 import 'ide_list.dart';
 import 'ide_menu.dart';
+import 'ide_notifications.dart';
 import 'save_copy.dart';
 
 /// One visible row of the explorer tree.
@@ -45,6 +49,7 @@ class IdeExplorerRow {
     required this.isDirectory,
     this.expanded = false,
     this.message,
+    this.error,
     this.isRoot = false,
   });
 
@@ -61,6 +66,9 @@ class IdeExplorerRow {
   /// A non-selectable note under a folder instead of an entry: the error
   /// reading it.
   final String? message;
+
+  /// What reading the folder failed with, for [message].
+  final Object? error;
 }
 
 /// The explorer's tree state, kept by the workbench so the expansion survives
@@ -173,6 +181,9 @@ class IdeExplorerController extends ChangeNotifier {
   Timer? _changesTimer;
   final Map<String, List<IdeFile>> _children = {};
   final Map<String, Object> _errors = {};
+
+  /// The file operations done here, to undo and redo.
+  final ExplorerHistory history = ExplorerHistory();
   final Set<String> _expanded = {};
   final Map<String, Future<void>> _loads = {};
   List<IdeExplorerRow>? _rows;
@@ -212,6 +223,7 @@ class IdeExplorerController extends ChangeNotifier {
             depth: depth,
             isDirectory: false,
             message: '$error',
+            error: error,
           ),
         );
         return;
@@ -829,6 +841,8 @@ class IdeExplorerState extends State<IdeExplorer> {
       'list.selectAll': (_) => selectAll(),
       'list.clear': (_) => clearSelection(),
       'list.collapseAll': (_) => _controller.collapseAll(),
+      explorerUndoCommandId: (_) => unawaited(undo()),
+      explorerRedoCommandId: (_) => unawaited(redo()),
     };
   }
 
@@ -942,6 +956,248 @@ class IdeExplorerState extends State<IdeExplorer> {
   /// `list.clear`: selects nothing.
   void clearSelection() => _controller.select(null);
 
+  /// The largest file kept to make again on Undo once deleted for good.
+  static const _undoableBytes = 20 * 1024 * 1024;
+
+  /// [path]'s bytes, to make it again on Undo; null for one too large, or
+  /// that cannot be read.
+  Future<Uint8List?> _bytesOf(String path) async {
+    try {
+      final bytes = await readBytesThrough(_controller.files, path);
+      return bytes.length > _undoableBytes ? null : bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool get canUndo => _controller.history.canUndo;
+  bool get canRedo => _controller.history.canRedo;
+
+  /// Undoes the last file operation (VS Code's Undo in the explorer): one
+  /// that fails is dropped, said why.
+  Future<void> undo() async {
+    final history = _controller.history;
+    final operation = history.takeUndo();
+    if (operation == null) return;
+    final files = _controller.files;
+    String? reveal;
+    try {
+      switch (operation) {
+        case ExplorerMoved(:final moves):
+          for (final (:from, :to) in moves.reversed) {
+            await files.rename(to, from);
+            _controller.forget(to);
+            widget.onMoved?.call(to, from);
+            reveal = from;
+          }
+        case ExplorerCreated(:final paths):
+          for (final (:path, :directory) in paths.reversed) {
+            if (!await _untouched(path, directory: directory)) return;
+            await files.delete(path);
+            _controller.forget(path);
+            widget.onDeleted?.call(path);
+          }
+        case ExplorerCopied(:final copies):
+          for (final (:copy, source: _) in copies.reversed) {
+            await files.delete(copy);
+            _controller.forget(copy);
+            widget.onDeleted?.call(copy);
+          }
+        case ExplorerDeleted(:final path, :final bytes):
+          await files.writeBytes(path, bytes);
+          reveal = path;
+      }
+      history.undone(operation);
+    } catch (error) {
+      _report(error);
+    } finally {
+      await _controller.refresh();
+      if (reveal != null) await _controller.reveal(reveal);
+    }
+  }
+
+  /// Does again the last file operation undone.
+  Future<void> redo() async {
+    final history = _controller.history;
+    final operation = history.takeRedo();
+    if (operation == null) return;
+    final files = _controller.files;
+    String? reveal;
+    try {
+      switch (operation) {
+        case ExplorerMoved(:final moves):
+          for (final (:from, :to) in moves) {
+            await files.rename(from, to);
+            _controller.forget(from);
+            widget.onMoved?.call(from, to);
+            reveal = to;
+          }
+        case ExplorerCreated(:final paths):
+          for (final (:path, :directory) in paths) {
+            await files.create(path, directory: directory);
+            reveal = path;
+          }
+        case ExplorerCopied(:final copies, :final upload):
+          if (upload) {
+            final uploading = context.l10n.explorerUploading;
+            await _withProgress(
+              uploading,
+              (onProgress) => uploadTo(files, [
+                for (final (:source, :copy) in copies) (from: source, to: copy),
+              ], onProgress: onProgress),
+            );
+            reveal = copies.lastOrNull?.copy;
+          } else {
+            for (final (:source, :copy) in copies) {
+              await files.copy(source, copy);
+              reveal = copy;
+            }
+          }
+        case ExplorerDeleted(:final path):
+          await files.delete(path);
+          _controller.forget(path);
+          widget.onDeleted?.call(path);
+      }
+      history.redone(operation);
+    } catch (error) {
+      _report(error);
+    } finally {
+      await _controller.refresh();
+      if (reveal != null) await _controller.reveal(reveal);
+    }
+  }
+
+  /// Whether [path], made here, is as it was made (an empty file or
+  /// folder), or the user lets Undo delete it anyway.
+  Future<bool> _untouched(String path, {required bool directory}) async {
+    final files = _controller.files;
+    final empty = directory
+        ? (await files.list(path)).isEmpty
+        : (await files.read(path, force: true)).isEmpty;
+    if (empty || !mounted) return empty;
+    final l10n = context.l10n;
+    final pick = await showIdeDialog(
+      context,
+      type: IdeDialogType.question,
+      message: l10n.explorerUndoCreateChanged(_controller.paths.basename(path)),
+      detail: l10n.explorerIrreversible,
+      buttons: [l10n.commonDelete],
+    );
+    return pick == 0;
+  }
+
+  // --- Dragging within the tree ---------------------------------------------
+
+  /// What is dragged from this tree, while it is.
+  List<String>? _dragging;
+
+  /// Its paths on this machine, once dragged out of the window (a remote
+  /// project's downloaded): back over the tree, the drag is still a move.
+  List<String>? _outward;
+
+  /// The folder a drag would move into, highlighted with what is in it.
+  String? _dropFolder;
+
+  /// Whether what is dragged moves into [folder]: none of it is [folder]
+  /// or above it, and some of it is elsewhere.
+  bool _takes(String folder) {
+    final dragging = _dragging;
+    if (dragging == null || dragging.isEmpty) return false;
+    final paths = _controller.paths;
+    if (dragging.any(
+      (path) => path == folder || paths.isWithin(path, folder),
+    )) {
+      return false;
+    }
+    return dragging.any((path) => paths.dirname(path) != folder);
+  }
+
+  /// Where a drop on [row] goes: a folder itself, a file's folder.
+  String _folderFor(IdeExplorerRow row) =>
+      row.isDirectory ? row.path : _controller.paths.dirname(row.path);
+
+  void _hoverDrop(String? folder) {
+    if (folder == _dropFolder) return;
+    setState(() => _dropFolder = folder);
+  }
+
+  // --- Dragging in from other apps ------------------------------------------
+
+  /// The rows shown, as last built: where a drag from another app is.
+  List<(IdeExplorerRow, bool)> _shownRows = const [];
+  final GlobalKey _listKey = GlobalKey();
+
+  /// The folder files let go at [position] (the window's) go into: a
+  /// folder's row, a file's folder, the top folder below the rows (the
+  /// only one); null elsewhere.
+  String? _folderAt(Offset position) {
+    final box = _listKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    final local = box.globalToLocal(position);
+    if (!(Offset.zero & box.size).contains(local)) return null;
+    final offset = _scroll.hasClients ? _scroll.offset : 0.0;
+    final index = ((local.dy + offset) / IdeExplorer.rowHeight).floor();
+    if (index >= 0 && index < _shownRows.length) {
+      final (row, editing) = _shownRows[index];
+      if (editing || row.message != null) return null;
+      return _folderFor(row);
+    }
+    return _topFolder;
+  }
+
+  /// What is let go below the rows goes into: the project's folder, or a
+  /// workspace's only one; none among several (their rows take drops).
+  String? get _topFolder => switch (_controller.roots) {
+    [] => _controller.root,
+    [final only] => only,
+    _ => null,
+  };
+
+  /// Files from another app (Finder, Explorer) over the tree: the folder
+  /// they would go into highlighted.
+  void _fileDragOver(Offset position) => _hoverDrop(_folderAt(position));
+
+  /// Files from another app let go over the tree: copied into the folder
+  /// they are over (uploaded to a remote project's host), as VS Code does.
+  /// What was dragged out of this tree and back in moves.
+  void _fileDrop(Offset position, List<ComposerFile> files) {
+    final folder = _folderAt(position);
+    _hoverDrop(null);
+    if (folder == null || files.isEmpty) return;
+    final dropped = {for (final file in files) file.path};
+    if (_dragging case final dragging?
+        when setEquals({...dragging}, dropped) ||
+            setEquals({...?_outward}, dropped)) {
+      if (_takes(folder)) unawaited(_moveInto(dragging, folder));
+      return;
+    }
+    unawaited(_paste(folder, (files: files, cut: false, external: true)));
+  }
+
+  /// Moves [sources] (dragged here) into [folder], as one operation.
+  Future<void> _moveInto(List<String> sources, String folder) async {
+    final files = _controller.files;
+    final paths = _controller.paths;
+    final moved = <({String from, String to})>[];
+    String? last;
+    try {
+      for (final source in sources) {
+        if (paths.dirname(source) == folder) continue;
+        final target = paths.join(folder, paths.basename(source));
+        await files.rename(source, target);
+        _controller.forget(source);
+        widget.onMoved?.call(source, target);
+        moved.add((from: source, to: target));
+        last = target;
+      }
+    } catch (error) {
+      _report(error);
+    }
+    if (moved.isNotEmpty) _controller.history.done(ExplorerMoved(moved));
+    await _controller.refresh();
+    if (last != null) await _controller.reveal(last);
+  }
+
   /// `list.expand`: opens the folder, or goes to its first child.
   void expandSelected() {
     final row = _selectedRow;
@@ -1004,14 +1260,103 @@ class IdeExplorerState extends State<IdeExplorer> {
     for (final row in rows) row.path,
   ];
 
+  // --- Between this machine and a remote host --------------------------------
+
+  /// Runs [transfer] (an upload, a download), how far it is shown in a
+  /// notification once it takes a moment: [message] of the files done.
+  Future<T> _withProgress<T>(
+    String Function(int done, int total) message,
+    Future<T> Function(TransferProgress onProgress) transfer,
+  ) async {
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    final preparing = context.l10n.explorerPreparingTransfer;
+    var done = 0;
+    int? total;
+    String text() => total == null ? preparing : message(done, total!);
+    IdeNotificationProgress progress() => switch (total) {
+      final total? when total > 0 => IdeNotificationProgress(
+        done.toDouble(),
+        total: total.toDouble(),
+      ),
+      _ => const IdeNotificationProgress.infinite(),
+    };
+    IdeNotification? shown;
+    // Not for what is done at once.
+    final timer = notifications == null
+        ? null
+        : Timer(const Duration(milliseconds: 300), () {
+            shown = notifications.notify(
+              IdeSeverity.info,
+              text(),
+              progress: progress(),
+              sticky: true,
+            );
+          });
+    try {
+      return await transfer((worked, of) {
+        done = worked;
+        total = of;
+        if (shown case final shown?) {
+          notifications!.update(shown, message: text(), progress: progress());
+        }
+      });
+    } finally {
+      timer?.cancel();
+      if (shown case final shown?) notifications!.close(shown);
+    }
+  }
+
+  /// [rows] as this machine's files, for other apps (Finder's paste, a drag
+  /// out): a remote project's downloaded to a folder here first. Null when
+  /// they cannot be had (a remote project's files that do not download).
+  Future<List<String>?> _download(List<ComposerFile> rows) async {
+    if (widget.local) return [for (final row in rows) row.path];
+    final files = _controller.files;
+    if (files is! IdeHostFiles) return null;
+    final downloading = context.l10n.explorerDownloading;
+    final folder = await newDownloadFolder();
+    final taken = <String>{};
+    final items = <({String from, String to, bool directory})>[];
+    for (final (i, row) in rows.indexed) {
+      final name = _controller.paths.basename(row.path);
+      // The same name from two folders: each in a folder of its own.
+      final to = taken.add(name)
+          ? p.join(folder, name)
+          : p.join(folder, '$i', name);
+      items.add((from: row.path, to: to, directory: row.directory));
+    }
+    if (!mounted) return const [];
+    await _withProgress(
+      downloading,
+      (onProgress) => downloadFrom(files, items, onProgress: onProgress),
+    );
+    return [for (final item in items) item.to];
+  }
+
   /// Copied, this machine's files are on the system's clipboard too, as
   /// Finder copies them: to paste into the chat, or into another app.
+  /// A remote project's are downloaded first, to be on it as this
+  /// machine's.
   void _copy(List<IdeExplorerRow> rows, {required bool cut}) {
     final paths = _paths(rows);
-    final written = !cut && widget.local
+    final written = cut
+        ? Future<void>.value()
+        : widget.local
         ? WindowControls.writePasteboardFiles(paths)
               .then((_) {}, onError: (Object _) {})
-        : Future<void>.value();
+        : _download([
+            for (final row in rows)
+              ComposerFile(row.path, directory: row.isDirectory),
+          ]).then(
+            (paths) async {
+              if (paths != null) {
+                await WindowControls.writePasteboardFiles(paths);
+              }
+            },
+            onError: (Object error) {
+              if (mounted) _report(error);
+            },
+          );
     _controller.clipboard = IdeExplorerClipboard(
       [
         for (final row in rows)
@@ -1131,22 +1476,27 @@ class IdeExplorerState extends State<IdeExplorer> {
         await files.rename(from, to);
         _controller.forget(from);
         widget.onMoved?.call(from, to);
+        _controller.history.done(ExplorerMoved([(from: from, to: to)]));
         await _controller.refresh();
         await _controller.reveal(to);
       } else {
         // `a/b/c.txt` makes the folders too.
         final parts = name.split(RegExp(r'[\\/]')).where((n) => n.isNotEmpty);
         var folder = edit.parent;
+        final made = <({String path, bool directory})>[];
         for (final part in parts.take(parts.length - 1)) {
           folder = _controller.paths.join(folder, part);
           try {
             await files.create(folder, directory: true);
+            made.add((path: folder, directory: true));
           } on IdeFileExistsException {
             // Already there.
           }
         }
         final path = _controller.paths.join(folder, parts.last);
         await files.create(path, directory: edit.directory);
+        made.add((path: path, directory: edit.directory));
+        _controller.history.done(ExplorerCreated(made));
         await _controller.refresh();
         await _controller.reveal(path);
         if (!edit.directory) widget.onOpen(path, true);
@@ -1248,7 +1598,14 @@ class IdeExplorerState extends State<IdeExplorer> {
             toTrash = null;
           }
         }
-        if (!trashed) await _controller.files.delete(row.path);
+        if (!trashed) {
+          // A file's bytes, to make it again on Undo.
+          final kept = row.isDirectory ? null : await _bytesOf(row.path);
+          await _controller.files.delete(row.path);
+          if (kept != null) {
+            _controller.history.done(ExplorerDeleted(row.path, kept));
+          }
+        }
         _controller.forget(row.path);
         widget.onDeleted?.call(row.path);
       } catch (error) {
@@ -1261,14 +1618,22 @@ class IdeExplorerState extends State<IdeExplorer> {
   /// Paste: copies (with VS Code's simple incremental names when taken) or
   /// moves what was cut into [folder]; files from the system's clipboard
   /// are copied, onto a remote project's host too.
-  Future<void> _paste(String folder) async {
-    final toPaste = await _toPaste();
+  Future<void> _paste(
+    String folder, [
+    ({List<ComposerFile> files, bool cut, bool external})? what,
+  ]) async {
+    final toPaste = what ?? await _toPaste();
     if (toPaste == null || !mounted) return;
     final files = _controller.files;
     final ancestor = context.l10n.explorerPasteIntoAncestor;
-    // This machine's files, into a remote project's.
+    final uploading = context.l10n.explorerUploading;
+    // This machine's files, into a remote project's: uploaded together,
+    // how far shown.
     final upload = toPaste.external && !widget.local;
+    final uploads = <({String from, String to})>[];
     String? last;
+    final moved = <({String from, String to})>[];
+    final copied = <({String source, String copy})>[];
     try {
       await _controller.expand(folder);
       final taken = {
@@ -1291,6 +1656,7 @@ class IdeExplorerState extends State<IdeExplorer> {
           await files.rename(source, target);
           _controller.forget(source);
           widget.onMoved?.call(source, target);
+          moved.add((from: source, to: target));
           last = target;
         } else {
           var name = sourceName;
@@ -1300,16 +1666,31 @@ class IdeExplorerState extends State<IdeExplorer> {
           taken.add(name);
           final copy = _controller.paths.join(folder, name);
           if (upload) {
-            await copyLocalTo(files, source, copy);
-          } else {
-            await files.copy(source, copy);
+            uploads.add((from: source, to: copy));
+            continue;
           }
+          await files.copy(source, copy);
+          copied.add((source: source, copy: copy));
           last = copy;
+        }
+      }
+      if (uploads.isNotEmpty) {
+        await _withProgress(
+          uploading,
+          (onProgress) => uploadTo(files, uploads, onProgress: onProgress),
+        );
+        for (final (:from, :to) in uploads) {
+          copied.add((source: from, copy: to));
+          last = to;
         }
       }
       if (toPaste.cut) _controller.clipboard = null;
     } catch (error) {
       _report(error);
+    }
+    if (moved.isNotEmpty) _controller.history.done(ExplorerMoved(moved));
+    if (copied.isNotEmpty) {
+      _controller.history.done(ExplorerCopied(copied, upload: upload));
     }
     await _controller.refresh();
     if (last != null) await _controller.reveal(last);
@@ -1540,7 +1921,7 @@ class IdeExplorerState extends State<IdeExplorer> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _rowsWithEdit();
+    final rows = _shownRows = _rowsWithEdit();
     final focused = _focusNode.hasFocus;
     final decorations = widget.git?.decorations;
     final repositories = widget.repositories;
@@ -1574,7 +1955,7 @@ class IdeExplorerState extends State<IdeExplorer> {
       ];
     }
 
-    return ColoredBox(
+    final tree = ColoredBox(
       // Modern UI: the panes are the side bar's.
       color: widget.background ?? themeColors['sideBar.background'],
       child: Focus(
@@ -1582,64 +1963,150 @@ class IdeExplorerState extends State<IdeExplorer> {
         onKeyEvent: _onKey,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onTap: _focusNode.requestFocus,
+          // Below the rows: none selected, as VS Code's list does, so that
+          // New File… and the rest are at the top folder.
+          onTap: () {
+            _focusNode.requestFocus();
+            clearSelection();
+          },
           onSecondaryTapUp: (details) {
             _focusNode.requestFocus();
+            clearSelection();
             unawaited(_showMenu(details.globalPosition, null));
           },
-          child: ListView.builder(
-            controller: _scroll,
-            itemExtent: IdeExplorer.rowHeight,
-            padding: const EdgeInsets.only(bottom: 12),
-            itemCount: rows.length,
-            itemBuilder: (context, index) {
-              final (row, editing) = rows[index];
-              if (editing) {
-                final edit = _edit!;
-                return _ExplorerEditRow(
-                  key: ValueKey(('edit', row.path)),
+          child: _rootDropTarget(
+            ListView.builder(
+              key: _listKey,
+              controller: _scroll,
+              itemExtent: IdeExplorer.rowHeight,
+              padding: const EdgeInsets.only(bottom: 12),
+              itemCount: rows.length,
+              itemBuilder: (context, index) {
+                final (row, editing) = rows[index];
+                if (editing) {
+                  final edit = _edit!;
+                  return _ExplorerEditRow(
+                    key: ValueKey(('edit', row.path)),
+                    row: row,
+                    edit: edit,
+                    paths: _controller.paths,
+                    validate: (name) => _validate(edit, name),
+                    onSubmit: (name) => unawaited(_commitEdit(edit, name)),
+                    onCancel: _cancelEdit,
+                  );
+                }
+                final view = _ExplorerRowView(
                   row: row,
-                  edit: edit,
-                  paths: _controller.paths,
-                  validate: (name) => _validate(edit, name),
-                  onSubmit: (name) => unawaited(_commitEdit(edit, name)),
-                  onCancel: _cancelEdit,
+                  selected: _controller.isSelected(row.path),
+                  focusedItem: row.path == _controller.selected,
+                  focused: focused,
+                  decoration: switch (decorationsOf(row.path)) {
+                    _ when row.message != null => null,
+                    null => null,
+                    final decorations when row.isDirectory =>
+                      decorations.folder(row.path),
+                    final decorations => decorations.file(row.path),
+                  },
+                  onTap: () {
+                    _focusNode.requestFocus();
+                    _click(row);
+                  },
+                  onContextMenu: (position) {
+                    _focusNode.requestFocus();
+                    unawaited(_showMenu(position, row));
+                  },
                 );
-              }
-              final view = _ExplorerRowView(
-                row: row,
-                selected: _controller.isSelected(row.path),
-                focusedItem: row.path == _controller.selected,
-                focused: focused,
-                decoration: switch (decorationsOf(row.path)) {
-                  _ when row.message != null => null,
-                  null => null,
-                  final decorations when row.isDirectory => decorations.folder(
-                    row.path,
+                if (row.message != null) {
+                  return KeyedSubtree(key: ValueKey(row.path), child: view);
+                }
+                // Dragged onto the chat's composer, it goes in as a file;
+                // within the tree, it moves into the folder dropped on.
+                final folder = _folderFor(row);
+                final drop = _dropFolder;
+                final inDrop =
+                    drop != null &&
+                    (row.path == drop ||
+                        _controller.paths.isWithin(drop, row.path));
+                return FileDraggable(
+                  key: ValueKey(row.path),
+                  files: dragged(row),
+                  // Out of the window, to other apps: a remote project's
+                  // downloaded first.
+                  localPaths: widget.local
+                      ? () => [for (final file in dragged(row)) file.path]
+                      : null,
+                  outward: () async => _outward = await _download(dragged(row)),
+                  onDragStarted: () =>
+                      _dragging = [for (final file in dragged(row)) file.path],
+                  onDragEnd: () {
+                    _dragging = null;
+                    _outward = null;
+                    _hoverDrop(null);
+                  },
+                  child: DragTarget<FileDragData>(
+                    onWillAcceptWithDetails: (_) {
+                      final takes = _takes(folder);
+                      _hoverDrop(takes ? folder : null);
+                      return takes;
+                    },
+                    onLeave: (_) {
+                      if (_dropFolder == folder) _hoverDrop(null);
+                    },
+                    onAcceptWithDetails: (_) {
+                      final sources = _dragging ?? const <String>[];
+                      _hoverDrop(null);
+                      unawaited(_moveInto(sources, folder));
+                    },
+                    builder: (context, _, _) => inDrop
+                        ? DecoratedBox(
+                            position: DecorationPosition.foreground,
+                            decoration: BoxDecoration(
+                              color: themeColors['list.dropBackground'],
+                            ),
+                            child: view,
+                          )
+                        : view,
                   ),
-                  final decorations => decorations.file(row.path),
-                },
-                onTap: () {
-                  _focusNode.requestFocus();
-                  _click(row);
-                },
-                onContextMenu: (position) {
-                  _focusNode.requestFocus();
-                  unawaited(_showMenu(position, row));
-                },
-              );
-              // Dragged onto the chat's composer, it goes in as a file.
-              return row.message != null
-                  ? KeyedSubtree(key: ValueKey(row.path), child: view)
-                  : FileDraggable(
-                      key: ValueKey(row.path),
-                      files: dragged(row),
-                      child: view,
-                    );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
+    );
+    // Files dragged in from other apps.
+    return FileDropRegion(delegate: _ExplorerFileDrop(this), child: tree);
+  }
+
+  /// [list], dropped on below its rows: what is dragged moves to the top
+  /// folder (the only one; a workspace's folders take drops on their rows),
+  /// all of the tree highlighted.
+  Widget _rootDropTarget(Widget list) {
+    final root = _topFolder;
+    if (root == null) return list;
+    return DragTarget<FileDragData>(
+      onWillAcceptWithDetails: (_) {
+        final takes = _takes(root);
+        _hoverDrop(takes ? root : null);
+        return takes;
+      },
+      onLeave: (_) {
+        if (_dropFolder == root) _hoverDrop(null);
+      },
+      onAcceptWithDetails: (_) {
+        final sources = _dragging ?? const <String>[];
+        _hoverDrop(null);
+        unawaited(_moveInto(sources, root));
+      },
+      builder: (context, _, _) => _dropFolder == root
+          ? DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                color: themeColors['list.dropBackground'],
+              ),
+              child: list,
+            )
+          : list,
     );
   }
 }
@@ -1663,6 +2130,28 @@ String ideIncrementFileName(String name, {required bool isFolder}) {
 final String _userHome = kIsWeb ? '' : AppPaths.home(Platform.environment);
 
 String _pathLabel(String path) => tildify(path, _userHome);
+
+/// Files dragged onto the tree from other apps.
+class _ExplorerFileDrop implements FileDropDelegate {
+  _ExplorerFileDrop(this._explorer);
+
+  final IdeExplorerState _explorer;
+
+  @override
+  void fileDragOver(Offset position, List<ComposerFile> files) {
+    if (_explorer.mounted) _explorer._fileDragOver(position);
+  }
+
+  @override
+  void fileDragLeave() {
+    if (_explorer.mounted) _explorer._hoverDrop(null);
+  }
+
+  @override
+  void fileDrop(Offset position, List<ComposerFile> files) {
+    if (_explorer.mounted) _explorer._fileDrop(position, files);
+  }
+}
 
 class _ExplorerRowView extends StatelessWidget {
   const _ExplorerRowView({
@@ -1696,6 +2185,7 @@ class _ExplorerRowView extends StatelessWidget {
       child: const SizedBox.expand(),
     );
     if (row.message case final message?) {
+      final denied = row.error is IdeFileAccessDeniedException;
       return Stack(
         children: [
           Positioned.fill(child: guides),
@@ -1703,13 +2193,44 @@ class _ExplorerRowView extends StatelessWidget {
             padding: EdgeInsets.only(left: left + 24, right: 8),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Text(
-                context.l10n.explorerCannotReadFolder(message),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: IdeListColors.errorForeground,
-                  fontSize: 12,
+              child: IdeHover(
+                message: switch (row.error) {
+                  final error? => localizedFileError(context.l10n, error),
+                  null => message,
+                },
+                followMouse: true,
+                child: Row(
+                  children: [
+                    if (denied) ...[
+                      Icon(
+                        Codicons.lock,
+                        size: 12,
+                        color: IdeListColors.errorForeground,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    Flexible(
+                      child: Text(
+                        denied
+                            ? context.l10n.explorerNoPermission
+                            : context.l10n.explorerCannotReadFolder(
+                                switch (row.error) {
+                                  final error? => localizedFileError(
+                                    context.l10n,
+                                    error,
+                                  ),
+                                  null => message,
+                                },
+                              ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: IdeListColors.errorForeground,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

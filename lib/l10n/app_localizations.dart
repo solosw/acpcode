@@ -2018,6 +2018,12 @@ abstract class AppLocalizations {
   /// **'Save All'**
   String get cmdSaveAll;
 
+  /// No description provided for @cmdToggleAutoSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle Auto Save'**
+  String get cmdToggleAutoSave;
+
   /// No description provided for @cmdCloseEditor.
   ///
   /// In en, this message translates to:
@@ -2701,6 +2707,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close Window'**
   String get menuCloseWindow;
+
+  /// File menu item, ticked while files.autoSave is on.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto Save'**
+  String get menuAutoSave;
 
   /// No description provided for @menuBackToChat.
   ///
@@ -3493,6 +3505,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete from Library'**
   String get iconPickerDeleteFromLibrary;
+
+  /// No description provided for @iconPickerBrands.
+  ///
+  /// In en, this message translates to:
+  /// **'Logos'**
+  String get iconPickerBrands;
+
+  /// No description provided for @iconPickerSiteIcon.
+  ///
+  /// In en, this message translates to:
+  /// **'Use the site\'s icon'**
+  String get iconPickerSiteIcon;
+
+  /// No description provided for @iconPickerSiteIconNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No icon found on {host}'**
+  String iconPickerSiteIconNone(String host);
 
   /// No description provided for @iconUploadTooLarge.
   ///
@@ -4442,6 +4472,36 @@ abstract class AppLocalizations {
   /// **'Reserved for compaction'**
   String get usageReservedForCompaction;
 
+  /// No description provided for @usagePromptCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Prompt cache'**
+  String get usagePromptCache;
+
+  /// The counts are formatted (8.2k).
+  ///
+  /// In en, this message translates to:
+  /// **'Last request: {read} read · {written} written · {uncached} uncached'**
+  String usageCacheLast(String read, String written, String uncached);
+
+  /// percent a whole number: what of the main conversation's input was read from the cache.
+  ///
+  /// In en, this message translates to:
+  /// **'main chat {percent}%'**
+  String usageCacheOverall(String percent);
+
+  /// read and written are formatted counts (8.2k); percent a whole number.
+  ///
+  /// In en, this message translates to:
+  /// **'Main conversation: {read} read · {written} written · {percent}% hit'**
+  String usageCacheConversation(String read, String written, String percent);
+
+  /// No description provided for @usageCacheExcludes.
+  ///
+  /// In en, this message translates to:
+  /// **'Not counting subagents, compaction or the CLI\'s side requests'**
+  String get usageCacheExcludes;
+
   /// No description provided for @usagePlanUsage.
   ///
   /// In en, this message translates to:
@@ -4640,6 +4700,18 @@ abstract class AppLocalizations {
   /// **'Back'**
   String get interactionBack;
 
+  /// No description provided for @interactionCollapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse'**
+  String get interactionCollapse;
+
+  /// No description provided for @interactionExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand'**
+  String get interactionExpand;
+
   /// No description provided for @interactionMoreLines.
   ///
   /// In en, this message translates to:
@@ -4724,17 +4796,95 @@ abstract class AppLocalizations {
   /// **'Disable'**
   String get mcpDisable;
 
+  /// No description provided for @mcpTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Test connection'**
+  String get mcpTest;
+
+  /// No description provided for @mcpTestAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Test all'**
+  String get mcpTestAll;
+
+  /// No description provided for @mcpViewLog.
+  ///
+  /// In en, this message translates to:
+  /// **'View log'**
+  String get mcpViewLog;
+
+  /// No description provided for @mcpExitCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Exited with code {code}'**
+  String mcpExitCode(int code);
+
+  /// No description provided for @mcpTimedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'No answer within {seconds} seconds'**
+  String mcpTimedOut(int seconds);
+
+  /// No description provided for @mcpLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Output (stderr)'**
+  String get mcpLog;
+
+  /// No description provided for @mcpNoLog.
+  ///
+  /// In en, this message translates to:
+  /// **'It wrote nothing.'**
+  String get mcpNoLog;
+
+  /// No description provided for @mcpSignInHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in from a chat\'s MCP servers panel, or with /mcp.'**
+  String get mcpSignInHint;
+
+  /// No description provided for @mcpProbeNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Started and greeted with MCP\'s initialize, as `claude mcp list` checks it.'**
+  String get mcpProbeNote;
+
   /// No description provided for @todoCount.
   ///
   /// In en, this message translates to:
   /// **'Todos {done}/{total}'**
   String todoCount(int done, int total);
 
-  /// No description provided for @messageQueued.
+  /// No description provided for @queuedMessages.
   ///
   /// In en, this message translates to:
-  /// **'Queued'**
-  String get messageQueued;
+  /// **'{count, plural, =1{1 queued} other{{count} queued}} · sent when the agent is done'**
+  String queuedMessages(int count);
+
+  /// No description provided for @queuedImages.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 image} other{{count} images}}'**
+  String queuedImages(int count);
+
+  /// No description provided for @queuedEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Take back to edit'**
+  String get queuedEdit;
+
+  /// No description provided for @queuedSendNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the agent and send this now'**
+  String get queuedSendNow;
+
+  /// No description provided for @queuedRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from the queue'**
+  String get queuedRemove;
 
   /// No description provided for @tabClose.
   ///
@@ -5119,6 +5269,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'File to paste is an ancestor of the destination folder'**
   String get explorerPasteIntoAncestor;
+
+  /// No description provided for @explorerUploading.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading files... {done}/{total}'**
+  String explorerUploading(int done, int total);
+
+  /// No description provided for @explorerDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading files... {done}/{total}'**
+  String explorerDownloading(int done, int total);
+
+  /// No description provided for @explorerPreparingTransfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing files...'**
+  String get explorerPreparingTransfer;
 
   /// No description provided for @explorerNewFile.
   ///
@@ -8568,7 +8736,7 @@ abstract class AppLocalizations {
   /// No description provided for @ideChatNoFolder.
   ///
   /// In en, this message translates to:
-  /// **'Open a folder to chat with an agent in it.'**
+  /// **'Open a file or a folder to chat with an agent about it.'**
   String get ideChatNoFolder;
 
   /// No description provided for @ideCannotOpen.
@@ -8732,6 +8900,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Windows'**
   String get generalSettingsWindows;
+
+  /// No description provided for @claudePathSetting.
+  ///
+  /// In en, this message translates to:
+  /// **'Path'**
+  String get claudePathSetting;
+
+  /// No description provided for @claudePathSettingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)'**
+  String get claudePathSettingDescription;
+
+  /// No description provided for @claudePathSettingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get claudePathSettingHint;
+
+  /// No description provided for @claudePathChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get claudePathChecking;
+
+  /// Under the Claude Code path setting: the build conversations run, and its version.
+  ///
+  /// In en, this message translates to:
+  /// **'In use: {path} ({version})'**
+  String claudePathInUse(String path, String version);
+
+  /// As claudePathInUse, for a build that does not say its version.
+  ///
+  /// In en, this message translates to:
+  /// **'In use: {path}'**
+  String claudePathInUseUnknown(String path);
+
+  /// No description provided for @claudePathInUseDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'In use: Claude Code {version}, downloaded by BaoCode'**
+  String claudePathInUseDownloaded(String version);
+
+  /// No description provided for @claudePathMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'None found yet: Claude Code is downloaded as the first conversation starts.'**
+  String get claudePathMissing;
 
   /// No description provided for @generalSettingsIdeWindows.
   ///
@@ -9054,8 +9270,14 @@ abstract class AppLocalizations {
   /// No description provided for @sidebarCustomize.
   ///
   /// In en, this message translates to:
-  /// **'Customize'**
+  /// **'Skills'**
   String get sidebarCustomize;
+
+  /// No description provided for @sidebarOpenProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Project'**
+  String get sidebarOpenProject;
 
   /// No description provided for @palettePlaceholder.
   ///
@@ -9354,8 +9576,14 @@ abstract class AppLocalizations {
   /// No description provided for @customizeNameInvalid.
   ///
   /// In en, this message translates to:
-  /// **'Letters, digits, - and _ only (up to 64)'**
+  /// **'Starts with a letter or digit; no spaces or / \\ : * ? \" < > | (up to 64)'**
   String get customizeNameInvalid;
+
+  /// No description provided for @customizeNameUnofficial.
+  ///
+  /// In en, this message translates to:
+  /// **'Officially lowercase, digits and - only; claude.ai may reject it'**
+  String get customizeNameUnofficial;
 
   /// No description provided for @customizeNameTaken.
   ///
@@ -9459,12 +9687,6 @@ abstract class AppLocalizations {
   /// **'Models'**
   String get modelsTitle;
 
-  /// No description provided for @modelsDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Where Claude Code\'s models come from: Claude Code as set up on this machine, and upstreams you add. Anthropic-compatible upstreams are spoken to by Claude Code itself; OpenAI\'s APIs through a local proxy of BaoCode\'s that translates.'**
-  String get modelsDescription;
-
   /// No description provided for @modelsDefault.
   ///
   /// In en, this message translates to:
@@ -9524,6 +9746,132 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Offer {name} in the model picker'**
   String modelsEnableProvider(String name);
+
+  /// No description provided for @modelsFeaturedWhy.
+  ///
+  /// In en, this message translates to:
+  /// **'Why am I seeing this?'**
+  String get modelsFeaturedWhy;
+
+  /// No description provided for @modelsFeaturedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'These sites are officially listed by BaoCode'**
+  String get modelsFeaturedNote;
+
+  /// No description provided for @modelsFeaturedNoteHow.
+  ///
+  /// In en, this message translates to:
+  /// **'Add the one-click import to be listed too, for free'**
+  String get modelsFeaturedNoteHow;
+
+  /// No description provided for @modelsFeaturedNoteLink.
+  ///
+  /// In en, this message translates to:
+  /// **'List My Site Too'**
+  String get modelsFeaturedNoteLink;
+
+  /// No description provided for @modelsImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import an upstream from {host}'**
+  String modelsImportTitle(String host);
+
+  /// No description provided for @modelsImportProtocol.
+  ///
+  /// In en, this message translates to:
+  /// **'Protocol'**
+  String get modelsImportProtocol;
+
+  /// No description provided for @modelsImportUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Base URL'**
+  String get modelsImportUrl;
+
+  /// No description provided for @modelsImportKeyLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Key'**
+  String get modelsImportKeyLabel;
+
+  /// No description provided for @modelsImportListedBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Officially listed'**
+  String get modelsImportListedBadge;
+
+  /// No description provided for @modelsImportNoKey.
+  ///
+  /// In en, this message translates to:
+  /// **'none, add it afterwards'**
+  String get modelsImportNoKey;
+
+  /// No description provided for @modelsImportExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'You have this upstream already: {name}.'**
+  String modelsImportExisting(String name);
+
+  /// No description provided for @modelsImportNamePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get modelsImportNamePlaceholder;
+
+  /// No description provided for @modelsImportAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Import Models'**
+  String get modelsImportAdd;
+
+  /// No description provided for @modelsImportFinish.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get modelsImportFinish;
+
+  /// No description provided for @modelsImportWithoutModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Import Without Models'**
+  String get modelsImportWithoutModels;
+
+  /// No description provided for @modelsImportPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting your models ready…'**
+  String get modelsImportPreparing;
+
+  /// No description provided for @modelsImportUpdateKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Update {name}\'s Key'**
+  String modelsImportUpdateKey(String name);
+
+  /// No description provided for @modelsImportOpenExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'Open {name}'**
+  String modelsImportOpenExisting(String name);
+
+  /// No description provided for @modelsImportAsNew.
+  ///
+  /// In en, this message translates to:
+  /// **'Add as New Upstream'**
+  String get modelsImportAsNew;
+
+  /// No description provided for @modelsImportInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This import link can\'t be used'**
+  String get modelsImportInvalid;
+
+  /// No description provided for @modelsImportInvalidDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'It needs a base URL (http or https) and a protocol BaoCode knows. Ask the site for a new link, or add the upstream by hand in Settings → Models.'**
+  String get modelsImportInvalidDetail;
 
   /// No description provided for @modelsAddProvider.
   ///
@@ -9782,6 +10130,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Name'**
   String get modelsName;
+
+  /// No description provided for @modelsIcon.
+  ///
+  /// In en, this message translates to:
+  /// **'Icon'**
+  String get modelsIcon;
+
+  /// No description provided for @modelsIconDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Heads its models in the model picker: a maker\'s logo, the site\'s icon or a picture of your own. Unset, the maker\'s logo its base URL names.'**
+  String get modelsIconDescription;
+
+  /// No description provided for @modelsIconChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Icon'**
+  String get modelsIconChange;
 
   /// No description provided for @modelsProtocol.
   ///
@@ -10080,7 +10446,7 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRoleSubagentDescription.
   ///
   /// In en, this message translates to:
-  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model subagents run on.'**
+  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).'**
   String get modelsRoleSubagentDescription;
 
   /// No description provided for @modelsAdvanced.
@@ -10641,6 +11007,144 @@ abstract class AppLocalizations {
   /// **'Off'**
   String get updateModeNone;
 
+  /// No description provided for @diagnosticsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagnostic Logs'**
+  String get diagnosticsTitle;
+
+  /// No description provided for @diagnosticsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Send BaoCode\'s error logs to its developers to help track down a problem. Nothing is sent until you upload.'**
+  String get diagnosticsDescription;
+
+  /// No description provided for @diagnosticsUpload.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload…'**
+  String get diagnosticsUpload;
+
+  /// No description provided for @diagnosticsDialogTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload Diagnostic Logs'**
+  String get diagnosticsDialogTitle;
+
+  /// No description provided for @diagnosticsNotePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Note (optional): what went wrong, and how to make it happen again'**
+  String get diagnosticsNotePlaceholder;
+
+  /// No description provided for @diagnosticsFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 log file} other{{count} log files}} ({size}) will be uploaded.'**
+  String diagnosticsFiles(int count, String size);
+
+  /// No description provided for @diagnosticsNoFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'There are no logs yet: only the note and the version details are uploaded.'**
+  String get diagnosticsNoFiles;
+
+  /// Windows only: the minidumps written when the app hung.
+  ///
+  /// In en, this message translates to:
+  /// **'Include hang memory dumps ({count}, {size})'**
+  String diagnosticsDumps(int count, String size);
+
+  /// No description provided for @diagnosticsDumpsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory dumps may contain parts of open files and paths. Over 10 MB, only the newest are included.'**
+  String get diagnosticsDumpsDetail;
+
+  /// No description provided for @diagnosticsPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Your home folder is written as ~. The app\'s version, system and language are sent with the logs, but not the usage statistics\' install ID. Kept on the server for 90 days.'**
+  String get diagnosticsPrivacy;
+
+  /// No description provided for @diagnosticsSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload'**
+  String get diagnosticsSend;
+
+  /// No description provided for @diagnosticsUploading.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading…'**
+  String get diagnosticsUploading;
+
+  /// No description provided for @diagnosticsUploaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploaded. Report ID:'**
+  String get diagnosticsUploaded;
+
+  /// No description provided for @diagnosticsUploadedDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Give this ID to BaoCode\'s developers so they can find these logs.'**
+  String get diagnosticsUploadedDetail;
+
+  /// No description provided for @diagnosticsOmittedDumps.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 older memory dump was} other{{count} older memory dumps were}} left out: over 10 MB.'**
+  String diagnosticsOmittedDumps(int count);
+
+  /// No description provided for @diagnosticsCopyId.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy ID'**
+  String get diagnosticsCopyId;
+
+  /// No description provided for @diagnosticsCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get diagnosticsCopied;
+
+  /// No description provided for @diagnosticsRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get diagnosticsRetry;
+
+  /// No description provided for @diagnosticsTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'The logs are over 10 MB and cannot be uploaded.'**
+  String get diagnosticsTooLarge;
+
+  /// No description provided for @diagnosticsRateLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many uploads just now. Try again later.'**
+  String get diagnosticsRateLimited;
+
+  /// No description provided for @diagnosticsRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'The server did not accept the logs (HTTP {status}).'**
+  String diagnosticsRefused(int status);
+
+  /// No description provided for @diagnosticsServerError.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not take the logs ({status}). Try again later.'**
+  String diagnosticsServerError(String status);
+
+  /// No description provided for @diagnosticsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not upload: {error}'**
+  String diagnosticsFailed(String error);
+
   /// Command title; the English one is the command catalog's.
   ///
   /// In en, this message translates to:
@@ -11079,6 +11583,12 @@ abstract class AppLocalizations {
   /// **'Installing Claude Code on {host}… {percent}%'**
   String remoteInstallingClaudeProgress(String host, int percent);
 
+  /// Shown over the chat while Claude Code is downloaded into BaoCode's data folder, the user having none that runs (or only one too old), before the agent starts.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading Claude Code… {percent}%'**
+  String localDownloadingClaude(int percent);
+
   /// The host cannot download Claude Code itself: this machine downloaded it and sends it over the SSH connection.
   ///
   /// In en, this message translates to:
@@ -11288,6 +11798,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 folder} other{{count} folders}} · {names}'**
   String newChatWorkspaceDetail(int count, String names);
+
+  /// Under an SSH host in the menu of where a new chat works: how many of its projects are listed at its side.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 project} other{{count} projects}}'**
+  String newChatHostProjects(int count);
+
+  /// First at an SSH host's side in the menu of where a new chat works: picks a folder on that host.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose Folder…'**
+  String get newChatPickRemoteFolder;
+
+  /// No description provided for @newChatPickRemoteFolderDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Open a folder on this host'**
+  String get newChatPickRemoteFolderDetail;
 
   /// The menu's choice that makes a workspace of several folders for a new chat to work in.
   ///
@@ -12104,6 +12632,126 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Language Servers'**
   String get extsTabLanguageServers;
+
+  /// No description provided for @sidebarThisMachine.
+  ///
+  /// In en, this message translates to:
+  /// **'This Computer'**
+  String get sidebarThisMachine;
+
+  /// No description provided for @sidebarSwitchHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch between this computer and SSH hosts'**
+  String get sidebarSwitchHost;
+
+  /// No description provided for @sidebarAddSshHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Add SSH Host...'**
+  String get sidebarAddSshHost;
+
+  /// No description provided for @sidebarOpenFolderOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Folder on {host}...'**
+  String sidebarOpenFolderOn(String host);
+
+  /// No description provided for @sidebarNoProjectsOn.
+  ///
+  /// In en, this message translates to:
+  /// **'No projects on {host} yet.'**
+  String sidebarNoProjectsOn(String host);
+
+  /// No description provided for @sidebarHostConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get sidebarHostConnected;
+
+  /// No description provided for @sidebarHostConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting...'**
+  String get sidebarHostConnecting;
+
+  /// No description provided for @sidebarHostDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnected'**
+  String get sidebarHostDisconnected;
+
+  /// No description provided for @sidebarHostIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected'**
+  String get sidebarHostIdle;
+
+  /// No description provided for @sidebarDisconnectHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get sidebarDisconnectHost;
+
+  /// No description provided for @sidebarRemoveHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Host'**
+  String get sidebarRemoveHost;
+
+  /// No description provided for @sidebarRemoveHostTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {host}?'**
+  String sidebarRemoveHostTitle(String host);
+
+  /// No description provided for @sidebarRemoveHostMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Its projects are taken off the sidebar. Their conversations are kept, and come back once the host is added again.'**
+  String get sidebarRemoveHostMessage;
+
+  /// No description provided for @sidebarRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get sidebarRemove;
+
+  /// No description provided for @sidebarElsewhereNeedsYou.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 agent on another machine needs you} other{{count} agents on other machines need you}}'**
+  String sidebarElsewhereNeedsYou(int count);
+
+  /// No description provided for @sidebarRenameHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename Host'**
+  String get sidebarRenameHost;
+
+  /// No description provided for @explorerNoPermission.
+  ///
+  /// In en, this message translates to:
+  /// **'No permission to read this folder'**
+  String get explorerNoPermission;
+
+  /// No description provided for @fileErrorAccessDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Permission denied: {path}'**
+  String fileErrorAccessDenied(String path);
+
+  /// No description provided for @remoteAddedHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'Added'**
+  String get remoteAddedHosts;
+
+  /// No description provided for @explorerUndoCreateChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} has changed since it was made. Undo deletes it anyway?'**
+  String explorerUndoCreateChanged(String name);
 }
 
 class _AppLocalizationsDelegate

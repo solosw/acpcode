@@ -12,7 +12,7 @@ import 'icon_storage.dart';
 
 /// How an uploaded picture is kept and drawn.
 enum IconImageKind {
-  /// A PNG, JPEG or WebP, kept as a square PNG of at most
+  /// A PNG, JPEG, WebP or ICO, kept as a square PNG of at most
   /// [IconLibrary.side] pixels.
   png,
 
@@ -78,6 +78,10 @@ class IconLibrary extends ChangeNotifier {
     : storage = storage ?? MemoryIconStorage();
 
   final IconStorage storage;
+
+  /// The app's, the workspace's; main() sets it. What draws an upstream of
+  /// models' picture takes it from here.
+  static IconLibrary current = IconLibrary();
 
   /// The largest file taken.
   static const maxBytes = 5 * 1024 * 1024;
@@ -214,6 +218,8 @@ class IconLibrary extends ChangeNotifier {
       return _Format.webp;
     }
     if (starts(ascii.encode('GIF8'))) return _Format.gif;
+    // A site's favicon.ico: decoded as the others, its largest picture.
+    if (starts(const [0, 0, 1, 0])) return _Format.ico;
     // Text with an <svg> element near its start (after an XML declaration,
     // comments, a doctype).
     final head = utf8.decode(
@@ -275,4 +281,4 @@ class IconLibrary extends ChangeNotifier {
   }
 }
 
-enum _Format { png, jpeg, webp, gif, svg }
+enum _Format { png, jpeg, webp, gif, svg, ico }

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import '../diagnostics/diagnostics_upload.dart';
+import '../kernel/claude_code/claude_path_setting.dart';
 import '../keybindings/import_dialog.dart';
 import '../keybindings/keybinding_service.dart';
 import '../keybindings/keybindings_editing.dart';
@@ -15,6 +17,7 @@ import '../tips/builtin_tips.dart';
 import '../tips/feature_tip.dart';
 import '../tips/feature_tips_controller.dart';
 import '../update/update_controller.dart';
+import '../workspace/workspace.dart';
 import 'app_locale.dart';
 import 'pages/agents_page.dart';
 import 'pages/appearance_page.dart';
@@ -44,6 +47,9 @@ class AppSettings {
     this.sync,
     this.installs,
     this.updates,
+    this.diagnostics,
+    this.workspace,
+    this.claudeStatus,
   }) : keybindings = keybindings ?? KeybindingService.instance,
        _providedAcpAgents = acpAgents;
 
@@ -60,6 +66,9 @@ class AppSettings {
   /// The keymaps to pick from.
   final KeymapCatalog? catalog;
 
+  /// The app's, for the icon picker (an upstream of models' icon).
+  final Workspace? workspace;
+
   /// Follows keybindings.json and the selected keymap into [keybindings].
   final KeybindingsSync? sync;
 
@@ -70,6 +79,13 @@ class AppSettings {
   /// Updating the app: Settings → Updates, Check for Updates; none where
   /// the build does not update itself.
   final UpdateController? updates;
+
+  /// Uploads the diagnostic logs, from Settings → Updates; none under test.
+  final DiagnosticsUploader? diagnostics;
+
+  /// The Claude Code that runs on this machine, for Settings → General;
+  /// none under test, where it is not looked for.
+  final Future<LocalClaudeStatus?> Function()? claudeStatus;
 
   /// The feature tips (the setup checklist, the update's and the scenarios'
   /// notifications); none without settings files.
@@ -107,7 +123,11 @@ class AppSettings {
   Widget buildPage(BuildContext context, SettingsSection section) {
     switch (section) {
       case SettingsSection.general:
-        return GeneralSettingsPage(settings: files?.settings, tips: tips);
+        return GeneralSettingsPage(
+          settings: files?.settings,
+          tips: tips,
+          claudeStatus: claudeStatus,
+        );
       case SettingsSection.appearance:
         final themes = WorkbenchThemeService.instance;
         return AppearanceSettingsPage(
@@ -116,7 +136,10 @@ class AppSettings {
           settings: files?.settings,
         );
       case SettingsSection.models:
-        return ModelsSettingsPage(providers: ModelProviders.current);
+        return ModelsSettingsPage(
+          providers: ModelProviders.current,
+          workspace: workspace,
+        );
       case SettingsSection.agents:
         return AgentsSettingsPage(agents: acpAgents);
       case SettingsSection.ssh:
@@ -143,7 +166,11 @@ class AppSettings {
           ),
         );
       case SettingsSection.updates:
-        return UpdatesSettingsPage(updates: updates, settings: files?.settings);
+        return UpdatesSettingsPage(
+          updates: updates,
+          settings: files?.settings,
+          diagnostics: diagnostics,
+        );
       case SettingsSection.dataDirectory:
         return const DataDirectoryPage();
     }

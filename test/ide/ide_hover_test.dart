@@ -65,6 +65,56 @@ void main() {
     expect(hoverRect.center.dx, closeTo(target.center.dx, 1));
   });
 
+  testWidgets('a long hover is at most 90% of a narrow window, clear of '
+      'its edges', (tester) async {
+    tester.view.physicalSize = const Size(500, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final message = 'A long explanation of where the models come from. ' * 6;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: IdeHover(
+              message: message,
+              child: const SizedBox(width: 24, height: 24),
+            ),
+          ),
+        ),
+      ),
+    );
+    await hover(tester, find.byType(SizedBox).last);
+    await tester.pump(ideHoverDelay + const Duration(milliseconds: 200));
+    final rect = tester.getRect(
+      find.ancestor(of: find.text(message), matching: find.byType(IdeHoverBox)),
+    );
+    expect(rect.width, lessThanOrEqualTo(500 * ideHoverMaxWidthFactor));
+    expect(rect.left, greaterThanOrEqualTo(ideHoverEdgeMargin));
+    expect(rect.right, lessThanOrEqualTo(500 - ideHoverEdgeMargin));
+  });
+
+  test('a hover kept in the window, at least the margin from its edges', () {
+    const overlay = Size(400, 300);
+    const size = Size(100, 20);
+    expect(
+      clampHoverOffset(const Offset(-20, -5), size, overlay),
+      const Offset(ideHoverEdgeMargin, ideHoverEdgeMargin),
+    );
+    expect(
+      clampHoverOffset(const Offset(390, 295), size, overlay),
+      const Offset(
+        400 - 100 - ideHoverEdgeMargin,
+        300 - 20 - ideHoverEdgeMargin,
+      ),
+    );
+    // Too wide for the margins: centered.
+    expect(
+      clampHoverOffset(const Offset(0, 50), const Size(390, 20), overlay).dx,
+      5,
+    );
+  });
+
   testWidgets('the delay is 500 ms everywhere, macOS too', (tester) async {
     expect(ideHoverDelay, const Duration(milliseconds: 500));
   });

@@ -34,6 +34,9 @@ class LongTurnFeed extends ChangeNotifier implements ChatFeed {
   bool get isStreaming => false;
 
   @override
+  bool get isUnprompted => false;
+
+  @override
   bool get canEditMessages => false;
 
   @override
@@ -41,9 +44,6 @@ class LongTurnFeed extends ChangeNotifier implements ChatFeed {
 
   @override
   void editMessage(int index, ComposerMessage message) {}
-
-  @override
-  void cancelQueued(int index) {}
 
   @override
   VoidCallback? moveToBackgroundAt(int index) => null;

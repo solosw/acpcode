@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi' show Abi;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -14,6 +13,7 @@ import '../files/local_files.dart';
 import '../files/recursive_watch.dart';
 import '../git/git_runner.dart';
 import '../platform/app_paths.dart';
+import '../platform/machine_platform.dart';
 import '../protocol.dart';
 import '../rpc/rpc_peer.dart';
 import '../search/local_search.dart';
@@ -245,8 +245,12 @@ class RemoteServer {
         includeParentEnvironment: args['login'] != true,
       );
       unawaited(call.cancelled.then((_) => process.kill()));
-      final stdout = process.stdout.transform(utf8.decoder).join();
-      final stderr = process.stderr.transform(utf8.decoder).join();
+      final stdout = process.stdout
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .join();
+      final stderr = process.stderr
+          .transform(const Utf8Decoder(allowMalformed: true))
+          .join();
       if (args['stdin'] case final String input) {
         process.stdin.add(utf8.encode(input));
       }
@@ -386,32 +390,7 @@ class RemoteServer {
   );
 
   /// This machine, as mason names it.
-  static RemotePlatform currentPlatform() {
-    final (os, arch) = switch (Abi.current()) {
-      Abi.macosArm64 => ('darwin', 'arm64'),
-      Abi.macosX64 => ('darwin', 'x64'),
-      Abi.linuxArm64 => ('linux', 'arm64'),
-      Abi.linuxX64 => ('linux', 'x64'),
-      Abi.linuxArm => ('linux', 'arm'),
-      Abi.windowsX64 => ('win', 'x64'),
-      Abi.windowsArm64 => ('win', 'arm64'),
-      final abi => (Platform.operatingSystem, '$abi'),
-    };
-    String? libc;
-    if (os == 'linux') {
-      try {
-        libc =
-            Directory('/lib')
-                .listSync()
-                .any((entry) => p.basename(entry.path).startsWith('ld-musl-'))
-            ? 'musl'
-            : 'gnu';
-      } on FileSystemException {
-        libc = 'gnu';
-      }
-    }
-    return RemotePlatform(os, arch, libc: libc);
-  }
+  static RemotePlatform currentPlatform() => machinePlatform();
 
   /// Ends every process the server started (politely, then killed),
   /// closes its streams and listeners: once, however often asked.

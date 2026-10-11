@@ -129,7 +129,13 @@ class CodexKernel
   final Map<String, int> _textLength = {};
   final Map<String, StringBuffer> _reasoning = {};
   final Map<String, Stopwatch> _reasoningClock = {};
+
+  /// The part of each summary streaming in.
+  final Map<String, int> _reasoningPart = {};
   final Map<String, DateTime> _startedAt = {};
+
+  /// Commands started and not completed yet, as they started.
+  final Map<String, Map<String, Object?>> _commands = {};
 
   /// Pending approvals: our request id → the server's JSON-RPC id.
   final Map<String, Object?> _approvals = {};
@@ -179,6 +185,7 @@ class CodexKernel
       'threadId': _threadId,
       'input': [
         {'type': 'text', 'text': turn.text},
+        for (final note in turn.notes) {'type': 'text', 'text': note},
       ],
       'model': model.selected,
       'approvalPolicy': readOnly ? 'never' : 'on-request',
@@ -277,7 +284,13 @@ class CodexKernel
         final id = params!['itemId'] as String;
         final buffer = _reasoning[id];
         if (buffer == null) return;
-        final delta = params['delta'] as String;
+        // Each part of the summary (its own bold title and text) apart from
+        // the one before.
+        final part = params['summaryIndex'] as int?;
+        final separate =
+            part != null && buffer.isNotEmpty && part != _reasoningPart[id];
+        if (part != null) _reasoningPart[id] = part;
+        final delta = '${separate ? '\n\n' : ''}${params['delta'] as String}';
         final offset = buffer.length;
         buffer.write(delta);
         emit(TextDelta(nextSeq, id, offset, delta, tokens: buffer.length));
@@ -361,6 +374,7 @@ class CodexKernel
         );
       case 'commandExecution':
         _startedAt[id] = DateTime.now();
+        _commands[id] = item;
         emit(ItemUpserted(nextSeq, id, _commandItem(item)));
     }
   }
@@ -371,6 +385,7 @@ class CodexKernel
       case 'reasoning':
         final buffer = _reasoning.remove(id);
         final clock = _reasoningClock.remove(id)?..stop();
+        _reasoningPart.remove(id);
         final text =
             buffer?.toString() ??
             (item['summary'] as List<Object?>? ?? const []).join('\n\n');
@@ -400,6 +415,7 @@ class CodexKernel
       case 'commandExecution':
         emit(ItemUpserted(nextSeq, id, _commandItem(item)));
         _startedAt.remove(id);
+        _commands.remove(id);
       case 'fileChange':
         final changes = item['changes'] as List<Object?>;
         for (final (index, raw) in changes.indexed) {
@@ -510,6 +526,10 @@ class CodexKernel
     for (final id in [..._textLength.keys]) {
       _textLength.remove(id);
       emit(ItemCompleted(nextSeq, id));
+    }
+    // A command stopped with its turn: it will not report its end.
+    for (final item in [..._commands.values]) {
+      _itemCompleted({...item, 'status': 'failed'});
     }
     for (final id in _approvals.keys) {
       emit(InteractionResolved(nextSeq, id));

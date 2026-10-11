@@ -1,10 +1,12 @@
 import 'package:flutter/widgets.dart';
 
 import '../theme/codicons.dart';
+import 'brand_logos.dart';
 
 /// What a project shows in place of its folder icon: an emoji, one of VS
-/// Code's icons in a color of the theme, or a picture of the user's
-/// [IconLibrary]. Kept as [toJson] (state.json's `projectIcons`).
+/// Code's icons in a color of the theme, a picture of the user's
+/// [IconLibrary], or a maker's logo (an upstream of models'). Kept as
+/// [toJson] (state.json's `projectIcons`).
 @immutable
 sealed class ProjectIcon {
   const ProjectIcon();
@@ -19,6 +21,9 @@ sealed class ProjectIcon {
     {'type': 'image', 'id': final String id} when id.isNotEmpty => LibraryIcon(
       id,
     ),
+    {'type': 'brand', 'name': final String name}
+        when BrandLogos.names.containsKey(name) =>
+      BrandIcon(name),
     _ => null,
   };
 
@@ -89,4 +94,23 @@ final class LibraryIcon extends ProjectIcon {
 
   @override
   String toString() => 'LibraryIcon($id)';
+}
+
+/// A logo of [BrandLogos], by its name, drawn in the text's color.
+final class BrandIcon extends ProjectIcon {
+  const BrandIcon(this.name);
+
+  final String name;
+
+  @override
+  Map<String, Object?> toJson() => {'type': 'brand', 'name': name};
+
+  @override
+  bool operator ==(Object other) => other is BrandIcon && other.name == name;
+
+  @override
+  int get hashCode => name.hashCode;
+
+  @override
+  String toString() => 'BrandIcon($name)';
 }

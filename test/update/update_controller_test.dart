@@ -163,7 +163,7 @@ void main() {
       make(manifest: manifestOf('1.2.0'));
       final stop = controller.listen(notifications, () => l10n);
       service.start();
-      await tester.pump(const Duration(seconds: 30));
+      await tester.pump(const Duration(seconds: 10));
       await tester.pump();
       expect(
         notifications.notifications.single.message,

@@ -176,7 +176,8 @@ void ViewWindow::HostView(flutter::BinaryMessenger* messenger, HWND view,
 
   // Window controls the Flutter side asks for (see window_controls.dart).
   window_channel_ =
-      std::make_unique<WindowChannel>(messenger, GetHandle(), window_channel);
+      std::make_unique<WindowChannel>(messenger, GetHandle(), view,
+                                      window_channel);
 
   // Files dragged onto the view from other apps (see file_drop.dart).
   drop_target_ = new DropTarget(messenger, view_, drop_channel);

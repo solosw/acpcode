@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,6 +14,8 @@ import '../workspace/window_controls.dart';
 import '../theme/codicons.dart';
 import '../theme/app_theme.dart';
 import '../ide/ide_back_button.dart';
+import '../ide/ide_modern_ui.dart' show IdeModernUI;
+import '../sidebar/sidebar.dart' show SidebarIconButton;
 import '../theme/workbench_theme.dart' show themeColors;
 import 'pages/settings_widgets.dart' show SettingsColors;
 
@@ -93,6 +98,10 @@ Future<void> showSettingsDialog(
 /// What [showSettingsDialog] shows, over the whole window: the pages
 /// listed at the left under Back and a search of them, as Cursor's
 /// settings; the page shown at the right, in a column of its own width.
+///
+/// The list is as the window's sidebar: dragged wider or narrower by its
+/// border, hidden (⌘B or its button), and a drawer over the page in a
+/// narrow window.
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({
     super.key,
@@ -103,21 +112,102 @@ class SettingsDialog extends StatefulWidget {
   final SettingsSection section;
   final SettingsPageBuilder pageBuilder;
 
-  /// The pages' list, narrower in a narrow window.
+  /// The pages' list: at first, and the least and most it is dragged to.
   static const navWidth = 240.0;
-  static const narrowNavWidth = 180.0;
+  static const minNavWidth = 180.0;
+  static const maxNavWidth = 400.0;
+
+  /// Below this width the list becomes a drawer, as the window's sidebar.
+  static const narrowWidth = 720.0;
+
+  /// The least the docked list leaves the page.
+  static const minPageWidth = 360.0;
 
   @override
   State<SettingsDialog> createState() => SettingsDialogState();
 }
 
 class SettingsDialogState extends State<SettingsDialog> {
+  static const _duration = Duration(milliseconds: 200);
+  static const _toggleCommand = 'workbench.action.toggleSidebarVisibility';
+
+  /// The list's border: a line at the left of a strip this wide, which
+  /// takes the resize drag.
+  static const _handleWidth = 5.0;
+
+  /// The list's width and whether it is docked, kept from one opening of
+  /// the dialog to the next, as the window keeps its sidebar's.
+  static double _keptWidth = SettingsDialog.navWidth;
+  static bool _keptDocked = true;
+
+  @visibleForTesting
+  static void resetLayout() {
+    _keptWidth = SettingsDialog.navWidth;
+    _keptDocked = true;
+  }
+
   late SettingsSection _section = widget.section;
 
   SettingsSection get section => _section;
 
   /// Shows [section]'s page.
   void show(SettingsSection section) => setState(() => _section = section);
+
+  /// The width set by dragging, shown as [_shownWidth]. A drag sets it
+  /// without building the dialog again (see the window's sidebar).
+  final ValueNotifier<double> _width = ValueNotifier(_keptWidth);
+
+  /// Of the dialog, from the last layout.
+  double _windowWidth = double.infinity;
+
+  /// Docked, the list leaves the page its least; as a drawer, a strip of
+  /// the window beside it.
+  double get _maxWidth => math.min(
+    SettingsDialog.maxNavWidth,
+    _windowWidth - (_narrow ? 20 : SettingsDialog.minPageWidth),
+  );
+
+  double get _minWidth => math.min(SettingsDialog.minNavWidth, _maxWidth);
+
+  double get _shownWidth => _width.value.clamp(_minWidth, _maxWidth);
+
+  bool _dragging = false;
+
+  /// Pointer and list width when the resize drag began.
+  ({double x, double width})? _dragOrigin;
+
+  /// Shown beside the page (wide window).
+  bool _docked = _keptDocked;
+
+  /// Shown over the page (narrow window). A closed drawer is not built,
+  /// once it has slid out.
+  bool _drawerOpen = false;
+  bool _drawerClosing = false;
+  bool _narrow = false;
+
+  /// Whether the list shows.
+  @visibleForTesting
+  bool get navShown => _narrow ? _drawerOpen : _docked;
+
+  /// Toggle Sidebar, for the list.
+  void _toggle() {
+    setState(() {
+      if (_narrow) {
+        _drawerClosing = _drawerOpen;
+        _drawerOpen = !_drawerOpen;
+      } else {
+        _docked = _keptDocked = !_docked;
+      }
+    });
+  }
+
+  void _closeDrawer() {
+    if (!_drawerOpen) return;
+    setState(() {
+      _drawerOpen = false;
+      _drawerClosing = true;
+    });
+  }
 
   static IconData icon(SettingsSection section) => switch (section) {
     SettingsSection.general => Codicons.settingsGear,
@@ -170,7 +260,8 @@ class SettingsDialogState extends State<SettingsDialog> {
   /// The pages the window's commands show while the dialog is up, by
   /// their keybindings: Preferences: Color Theme (⌘K ⌘T) the color theme's,
   /// Open Keyboard Shortcuts (⌘K ⌘S) the keybindings'. (The window's own
-  /// keys stop at the dialog.)
+  /// keys stop at the dialog.) Toggle Sidebar (⌘B) hides or shows the
+  /// list.
   static const _commandSections = {
     ideSelectColorThemeCommandId: SettingsSection.appearance,
     openKeybindingsCommandId: SettingsSection.keyboard,
@@ -190,9 +281,14 @@ class SettingsDialogState extends State<SettingsDialog> {
       event,
       pending: pending ?? const [],
       context: (key) => null,
-      canRun: (item) => _commandSections.containsKey(item.command),
+      canRun: (item) =>
+          item.command == _toggleCommand ||
+          _commandSections.containsKey(item.command),
     );
     switch (result) {
+      case KeybindingFound(command: _toggleCommand):
+        _toggle();
+        return KeyEventResult.handled;
       case KeybindingFound(:final command):
         show(_commandSections[command]!);
         return KeyEventResult.handled;
@@ -218,18 +314,21 @@ class SettingsDialogState extends State<SettingsDialog> {
   @override
   void dispose() {
     _search.dispose();
+    _width.dispose();
     super.dispose();
   }
 
   void _close() => Navigator.of(context).maybePop();
 
+  /// Escape closes the drawer first, then the dialog.
+  void _escape() => _drawerOpen ? _closeDrawer() : _close();
+
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
     // On Windows the window's own header stays above it.
     final top = WindowControls.drawsHeader ? AppMetrics.headerHeight : 0.0;
     return CallbackShortcuts(
-      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _escape},
       child: FocusScope(
         autofocus: true,
         onKeyEvent: _onKey,
@@ -237,40 +336,227 @@ class SettingsDialogState extends State<SettingsDialog> {
           padding: EdgeInsets.only(top: top),
           child: Material(
             color: AppColors.code,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                _windowWidth = constraints.maxWidth;
+                final narrow = _windowWidth < SettingsDialog.narrowWidth;
+                if (narrow != _narrow) {
+                  _narrow = narrow;
+                  // Crossing the breakpoint never leaves a drawer open.
+                  _drawerOpen = false;
+                  _drawerClosing = false;
+                }
+                return narrow ? _buildNarrow() : _buildWide();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The page, under a row of the title bar's height: room for the window
+  /// to be dragged by, and the list's toggle while it is hidden.
+  Widget _buildPage({required bool showToggle}) {
+    final toggle = showToggle
+        ? Padding(
+            padding: EdgeInsets.only(left: AppMetrics.trafficLightsWidth + 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SidebarIconButton(
+                icon: Codicons.layoutSidebarLeftOff,
+                tooltip: context.l10n.windowShowSidebar,
+                command: _toggleCommand,
+                onTap: _toggle,
+              ),
+            ),
+          )
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Under Windows' header, a row only for the toggle.
+        if (!WindowControls.drawsHeader)
+          TitleBarDoubleClick(
+            child: SizedBox(height: AppMetrics.titleBarHeight, child: toggle),
+          )
+        else if (toggle != null)
+          SizedBox(height: AppMetrics.titleBarHeight, child: toggle),
+        Expanded(
+          child: KeyedSubtree(
+            key: ValueKey(_section),
+            child: widget.pageBuilder(context, _section),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The list on the side bar's color, the page on the editor's, as the
+  /// IDE's side bar beside its editor.
+  Widget _buildList() =>
+      ColoredBox(color: AppColors.background, child: _nav(context));
+
+  /// The list docked beside the page.
+  Widget _buildWide() {
+    // Built once for the widths a drag goes through (see [_width]).
+    final list = _buildList();
+    final page = _buildPage(showToggle: !_docked);
+    final row = ValueListenableBuilder(
+      valueListenable: _width,
+      builder: (context, _, _) => Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AnimatedContainer(
+            duration: _dragging ? Duration.zero : _duration,
+            curve: Curves.easeOutCubic,
+            width: _docked ? _shownWidth : 0,
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.centerRight,
+                minWidth: _shownWidth,
+                maxWidth: _shownWidth,
+                child: list,
+              ),
+            ),
+          ),
+          // The handle over the page's edge, its line alone beside it.
+          Expanded(
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                // The nav on the side bar's color, the page on the editor's,
-                // as the IDE's side bar beside its editor.
-                Container(
-                  width: width < 720
-                      ? SettingsDialog.narrowNavWidth
-                      : SettingsDialog.navWidth,
-                  color: AppColors.background,
-                  child: _nav(context),
-                ),
-                Container(width: 1, color: AppColors.partBorder),
-                Expanded(
-                  child: Column(
+                Positioned.fill(left: _docked ? 1 : 0, child: page),
+                if (_docked)
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: _buildResizeHandle(),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [row, if (_dragging) _resizeCursorLayer],
+    );
+  }
+
+  /// The list as a drawer over the page.
+  Widget _buildNarrow() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(child: _buildPage(showToggle: true)),
+        // Scrim: a click outside closes the drawer.
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: !_drawerOpen,
+            child: GestureDetector(
+              onTap: _closeDrawer,
+              child: AnimatedOpacity(
+                opacity: _drawerOpen ? 1 : 0,
+                duration: _duration,
+                child: const ColoredBox(color: Color(0x66000000)),
+              ),
+            ),
+          ),
+        ),
+        // Only the slide animates; the width follows the drag or the window
+        // at once.
+        ValueListenableBuilder(
+          valueListenable: _width,
+          builder: (context, _, list) => TweenAnimationBuilder<double>(
+            tween: Tween(end: _drawerOpen ? 1 : 0),
+            duration: _duration,
+            curve: Curves.easeOutCubic,
+            onEnd: () {
+              if (_drawerClosing) setState(() => _drawerClosing = false);
+            },
+            builder: (context, shown, child) => Positioned(
+              top: 0,
+              bottom: 0,
+              left: -(_shownWidth + _handleWidth + 24) * (1 - shown),
+              width: _shownWidth + _handleWidth,
+              child: child!,
+            ),
+            child: list == null
+                ? const SizedBox.shrink()
+                : Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Room for the window to be dragged by, as the chat's
-                      // title bar has.
-                      if (top == 0)
-                        const TitleBarDoubleClick(
-                          child: SizedBox(height: AppMetrics.titleBarHeight),
-                        ),
-                      Expanded(
-                        child: KeyedSubtree(
-                          key: ValueKey(_section),
-                          child: widget.pageBuilder(context, _section),
-                        ),
+                      SizedBox(width: _shownWidth, child: list),
+                      _buildResizeHandle(),
+                    ],
+                  ),
+          ),
+          // Built once for the widths a drag goes through (see [_width]).
+          child: _drawerOpen || _drawerClosing
+              ? DecoratedBox(
+                  decoration: BoxDecoration(
+                    boxShadow: [
+                      BoxShadow(
+                        color: themeColors['widget.shadow'],
+                        blurRadius: 24,
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
+                  child: _buildList(),
+                )
+              : null,
+        ),
+        if (_dragging) _resizeCursorLayer,
+      ],
+    );
+  }
+
+  /// While resizing, the pointer may be far from the border: the resize
+  /// cursor everywhere, and no hover effects under it.
+  static const _resizeCursorLayer = MouseRegion(
+    cursor: SystemMouseCursors.resizeColumn,
+  );
+
+  void _endDrag() {
+    _keptWidth = _shownWidth;
+    setState(() {
+      _dragging = false;
+      _dragOrigin = null;
+    });
+  }
+
+  /// The border between the list and the page, draggable to resize.
+  Widget _buildResizeHandle() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        // Its clicks stay its own (not the drawer's scrim, under it).
+        behavior: HitTestBehavior.opaque,
+        // From the press, so the border stays under the pointer.
+        dragStartBehavior: DragStartBehavior.down,
+        onHorizontalDragStart: (details) => setState(() {
+          _dragging = true;
+          _dragOrigin = (x: details.globalPosition.dx, width: _shownWidth);
+        }),
+        // Where the pointer is relative to where it was pressed: past the
+        // min or max the border waits there.
+        onHorizontalDragUpdate: (details) {
+          final origin = _dragOrigin!;
+          _width.value = (origin.width + details.globalPosition.dx - origin.x)
+              .clamp(_minWidth, _maxWidth);
+        },
+        onHorizontalDragEnd: (_) => _endDrag(),
+        onHorizontalDragCancel: _endDrag,
+        // At rest the border line; dragged, as thick as the IDE's sashes.
+        child: Container(
+          width: _handleWidth,
+          alignment: Alignment.centerLeft,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            width: _dragging ? IdeModernUI.gap : 1,
+            color: _dragging ? IdeModernUI.sashHover : AppColors.partBorder,
           ),
         ),
       ),
@@ -296,20 +582,42 @@ class SettingsDialogState extends State<SettingsDialog> {
             if (_matches(section)) section,
         ],
     ].where((sections) => sections.isNotEmpty).toList();
+    final hide = SidebarIconButton(
+      icon: Codicons.layoutSidebarLeft,
+      tooltip: l10n.windowHideSidebar,
+      command: _toggleCommand,
+      onTap: _toggle,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Under the traffic lights.
+        // Under the traffic lights, the hide button on the right, as the
+        // window's sidebar has it; under Windows' header, beside Back.
         if (!WindowControls.drawsHeader)
-          const TitleBarDoubleClick(
-            child: SizedBox(height: AppMetrics.titleBarHeight),
+          TitleBarDoubleClick(
+            child: SizedBox(
+              height: AppMetrics.titleBarHeight,
+              child: Row(
+                children: [const Spacer(), hide, const SizedBox(width: 6)],
+              ),
+            ),
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
-          child: IdeBackButton(
-            label: l10n.settingsBack,
-            onTap: _close,
-            expand: true,
+          child: Row(
+            children: [
+              Expanded(
+                child: IdeBackButton(
+                  label: l10n.settingsBack,
+                  onTap: _close,
+                  expand: true,
+                ),
+              ),
+              if (WindowControls.drawsHeader) ...[
+                const SizedBox(width: 4),
+                hide,
+              ],
+            ],
           ),
         ),
         Padding(
@@ -364,7 +672,10 @@ class SettingsDialogState extends State<SettingsDialog> {
                     icon: icon(section),
                     label: label(context, section),
                     selected: section == _section,
-                    onTap: () => show(section),
+                    onTap: () {
+                      show(section);
+                      _closeDrawer();
+                    },
                   ),
               ],
             ],

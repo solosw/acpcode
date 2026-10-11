@@ -48,10 +48,39 @@ SettingsSection? _section(WidgetTester tester) {
   return tester.state<SettingsDialogState>(dialog).section;
 }
 
+/// Opens the settings, alone, in a window of [size]; their state.
+Future<SettingsDialogState Function()> _openSettings(
+  WidgetTester tester,
+  Size size,
+) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () => showSettingsDialog(
+            context,
+            pageBuilder: (context, section) => Text('page ${section.name}'),
+          ),
+          child: const Text('open'),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+  return () => tester.state<SettingsDialogState>(find.byType(SettingsDialog));
+}
+
 double _chatLeft(WidgetTester tester) =>
     tester.getTopLeft(find.byType(ChatScreen)).dx;
 
 void main() {
+  // The settings' list is kept from one opening to the next.
+  tearDown(SettingsDialogState.resetLayout);
+
   testWidgets('⌘, opens the settings over the chat; Escape closes them', (
     tester,
   ) async {
@@ -138,7 +167,12 @@ void main() {
     await _pumpApp(tester);
     final left = _chatLeft(tester);
     await _press(tester, LogicalKeyboardKey.comma, meta: true);
+    // ⌘B hides the settings' list, not the sidebar under them.
     await _press(tester, LogicalKeyboardKey.keyB, meta: true);
+    expect(
+      tester.state<SettingsDialogState>(find.byType(SettingsDialog)).navShown,
+      isFalse,
+    );
     await _press(tester, LogicalKeyboardKey.escape);
     expect(_chatLeft(tester), left);
   }, variant: _mac);
@@ -168,7 +202,7 @@ void main() {
   testWidgets('the settings fill the window, find and switch pages', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(700, 500);
+    tester.view.physicalSize = const Size(800, 500);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
@@ -186,7 +220,7 @@ void main() {
     );
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
-    expect(tester.getSize(find.byType(SettingsDialog)), const Size(700, 500));
+    expect(tester.getSize(find.byType(SettingsDialog)), const Size(800, 500));
     expect(find.text('page general'), findsOneWidget);
     // The pages listed in their groups' order.
     expect(
@@ -204,6 +238,88 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(SettingsDialog), findsNothing);
   });
+
+  testWidgets('the settings\' list hides, shows again and is dragged '
+      'wider, kept so the next time', (tester) async {
+    final state = await _openSettings(tester, const Size(1000, 600));
+    double listWidth() => tester.getTopLeft(find.text('page general')).dx;
+    expect(state().navShown, isTrue);
+    expect(listWidth(), closeTo(SettingsDialog.navWidth + 1, 1));
+    // Its button hides it; the page's shows it again.
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeft));
+    await tester.pumpAndSettle();
+    expect(state().navShown, isFalse);
+    expect(find.text('General').hitTestable(), findsNothing);
+    expect(listWidth(), 0);
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeftOff));
+    await tester.pumpAndSettle();
+    expect(state().navShown, isTrue);
+    // ⌘B too.
+    await _press(tester, LogicalKeyboardKey.keyB, meta: true);
+    expect(state().navShown, isFalse);
+    await _press(tester, LogicalKeyboardKey.keyB, meta: true);
+    expect(state().navShown, isTrue);
+    // Its border dragged, within its most.
+    await tester.dragFrom(
+      Offset(SettingsDialog.navWidth + 2, 300),
+      const Offset(60, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(listWidth(), closeTo(SettingsDialog.navWidth + 61, 1));
+    await tester.dragFrom(
+      Offset(SettingsDialog.navWidth + 62, 300),
+      const Offset(500, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(listWidth(), closeTo(SettingsDialog.maxNavWidth + 1, 1));
+    // Hidden, and opened again: as it was left.
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeft));
+    await tester.pumpAndSettle();
+    await _press(tester, LogicalKeyboardKey.escape);
+    expect(find.byType(SettingsDialog), findsNothing);
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(state().navShown, isFalse);
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeftOff));
+    await tester.pumpAndSettle();
+    expect(listWidth(), closeTo(SettingsDialog.maxNavWidth + 1, 1));
+  }, variant: _mac);
+
+  testWidgets('in a narrow window the settings\' list is a drawer over the '
+      'page', (tester) async {
+    final state = await _openSettings(tester, const Size(600, 500));
+    // Hidden at first, the page the whole width.
+    expect(state().navShown, isFalse);
+    expect(find.text('General'), findsNothing);
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeftOff));
+    await tester.pumpAndSettle();
+    expect(state().navShown, isTrue);
+    // Over the page, which stays where it was.
+    expect(find.text('page general'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('page general')).dx, lessThan(150));
+    // A page picked closes it.
+    await tester.tap(find.text('Appearance'));
+    await tester.pumpAndSettle();
+    expect(find.text('page appearance'), findsOneWidget);
+    expect(state().navShown, isFalse);
+    expect(find.text('General'), findsNothing);
+    // A click beside it closes it, Escape too, before the dialog.
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeftOff));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(560, 300));
+    await tester.pumpAndSettle();
+    expect(state().navShown, isFalse);
+    await tester.tap(find.byIcon(Codicons.layoutSidebarLeftOff));
+    await tester.pumpAndSettle();
+    await _press(tester, LogicalKeyboardKey.escape);
+    expect(state().navShown, isFalse);
+    expect(find.byType(SettingsDialog), findsOneWidget);
+    // Wide again, docked.
+    tester.view.physicalSize = const Size(1000, 500);
+    await tester.pumpAndSettle();
+    expect(state().navShown, isTrue);
+    expect(find.text('General'), findsOneWidget);
+  }, variant: _mac);
 
   test('every settings page is listed under one heading', () {
     expect([

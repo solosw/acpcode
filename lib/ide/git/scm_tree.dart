@@ -13,6 +13,8 @@
 // `SCMTreeSorter` in src/vs/workbench/contrib/scm/browser/scmViewPane.ts
 // and `compareFileNames` in src/vs/base/common/comparers.ts.
 
+import 'package:path/path.dart' as p;
+
 import 'git_model.dart';
 
 /// A node of the tree: a folder or a changed file.
@@ -53,26 +55,25 @@ List<IdeScmTreeNode> ideScmTree(
   String root,
   Iterable<IdeGitResource> resources, {
   bool compact = true,
+  p.Context? paths,
 }) {
   final top = IdeScmTreeFolder(root, '');
   final folders = <String, IdeScmTreeFolder>{root: top};
   IdeScmTreeFolder folderAt(String path) {
     if (folders[path] case final folder?) return folder;
-    final parentPath = ideGitDirname(path);
-    // A path package:path cannot walk (a remote `/sessions/...` read on
-    // Windows as `\sessions\...`) would recurse forever and blank the
-    // panel. Stop at the project's root.
-    final parent = parentPath == path ? top : folderAt(parentPath);
-    final folder = IdeScmTreeFolder(path, ideGitBasename(path));
-    parent.children.add(folder);
+    final up = ideGitDirname(path, paths);
+    // Above [root] after all (spelled another way): at the top.
+    if (up == path || !ideGitIsWithin(root, path, paths)) return top;
+    final folder = IdeScmTreeFolder(path, ideGitBasename(path, paths));
+    folderAt(up).children.add(folder);
     return folders[path] = folder;
   }
 
   for (final resource in resources) {
-    final directory = ideGitDirname(resource.path);
+    final directory = ideGitDirname(resource.path, paths);
     final parent =
         folders[directory] ??
-        (ideGitIsWithin(root, directory) ? folderAt(directory) : top);
+        (ideGitIsWithin(root, directory, paths) ? folderAt(directory) : top);
     parent.children.add(IdeScmTreeFile(resource));
   }
 

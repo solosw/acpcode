@@ -157,6 +157,13 @@ enum IdeGitStatus {
     _ => 1,
   };
 
+  /// Whether the file is gone from the working tree (a deletion "by them"
+  /// leaves ours there).
+  bool get fileGone => switch (this) {
+    deleted || indexDeleted || deletedByUs || bothDeleted => true,
+    _ => false,
+  };
+
   /// Whether folders above show it (deletions do not).
   bool get propagates => this != deleted && this != indexDeleted;
 }

@@ -1258,15 +1258,25 @@ void main() {
         ..send(const KernelTurn(id: 'u3', text: 'third'));
       await pumpEventQueue();
       expect(cli.users.map((m) => m['uuid']), ['u1', 'u2', 'u3']);
-      bool queued(String id) => (transcript.itemAt(
-        transcript.indexOf(id)!,
-      ) as UserMessageItem).queued;
-      expect([queued('u2'), queued('u3')], [true, true]);
-
-      kernel.cancelQueued('u3');
+      List<String> queued() => [for (final (id, _) in transcript.queued) id];
+      // Waiting apart, not in the conversation yet.
+      expect(queued(), ['u2', 'u3']);
+      expect(transcript.indexOf('u2'), isNull);
+      cli.push({
+        'type': 'assistant',
+        'message': {
+          'id': 'm1',
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': 'working on it'},
+          ],
+        },
+      });
       await pumpEventQueue();
+
+      expect(await kernel.cancelQueued('u3'), isTrue);
       expect(cli.requests('cancel_async_message').single['message_uuid'], 'u3');
-      expect(transcript.indexOf('u3'), isNull);
+      expect(queued(), ['u2']);
 
       cli
         ..push({'type': 'result', 'subtype': 'success', 'is_error': false})
@@ -1276,7 +1286,10 @@ void main() {
           'state': 'started',
         });
       await pumpEventQueue();
-      expect(queued('u2'), isFalse);
+      expect(queued(), isEmpty);
+      // Taken up: after what the turn before it said while it waited.
+      expect(transcript.indexOf('u2'), 2);
+      expect(transcript.length, 3);
       expect(transcript.activeTurn, 'u2');
 
       kernel
@@ -1285,6 +1298,57 @@ void main() {
       await pumpEventQueue();
       expect(cli.requests('interrupt'), hasLength(1));
       expect(transcript.activeTurn, isNull);
+      kernel.dispose();
+    });
+
+    test('a queued message sent now goes before those queued ahead of it, '
+        'the turn running stopped for it', () async {
+      final cli = FakeCli(
+        answers: {
+          'cancel_async_message': {'cancelled': true},
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel
+        ..send(const KernelTurn(id: 'u1', text: 'first'))
+        ..send(const KernelTurn(id: 'u2', text: 'second'))
+        ..send(const KernelTurn(id: 'u3', text: 'third'));
+      await pumpEventQueue();
+
+      // The next anyway: only the turn running is stopped.
+      kernel.sendQueuedNow('u2');
+      await pumpEventQueue();
+      expect(cli.requests('interrupt'), hasLength(1));
+      expect(cli.requests('cancel_async_message'), isEmpty);
+
+      cli.push({
+        'type': 'command_lifecycle',
+        'command_uuid': 'u2',
+        'state': 'started',
+      });
+      await pumpEventQueue();
+      kernel.send(const KernelTurn(id: 'u4', text: 'fourth'));
+      await pumpEventQueue();
+      kernel.sendQueuedNow('u4');
+      await pumpEventQueue();
+      expect(
+        cli.requests('cancel_async_message').map((r) => r['message_uuid']),
+        ['u4', 'u3'],
+      );
+      // Sent again, in its new place: it first, the turn stopped for it.
+      expect(cli.users.skip(4).map((m) => (m['message'] as Map)['content']), [
+        [
+          {'type': 'text', 'text': 'fourth'},
+        ],
+        [
+          {'type': 'text', 'text': 'third'},
+        ],
+      ]);
+      expect(cli.requests('interrupt'), hasLength(2));
+      expect(
+        [for (final (_, item) in transcript.queued) item.text],
+        ['fourth', 'third'],
+      );
       kernel.dispose();
     });
 
@@ -1325,6 +1389,67 @@ void main() {
       await pumpEventQueue();
       expect(transcript.length, 1);
       expect(transcript.itemAt(0), isA<UserMessageItem>());
+      kernel.dispose();
+    });
+
+    test('a stopped turn\'s calls left unanswered show as failed, but a '
+        'subagent in the background and its calls go on', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(cli);
+      Map<String, Object?> call(
+        String id,
+        String name,
+        Map<String, Object?> input, {
+        String? parent,
+      }) => {
+        'type': 'assistant',
+        'uuid': 'm-$id',
+        'parent_tool_use_id': parent,
+        'message': {
+          'id': 'msg-$id',
+          'role': 'assistant',
+          'content': [
+            {'type': 'tool_use', 'id': id, 'name': name, 'input': input},
+          ],
+        },
+      };
+
+      kernel.send(const KernelTurn(id: 'u1', text: 'look at my code'));
+      await pumpEventQueue();
+      cli
+        ..push(call('a1', 'Agent', {'description': 'Look', 'prompt': 'look'}))
+        ..push(call('r1', 'Read', {'file_path': '/a.dart'}, parent: 'a1'))
+        ..push(
+          call('a2', 'Agent', {
+            'description': 'Watch',
+            'prompt': 'watch',
+            'run_in_background': true,
+          }),
+        )
+        ..push(call('r2', 'Read', {'file_path': '/b.dart'}, parent: 'a2'))
+        ..push(call('b1', 'Bash', {'command': 'sleep 9'}));
+      await pumpEventQueue();
+      final before = [...transcript.liveItems.map((e) => e.$2)];
+      expect(
+        before.whereType<AgentItem>().map((a) => a.status),
+        everyElement(CommandStatus.running),
+      );
+
+      kernel.cancel();
+      final items = {for (final (id, item) in transcript.liveItems) id: item};
+      final look = items['a1']! as AgentItem;
+      expect(look.status, CommandStatus.failed);
+      expect(
+        (look.children.single as ToolCallItem).status,
+        ToolStatus.failed,
+      );
+      expect((items['b1']! as TerminalItem).status, CommandStatus.failed);
+      final watch = items['a2']! as AgentItem;
+      expect(watch.status, CommandStatus.running);
+      expect(
+        (watch.children.single as ToolCallItem).status,
+        ToolStatus.running,
+      );
       kernel.dispose();
     });
 
@@ -1374,12 +1499,7 @@ void main() {
       expect(transcript.activeTurn, 's2');
       // A message meanwhile waits its turn, as the CLI has it.
       kernel.send(const KernelTurn(id: 'u2', text: 'and lint'));
-      expect(
-        (transcript.itemAt(
-          transcript.indexOf('u2')!,
-        ) as UserMessageItem).queued,
-        isTrue,
-      );
+      expect(transcript.queued.single.$1, 'u2');
       cli.push(result);
       await pumpEventQueue();
       expect(transcript.activeTurn, isNull);
@@ -1723,6 +1843,96 @@ void main() {
       kernel.dispose();
     });
 
+    test('reports the prompt cache, from the session file then live', () async {
+      Map<String, Object?> assistant(
+        String id,
+        int read,
+        int written, {
+        int uncached = 2,
+        String model = 'claude-opus-5-5',
+        Object? parent,
+        bool sidechain = false,
+      }) => {
+        'type': 'assistant',
+        'parent_tool_use_id': ?parent,
+        if (sidechain) 'isSidechain': true,
+        'message': {
+          'id': id,
+          'role': 'assistant',
+          'model': model,
+          'content': const [],
+          'usage': {
+            'input_tokens': uncached,
+            // As the proxy gives a provider's: only what was cached.
+            if (read > 0 || !model.startsWith('p/'))
+              'cache_read_input_tokens': read,
+            if (written > 0 || !model.startsWith('p/'))
+              'cache_creation_input_tokens': written,
+          },
+        },
+      };
+      final cli = FakeCli();
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        KernelContext(
+          cwd: '/p',
+          resume: SessionRecord(
+            id: 's',
+            title: 't',
+            updatedAt: DateTime(2026),
+            cwd: '/p',
+          ),
+        ),
+        start: (_) async => cli,
+        readHistory: (_) async => [
+          // A message comes a content block a line, each with its usage.
+          assistant('m1', 0, 20000),
+          assistant('m1', 0, 20000),
+          assistant('sub', 900, 900, sidechain: true),
+          // Resumed elsewhere: all written again.
+          assistant('m2', 0, 30000),
+        ],
+      );
+      final transcript = Transcript();
+      kernel.events.listen(transcript.apply);
+      await pumpEventQueue();
+      var cache = transcript.stats!.cache!;
+      expect(cache.last.written, 30000);
+      expect(cache.conversation.written, 50000);
+      expect(cache.conversation.uncached, 4);
+
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      cli
+        ..push(assistant('m3', 30000, 500))
+        ..push(assistant('m3', 30000, 500))
+        ..push(assistant('agent', 5000, 5000, parent: 'toolu_1'))
+        // An API error's: no usage of the model's.
+        ..push(assistant('err', 0, 0, uncached: 0));
+      await pumpEventQueue();
+      cache = transcript.stats!.cache!;
+      expect(cache.last.read, 30000);
+      expect(cache.last.hitRate, closeTo(30000 / 30502, 1e-9));
+      expect(cache.conversation.read, 30000);
+      expect(cache.conversation.written, 50500);
+
+      // A provider's model that never says what was cached: not shown,
+      // rather than all uncached.
+      cli.push(assistant('p1', 0, 0, uncached: 31000, model: 'p/plain'));
+      await pumpEventQueue();
+      expect(transcript.stats!.cache, isNull);
+      // One that does, once it is cached.
+      cli
+        ..push(assistant('p2', 0, 0, uncached: 31000, model: 'p/caching'))
+        ..push(assistant('p3', 30000, 0, uncached: 1000, model: 'p/caching'));
+      await pumpEventQueue();
+      expect(transcript.stats!.cache!.last.read, 30000);
+      cli.push(assistant('p4', 0, 0, uncached: 31000, model: 'p/caching'));
+      await pumpEventQueue();
+      expect(transcript.stats!.cache!.last.hitRate, 0);
+      kernel.dispose();
+    });
+
     test('the account limits one session hears of show in every one', () async {
       ClaudeCodeKernel.forgetAccount();
       final first = claude(FakeCli());
@@ -2000,6 +2210,70 @@ void main() {
         kernel.health.detail,
         contains('/Users/u/.nvm/versions/node/v22/bin/claude'),
       );
+      kernel.dispose();
+    });
+
+    test('one too old is passed over for a newer one, started in its place: '
+        'the turn goes on there', () async {
+      final old = _SilentCli();
+      final newer = FakeCli();
+      final rejected = <(String, String)>[];
+      var starts = 0;
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        const KernelContext(cwd: '/p'),
+        start: (_) async => [old, newer][starts++],
+        rejectTooOld: (cwd, executable) async {
+          rejected.add((cwd, executable));
+          return true;
+        },
+      );
+      final transcript = Transcript();
+      kernel.events.listen(transcript.apply);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      old.push(
+        ClaudeExit.message(
+          1,
+          "error: unknown option '--prompt-suggestions'",
+          executable: '/usr/local/bin/claude',
+        ),
+      );
+      await pumpEventQueue();
+      expect(rejected, [('/p', '/usr/local/bin/claude')]);
+      expect(starts, 2);
+      expect(kernel.health.status, KernelHealthStatus.ready);
+      expect(newer.users, hasLength(1));
+      expect(shown(transcript), isNot(contains(startsWith('notice error'))));
+      kernel.dispose();
+    });
+
+    test('one too old with none newer to run says to update it', () async {
+      final cli = _SilentCli();
+      var starts = 0;
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        const KernelContext(cwd: '/p'),
+        start: (_) async {
+          starts++;
+          return cli;
+        },
+        rejectTooOld: (_, _) async => false,
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      cli.push(
+        ClaudeExit.message(
+          1,
+          "error: unknown option '--prompt-suggestions'",
+          executable: '/usr/local/bin/claude',
+        ),
+      );
+      await pumpEventQueue();
+      expect(starts, 1);
+      expect(kernel.health.status, KernelHealthStatus.failed);
+      expect(kernel.health.message, contains('older than BaoCode needs'));
+      expect(kernel.health.detail, contains('/usr/local/bin/claude'));
       kernel.dispose();
     });
 
@@ -3319,34 +3593,22 @@ void main() {
   group('claude locator', () {
     tearDown(() => CliLocator.use(null));
 
-    test('runs the build BAOCODE_CLAUDE_PATH names, not the installed '
-        'one', () async {
+    test('BAOCODE_CLAUDE_PATH in the environment is not read: the build '
+        'to run is a setting now', () async {
       final root = await Directory.systemTemp.createTemp('baocode-locator-');
       addTearDown(() => root.delete(recursive: true));
       final variant = File('${root.path}/claude-variant')
         ..writeAsStringSync('#!/bin/sh\n');
+      final installed = File('${root.path}/bin/claude')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('#!/bin/sh\n');
       CliLocator.use({
         'BAOCODE_CLAUDE_PATH': variant.path,
-        'PATH': '${root.path}/none',
+        'PATH': '${root.path}/bin',
       });
 
       final cli = await CliLocator.locate();
-      expect(cli.executable, variant.path);
-    });
-
-    test('an override that is not there fails, naming the variable', () async {
-      CliLocator.use({'BAOCODE_CLAUDE_PATH': '/nonexistent/claude-variant'});
-
-      await expectLater(
-        CliLocator.locate(),
-        throwsA(
-          isA<ClaudeUnavailable>().having(
-            (error) => error.detail,
-            'detail',
-            contains('BAOCODE_CLAUDE_PATH'),
-          ),
-        ),
-      );
+      expect(cli.executable, installed.path);
     });
 
     // What npm leaves at bin/claude.exe when its postinstall did not run.
@@ -3981,6 +4243,30 @@ exec /bin/sh -c "\$command"
       expect(events.last, isA<TurnEnded>());
       final edited = events.whereType<FileEdited>().single.change;
       expect((edited.path, edited.added, edited.removed), ('lib/a.dart', 1, 1));
+    });
+
+    test('a command running when the turn stops shows as failed', () async {
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      notify('item/started', {
+        'item': {
+          'type': 'commandExecution',
+          'id': 'c1',
+          'command': 'sleep 9',
+          'status': 'inProgress',
+        },
+      });
+      final running = events.whereType<ItemUpserted>().last.item;
+      expect((running as TerminalItem).status, CommandStatus.running);
+
+      kernel.cancel();
+      final stopped = events
+          .whereType<ItemUpserted>()
+          .lastWhere((e) => e.id == 'c1')
+          .item;
+      expect((stopped as TerminalItem).status, CommandStatus.failed);
+      expect(stopped.command, 'sleep 9');
+      expect(events.last, isA<TurnEnded>());
     });
 
     test('declares no background tasks and no undo', () {

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -5,8 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:bao_remote/search.dart' show IdeTextQuery;
+import 'package:baocode/chat/composer/file_drop.dart';
 import 'package:baocode/ide/file_service.dart';
 import 'package:baocode/ide/ide_explorer.dart';
+import 'package:baocode/ide/ide_notifications.dart';
 
 import 'fake_files.dart';
 
@@ -172,8 +177,9 @@ void main() {
     expect(contents.containsKey(inRoot('lib/util.dart')), isFalse);
   }, variant: windows);
 
-  testWidgets('a remote project\'s copies stay off the system\'s clipboard; '
-      'this machine\'s files pasted into it go up to its host', (tester) async {
+  testWidgets('a remote project\'s copies are downloaded onto the system\'s '
+      'clipboard, how far shown; this machine\'s files pasted into it go up '
+      'to its host', (tester) async {
     final local = (await tester.runAsync(
       () => Directory.systemTemp.createTemp('explorer_paste'),
     ))!;
@@ -182,20 +188,90 @@ void main() {
     await tester.runAsync(() => notes.writeAsString('hi'));
 
     final held = clipboard(tester);
-    await _pumpTree(tester, files, local: false);
+    final notifications = IdeNotifications();
+    addTearDown(notifications.dispose);
+    final host = _HostFiles({
+      for (final MapEntry(:key, :value) in files.entries) inRoot(key): value,
+    });
+    final gate = host.gate = Completer<void>();
+    await _pumpTree(
+      tester,
+      files,
+      local: false,
+      host: host,
+      notifications: notifications,
+    );
     await tester.tap(row('README.md'));
     await tester.pumpAndSettle();
-    await chord(tester, LogicalKeyboardKey.keyC, control: true);
+    await tester.runAsync(() async {
+      await chord(tester, LogicalKeyboardKey.keyC, control: true);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    // Taking a moment: shown.
     expect(held, isEmpty);
+    expect(
+      notifications.notifications.single.message,
+      'Downloading files... 0/1',
+    );
+    gate.complete();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    await tester.pump();
+    expect(notifications.notifications, isEmpty);
+    expect(p.basename(held.single), 'README.md');
+    expect(File(held.single).readAsStringSync(), 'r');
 
-    held.add(notes.path);
+    held
+      ..clear()
+      ..add(notes.path);
     await tester.runAsync(() async {
       await chord(tester, LogicalKeyboardKey.keyV, control: true);
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pumpAndSettle();
-    final tree = filesOf(tester);
-    expect(tree.bytes[inRoot('notes.txt')], 'hi'.codeUnits);
+    expect(host.bytes[inRoot('notes.txt')], 'hi'.codeUnits);
+  }, variant: windows);
+
+  testWidgets('a remote project\'s file dragged out of the window is '
+      'downloaded once out, then dragged on as the system drags files', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    final messenger = tester.binding.defaultBinaryMessenger;
+    const channel = MethodChannel('baocode/window');
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return true;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await _pumpTree(
+      tester,
+      files,
+      local: false,
+      host: _HostFiles({
+        for (final MapEntry(:key, :value) in files.entries) inRoot(key): value,
+      }),
+    );
+    final gesture = await tester.startGesture(
+      tester.getCenter(row('README.md')),
+    );
+    await gesture.moveBy(const Offset(0, 40));
+    await tester.pump();
+    // Not this machine's yet: the window only watches.
+    expect(calls.single.method, 'armFileDrag');
+    expect(calls.single.arguments, {'paths': null});
+    await tester.runAsync(() async {
+      await FileDrops.handle(const MethodCall('dragOut', {'began': false}));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    await tester.pump();
+    final drag = calls.singleWhere((call) => call.method == 'startFileDrag');
+    final paths = ((drag.arguments as Map)['paths'] as List).cast<String>();
+    expect(p.basename(paths.single), 'README.md');
+    expect(File(paths.single).readAsStringSync(), 'r');
+    await gesture.up();
+    await tester.pumpAndSettle();
   }, variant: windows);
 
   test('copyLocalTo copies a folder with its contents, without links to '
@@ -222,12 +298,17 @@ Future<void> _pumpTree(
   WidgetTester tester,
   Map<String, String> files, {
   bool local = true,
+  TreeFiles? host,
+  IdeNotifications? notifications,
   ValueChanged<Object>? onError,
 }) async {
   final controller = IdeExplorerController(
-    files: TreeFiles({
-      for (final MapEntry(:key, :value) in files.entries) inRoot(key): value,
-    }),
+    files:
+        host ??
+        TreeFiles({
+          for (final MapEntry(:key, :value) in files.entries)
+            inRoot(key): value,
+        }),
     root: testRoot,
     watch: (_) => const Stream.empty(),
   );
@@ -236,16 +317,43 @@ Future<void> _pumpTree(
     MaterialApp(
       theme: ThemeData.dark(),
       home: Scaffold(
-        body: IdeExplorer(
-          controller: controller,
-          local: local,
-          onOpen: (_, _) {},
-          onError: onError == null
-              ? null
-              : (error) => onError(error is String ? error : '$error'),
+        body: IdeNotificationsScope(
+          notifications: notifications ?? IdeNotifications(),
+          child: IdeExplorer(
+            controller: controller,
+            local: local,
+            onOpen: (_, _) {},
+            onError: onError == null
+                ? null
+                : (error) => onError(error is String ? error : '$error'),
+          ),
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
+}
+
+/// A remote project's files, on its host: read as bytes once [gate] opens.
+class _HostFiles extends TreeFiles implements IdeHostFiles {
+  _HostFiles(super.contents);
+
+  Completer<void>? gate;
+
+  @override
+  Future<Uint8List> readBytes(String path) async {
+    await gate?.future;
+    return bytes[path] ?? utf8.encode(contents[path]!);
+  }
+
+  @override
+  Stream<void> watchDirectory(String directory) => const Stream.empty();
+
+  @override
+  Future<IdeFileListing> listProject(String root, {int limit = 50000}) =>
+      throw UnimplementedError();
+
+  @override
+  Stream<Object> searchText(String root, IdeTextQuery query) =>
+      throw UnimplementedError();
 }

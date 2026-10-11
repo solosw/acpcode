@@ -302,6 +302,35 @@ void main() {
       expect(find.textContaining('tokens', findRichText: true), findsNothing);
     });
 
+    testWidgets('a summarized thought is headed by its bold title alone, and '
+        'opens to the rest', (tester) async {
+      await pumpStep(
+        tester,
+        const ThinkingItem(
+          text: '**Planning the fix**\n\nFirst read the kernel.\n\n'
+              '**Checking tests**\n\nThen run them.\n\n',
+          tokens: 40,
+          seconds: 4,
+        ),
+      );
+      expect(header('Planning the fix'), findsOneWidget);
+      expect(find.textContaining('Thought'), findsNothing);
+      await tester.tap(header('Planning the fix'));
+      await tester.pump();
+      expect(
+        find.text('First read the kernel.\n\nChecking tests\n\nThen run them.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a summarized thought shows its title while it streams in', (
+      tester,
+    ) async {
+      await pumpStep(tester, const ThinkingItem(text: '**Reading', tokens: 4));
+      expect(header('Reading'), findsOneWidget);
+      expect(find.textContaining('Thinking'), findsNothing);
+    });
+
     testWidgets('a subagent: a line, how it went after its description once '
         'done, opening on a click or Enter', (tester) async {
       var opened = 0;

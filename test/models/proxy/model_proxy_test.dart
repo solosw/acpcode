@@ -427,7 +427,7 @@ void main() {
     final body = sent.body! as Map;
     expect(body['model'], 'gpt-5');
     expect(body['stream'], isTrue);
-    expect(body['reasoning'], {'effort': 'low'});
+    expect(body['reasoning'], {'effort': 'low', 'summary': 'auto'});
     expect((body['tools'] as List).single, containsPair('name', 'Read'));
     expect(
       (body['input'] as List).cast<Map>().map((item) => item['role']),

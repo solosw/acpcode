@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../claude/claude_environment.dart';
 import '../claude/claude_release.dart';
+import '../claude/claude_runtime.dart';
 import '../claude/claude_unavailable.dart';
 import '../claude/cli_locator.dart';
 import '../protocol.dart';
@@ -10,8 +11,8 @@ import '../rpc/rpc_peer.dart';
 import 'remote_server.dart' show paramsOf;
 import 'server_streams.dart';
 
-/// The Claude Code the server runs: the user's, else one it installed
-/// ([ManagedClaude]), downloaded there ([RemoteProtocol.claudeInstall]) or
+/// The Claude Code the server runs: the newest of the user's and one it
+/// installed ([ManagedClaude], see [ClaudeRuntime]), downloaded there ([RemoteProtocol.claudeInstall]) or
 /// sent by the app from its own download where the host cannot reach the
 /// downloads ([RemoteProtocol.claudeUpload]).
 class ServerClaude {
@@ -20,7 +21,11 @@ class ServerClaude {
     this._streams, {
     required this.managed,
     required this.platform,
-  }) {
+  }) : _runtime = ClaudeRuntime(
+         managed: managed,
+         platform: platform,
+         named: _named,
+       ) {
     peer.handlers[RemoteProtocol.claudeInstall] = (_, _) => _install();
     peer.handlers[RemoteProtocol.claudeUpload] = (params, _) =>
         _upload(paramsOf(params));
@@ -28,39 +33,37 @@ class ServerClaude {
 
   final ServerStreams _streams;
   final ManagedClaude managed;
+  final ClaudeRuntime _runtime;
 
   /// The release's name for this machine (`linux-x64`, …).
   final String platform;
 
-  /// How often the installed build looks for a newer one.
-  static const updateEvery = Duration(days: 1);
+  /// Names another build to run on the host instead of those installed,
+  /// e.g. set in the user's environment there to try a fork. (In the app,
+  /// it is a setting.)
+  static const pathVariable = 'BAOCODE_CLAUDE_PATH';
 
-  Future<void>? _installing;
+  static ({String path, String undo})? _named(Map<String, String> env) =>
+      switch (env[pathVariable]) {
+        final path? when path.isNotEmpty => (
+          path: path,
+          undo: 'Unset $pathVariable to run the installed Claude Code.',
+        ),
+        _ => null,
+      };
 
-  /// The CLI to run: the user's, else the one installed here. The one
-  /// installed does not update itself (that would put it in the user's
-  /// `~/.local`): this does, now and then, for the next start.
-  Future<ClaudeCli> locate() async {
-    try {
-      return await CliLocator.locate();
-    } on ClaudeNotInstalled {
-      final installed = managed.installed;
-      if (installed == null) rethrow;
-      unawaited(_updateNowAndThen());
-      return ClaudeCli(installed, {
-        ...await ClaudeEnvironment.of(),
-        'DISABLE_AUTOUPDATER': '1',
-      });
-    }
-  }
+  /// The CLI to run: the newest of the user's and the one installed here
+  /// (see [ClaudeRuntime]). None is installed by this: the app asks for
+  /// it, and sends it where the host cannot download it.
+  Future<ClaudeCli> locate() => _runtime.locate();
 
   /// Where the `claude` of the build installed here is, for the terminals'
   /// PATH: only when it is the one run, the user having none of their own.
   Future<String?> commandDirectory() async {
     try {
-      await CliLocator.locate();
-      return null;
-    } on ClaudeNotInstalled {
+      final environment = await ClaudeEnvironment.of();
+      if (_named(environment) != null) return null;
+      if (CliLocator.installed(environment).isNotEmpty) return null;
       return managed.command();
     } on Object {
       return null;
@@ -118,9 +121,18 @@ class ServerClaude {
     unawaited(() async {
       try {
         if (managed.installed == null) {
-          await (_installing ??= _download(progress.add).whenComplete(() {
-            _installing = null;
-          }));
+          var reported = -1;
+          await _runtime.fetch(
+            onProgress: (received, size) {
+              if (reported >= 0 &&
+                  received - reported < 1 << 20 &&
+                  received < size) {
+                return;
+              }
+              reported = received;
+              progress.add({'received': received, 'size': size});
+            },
+          );
         }
       } on Object catch (error, stack) {
         progress.addError(error, stack);
@@ -129,24 +141,6 @@ class ServerClaude {
       }
     }());
     return _streams.open(progress.stream);
-  }
-
-  Future<void> _download(void Function(Object? event) onProgress) async {
-    final release = ClaudeRelease();
-    final build = await release.current(platform);
-    final part = managed.partOf(build);
-    onProgress({'received': 0, 'size': build.size});
-    var reported = 0;
-    await release.download(
-      build,
-      part,
-      onProgress: (received) {
-        if (received - reported < 1 << 20 && received < build.size) return;
-        reported = received;
-        onProgress({'received': received, 'size': build.size});
-      },
-    );
-    await managed.install(build, part);
   }
 
   /// A piece of the build the app downloaded: `{build, offset, data}`,
@@ -184,30 +178,5 @@ class ServerClaude {
       );
     }
     return managed.install(build, part);
-  }
-
-  /// Installs a newer build, if there is one, at most once per
-  /// [updateEvery]; quietly, whatever goes wrong.
-  Future<void> _updateNowAndThen() async {
-    final checked = File('${managed.directory}/.checked');
-    try {
-      if (checked.existsSync() &&
-          DateTime.now().difference(checked.lastModifiedSync()) < updateEvery) {
-        return;
-      }
-      checked.writeAsStringSync('');
-      if (_installing != null) return;
-      final release = ClaudeRelease();
-      final version = await release.version();
-      if (managed.binaryOf(version).existsSync()) return;
-      await (_installing ??= () async {
-        final build = await release.build(version, platform);
-        final part = managed.partOf(build);
-        await release.download(build, part);
-        await managed.install(build, part);
-      }().whenComplete(() => _installing = null));
-    } on Object {
-      // Tried again tomorrow.
-    }
   }
 }

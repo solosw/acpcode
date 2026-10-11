@@ -384,9 +384,30 @@ class MockClaudeCodeTransport implements ClaudeCodeTransport {
       'role': 'assistant',
       'model': 'claude-opus-5-5',
       'content': content,
+      'usage': _usages.putIfAbsent(id, _requestUsage),
     },
     'parent_tool_use_id': null,
   });
+
+  /// Each message's request: the same usage on all its content blocks.
+  final Map<String, Map<String, Object?>> _usages = {};
+  int _cached = 0;
+
+  /// As the cache takes a request: what was cached before read, what is
+  /// new since written for the next.
+  Map<String, Object?> _requestUsage() {
+    const uncached = 3;
+    final input =
+        _fixedContext.values.fold(0, (sum, n) => sum + n) + _conversationTokens;
+    final read = _cached.clamp(0, input - uncached);
+    _cached = input;
+    return {
+      'input_tokens': uncached,
+      'cache_read_input_tokens': read,
+      'cache_creation_input_tokens': input - uncached - read,
+      'output_tokens': 60,
+    };
+  }
 
   String _messageStart() {
     final id = 'msg_${++_messages}';

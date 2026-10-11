@@ -554,8 +554,12 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       var window = folder == null
           ? (newWindow ? null : recentIde)
           : windowFor(folder);
+      // A new window for files shows once they are open in it, not its
+      // welcome page first.
+      var hidden = false;
       if (window == null) {
-        window = await _create(folder);
+        hidden = files.isNotEmpty;
+        window = await _create(folder, show: !hidden);
       } else {
         _focus(window);
         if (folder != null) workspace.noteIdeFolder(folder);
@@ -564,7 +568,18 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       if (thread != null || files.isNotEmpty) {
         final delegate = await window.ready;
         if (thread != null) delegate?.showAgent(thread);
-        if (files.isNotEmpty) await delegate?.openFiles(files);
+        if (files.isNotEmpty) {
+          final opening = delegate?.openFiles(files) ?? Future<void>.value();
+          if (hidden) {
+            // Not kept from sight long by a slow file.
+            await opening
+                .timeout(_filesWait, onTimeout: () {})
+                .catchError((Object _) {});
+            await _nextFrame();
+            _focus(window);
+          }
+          await opening;
+        }
       }
       return window;
     });
@@ -599,9 +614,18 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     return showFolder(null, newWindow: true);
   }
 
+  /// How long a new window waits for the files it opens before it shows
+  /// (see [showFolder]).
+  static const _filesWait = Duration(seconds: 1);
+
   /// Opens a window of the IDE's for [folder] (its welcome, for none): at
-  /// the size `window.newWindowDimensions` says, shown once it is drawn.
-  Future<AppWindow?> _create(String? folder, {WindowFrame? frame}) async {
+  /// the size `window.newWindowDimensions` says, shown once it is drawn
+  /// (with [show] false, when the caller focuses it).
+  Future<AppWindow?> _create(
+    String? folder, {
+    WindowFrame? frame,
+    bool show = true,
+  }) async {
     if (folder != null) workspace.noteIdeFolder(folder);
     final l10n = _l10n();
     final window = AppWindow._(AppWindowKind.ide, -1, folder);
@@ -625,7 +649,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     _changed();
     // Shown once it has something to show.
     await _nextFrame();
-    _focus(created);
+    if (show) _focus(created);
     unawaited(
       host.setTitle(viewId, created.title(l10n), path: _localOnly(folder)),
     );
@@ -727,6 +751,12 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
 
   /// What the `code` command asks (see [CodeArgs]).
   Future<void> handleCode(CodeArgs args) async {
+    if (args.opensNothing) {
+      // The app started for it (an older script's request) shows its own
+      // window, not none.
+      if (_started && !_mru.any((window) => window.shown)) showChat();
+      return;
+    }
     final folders = <CodeTarget>[], files = <CodeTarget>[];
     for (final target in args.paths) {
       (await _isDirectory(target.path) ? folders : files).add(target);

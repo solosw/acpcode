@@ -1,8 +1,10 @@
 # Response headers for Cloudflare Pages
 # (https://developers.cloudflare.com/pages/configuration/headers/).
 
+# Inline style attributes only for /upstreams' sample buttons, which carry
+# their own style to be copied.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self' https://dl.baocode.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; media-src 'self'; connect-src 'self' https://dl.baocode.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -17,6 +19,26 @@
 /icon.png
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
 
+# BaoCode's icons, loaded by upstreams' key pages (/upstreams): from any
+# site, kept a day as the rest.
+/brand/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+  Access-Control-Allow-Origin: *
+  Cross-Origin-Resource-Policy: cross-origin
+
+# The upstreams Settings → Models lists, and their logos
+# (lib/models/featured_upstreams.dart): a site listed shows within minutes.
+/featured/*
+  Cache-Control: public, max-age=300
+
 # Not part of the site.
 /README.md
+  X-Robots-Tag: noindex
+
+# The one-click import (import.js): what it reads is the visitor's own.
+/import
+  Cache-Control: no-store
+  X-Robots-Tag: noindex
+/zh/import
+  Cache-Control: no-store
   X-Robots-Tag: noindex

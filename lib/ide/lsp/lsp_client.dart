@@ -89,7 +89,7 @@ class LspClient {
     );
     _registerHandlers();
     process.stderr
-        .transform(utf8.decoder)
+        .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen(
           (line) {

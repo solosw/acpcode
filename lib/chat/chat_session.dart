@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../kernel/acp/acp_kernel.dart';
 import '../kernel/agent_kernel.dart';
@@ -14,6 +15,7 @@ import 'chat_feed.dart';
 import 'chat_models.dart';
 import 'composer/composer_draft.dart';
 import 'mock_conversation.dart';
+import 'open_editor.dart';
 import 'review/change_review.dart';
 import 'review/change_reviews.dart';
 import 'review/review_store.dart';
@@ -365,7 +367,10 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         ModelSettingChoice(
           kind: kind,
           options: options,
-          selected: options.where((o) => o.id == setting.selected).firstOrNull,
+          // Another model's own, not the one in use's.
+          selected: options
+              .where((o) => o.id == setting.selectedFor(model))
+              .firstOrNull,
           onSelected: (option) => setting.select(model, option.id),
         ),
   ];
@@ -510,6 +515,9 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   @override
   bool get isStreaming => _transcript.activeTurn != null;
+
+  @override
+  bool get isUnprompted => _transcript.activeTurnUnprompted;
 
   /// Whether the composer may send now.
   bool get canSend => !isStreaming || canQueue;
@@ -727,6 +735,13 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   /// [path] absolute, on the project's host (a remote project's paths are
   /// its host's).
+  /// How the project's paths are spelled: its host's way (POSIX) for a
+  /// remote one, this machine's otherwise.
+  p.Context get paths => switch (kernelContext.cwd) {
+    final cwd? => RemoteLocation.pathsOf(cwd),
+    null => p.context,
+  };
+
   String _absolute(String path) {
     final cwd = kernelContext.cwd;
     if (cwd == null) return path;
@@ -829,10 +844,33 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   // --- Commands ---------------------------------------------------------------
 
+  /// The file the agent was last told is open, once told (see
+  /// [_editorNotes]).
+  OpenEditor? _toldEditor;
+  bool _toldOfEditor = false;
+
+  /// What the agent is told of [editor], the file open beside the chat now:
+  /// nothing where it was told so already, nor of no file before any.
+  List<String> _editorNotes(OpenEditor? editor) {
+    if (_toldOfEditor ? editor == _toldEditor : editor == null) {
+      return const [];
+    }
+    _toldOfEditor = true;
+    _toldEditor = editor;
+    return [editor?.note ?? OpenEditor.closedNote];
+  }
+
   /// Sends [message]; [now], taken up at once, the turn running stopped
   /// for it (rather than queued behind it). With a plan shown beside the
   /// chat waiting on the user, it says what should change in it instead.
-  void send(ComposerMessage message, {bool now = false}) {
+  ///
+  /// [editor] gives the file open in the editor beside the chat, where
+  /// there is one; the agent is told of it as it changes.
+  void send(
+    ComposerMessage message, {
+    bool now = false,
+    OpenEditor? Function()? editor,
+  }) {
     if (pendingInteraction case PlanReviewRequest(planPath: _?)
         when message.text.trim().isNotEmpty) {
       answer(
@@ -855,6 +893,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       mentions: message.mentions,
       images: acceptsImages ? message.images : const [],
       now: now,
+      notes: editor == null ? const [] : _editorNotes(editor()),
     );
     // A turn about to start, not one queued behind another: the project
     // is snapshotted, so that what the agent does is told apart. Not
@@ -886,12 +925,34 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     return '${hex(8)}-${hex(4)}-4${hex(3)}-$variant${hex(3)}-${hex(12)}';
   }
 
-  /// Takes back the queued message at [index].
-  @override
-  void cancelQueued(int index) {
-    final id = _transcript.idAt(index);
-    if (id == null) return;
-    if (_kernel case final QueuesMessages kernel) kernel.cancelQueued(id);
+  /// The messages sent while the agent works, waiting their turn, with
+  /// their ids: the next first. Not in the conversation until taken up.
+  List<(String, UserMessageItem)> get queued => _transcript.queued;
+
+  /// Takes back the queued message [id].
+  void cancelQueued(String id) {
+    if (_kernel case final QueuesMessages kernel) {
+      unawaited(kernel.cancelQueued(id));
+    }
+  }
+
+  /// Takes back the queued message [id] to be edited: into the composer's
+  /// [draft], once taken back (not if it started meanwhile).
+  Future<void> editQueued(String id) async {
+    final message = _transcript.queued
+        .where((queued) => queued.$1 == id)
+        .firstOrNull
+        ?.$2;
+    if (message == null) return;
+    if (_kernel case final QueuesMessages kernel
+        when await kernel.cancelQueued(id) && !_disposed) {
+      draft.restore(message.text, message.images);
+    }
+  }
+
+  /// Takes up the queued message [id] now: the turn running stops for it.
+  void sendQueuedNow(String id) {
+    if (_kernel case final QueuesMessages kernel) kernel.sendQueuedNow(id);
   }
 
   /// Resends the user message at [index] as [message]: everything after it

@@ -9,7 +9,8 @@ import '../../ide/ide_hover.dart';
 import '../../ide/ide_layout.dart';
 import '../../ide/ide_modern_ui.dart';
 import '../../keybindings/chat_keybindings.dart';
-import '../../keybindings/default_keybindings.dart' show openSettingsCommandId;
+import '../../keybindings/default_keybindings.dart'
+    show openSettingsCommandId, toggleAutoSaveCommandId;
 import '../../l10n/l10n.dart';
 import '../../sidebar/sidebar.dart';
 import '../../theme/codicons.dart';
@@ -53,6 +54,7 @@ class WindowHeader extends StatefulWidget {
     this.onOpenSettings,
     this.onCommand,
     this.onFileCommand,
+    this.autoSave = false,
     this.project,
     this.ideLayout,
     this.ide,
@@ -143,6 +145,9 @@ class WindowHeader extends StatefulWidget {
   /// Save As…, Close Folder…), by its id; with none, the IDE's File menu
   /// is the chat's.
   final ValueChanged<String>? onFileCommand;
+
+  /// Whether `files.autoSave` is on: the IDE's File menu's Auto Save ticked.
+  final bool autoSave;
 
   @override
   State<WindowHeader> createState() => _WindowHeaderState();
@@ -470,6 +475,13 @@ class _WindowHeaderState extends State<WindowHeader> {
         const HeaderMenuItem.rule(),
         fileCommand(l10n.cmdSave, 'workbench.action.files.save'),
         fileCommand(l10n.cmdSaveAs, 'workbench.action.files.saveAs'),
+        const HeaderMenuItem.rule(),
+        HeaderMenuItem(
+          l10n.menuAutoSave,
+          shortcut: _shortcut(toggleAutoSaveCommandId, ChatKeys.ideLayout),
+          checked: widget.autoSave,
+          onSelected: () => file(toggleAutoSaveCommandId),
+        ),
         if (widget.hasFolder ?? widget.workspace.ideFolder != null) ...[
           const HeaderMenuItem.rule(),
           fileCommand(l10n.cmdCloseFolder, 'workbench.action.closeFolder'),

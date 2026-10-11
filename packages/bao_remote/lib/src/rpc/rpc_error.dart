@@ -55,6 +55,9 @@ class RpcError {
     IdeFileExistsException(:final path) => _typed(error, 'exists', {
       'path': path,
     }),
+    IdeFileAccessDeniedException(:final path) => _typed(error, 'accessDenied', {
+      'path': path,
+    }),
     IdeGitException(:final message) => _typed(error, 'git', {
       'message': message,
     }),
@@ -142,6 +145,7 @@ class RpcError {
       'binary' => IdeBinaryFileException(path()),
       'tooLarge' => IdeFileTooLargeException(path(), data['size'] as int? ?? 0),
       'exists' => IdeFileExistsException(path()),
+      'accessDenied' => IdeFileAccessDeniedException(path()),
       'git' => IdeGitException(text()),
       'claudeNotInstalled' => ClaudeNotInstalled(
         text(),

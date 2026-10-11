@@ -90,6 +90,7 @@ class SettingsPage extends StatelessWidget {
     super.key,
     required this.title,
     this.description,
+    this.lead,
     required this.children,
   });
 
@@ -97,28 +98,36 @@ class SettingsPage extends StatelessWidget {
 
   final String title;
   final String? description;
+
+  /// Under the title, as far out as the cards: in place of [description].
+  /// Its own space above it, so that it takes none while it shows nothing.
+  final Widget? lead;
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => SettingsColumn(
-    children: [
-      // Its title and description in as far as the groups' headings.
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: SettingsText.title),
-            if (description case final description?) ...[
-              const SizedBox(height: 4),
-              Text(description, style: SettingsText.lead),
+  Widget build(BuildContext context) {
+    final lead = this.lead;
+    return SettingsColumn(
+      children: [
+        // Its title and description in as far as the groups' headings.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: SettingsText.title),
+              if (description case final description?) ...[
+                const SizedBox(height: 4),
+                Text(description, style: SettingsText.lead),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
-      for (final child in children) ...[const SizedBox(height: 20), child],
-    ],
-  );
+        ?lead,
+        for (final child in children) ...[const SizedBox(height: 20), child],
+      ],
+    );
+  }
 }
 
 /// A page's scrolling column, as wide at most as the conversation's
@@ -339,9 +348,9 @@ class SettingsSwitch extends StatelessWidget {
         ? colors['button.foreground']
         : SettingsColors.textSecondary;
     // As tall as its label's letters, with the interface's font size.
-    final height = MediaQuery.textScalerOf(
-      context,
-    ).scale(SettingsText.label.fontSize! * 1.2).roundToDouble();
+    final height = MediaQuery.textScalerOf(context)
+        .scale(SettingsText.label.fontSize! * 1.2)
+        .roundToDouble();
     final knobSize = height - 4;
     return Semantics(
       toggled: value,

@@ -22,14 +22,9 @@ class ClaudeCli {
       const {'.cmd', '.bat'}.contains(p.extension(executable).toLowerCase());
 }
 
-/// Finds the `claude` CLI as the user's terminal would: the build
-/// [overrideVariable] names, else the PATH, else the usual install
-/// locations.
+/// Finds the `claude` CLI as the user's terminal would: on the PATH, else
+/// in the usual install locations.
 abstract final class CliLocator {
-  /// Names another build to run instead of the installed one, e.g. set in
-  /// the user's environment (on macOS, `~/.zshenv`) to try a fork.
-  static const overrideVariable = 'BAOCODE_CLAUDE_PATH';
-
   static Future<ClaudeCli>? _located;
 
   /// Where to look instead of the usual places, under test: so that a test
@@ -60,32 +55,63 @@ abstract final class CliLocator {
 
   static Future<ClaudeCli> _locate() async {
     final environment = await ClaudeEnvironment.of();
-    if (environment[overrideVariable] case final override?
-        when override.isNotEmpty) {
-      if (!File(override).existsSync()) {
-        throw ClaudeUnavailable(
-          'Claude Code is not at $overrideVariable',
-          detail:
-              '$override does not exist. Unset $overrideVariable to run the '
-              'installed Claude Code.',
-        );
-      }
-      return ClaudeCli(override, environment);
+    final found = installed(environment);
+    if (found.isNotEmpty) return found.first;
+    throw notInstalled(environment);
+  }
+
+  /// The build at [path], the one the user named to run; throws, saying
+  /// how to undo it ([undo]), when it is not there.
+  static ClaudeCli named(
+    String path,
+    Map<String, String> environment, {
+    required String undo,
+  }) {
+    if (!p.isAbsolute(path) || !File(path).existsSync()) {
+      throw ClaudeUnavailable(
+        'Claude Code is not at $path',
+        detail: '$path does not exist. $undo',
+      );
     }
-    final broken = <String>[];
-    for (final candidate in (candidatesOverride ?? _candidates)(environment)) {
-      if (!File(candidate).existsSync()) continue;
-      if (runnable(candidate)) return ClaudeCli(candidate, environment);
-      broken.add(candidate);
+    return ClaudeCli(path, environment);
+  }
+
+  /// Every build of the user's that runs, in the order [locate] tries
+  /// them; each once, however many links lead to it.
+  static List<ClaudeCli> installed(Map<String, String> environment) {
+    final seen = <String>{};
+    return [
+      for (final candidate in (candidatesOverride ?? _candidates)(environment))
+        if (File(candidate).existsSync() &&
+            runnable(candidate) &&
+            seen.add(_realPath(candidate)))
+          ClaudeCli(candidate, environment),
+    ];
+  }
+
+  static String _realPath(String path) {
+    try {
+      return File(path).resolveSymbolicLinksSync();
+    } on FileSystemException {
+      return path;
     }
-    throw ClaudeNotInstalled(
+  }
+
+  /// What is said when no build is found: those that are there but do not
+  /// run, and how to install one.
+  static ClaudeNotInstalled notInstalled(Map<String, String> environment) {
+    final broken = [
+      for (final candidate in (candidatesOverride ?? _candidates)(environment))
+        if (File(candidate).existsSync() && !runnable(candidate)) candidate,
+    ];
+    return ClaudeNotInstalled(
       'Claude Code is not installed',
       detail: [
         if (broken.isNotEmpty)
           'Not a program this machine can run, an install that did not '
               'finish:\n${broken.join('\n')}\n',
-        'Install it with `npm install -g @anthropic-ai/claude-code`, '
-            'then try again; or set $overrideVariable to the build to run.',
+        'Install it (`curl -fsSL https://claude.ai/install.sh | bash`), '
+            'then try again.',
       ].join('\n'),
     );
   }

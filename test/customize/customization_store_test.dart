@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bao_remote/files.dart' show IdeFileExistsException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -249,6 +250,38 @@ void main() {
     }
   });
 
+  test('takes any name a file can have, Chinese included', () {
+    for (final name in ['style', 'Release_notes-2', '代码风格', '发布v2', 'a' * 64]) {
+      expect(isCustomizationName(name), isTrue, reason: name);
+    }
+    for (final name in [
+      '',
+      '../escape',
+      'a/b',
+      'a b',
+      'what?',
+      'a:b',
+      '.hidden',
+      '-dash',
+      'ends.',
+      'a' * 65,
+    ]) {
+      expect(isCustomizationName(name), isFalse, reason: name);
+    }
+
+    expect(
+      followsOfficialNaming(CustomizationKind.skills, 'pdf-tools'),
+      isTrue,
+    );
+    expect(followsOfficialNaming(CustomizationKind.skills, '代码风格'), isFalse);
+    expect(
+      followsOfficialNaming(CustomizationKind.subagents, 'Reviewer'),
+      isFalse,
+    );
+    expect(followsOfficialNaming(CustomizationKind.rules, '代码风格'), isTrue);
+    expect(followsOfficialNaming(CustomizationKind.commands, '发布'), isTrue);
+  });
+
   test('makes new ones from templates, edits and deletes them', () async {
     final skill = await store.create(
       CustomizationKind.skills,
@@ -263,7 +296,7 @@ void main() {
         CustomizationScope.user,
         'release-notes',
       ),
-      throwsA(isA<FileSystemException>()),
+      throwsA(isA<IdeFileExistsException>()),
     );
     expect(
       () => store.create(
@@ -281,6 +314,15 @@ void main() {
       project: project,
     );
     expect(rule, p.join(project, '.claude', 'rules', 'style.md'));
+
+    final chinese = await store.create(
+      CustomizationKind.commands,
+      CustomizationScope.project,
+      '发布说明',
+      project: project,
+    );
+    expect(chinese, p.join(project, '.claude', 'commands', '发布说明.md'));
+    expect(File(chinese).existsSync(), isTrue);
 
     await store.write(skill, '---\nname: notes\ndescription: Edited\n---\n');
     final listed = await store.list(CustomizationKind.skills);

@@ -6,6 +6,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../ide/terminal/terminal_colors.dart';
 import '../theme/workbench_theme.dart' show themeColors;
+import 'brand_logos.dart';
 import 'emoji_sheet.dart';
 import 'icon_library.dart';
 import 'project_icon.dart';
@@ -34,6 +35,9 @@ class ProjectIconView extends StatelessWidget {
 
   /// How much of the square a glyph (a codicon, the folder) takes.
   static const glyphScale = 0.65;
+
+  /// How much of the square a logo takes: its drawing fills its own.
+  static const logoScale = 0.7;
 
   final ProjectIcon? icon;
   final IconLibrary library;
@@ -65,6 +69,11 @@ class ProjectIconView extends StatelessWidget {
             final image? => IconImageView(image, size: size * imageScale),
             null => folder,
           },
+          BrandIcon(:final name) => BrandLogo(
+            name,
+            size: size * logoScale,
+            color: color,
+          ),
         },
       ),
     );

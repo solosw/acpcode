@@ -11,8 +11,8 @@
 // language, then `file`; a folder by its name, then `folder`; the project's
 // own by `rootFolderNames`, then `rootFolder`).
 //
-// Deviations: a font glyph needs the font as TTF or OTF (Flutter loads no
-// WOFF); `hidesExplorerArrows` and `showLanguageModeIcons` are not read.
+// Deviations: a font glyph needs the font as TTF, OTF or WOFF (decoded by
+// woff.dart; no WOFF2); `hidesExplorerArrows` and `showLanguageModeIcons` are not read.
 
 import 'dart:io';
 
@@ -22,6 +22,7 @@ import 'package:path/path.dart' as p;
 
 import '../platform/svg_file.dart';
 import '../settings/jsonc.dart';
+import 'woff.dart';
 
 /// One icon of a theme: an image file, or a font's glyph.
 @immutable
@@ -42,7 +43,8 @@ class FileIconDefinition {
   /// The loaded font's family (see [FileIconThemeData.load]).
   final String? fontFamily;
 
-  /// A size relative to the icon's (`150%`); null for the icon's.
+  /// A size relative to the label's font (`150%`); null for upstream's
+  /// default, 150%.
   final double? fontSize;
 }
 
@@ -122,10 +124,10 @@ class FileIconThemeData {
           if (source case {'path': final String fontPath}) {
             final file = p.normalize(p.join(folder, fontPath));
             final extension = p.extension(file).toLowerCase();
-            if (extension != '.ttf' && extension != '.otf') continue;
+            if (!const {'.ttf', '.otf', '.woff'}.contains(extension)) continue;
             try {
               final family = 'baocode-file-icons-${_fonts++}';
-              final bytes = await File(file).readAsBytes();
+              final bytes = sfntFromWoff(await File(file).readAsBytes());
               await (FontLoader(
                 family,
               )..addFont(Future.value(ByteData.sublistView(bytes)))).load();
@@ -182,10 +184,18 @@ class FileIconThemeData {
     return code == null ? value : String.fromCharCode(code);
   }
 
+  /// `150%`, `1.5em` or `19.5px` (13px the label's font, as upstream's
+  /// `tryNormalizeFontSize`) as 1.5.
   static double? _percent(Object? value) {
-    if (value is! String || !value.endsWith('%')) return null;
-    final number = double.tryParse(value.substring(0, value.length - 1));
-    return number == null ? null : number / 100;
+    if (value is! String) return null;
+    for (final (unit, scale) in const [('%', 100), ('em', 1), ('px', 13)]) {
+      if (!value.endsWith(unit)) continue;
+      final number = double.tryParse(
+        value.substring(0, value.length - unit.length),
+      );
+      return number == null ? null : number / scale;
+    }
+    return null;
   }
 
   static Color? _color(Object? value) {
@@ -416,12 +426,18 @@ class FileIconThemeIcon extends StatelessWidget {
     }
     final character = definition.fontCharacter;
     if (character != null && definition.fontFamily != null) {
-      return Center(
+      // Upstream's sizes are of the label's 13px font beside a 16px icon;
+      // the glyph overflows the icon's box, unclipped, as a CSS `::before`.
+      return OverflowBox(
+        maxWidth: double.infinity,
+        maxHeight: double.infinity,
         child: Text(
           character,
+          softWrap: false,
+          overflow: TextOverflow.visible,
           style: TextStyle(
             fontFamily: definition.fontFamily,
-            fontSize: size * (definition.fontSize ?? 1),
+            fontSize: size * 13 / 16 * (definition.fontSize ?? 1.5),
             height: 1,
             color: definition.fontColor,
           ),

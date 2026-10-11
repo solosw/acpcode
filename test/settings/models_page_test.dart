@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:baocode/icons/brand_logos.dart';
+import 'package:baocode/icons/project_icon.dart';
 import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/kernel/claude_code/claude_haiku.dart';
 import 'package:baocode/models/codex/codex_service.dart';
@@ -11,6 +13,7 @@ import 'package:baocode/models/upstream.dart';
 import 'package:baocode/settings/pages/model_dialogs.dart';
 import 'package:baocode/settings/pages/models_page.dart';
 import 'package:baocode/settings/pages/settings_widgets.dart';
+import 'package:baocode/workspace/workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -119,6 +122,7 @@ void main() {
     WidgetTester tester, {
     CodexService? codex,
     ModelTester testModel = testModelThroughClaudeCode,
+    Workspace? workspace,
   }) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
@@ -131,6 +135,7 @@ void main() {
             listModels: list,
             testModel: testModel,
             codex: codex,
+            workspace: workspace,
           ),
         ),
       ),
@@ -252,6 +257,47 @@ void main() {
       find.textContaining('Unset, background work runs on the model picked'),
       findsNothing,
     );
+  });
+
+  testWidgets('an upstream shows its maker\'s logo until another icon is '
+      'picked for it', (tester) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'ds',
+        name: 'DS',
+        baseUrl: 'https://api.deepseek.com/anthropic',
+        models: [ProviderModel(id: 'deepseek-chat')],
+      ),
+    );
+    final workspace = Workspace();
+    await pump(tester, workspace: workspace);
+    Finder logo(String name) => find.byWidgetPredicate(
+      (widget) => widget is BrandLogo && widget.name == name,
+    );
+    expect(logo('deepseek'), findsOneWidget);
+    expect(logo('anthropic'), findsOneWidget);
+
+    await tester.tap(find.text('DS'));
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Change Icon'));
+    await tester.pump();
+    // The makers' logos first, the site's icon among the pictures.
+    // The tab, and its section.
+    expect(find.text('Logos'), findsNWidgets(2));
+    await tester.tap(find.bySemanticsLabel('Kimi'));
+    await tester.pump();
+    expect(providers.provider('ds')!.icon, const BrandIcon('kimi'));
+    expect(workspace.recentIcons, [const BrandIcon('kimi')]);
+    expect(logo('kimi'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Change Icon'));
+    await tester.pump();
+    await tester.tap(find.text('Custom'));
+    await tester.pump();
+    expect(find.bySemanticsLabel("Use the site's icon"), findsOneWidget);
+    await tester.tap(find.text('Remove'));
+    await tester.pump();
+    expect(providers.provider('ds')!.icon, isNull);
   });
 
   testWidgets('an auxiliary model is picked', (tester) async {

@@ -44,6 +44,25 @@ String thinkingTitle({
   };
 }
 
+/// A summarized thought (OpenAI's, say) in its parts: its first line, all
+/// bold (`**Planning the fix**`), is its title, the rest its body. While it
+/// streams the title may lack its closing stars. Null for a thought whose
+/// first line is not a bold one.
+({String title, String body})? thoughtSummary(String text) {
+  final match = _summaryTitle.firstMatch(text.trimLeft());
+  if (match == null) return null;
+  final title = match[1]!.trim();
+  if (title.isEmpty) return null;
+  final body = match[2]?.trim() ?? '';
+  // A later part's title reads as a line of the body.
+  return (title: title, body: body.replaceAllMapped(_partTitle, (m) => m[1]!));
+}
+
+final _summaryTitle = RegExp(
+  r'^\*\*([^*\n]*)(?:\*{0,2}[ \t]*$|\*\*[ \t]*\n([\s\S]*))',
+);
+final _partTitle = RegExp(r'^\*\*([^*\n]+)\*\*[ \t]*$', multiLine: true);
+
 /// Collapsible thought. While it streams ([seconds] is null) its text sits
 /// in a box of limited height that follows the newest lines, fading out at
 /// the top over earlier ones; once done it shows in full.
@@ -99,8 +118,12 @@ class _ThinkingSectionState extends State<ThinkingSection> {
     _syncClock();
   }
 
-  /// Its text without the blank lines thoughts end with.
-  String get _text => widget.text.trimRight();
+  /// A summarized thought's title and body, or null for a thought in full.
+  ({String title, String body})? get _summary => thoughtSummary(widget.text);
+
+  /// What it shows open: a summarized thought's body, else its text, without
+  /// the blank lines thoughts end with.
+  String get _text => _summary?.body ?? widget.text.trimRight();
 
   @override
   void didUpdateWidget(ThinkingSection oldWidget) {
@@ -169,6 +192,18 @@ class _ThinkingSectionState extends State<ThinkingSection> {
   }
 
   Widget _buildHeader() {
+    // A summarized thought is headed by its title alone, as a command by its
+    // description.
+    if (_summary case (:final title, body: _)) {
+      return StepHeader(
+        verb: '',
+        object: title,
+        bold: true,
+        running: _streaming,
+        expanded: widget.expanded,
+        onToggle: _text.isEmpty ? null : widget.onToggle,
+      );
+    }
     final (verb, object) = thinkingParts(
       widget.seconds,
       elapsed: switch (widget.startedAt) {

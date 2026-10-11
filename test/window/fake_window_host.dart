@@ -133,9 +133,12 @@ class FakeWindowHost extends WindowHost {
 
 /// A window's workbench, doing nothing but noting what it was asked.
 class FakeDelegate implements WindowDelegate {
-  FakeDelegate({this.context});
+  FakeDelegate({this.context, this.log});
 
   BuildContext? context;
+
+  /// Where the files it opens are noted too, among the host's calls.
+  final List<String>? log;
   final List<List<CodeTarget>> opened = [];
   final List<AgentThread> agents = [];
   final List<String?> folders = [];
@@ -152,7 +155,10 @@ class FakeDelegate implements WindowDelegate {
   IdeWorkspace? get ideSpace => null;
 
   @override
-  Future<void> openFiles(List<CodeTarget> files) async => opened.add(files);
+  Future<void> openFiles(List<CodeTarget> files) async {
+    opened.add(files);
+    log?.add('open ${files.map((file) => file.path).join(' ')}');
+  }
 
   @override
   void showAgent(AgentThread thread) => agents.add(thread);

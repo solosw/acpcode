@@ -1362,6 +1362,40 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     });
 
+    testWidgets('text dragged over in the message editor is deleted as one', (
+      tester,
+    ) async {
+      await pumpScreen(tester);
+      await reveal(tester, '第 2 轮');
+      await tester.tap(bubble('第 2 轮'));
+      await tester.pump();
+      final editor = editorInHistory();
+      final controller = editController(tester);
+      controller.replaceText(
+        0,
+        controller.document.length - 1,
+        'hello world',
+        const TextSelection.collapsed(offset: 11),
+      );
+      await tester.pump();
+      final start = tester.getTopLeft(editor) + const Offset(14, 12);
+      final drag = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await drag.moveTo(start + const Offset(40, 0));
+      await tester.pump();
+      await drag.moveTo(start + const Offset(200, 0));
+      await tester.pump();
+      await drag.up();
+      await tester.pump();
+      expect(controller.selection.isCollapsed, isFalse);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+      expect(controller.document.toPlainText(), 'h\n');
+    }, variant: TargetPlatformVariant.desktop());
+
     testWidgets('double-clicking in the message editor selects all', (
       tester,
     ) async {

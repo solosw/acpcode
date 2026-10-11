@@ -31,8 +31,10 @@ Future<ProcessResult> _runProcess(
   executable,
   arguments,
   environment: environment,
-  stdoutEncoding: utf8,
-  stderrEncoding: utf8,
+  // Leniently: not every command says it in UTF-8 (PowerShell's errors,
+  // in the system's code page on a Chinese Windows).
+  stdoutEncoding: const Utf8Codec(allowMalformed: true),
+  stderrEncoding: const Utf8Codec(allowMalformed: true),
 );
 
 /// The line a script of ours carries, by which it is told from another
@@ -51,6 +53,20 @@ Future<bool> _isOurs(String path) async {
     return false;
   } finally {
     await file?.close();
+  }
+}
+
+/// The script of ours at [path] written as [script], if it says otherwise
+/// (an older version's): in place, so it keeps its mode. One the user may
+/// not write to (root's) is left.
+Future<void> _refresh(String path, String script) async {
+  if (path.isEmpty || !await _isOurs(path)) return;
+  try {
+    final file = File(path);
+    if (await file.readAsString() == script) return;
+    await file.writeAsString(script, flush: true);
+  } on FileSystemException {
+    return;
   }
 }
 
@@ -101,11 +117,21 @@ class MacShellCommand implements ShellCommandInstaller {
   /// The script: what it was given, and the terminal's folder, written to
   /// a request file the app is handed to open (see CodeArgs), which reads
   /// it as VS Code's CLI would its arguments (`-n`, `-r`, `-g`, the paths).
+  /// What asks VS Code about itself ([CodeArgs.queryOptions]: tools run
+  /// `code --version` in the background) fails here, the app not started.
   String get script =>
       '''
 #!/usr/bin/env bash
 # $shellCommandMarker
 # Opens files and folders in BaoCode (installed by BaoCode's "Install '${ShellCommand.name}' command in PATH").
+for arg in "\$@"; do
+  case "\${arg%%=*}" in
+    --) break ;;
+    ${CodeArgs.queryOptions.join('|')})
+      echo "${ShellCommand.name}: \$arg is not supported: BaoCode's ${ShellCommand.name} command only opens files and folders." >&2
+      exit 1 ;;
+  esac
+done
 tmp=\$(mktemp "\${TMPDIR:-/tmp}/baocode-XXXXXX") || exit 1
 request="\$tmp${CodeArgs.requestFileSuffix}"
 mv "\$tmp" "\$request" || exit 1
@@ -192,6 +218,9 @@ exec open -b $bundleId "\$request"
       await folder.delete(recursive: true).catchError((_) => folder);
     }
   }
+
+  @override
+  Future<void> refresh() => _refresh(target, script);
 
   @override
   Future<void> uninstall() async {
@@ -294,11 +323,18 @@ class WindowsShellCommand implements ShellCommandInstaller {
   /// The script: the app, started apart from the console (`start`), with
   /// a request of the `code` command: its marker, the console's folder,
   /// then all it was given (see open_requests.cpp). `%` doubled, which cmd
-  /// would otherwise expand.
+  /// would otherwise expand. A first argument that asks VS Code about
+  /// itself ([CodeArgs.queryOptions]: tools run `code --version` in the
+  /// background) fails here, the app not started.
   String get script => [
     '@echo off',
     'REM $shellCommandMarker',
+    'for %%a in (${CodeArgs.queryOptions.join(' ')}) do if /i "%~1"=="%%a" goto query',
     'start "" "${executable.replaceAll('%', '%%')}" ${CodeArgs.windowsRequestFlag} "%CD%\\." %*',
+    'exit /b 0',
+    ':query',
+    'echo ${ShellCommand.name}: %~1 is not supported: BaoCode\'s ${ShellCommand.name} command only opens files and folders. 1>&2',
+    'exit /b 1',
     '',
   ].join('\r\n');
 
@@ -352,6 +388,9 @@ class WindowsShellCommand implements ShellCommandInstaller {
     final value = wanted.join(';');
     if (value != entries.join(';')) await _writeUserPath(value);
   }
+
+  @override
+  Future<void> refresh() => _refresh(location, script);
 
   @override
   Future<void> uninstall() async {
@@ -486,13 +525,14 @@ $answer = [UIntPtr]::Zero
 
 /// Runs [script] in Windows PowerShell through [run], encoded
 /// (`-EncodedCommand`, its UTF-16 in base64) so no quoting stands between
-/// it and the shell; values go to it through [environment].
+/// it and the shell; values go to it through [environment]. Without
+/// progress records: those of a session's first run would be its stderr.
 Future<ProcessResult> runPowerShell(
   ShellCommandRunner run,
   String script, {
   Map<String, String>? environment,
 }) {
-  final units = script.codeUnits;
+  final units = "\$ProgressPreference = 'SilentlyContinue'\n$script".codeUnits;
   final bytes = Uint8List(units.length * 2);
   for (var i = 0; i < units.length; i++) {
     bytes[2 * i] = units[i] & 0xff;

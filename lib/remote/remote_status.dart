@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../chat/panels/health_banner.dart';
 import '../ide/ide_status_bar.dart';
+import '../kernel/claude_code/claude_install_progress.dart';
 import '../kernel/kernel_types.dart';
 import '../l10n/l10n.dart';
 import '../theme/codicons.dart';
@@ -95,64 +96,99 @@ String claudeInstallText(
       : l10n.remoteInstallingClaudeProgress(host, percent);
 }
 
-/// Over a remote project's composer while Claude Code is being installed
-/// on its host for the agent to start: its progress. Nothing otherwise.
+/// Over the composer while Claude Code is being installed for the agent
+/// to start: on a remote project's host, or downloaded for this machine
+/// (see LocalClaude). Nothing otherwise.
 class ClaudeInstallBanner extends StatelessWidget {
-  const ClaudeInstallBanner({super.key, required this.location, this.hosts});
+  const ClaudeInstallBanner({
+    super.key,
+    required this.location,
+    this.hosts,
+    this.local,
+  });
 
-  /// The project's location; nothing shows for a local one.
+  /// The project's location; null for none, on this machine.
   final String? location;
 
   /// The hosts to look at: [SshHosts.instance] when not given.
   final SshHosts? hosts;
 
+  /// This machine's download: [LocalClaudeInstall.instance] when not given.
+  final LocalClaudeInstall? local;
+
   @override
   Widget build(BuildContext context) {
-    final name = location == null ? null : RemoteLocation.hostOf(location!);
-    if (name == null) return const SizedBox.shrink();
+    final location = this.location;
+    final name = location == null ? null : RemoteLocation.hostOf(location);
+    if (name == null) {
+      final local = this.local ?? LocalClaudeInstall.instance;
+      return ListenableBuilder(
+        listenable: local,
+        builder: (context, _) => switch (local.progress) {
+          final progress? => _InstallCard(
+            text: context.l10n.localDownloadingClaude(
+              ((progress.fraction ?? 0) * 100).floor(),
+            ),
+            progress: progress,
+          ),
+          null => const SizedBox.shrink(),
+        },
+      );
+    }
     final host = (hosts ?? SshHosts.instance)[name];
     return ListenableBuilder(
       listenable: host,
-      builder: (context, _) {
-        final progress = host.installingClaude;
-        if (progress == null) return const SizedBox.shrink();
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
-            decoration: BoxDecoration(
-              color: themeColors['editorWidget.background'],
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: themeColors['editorWidget.border']),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  claudeInstallText(context.l10n, name, progress),
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 12.5,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: 4,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(2),
-                    child: LinearProgressIndicator(
-                      value: progress.fraction,
-                      color: themeColors['progressBar.background'],
-                      backgroundColor: themeColors['editorWidget.border'],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
+      builder: (context, _) => switch (host.installingClaude) {
+        final progress? => _InstallCard(
+          text: claudeInstallText(context.l10n, name, progress),
+          progress: progress,
+        ),
+        null => const SizedBox.shrink(),
       },
+    );
+  }
+}
+
+class _InstallCard extends StatelessWidget {
+  const _InstallCard({required this.text, required this.progress});
+
+  final String text;
+  final ClaudeInstallProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 9, 12, 10),
+        decoration: BoxDecoration(
+          color: themeColors['editorWidget.background'],
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: themeColors['editorWidget.border']),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              style: TextStyle(color: AppColors.textPrimary, fontSize: 12.5),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: progress.fraction,
+                  color: themeColors['progressBar.background'],
+                  backgroundColor: themeColors['editorWidget.border'],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

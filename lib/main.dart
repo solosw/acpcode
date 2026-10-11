@@ -13,6 +13,7 @@ import 'package:bao_editor/monaco/flutter/language_assets.dart';
 import 'chat/chat_width.dart';
 import 'chat/user_message_style.dart';
 import 'customize/customization_store.dart';
+import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
@@ -25,8 +26,10 @@ import 'ide/terminal/terminal_instance.dart';
 import 'icons/emoji_sheet.dart';
 import 'icons/icon_library.dart';
 import 'icons/icon_storage.dart';
+import 'icons/site_icons.dart';
 import 'kernel/acp_agents.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
+import 'kernel/claude_code/claude_path_setting.dart';
 import 'kernel/claude_code/process_transport.dart';
 import 'kernel/commit_attribution.dart';
 import 'kernel/kernel_registry.dart';
@@ -34,6 +37,8 @@ import 'keybindings/keybindings_sync.dart';
 import 'keybindings/keymap.dart';
 import 'keybindings/vscode_import.dart';
 import 'l10n/l10n.dart';
+import 'models/featured_upstreams.dart';
+import 'models/model_icons.dart';
 import 'models/model_providers.dart';
 import 'models/model_runtime.dart';
 import 'network/network_proxy.dart';
@@ -43,6 +48,7 @@ import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
 import 'platform/open_requests.dart';
+import 'platform/shell_command.dart';
 import 'remote/project_host.dart';
 import 'remote/remote_claude.dart';
 import 'remote/ssh_host.dart';
@@ -58,6 +64,7 @@ import 'telemetry/telemetry_service.dart';
 import 'telemetry/telemetry_store.dart';
 import 'theme/app_theme.dart';
 import 'theme/code_font.dart';
+import 'theme/pixel_snapped_text_scaler.dart';
 import 'theme/workbench_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_platform.dart';
@@ -118,8 +125,25 @@ Future<void> main(List<String> arguments) async {
     // Read as each agent starts.
     CommitAttribution.current = () =>
         CommitAttribution.parse(files.settings[CommitAttribution.settingKey]);
+    // Settings → General → Claude Code: the build to run, read as each
+    // agent starts.
+    ClaudePathSetting.current = () =>
+        ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
     // Settings → Models: the upstreams, kept in settings.json.
     ModelProviders.current = ModelProviders.settings(files.settings);
+    // The upstreams' sites' icons, for those that show no other: in the
+    // cache, fetched as soon as one is added.
+    SiteIcons.current = SiteIcons(
+      library: IconLibrary(
+        storage: IconStorage.directory(
+          p.join(DataDirectory.current.cacheDir, 'site-icons'),
+        ),
+      ),
+    );
+    prefetchProviderIcons(ModelProviders.current, SiteIcons.current);
+    // The logos of the sites listed, for their upstreams' icons, as kept
+    // last time (Settings → Models gets the list again).
+    unawaited(FeaturedUpstream.readKept());
     // Settings → Appearance: how wide the conversation grows.
     ChatWidth.follow(
       files.settings,
@@ -157,8 +181,8 @@ Future<void> main(List<String> arguments) async {
         : PreferenceStore.file(
             p.join(DataDirectory.current.stateDir, 'drafts.json'),
           ),
-    // The data folder's icons/.
-    icons: IconLibrary(storage: IconStorage.directory()),
+    // The data folder's icons/, the upstreams of models' pictures too.
+    icons: IconLibrary.current = IconLibrary(storage: IconStorage.directory()),
     titler: claudeAgentTitle,
     l10n: () =>
         lookupAppLocalizations(locale.locale ?? AppLocale.systemLocale()),
@@ -216,6 +240,8 @@ Future<void> main(List<String> arguments) async {
         .layoutAtLaunch(workspace.layout);
   }
   WindowControls.trackActiveView();
+  // An older `code` script opened windows for `code --version`.
+  unawaited(ShellCommand.refresh());
   final ColorThemeStorage colorTheme = files == null
       ? workspace
       : ColorThemeSettings(settings: files.settings, state: workspace);
@@ -248,6 +274,9 @@ Future<void> main(List<String> arguments) async {
       sync: sync,
       installs: VsCodeInstalls.current(),
       updates: _startUpdates(files),
+      diagnostics: DiagnosticsUploader.platform(),
+      workspace: workspace,
+      claudeStatus: localClaudeStatus,
     );
     _startTelemetry(files);
   }
@@ -571,12 +600,16 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       valueListenable: CodeFont.uiScale,
       builder: (context, percent, scaled) {
         final media = MediaQuery.of(context);
+        // Windows blurs glyphs drawn at a fractional pixel size.
+        TextScaler snapped(TextScaler scaler) => AppPlatform.isWindows
+            ? PixelSnappedTextScaler(scaler, media.devicePixelRatio)
+            : scaler;
         return SystemTextScale(
-          scaler: media.textScaler,
+          scaler: snapped(media.textScaler),
           child: MediaQuery(
             data: media.copyWith(
-              textScaler: TextScaler.linear(
-                media.textScaler.scale(1) * percent / 100,
+              textScaler: snapped(
+                TextScaler.linear(media.textScaler.scale(1) * percent / 100),
               ),
             ),
             child: scaled!,

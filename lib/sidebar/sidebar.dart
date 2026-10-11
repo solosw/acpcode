@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -20,7 +19,7 @@ import '../keybindings/chat_keybindings.dart';
 import '../keybindings/default_keybindings.dart' show openSettingsCommandId;
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show sshErrorText;
-import '../remote/ssh_host.dart' show SshHostState, SshHosts;
+import '../remote/ssh_host.dart' show SshHost, SshHostState, SshHosts;
 import '../theme/codicons.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
@@ -135,6 +134,8 @@ class Sidebar extends StatefulWidget {
     required this.onCollapse,
     this.onOpened,
     this.onOpenFolder,
+    this.onAddSshHost,
+    this.onOpenFolderOn,
     this.onOpenSettings,
     this.onSearch,
     this.onCustomize,
@@ -186,6 +187,14 @@ class Sidebar extends StatefulWidget {
   /// ask (the web).
   final VoidCallback? onOpenFolder;
 
+  /// Adds an SSH host (connected to, then a folder there to open, or not),
+  /// listed once connected: the heading switches between this machine and
+  /// the hosts. None, none added here.
+  final VoidCallback? onAddSshHost;
+
+  /// Asks for a folder of an SSH host to open as a project.
+  final ValueChanged<String>? onOpenFolderOn;
+
   /// Opens the settings: the gear at the bottom; none without it.
   final VoidCallback? onOpenSettings;
 
@@ -217,6 +226,12 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
   static const _recent = 5;
 
   AgentThread? _renaming;
+
+  /// Renaming the SSH host switched to, in the heading.
+  bool _renamingHost = false;
+
+  /// The heading's host icon, the icon picker's anchor.
+  final GlobalKey _hostIconKey = GlobalKey();
 
   /// Keeps the relative times current.
   late final Timer _clock;
@@ -323,8 +338,9 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
 
   /// A new agent nothing was sent to is listed only while it shows: one
   /// left for another is not worth a row.
-  bool _listed(AgentThread thread) =>
+  bool _listed(AgentThread thread, String? host) =>
       !_workspace.isHidden(thread.project) &&
+      thread.project.host == host &&
       (!thread.untouched ||
           identical(thread, _current) ||
           _workspace.grid.contains(thread));
@@ -356,6 +372,12 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
   }
 
   void _create([Project? project]) {
+    // Where the sidebar lists: the open agent's project if it is there.
+    final host = _workspace.sidebarHost;
+    project ??= switch (_current?.project) {
+      final current? when current.host == host => current,
+      _ => _workspace.sidebarProjectsOn(host).firstOrNull,
+    };
     if (widget.onNewAgent case final open?) {
       open(project);
     } else {
@@ -366,12 +388,15 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
 
   List<_Group> _groups() {
     final l10n = context.l10n;
+    final host = _workspace.sidebarHost;
     final threads = [
       for (final thread in _workspace.threads)
         // Archived ones are listed whatever their project: the footer
         // counts them all, so one of a project taken off the sidebar (see
         // [Workspace.hideProject]) would be counted with no way back.
-        if ((thread.archived || _listed(thread)) &&
+        if ((thread.archived
+                ? thread.project.host == host
+                : _listed(thread, host)) &&
             _workspace.listsInSidebar(thread))
           thread,
     ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
@@ -403,7 +428,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
         _Group(_pinnedGroup, l10n.sidebarPinned, pinned),
       ...switch (_grouping) {
         SidebarGrouping.project => [
-          for (final project in _workspace.sidebarProjects)
+          for (final project in _workspace.sidebarProjectsOn(host))
             _Group(
               Workspace.projectGroup(project.path),
               project.name,
@@ -481,11 +506,27 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
               // A new chat picks its folder over its input (see
               // NewChatFolderBar): a folder first only without any.
               child: _NewAgentButton(
-                onTap: _workspace.sidebarProjects.isEmpty
-                    ? (widget.onOpenFolder ?? () {})
-                    : _create,
+                onTap: switch (_workspace.sidebarHost) {
+                  final host? when _workspace.sidebarProjectsOn(host).isEmpty =>
+                    () => widget.onOpenFolderOn?.call(host),
+                  null when _workspace.sidebarProjectsOn(null).isEmpty =>
+                    widget.onOpenFolder ?? () {},
+                  _ => _create,
+                },
               ),
             ),
+            if (switch (_workspace.sidebarHost) {
+                  final host? when widget.onOpenFolderOn != null =>
+                    () => widget.onOpenFolderOn!(host),
+                  null => widget.onOpenFolder,
+                  _ => null,
+                }
+                case final open?)
+              _NavRow(
+                icon: Codicons.folderOpened,
+                label: context.l10n.sidebarOpenProject,
+                onTap: open,
+              ),
             if (widget.onSearch case final search?)
               _NavRow(
                 icon: Codicons.search,
@@ -499,7 +540,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
               ),
             if (widget.onCustomize case final customize?)
               _NavRow(
-                icon: Codicons.extensions,
+                icon: Codicons.plug,
                 label: context.l10n.sidebarCustomize,
                 selected: widget.customizing,
                 onTap: customize,
@@ -542,14 +583,19 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              context.l10n.sidebarAgents,
-              style: TextStyle(
-                color: AppColors.textFaint,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            child: _workspace.sshHosts.isEmpty
+                ? Text(
+                    context.l10n.sidebarAgents,
+                    style: TextStyle(
+                      color: AppColors.textFaint,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  )
+                : Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildHostSwitcher(),
+                  ),
           ),
           SidebarMenu(
             width: 150,
@@ -602,6 +648,305 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
     );
   }
 
+  /// The heading once there are SSH hosts: where the sidebar lists (this
+  /// machine, or a host, its connection's dot after it), and a menu to
+  /// switch, add a host, or open a folder there, reconnect, disconnect or
+  /// remove it. A dot over the icon while agents elsewhere need the user.
+  Widget _buildHostSwitcher() {
+    final l10n = context.l10n;
+    final hosts = SshHosts.instance;
+    return ListenableBuilder(
+      listenable: hosts,
+      builder: (context, _) {
+        final current = _workspace.sidebarHost;
+        final elsewhere = _needingYou(where: (host) => host != current);
+        final icon = _HostIcon(
+          key: _hostIconKey,
+          workspace: _workspace,
+          host: current,
+          attention: _mostUrgent(elsewhere),
+        );
+        if (_renamingHost && current != null) {
+          return Row(
+            children: [
+              icon,
+              const SizedBox(width: 5),
+              Expanded(
+                child: InlineRenameField(
+                  initial: _workspace.hostLabel(current),
+                  style: TextStyle(color: AppColors.text, fontSize: 11.5),
+                  onDone: (name) {
+                    setState(() => _renamingHost = false);
+                    if (name != null) _workspace.renameHost(current, name);
+                  },
+                ),
+              ),
+            ],
+          );
+        }
+        final label = current == null
+            ? l10n.sidebarThisMachine
+            : _workspace.hostLabel(current);
+        return SidebarMenu(
+          width: 240,
+          placement: (side: FloatingSide.bottom, align: FloatingAlign.start),
+          items: () => _hostItems(l10n),
+          builder: (context, menu) => HoverBuilder(
+            cursor: SystemMouseCursors.click,
+            builder: (context, hovered) => _RowHover(
+              content: (context) => Text(
+                [
+                  if (current != null && label != current) current,
+                  elsewhere.isEmpty
+                      ? l10n.sidebarSwitchHost
+                      : l10n.sidebarElsewhereNeedsYou(elsewhere.length),
+                ].join('\n'),
+              ),
+              child: GestureDetector(
+                onTap: menu.open,
+                child: Container(
+                  height: 20,
+                  padding: const EdgeInsets.only(left: 4, right: 2),
+                  decoration: BoxDecoration(
+                    color: hovered || menu.isOpen
+                        ? AppColors.hover
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      icon,
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (current != null) ...[
+                        const SizedBox(width: 5),
+                        _HostDot(hosts[current]),
+                      ],
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 14,
+                        color: AppColors.textFaint,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// The agents not archived that wait on the user or finished unseen, on
+  /// the hosts [where] takes (null for this machine).
+  List<AgentThread> _needingYou({required bool Function(String?) where}) => [
+    for (final thread in _workspace.threads)
+      if (!thread.archived &&
+          !_workspace.isHidden(thread.project) &&
+          _workspace.listsInSidebar(thread) &&
+          where(thread.project.host) &&
+          (thread.status == ThreadStatus.needsInput ||
+              thread.status == ThreadStatus.unread))
+        thread,
+  ];
+
+  static ThreadStatus? _mostUrgent(List<AgentThread> threads) =>
+      threads.any((t) => t.status == ThreadStatus.needsInput)
+      ? ThreadStatus.needsInput
+      : threads.isEmpty
+      ? null
+      : ThreadStatus.unread;
+
+  List<SidebarMenuItem> _hostItems(AppLocalizations l10n) {
+    final current = _workspace.sidebarHost;
+    final hosts = SshHosts.instance;
+    String? waiting(String? host) {
+      final count = _needingYou(where: (h) => h == host).length;
+      return count == 0 ? null : '$count';
+    }
+
+    final add = widget.onAddSshHost;
+    final open = widget.onOpenFolderOn;
+    final ssh = current == null ? null : hosts[current];
+    return [
+      SidebarMenuItem(
+        l10n.sidebarThisMachine,
+        leading: _HostIcon(workspace: _workspace, host: null, attention: null),
+        detail: waiting(null),
+        checked: current == null,
+        onSelected: () => _workspace.sidebarHost = null,
+      ),
+      for (final host in _workspace.sshHosts)
+        SidebarMenuItem(
+          _workspace.hostLabel(host),
+          leading: _HostIcon(
+            workspace: _workspace,
+            host: host,
+            attention: null,
+          ),
+          detail: waiting(host) ?? _stateLabel(l10n, hosts[host]),
+          checked: current == host,
+          onSelected: () => _workspace.sidebarHost = host,
+        ),
+      if (add != null) ...[
+        const SidebarMenuItem.divider(),
+        SidebarMenuItem(
+          l10n.sidebarAddSshHost,
+          icon: Codicons.add,
+          onSelected: add,
+        ),
+      ],
+      if (current != null && ssh != null) ...[
+        const SidebarMenuItem.divider(),
+        if (open != null)
+          SidebarMenuItem(
+            l10n.sidebarOpenFolderOn(current),
+            icon: Codicons.folderOpened,
+            onSelected: () => open(current),
+          ),
+        SidebarMenuItem(
+          l10n.sidebarRenameHost,
+          icon: Icons.edit_outlined,
+          onSelected: () => setState(() => _renamingHost = true),
+        ),
+        SidebarMenuItem(
+          l10n.sidebarChangeIcon,
+          icon: Icons.emoji_emotions_outlined,
+          onSelected: () => _openHostIconPicker(current),
+        ),
+        if (ssh.state == SshHostState.connected)
+          SidebarMenuItem(
+            l10n.sidebarDisconnectHost,
+            icon: Codicons.debugDisconnect,
+            onSelected: () => unawaited(ssh.close()),
+          )
+        else
+          SidebarMenuItem(
+            l10n.remoteReconnect,
+            icon: Codicons.refresh,
+            onSelected: () => ssh.reconnect().ignore(),
+          ),
+        SidebarMenuItem(
+          l10n.sidebarRemoveHost,
+          icon: Codicons.trash,
+          destructive: true,
+          onSelected: () => unawaited(_confirmRemoveHost(current)),
+        ),
+      ],
+    ];
+  }
+
+  /// [host]'s icon picker, under its icon in the heading.
+  void _openHostIconPicker(String host) {
+    final box = _hostIconKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.attached) return;
+    ProjectIconPicker.toggle(
+      context,
+      workspace: _workspace,
+      project: _workspace.hostIconProject(host),
+      anchor: box.localToGlobal(Offset.zero) & box.size,
+    );
+  }
+
+  static String _stateLabel(AppLocalizations l10n, SshHost host) =>
+      switch (host.state) {
+        SshHostState.connected => l10n.sidebarHostConnected,
+        SshHostState.connecting ||
+        SshHostState.reconnecting => l10n.sidebarHostConnecting,
+        SshHostState.failed => l10n.sidebarHostDisconnected,
+        SshHostState.idle => l10n.sidebarHostIdle,
+      };
+
+  Future<void> _confirmRemoveHost(String host) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      // Black, not the theme's: as upstream's dialogs dim the window.
+      barrierColor: const Color(0x99000000),
+      builder: (context) {
+        final l10n = context.l10n;
+        return _ConfirmDialog(
+          title: l10n.sidebarRemoveHostTitle(host),
+          message: l10n.sidebarRemoveHostMessage,
+          action: l10n.sidebarRemove,
+        );
+      },
+    );
+    if (confirmed ?? false) _workspace.removeSshHost(host);
+  }
+
+  /// A host switched to with no project there: a folder there to open.
+  Widget _buildNoProjectsOn(String host) {
+    final open = widget.onOpenFolderOn;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            context.l10n.sidebarNoProjectsOn(host),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.textFaint, fontSize: 12),
+          ),
+          if (open != null) ...[
+            const SizedBox(height: 10),
+            HoverBuilder(
+              cursor: SystemMouseCursors.click,
+              builder: (context, hovered) => GestureDetector(
+                onTap: () => open(host),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: hovered ? AppColors.hover : Colors.transparent,
+                    border: Border.all(color: AppColors.border),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Codicons.folderOpened,
+                        size: 13,
+                        color: AppColors.textMuted,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          context.l10n.sidebarOpenFolderOn(host),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// What [_buildList] laid out last, top to bottom, to find where a drag
   /// is: each group's header, then its rows (an empty pinned group's
   /// place to drop on instead).
@@ -621,6 +966,9 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
     ];
     _laidOut = const [];
     if (groups.isEmpty) {
+      if (_workspace.sidebarHost case final host?) {
+        return _buildNoProjectsOn(host);
+      }
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
@@ -1028,7 +1376,20 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
   }
 
   /// Several projects in the sidebar: their groups fold.
-  bool get _projectsShown => _workspace.sidebarProjects.length > 1;
+  bool get _projectsShown =>
+      _workspace.sidebarProjectsOn(_workspace.sidebarHost).length > 1;
+
+  /// Whether [thread] is listed where the sidebar is (this machine, or the
+  /// SSH host switched to).
+  bool Function(AgentThread thread) get _here {
+    final host = _workspace.sidebarHost;
+    return (thread) => thread.project.host == host;
+  }
+
+  int get _archivedCount {
+    final here = _here;
+    return _workspace.threads.where((t) => t.archived && here(t)).length;
+  }
 
   /// The archived toggle, when there are archived agents, an update's
   /// button, and the settings' gear.
@@ -1047,7 +1408,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
   }
 
   Widget _buildFooterRow(Widget? update) {
-    final count = _workspace.threads.where((t) => t.archived).length;
+    final count = _archivedCount;
     final settings = widget.onOpenSettings;
     if (count == 0 &&
         settings == null &&
@@ -1122,7 +1483,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
       icon: Icons.unarchive_outlined,
       onSelected: () {
         _workspace
-          ..unarchiveAll()
+          ..unarchiveAll(where: _here)
           ..showArchived = false;
       },
     ),
@@ -1135,7 +1496,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
   ];
 
   Future<void> _confirmDeleteArchived() async {
-    final count = _workspace.threads.where((t) => t.archived).length;
+    final count = _archivedCount;
     if (count == 0) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1152,7 +1513,7 @@ class _SidebarState extends State<Sidebar> implements ChatDragList {
     );
     if (!(confirmed ?? false)) return;
     _workspace
-      ..deleteArchived()
+      ..deleteArchived(where: _here)
       ..showArchived = false;
   }
 
@@ -1560,43 +1921,27 @@ class _GroupHeader extends StatelessWidget {
         ),
       );
     }
-    // A remote project: its host after its name, red while it cannot be
-    // reached (a click tries again).
+    // A remote project, listed under its host (the heading says which):
+    // a red mark after its name while the host cannot be reached (a click
+    // tries again).
     final ssh = SshHosts.instance[host];
     return ListenableBuilder(
       listenable: ssh,
       builder: (context, _) {
         final failed = ssh.state == SshHostState.failed;
-        final color = failed
-            ? themeColors['errorForeground']
-            : AppColors.textFaint;
         final (message, _) = failed ? sshErrorText(ssh.error) : (null, null);
-        Widget badge = Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              failed ? Codicons.debugDisconnect : Codicons.remote,
-              size: 11,
-              color: color,
-            ),
-            const SizedBox(width: 3),
-            Flexible(
-              child: Text(
-                host,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: color, fontSize: 11),
-              ),
-            ),
-          ],
-        );
+        Widget? badge;
         if (failed) {
           badge = MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => ssh.reconnect().ignore(),
-              child: badge,
+              child: Icon(
+                Codicons.debugDisconnect,
+                size: 11,
+                color: themeColors['errorForeground'],
+              ),
             ),
           );
         }
@@ -1618,8 +1963,7 @@ class _GroupHeader extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Flexible(child: label),
-                const SizedBox(width: 6),
-                Flexible(child: badge),
+                if (badge != null) ...[const SizedBox(width: 6), badge],
               ],
             ),
           ),
@@ -1735,10 +2079,7 @@ class _BelowMouse extends SingleChildLayoutDelegate {
     final y = target.bottom + childSize.height > size.height
         ? target.top - childSize.height
         : target.bottom - 2;
-    return Offset(
-      x.clamp(0, math.max(0, size.width - childSize.width)),
-      y.clamp(0, math.max(0, size.height - childSize.height)),
-    );
+    return clampHoverOffset(Offset(x, y), childSize, size);
   }
 
   @override
@@ -2567,4 +2908,91 @@ class _HeaderIcon extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// This machine's icon, or an SSH host's; the dot of what most needs the
+/// user elsewhere ([attention]) over its corner.
+class _HostIcon extends StatelessWidget {
+  const _HostIcon({
+    super.key,
+    required this.workspace,
+    required this.host,
+    required this.attention,
+  });
+
+  final Workspace workspace;
+  final String? host;
+  final ThreadStatus? attention;
+
+  @override
+  Widget build(BuildContext context) {
+    final host = this.host;
+    final icon = SizedBox.square(
+      dimension: 14,
+      child: Center(
+        child: host == null
+            ? Icon(Codicons.deviceDesktop, size: 13, color: AppColors.textMuted)
+            : ProjectIconView(
+                icon: workspace.iconOf(workspace.hostIconProject(host)),
+                library: workspace.icons,
+                size: 14,
+                color: AppColors.textMuted,
+                fallback: Codicons.remote,
+              ),
+      ),
+    );
+    final attention = this.attention;
+    if (attention == null) return icon;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: -3,
+          top: -2,
+          child: Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: attention == ThreadStatus.needsInput
+                  ? StatusIndicator.needsInputColor
+                  : AppColors.accent,
+              border: Border.all(color: AppColors.sidebarSurface, width: 1),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// How [host]'s connection is: green while connected, red once failed,
+/// hollow otherwise.
+class _HostDot extends StatelessWidget {
+  const _HostDot(this.host);
+
+  final SshHost host;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (host.state) {
+      SshHostState.connected => themeColors['charts.green'],
+      SshHostState.failed => themeColors['errorForeground'],
+      SshHostState.connecting ||
+      SshHostState.reconnecting => themeColors['charts.yellow'],
+      SshHostState.idle => null,
+    };
+    return Container(
+      width: 6,
+      height: 6,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color,
+        border: color == null
+            ? Border.all(color: AppColors.textFaint, width: 1)
+            : null,
+      ),
+    );
+  }
 }

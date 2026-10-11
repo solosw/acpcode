@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:bao_remote/client.dart';
 import 'package:bao_remote/files.dart' show IdeFileExistsException;
 import 'package:bao_remote/local.dart' show ClaudeEnvironment, CliLocator;
+import 'package:bao_remote/server.dart' show ServerClaude;
 import 'package:baocode/chat/panels/health_banner.dart';
 import 'package:baocode/ide/git/git_model.dart' show IdeGitGroup;
 import 'package:baocode/ide/ide_quick_input.dart';
@@ -138,6 +139,15 @@ void main() {
       expect(host.error, isA<SshConnectException>());
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(connector.attempts, 1);
+
+      // Nor by each part of a project asking for it (its sessions, files,
+      // git…, all restored at start): the user is not asked to sign in
+      // again and again.
+      for (var i = 0; i < 3; i++) {
+        await expectLater(host.ready, throwsA(isA<SshConnectException>()));
+      }
+      expect(connector.attempts, 1);
+      expect(host.state, SshHostState.failed);
 
       connector.failure = null;
       await host.reconnect();
@@ -569,9 +579,9 @@ printf '%s\n' "$line"
           isA<ClaudeUnavailable>()
               .having((e) => e.message, 'message', contains('dev'))
               .having(
-                (e) => e.message,
-                'message',
-                contains(CliLocator.overrideVariable),
+                (e) => e.detail,
+                'detail',
+                contains(ServerClaude.pathVariable),
               ),
         ),
       );
@@ -632,6 +642,51 @@ printf '%s\n' "$line"
           )
           .onAccept!();
       expect(opened, RemoteLocation.of('dev', p.join(root, 'app')));
+    });
+
+    test('the hosts added come first, by their names and icons; then '
+        "~/.ssh/config's", () async {
+      final shown = <IdeQuickPick>[];
+      String? connected;
+      final flow = OpenRemoteFlow(
+        show: shown.add,
+        l10n: englishLocalizations,
+        onOpen: (_) {},
+        onConnected: (host) => connected = host,
+        added: ['me@box:2222', 'dev'],
+        labelOf: (host) => host == 'me@box:2222' ? 'Ubuntu' : host,
+        iconOf: (host) => host == 'me@box:2222' ? const Text('🐧') : null,
+        hosts: hosts,
+        configHosts: () async => ['dev', 'prod'],
+      );
+      await flow.start();
+      final pick = shown.single;
+      final items = pick.itemsFor!('');
+      expect(
+        [
+          for (final item in items)
+            switch (item) {
+              IdeQuickPickSeparator(:final label) => '-- $label',
+              IdeQuickPickItem(:final label) => label,
+              _ => '?',
+            },
+        ],
+        ['-- Added', 'Ubuntu', 'dev', '-- ~/.ssh/config', 'prod'],
+      );
+      final ubuntu = items.whereType<IdeQuickPickItem>().first;
+      expect(ubuntu.description, 'me@box:2222');
+      expect(ubuntu.icon, isA<Text>());
+      // Its address is no other host to connect to.
+      expect(
+        pick.itemsFor!('me@box:2222').whereType<IdeQuickPickItem>().map(
+          (i) => i.label,
+        ),
+        isNot(contains(englishLocalizations.remoteConnectTo('me@box:2222'))),
+      );
+
+      pick.onDidAccept!(items.whereType<IdeQuickPickItem>().elementAt(1));
+      await until(() => connected != null);
+      expect(connected, 'dev');
     });
 
     test('a host that cannot be reached: why, and Retry', () async {

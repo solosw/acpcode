@@ -5,13 +5,18 @@ import 'package:native_toolchain_c/native_toolchain_c.dart';
 import 'windows_vswhere.dart';
 
 /// Builds Oniguruma with its scanner (native/oniguruma) for macOS, Linux
-/// and Windows, for an app and for `flutter test` alike. The web has none:
-/// TextMate highlighting is off there.
+/// and Windows, for an app and for `flutter test` alike, and for iOS and
+/// Android (the phone app reads code with it). The web has none: TextMate
+/// highlighting is off there.
 void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
     if (!input.config.buildCodeAssets) return;
     final os = input.config.code.targetOS;
-    if (os == OS.macOS || os == OS.linux || os == OS.windows) {
+    if (os == OS.macOS ||
+        os == OS.linux ||
+        os == OS.windows ||
+        os == OS.iOS ||
+        os == OS.android) {
       if (os == OS.windows) {
         await configureWindowsCompiler(input.config);
       }

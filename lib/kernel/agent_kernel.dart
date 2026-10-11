@@ -133,9 +133,19 @@ abstract interface class ModelSetting {
   /// null while not known.
   String? get selected;
 
+  /// What [model] would be on, switched to: [selected] for the model in
+  /// use; for another, what was last picked with it (each model keeps its
+  /// own), else what it would take on.
+  String? selectedFor(String model);
+
   /// Picks [id], with [model] in use: switched to first, if another is.
   void select(String model, String id);
 }
+
+/// The key a setting of [kind] picked with [model] is kept under, beside
+/// the one last picked with any (its name): `effort@<model>`.
+String modelSettingKey(KernelChoiceKind kind, String model) =>
+    '${kind.name}@$model';
 
 /// How much the model thinks before it answers.
 abstract interface class SelectsEffort {
@@ -181,8 +191,13 @@ abstract interface class RunsBackgroundTasks {
 
 /// Takes messages while busy, and runs them in turn.
 abstract interface class QueuesMessages {
-  /// Takes back a queued message not yet started.
-  void cancelQueued(String turnId);
+  /// Takes back a queued message not yet started; completes with whether
+  /// it was (it may have started meanwhile).
+  Future<bool> cancelQueued(String turnId);
+
+  /// Takes up the queued message [turnId] at once, before any queued ahead
+  /// of it: the turn running is stopped for it.
+  void sendQueuedNow(String turnId);
 }
 
 abstract interface class RevertsChanges {

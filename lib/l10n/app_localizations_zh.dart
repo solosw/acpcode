@@ -989,6 +989,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdSaveAll => '全部保存';
 
   @override
+  String get cmdToggleAutoSave => '切换自动保存';
+
+  @override
   String get cmdCloseEditor => '关闭编辑器';
 
   @override
@@ -1337,6 +1340,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get menuCloseWindow => '关闭窗口';
+
+  @override
+  String get menuAutoSave => '自动保存';
 
   @override
   String get menuBackToChat => '返回聊天';
@@ -1764,6 +1770,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get iconPickerDeleteFromLibrary => '从图库删除';
+
+  @override
+  String get iconPickerBrands => '品牌';
+
+  @override
+  String get iconPickerSiteIcon => '使用网站图标';
+
+  @override
+  String iconPickerSiteIconNone(String host) {
+    return '没有在 $host 找到图标';
+  }
 
   @override
   String get iconUploadTooLarge => '文件超过 5 MB';
@@ -2352,6 +2369,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get usageReservedForCompaction => '为压缩预留';
 
   @override
+  String get usagePromptCache => '提示缓存';
+
+  @override
+  String usageCacheLast(String read, String written, String uncached) {
+    return '最近一次请求：读取 $read · 写入 $written · 未缓存 $uncached';
+  }
+
+  @override
+  String usageCacheOverall(String percent) {
+    return '主对话 $percent%';
+  }
+
+  @override
+  String usageCacheConversation(String read, String written, String percent) {
+    return '主对话：读取 $read · 写入 $written · 命中 $percent%';
+  }
+
+  @override
+  String get usageCacheExcludes => '不含子智能体、压缩及 CLI 的附带请求';
+
+  @override
   String get usagePlanUsage => '套餐用量';
 
   @override
@@ -2469,6 +2507,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get interactionBack => '上一步';
 
   @override
+  String get interactionCollapse => '收起';
+
+  @override
+  String get interactionExpand => '展开';
+
+  @override
   String interactionMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -2520,12 +2564,60 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mcpDisable => '禁用';
 
   @override
+  String get mcpTest => '测试连接';
+
+  @override
+  String get mcpTestAll => '全部重新检测';
+
+  @override
+  String get mcpViewLog => '查看日志';
+
+  @override
+  String mcpExitCode(int code) {
+    return '进程已退出，退出码 $code';
+  }
+
+  @override
+  String mcpTimedOut(int seconds) {
+    return '$seconds 秒内没有响应';
+  }
+
+  @override
+  String get mcpLog => '输出（stderr）';
+
+  @override
+  String get mcpNoLog => '没有任何输出。';
+
+  @override
+  String get mcpSignInHint => '在对话的 MCP 服务器面板或用 /mcp 登录。';
+
+  @override
+  String get mcpProbeNote =>
+      '启动后用 MCP 的 initialize 握手检测，与 `claude mcp list` 的检测方式相同。';
+
+  @override
   String todoCount(int done, int total) {
     return '待办 $done/$total';
   }
 
   @override
-  String get messageQueued => '排队中';
+  String queuedMessages(int count) {
+    return '$count 条排队中 · 当前任务结束后依次发送';
+  }
+
+  @override
+  String queuedImages(int count) {
+    return '$count 张图片';
+  }
+
+  @override
+  String get queuedEdit => '撤回并编辑';
+
+  @override
+  String get queuedSendNow => '中断当前任务，立即发送';
+
+  @override
+  String get queuedRemove => '移出队列';
 
   @override
   String get tabClose => '关闭';
@@ -2772,6 +2864,19 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get explorerPasteIntoAncestor => '要粘贴的文件是目标文件夹的上级';
+
+  @override
+  String explorerUploading(int done, int total) {
+    return '正在上传文件… $done/$total';
+  }
+
+  @override
+  String explorerDownloading(int done, int total) {
+    return '正在下载文件… $done/$total';
+  }
+
+  @override
+  String get explorerPreparingTransfer => '正在准备文件…';
 
   @override
   String get explorerNewFile => '新建文件...';
@@ -4839,7 +4944,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ideClearRecent => '清除';
 
   @override
-  String get ideChatNoFolder => '打开文件夹后，即可在其中与智能体对话。';
+  String get ideChatNoFolder => '打开文件或文件夹后，即可与智能体对话。';
 
   @override
   String ideCannotOpen(String path, String error) {
@@ -4940,6 +5045,37 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsWindows => '窗口';
+
+  @override
+  String get claudePathSetting => '路径';
+
+  @override
+  String get claudePathSettingDescription =>
+      '留空：自动使用本机已安装的和 BaoCode 下载的 Claude Code 中版本最高的一份（一份都没有时会自动下载）。填入路径：始终使用这一份，例如你自己编译的版本。（claudeCode.path）';
+
+  @override
+  String get claudePathSettingHint => '自动';
+
+  @override
+  String get claudePathChecking => '正在检查…';
+
+  @override
+  String claudePathInUse(String path, String version) {
+    return '当前使用：$path（$version）';
+  }
+
+  @override
+  String claudePathInUseUnknown(String path) {
+    return '当前使用：$path';
+  }
+
+  @override
+  String claudePathInUseDownloaded(String version) {
+    return '当前使用：BaoCode 下载的 Claude Code $version';
+  }
+
+  @override
+  String get claudePathMissing => '尚未找到：开始第一个对话时会自动下载 Claude Code。';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide 窗口';
@@ -5113,7 +5249,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarSearch => '搜索';
 
   @override
-  String get sidebarCustomize => '自定义';
+  String get sidebarCustomize => '技能';
+
+  @override
+  String get sidebarOpenProject => '打开项目';
 
   @override
   String get palettePlaceholder => '搜索智能体、对话内容、文件、操作…';
@@ -5271,7 +5410,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get customizeNameHint => '名称';
 
   @override
-  String get customizeNameInvalid => '只能使用字母、数字、- 和 _（最多 64 个）';
+  String get customizeNameInvalid =>
+      '须以文字或数字开头，不能含空格和 / \\ : * ? \" < > |（最多 64 个）';
+
+  @override
+  String get customizeNameUnofficial => '官方规范只用小写字母、数字和 -，上传 claude.ai 可能被拒';
 
   @override
   String get customizeNameTaken => '已存在同名项';
@@ -5335,10 +5478,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsTitle => '模型';
 
   @override
-  String get modelsDescription =>
-      'Claude Code 的模型从哪里来：本机已配置好的 Claude Code，以及你添加的上游。Anthropic 兼容的上游由 Claude Code 直连；OpenAI 接口经 BaoCode 内置的本地代理转换。';
-
-  @override
   String get modelsDefault => '新会话默认模型';
 
   @override
@@ -5371,6 +5510,78 @@ class AppLocalizationsZh extends AppLocalizations {
   String modelsEnableProvider(String name) {
     return '在模型选择中显示 $name';
   }
+
+  @override
+  String get modelsFeaturedWhy => '为什么我看到这个？';
+
+  @override
+  String get modelsFeaturedNote => '这些站点目前已经被官方收录';
+
+  @override
+  String get modelsFeaturedNoteHow => '接入一键导入，即可免费参与收录';
+
+  @override
+  String get modelsFeaturedNoteLink => '我也要接入';
+
+  @override
+  String modelsImportTitle(String host) {
+    return '从 $host 导入上游';
+  }
+
+  @override
+  String get modelsImportProtocol => '协议';
+
+  @override
+  String get modelsImportUrl => '地址';
+
+  @override
+  String get modelsImportKeyLabel => '密钥';
+
+  @override
+  String get modelsImportListedBadge => '官方收录';
+
+  @override
+  String get modelsImportNoKey => '无，导入后再填';
+
+  @override
+  String modelsImportExisting(String name) {
+    return '你已经添加过这个上游：$name。';
+  }
+
+  @override
+  String get modelsImportNamePlaceholder => '名称';
+
+  @override
+  String get modelsImportAdd => '导入模型';
+
+  @override
+  String get modelsImportFinish => '导入';
+
+  @override
+  String get modelsImportWithoutModels => '不选模型，直接导入';
+
+  @override
+  String get modelsImportPreparing => '正在为您准备模型中…';
+
+  @override
+  String modelsImportUpdateKey(String name) {
+    return '更新「$name」的密钥';
+  }
+
+  @override
+  String modelsImportOpenExisting(String name) {
+    return '打开「$name」';
+  }
+
+  @override
+  String get modelsImportAsNew => '另存为新上游';
+
+  @override
+  String get modelsImportInvalid => '这个导入链接无法使用';
+
+  @override
+  String get modelsImportInvalidDetail =>
+      '链接里需要有 Base URL（http 或 https）和 BaoCode 支持的协议。请让站点重新生成链接，或在 设置 → 模型 中手动添加上游。';
 
   @override
   String get modelsAddProvider => '添加上游';
@@ -5529,6 +5740,16 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsName => '名称';
+
+  @override
+  String get modelsIcon => '图标';
+
+  @override
+  String get modelsIconDescription =>
+      '显示在模型选择器中它的分组标题前：厂商标识、网站图标或自定义图片。未设置时按 Base URL 识别厂商。';
+
+  @override
+  String get modelsIconChange => '更换图标';
 
   @override
   String get modelsProtocol => '协议';
@@ -5698,7 +5919,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL：子 Agent 使用的模型。';
+      'CLAUDE_CODE_SUBAGENT_MODEL：所有子 Agent 使用的模型，优先于子 Agent 定义或调用时指定的模型（定义为 inherit 的除外）。';
 
   @override
   String get modelsAdvanced => '高级';
@@ -6023,6 +6244,89 @@ class AppLocalizationsZh extends AppLocalizations {
   String get updateModeNone => '关闭';
 
   @override
+  String get diagnosticsTitle => '诊断日志';
+
+  @override
+  String get diagnosticsDescription =>
+      '把 BaoCode 的错误日志发给开发者，帮助排查问题。只有点击上传时才会发送。';
+
+  @override
+  String get diagnosticsUpload => '上传…';
+
+  @override
+  String get diagnosticsDialogTitle => '上传诊断日志';
+
+  @override
+  String get diagnosticsNotePlaceholder => '备注（选填）：遇到了什么问题，怎样复现';
+
+  @override
+  String diagnosticsFiles(int count, String size) {
+    return '将上传 $count 个日志文件（$size）。';
+  }
+
+  @override
+  String get diagnosticsNoFiles => '暂时没有日志，只会上传备注和版本信息。';
+
+  @override
+  String diagnosticsDumps(int count, String size) {
+    return '包含卡死时的内存转储（$count 个，$size）';
+  }
+
+  @override
+  String get diagnosticsDumpsDetail => '内存转储可能含有已打开文件的内容和路径。超过 10 MB 时只附带最新的。';
+
+  @override
+  String get diagnosticsPrivacy =>
+      '日志里的用户目录会替换成 ~。同时发送版本、系统和语言，但不包含使用统计的安装 ID。服务器上保存 90 天。';
+
+  @override
+  String get diagnosticsSend => '上传';
+
+  @override
+  String get diagnosticsUploading => '正在上传…';
+
+  @override
+  String get diagnosticsUploaded => '已上传。报告编号：';
+
+  @override
+  String get diagnosticsUploadedDetail => '把这个编号告诉 BaoCode 开发者，就能找到这份日志。';
+
+  @override
+  String diagnosticsOmittedDumps(int count) {
+    return '已省略 $count 个较早的内存转储（超过 10 MB）。';
+  }
+
+  @override
+  String get diagnosticsCopyId => '复制编号';
+
+  @override
+  String get diagnosticsCopied => '已复制';
+
+  @override
+  String get diagnosticsRetry => '重试';
+
+  @override
+  String get diagnosticsTooLarge => '日志超过 10 MB，无法上传。';
+
+  @override
+  String get diagnosticsRateLimited => '上传太频繁，请稍后再试。';
+
+  @override
+  String diagnosticsRefused(int status) {
+    return '服务器没有接受这份日志（HTTP $status）。';
+  }
+
+  @override
+  String diagnosticsServerError(String status) {
+    return '服务器暂时无法接收日志（$status），请稍后再试。';
+  }
+
+  @override
+  String diagnosticsFailed(String error) {
+    return '上传失败：$error';
+  }
+
+  @override
   String get cmdCheckForUpdates => '检查更新...';
 
   @override
@@ -6300,6 +6604,11 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String localDownloadingClaude(int percent) {
+    return '正在下载 Claude Code… $percent%';
+  }
+
+  @override
   String remoteUploadingClaude(String host, int percent) {
     return '正在把 Claude Code 传到 $host… $percent%';
   }
@@ -6434,6 +6743,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String newChatWorkspaceDetail(int count, String names) {
     return '$count 个文件夹 · $names';
   }
+
+  @override
+  String newChatHostProjects(int count) {
+    return '$count 个项目';
+  }
+
+  @override
+  String get newChatPickRemoteFolder => '选择目录…';
+
+  @override
+  String get newChatPickRemoteFolderDetail => '打开这台主机上的文件夹';
 
   @override
   String get newChatCreateWorkspace => '创建工作区…';
@@ -6900,4 +7220,81 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get extsTabLanguageServers => '语言服务器';
+
+  @override
+  String get sidebarThisMachine => '本机';
+
+  @override
+  String get sidebarSwitchHost => '在本机和 SSH 主机之间切换';
+
+  @override
+  String get sidebarAddSshHost => '添加 SSH 主机...';
+
+  @override
+  String sidebarOpenFolderOn(String host) {
+    return '在 $host 上打开文件夹...';
+  }
+
+  @override
+  String sidebarNoProjectsOn(String host) {
+    return '$host 上还没有项目。';
+  }
+
+  @override
+  String get sidebarHostConnected => '已连接';
+
+  @override
+  String get sidebarHostConnecting => '正在连接...';
+
+  @override
+  String get sidebarHostDisconnected => '已断开';
+
+  @override
+  String get sidebarHostIdle => '未连接';
+
+  @override
+  String get sidebarDisconnectHost => '断开连接';
+
+  @override
+  String get sidebarRemoveHost => '移除主机';
+
+  @override
+  String sidebarRemoveHostTitle(String host) {
+    return '移除 $host？';
+  }
+
+  @override
+  String get sidebarRemoveHostMessage => '它的项目会从侧栏移走。对话不会删除，重新添加这台主机后会回来。';
+
+  @override
+  String get sidebarRemove => '移除';
+
+  @override
+  String sidebarElsewhereNeedsYou(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '其他环境有 $count 个对话需要处理',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get sidebarRenameHost => '重命名主机';
+
+  @override
+  String get explorerNoPermission => '没有权限读取此文件夹';
+
+  @override
+  String fileErrorAccessDenied(String path) {
+    return '没有权限访问: $path';
+  }
+
+  @override
+  String get remoteAddedHosts => '已添加';
+
+  @override
+  String explorerUndoCreateChanged(String name) {
+    return '$name 创建后已被修改，仍要撤销（删除它）吗？';
+  }
 }

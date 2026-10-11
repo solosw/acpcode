@@ -6,6 +6,7 @@
 #include <dbghelp.h>
 #include <tlhelp32.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cwchar>
@@ -29,6 +30,10 @@ constexpr int kMaxReports = 3;
 // The deepest a stack is followed.
 constexpr int kMaxFrames = 64;
 
+// The most reports kept in the folder, across runs: the oldest go as a new
+// one is written.
+constexpr size_t kKeptReports = 10;
+
 std::atomic<HWND> g_window{nullptr};
 std::atomic<ULONGLONG> g_answered{0};
 std::atomic<ULONGLONG> g_loop_ended{0};
@@ -44,6 +49,35 @@ std::wstring ReportFolder() {
   const std::wstring folder = logs + L"\\hangs";
   ::CreateDirectoryW(folder.c_str(), nullptr);
   return folder;
+}
+
+// Leaves room in |folder| for one more report: of the reports there
+// (hang-*.txt and the .dmp beside each), all but the newest
+// kKeptReports - 1 are deleted. Their names (hang-YYYYMMDD-HHMMSS-pid) sort
+// as their times.
+void PruneReports(const std::wstring& folder) {
+  std::vector<std::wstring> reports;
+  WIN32_FIND_DATAW found = {};
+  const HANDLE find =
+      ::FindFirstFileW((folder + L"\\hang-*.txt").c_str(), &found);
+  if (find == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  do {
+    std::wstring name = found.cFileName;
+    reports.push_back(name.substr(0, name.size() - 4));
+  } while (::FindNextFileW(find, &found));
+  ::FindClose(find);
+  if (reports.size() < kKeptReports) {
+    return;
+  }
+  std::sort(reports.begin(), reports.end());
+  const size_t old = reports.size() - (kKeptReports - 1);
+  for (size_t i = 0; i < old; ++i) {
+    const std::wstring base = folder + L"\\" + reports[i];
+    ::DeleteFileW((base + L".txt").c_str());
+    ::DeleteFileW((base + L".dmp").c_str());
+  }
 }
 
 // The name a thread was given (Flutter names its own: io.flutter.raster…),
@@ -185,6 +219,7 @@ void WriteReport(HANDLE process, DWORD process_id, DWORD windows_thread,
   if (folder.empty()) {
     return;
   }
+  PruneReports(folder);
   SYSTEMTIME now = {};
   ::GetLocalTime(&now);
   wchar_t stamp[64];

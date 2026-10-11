@@ -34,8 +34,11 @@ Future<ProcessResult> _run(
   String? input,
 }) async {
   final process = await Process.start(executable, arguments);
-  final stdout = process.stdout.transform(utf8.decoder).join();
-  final stderr = process.stderr.transform(utf8.decoder).join();
+  // Leniently: what goes to stderr is not always UTF-8 (PowerShell's
+  // progress, in the system's code page on a Chinese Windows).
+  const decoder = Utf8Decoder(allowMalformed: true);
+  final stdout = process.stdout.transform(decoder).join();
+  final stderr = process.stderr.transform(decoder).join();
   if (input != null) process.stdin.add(utf8.encode(input));
   await process.stdin.close();
   final code = await process.exitCode.timeout(
@@ -119,8 +122,11 @@ class DpapiSecretStore implements SecretStore {
   final String directory;
   final SecretCommand _command;
 
+  /// No progress: PowerShell's first run of a session prepares its modules
+  /// with a progress record on stderr.
   static const _prelude =
-      r'$ErrorActionPreference = "Stop"; Add-Type -AssemblyName System.Security; ';
+      r'$ErrorActionPreference = "Stop"; $ProgressPreference = "SilentlyContinue"; '
+      r'Add-Type -AssemblyName System.Security; ';
 
   File _file(String id) => File(p.join(directory, '${_safe(id)}.dpapi'));
 

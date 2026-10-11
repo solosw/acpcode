@@ -22,6 +22,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import 'codicons.dart';
+import 'woff.dart';
 
 /// An icon of a font an extension contributes: [codePoint] in
 /// [fontFamily]. Not an [IconData], whose values must be constants.
@@ -193,7 +194,7 @@ class IconRegistry extends ChangeNotifier {
 
   Future<void> _load(String family, String file) async {
     try {
-      await loadFont(family, await File(file).readAsBytes());
+      await loadFont(family, sfntFromWoff(await File(file).readAsBytes()));
     } on Object {
       // Not readable or not a font: its icons show nothing, as a font that
       // fails to load upstream.

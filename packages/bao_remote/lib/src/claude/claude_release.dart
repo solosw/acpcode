@@ -56,11 +56,16 @@ class ClaudeRelease {
 
   final String base;
 
-  /// The release's name for [platform].
-  static String platformOf(RemotePlatform platform) =>
-      platform.os == 'linux' && platform.libc == 'musl'
-      ? 'linux-${platform.arch}-musl'
-      : '${platform.os}-${platform.arch}';
+  /// The release's name for [platform]: Windows is `win32-…` there.
+  static String platformOf(RemotePlatform platform) => switch (platform) {
+    RemotePlatform(os: 'linux', libc: 'musl') => 'linux-${platform.arch}-musl',
+    RemotePlatform(os: 'win') => 'win32-${platform.arch}',
+    _ => '${platform.os}-${platform.arch}',
+  };
+
+  /// The build's file name in the release: `claude.exe` on Windows.
+  static String fileOf(String platform) =>
+      platform.startsWith('win32-') ? 'claude.exe' : 'claude';
 
   /// The version [channel] (`stable` or `latest`) is at.
   Future<String> version([String channel = 'stable']) async {
@@ -114,7 +119,9 @@ class ClaudeRelease {
     final client = HttpClient();
     try {
       final request = await client.getUrl(
-        Uri.parse('$base/${build.version}/${build.platform}/claude'),
+        Uri.parse(
+          '$base/${build.version}/${build.platform}/${fileOf(build.platform)}',
+        ),
       );
       final response = await request.close();
       if (response.statusCode != HttpStatus.ok) {
@@ -222,11 +229,12 @@ class _DigestSink implements Sink<Digest> {
   void close() {}
 }
 
-/// The Claude Code BaoCode installs on a host where the user has none, as
-/// VS Code's extension carries its own: `<directory>/claude-<version>`, the
-/// one in use named by `<directory>/CURRENT`, and `<directory>/bin/claude`
-/// that runs it, for the app's terminals there (see [command]). Nothing of
-/// the user's (their PATH, `~/.local/bin`, their shell's files) is touched.
+/// The Claude Code BaoCode installs on a machine where the user has none
+/// (or only older ones), as VS Code's extension carries its own:
+/// `<directory>/claude-<version>` (`.exe` on Windows), the one in use named
+/// by `<directory>/CURRENT`, and `<directory>/bin/claude` that runs it, for
+/// the app's terminals on a remote host (see [command]). Nothing of the
+/// user's (their PATH, `~/.local/bin`, their shell's files) is touched.
 class ManagedClaude {
   ManagedClaude(this.directory);
 
@@ -237,19 +245,26 @@ class ManagedClaude {
 
   File get _current => File(p.join(directory, 'CURRENT'));
 
-  File binaryOf(String version) => File(p.join(directory, 'claude-$version'));
+  File binaryOf(String version) => File(
+    p.join(directory, 'claude-$version${Platform.isWindows ? '.exe' : ''}'),
+  );
 
-  /// The installed build's path, if there is one.
-  String? get installed {
+  /// The installed build's version, if there is one.
+  String? get version {
     try {
       final version = _current.readAsStringSync().trim();
-      if (version.isEmpty || version.contains('/')) return null;
-      final binary = binaryOf(version);
-      return binary.existsSync() ? binary.path : null;
+      if (version.isEmpty || version.contains(RegExp(r'[/\\]'))) return null;
+      return binaryOf(version).existsSync() ? version : null;
     } on FileSystemException {
       return null;
     }
   }
+
+  /// The installed build's path, if there is one.
+  String? get installed => switch (version) {
+    final version? => binaryOf(version).path,
+    null => null,
+  };
 
   /// [binDirectory], its `claude` written if need be (a build installed
   /// before there was one); null when none is installed. That `claude` runs
@@ -303,16 +318,28 @@ class ManagedClaude {
       ..writeAsStringSync('${build.version}\n');
     next.renameSync(_current.path);
     command();
-    for (final entry in Directory(directory).listSync()) {
-      final name = p.basename(entry.path);
-      if (name.startsWith('claude-') && entry.path != binary.path) {
-        try {
-          entry.deleteSync();
-        } on FileSystemException {
-          // Still running: removed next time.
+    prune();
+    return binary.path;
+  }
+
+  /// Removes the builds other than the one in use: those still running
+  /// (which Windows does not let go of) are removed another time.
+  void prune() {
+    final current = installed;
+    if (current == null) return;
+    try {
+      for (final entry in Directory(directory).listSync()) {
+        final name = p.basename(entry.path);
+        if (name.startsWith('claude-') && !p.equals(entry.path, current)) {
+          try {
+            entry.deleteSync();
+          } on FileSystemException {
+            // Still running: removed next time.
+          }
         }
       }
+    } on FileSystemException {
+      // Nothing to remove.
     }
-    return binary.path;
   }
 }

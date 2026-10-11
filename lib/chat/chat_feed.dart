@@ -13,6 +13,10 @@ abstract interface class ChatFeed implements Listenable {
   /// Whether it is still being written.
   bool get isStreaming;
 
+  /// Whether what is being written the agent took up on its own (a
+  /// background task's report, a scheduled prompt), not sent by the user.
+  bool get isUnprompted;
+
   bool get canEditMessages;
 
   /// The sent message being edited, if any, and what is typed in its place.
@@ -20,7 +24,6 @@ abstract interface class ChatFeed implements Listenable {
   set editing(({int index, ComposerDraft draft})? value);
 
   void editMessage(int index, ComposerMessage message);
-  void cancelQueued(int index);
 
   /// Moves what the item at [index] runs to the background; null when it
   /// cannot be.
@@ -117,6 +120,9 @@ class SubagentFeed extends ChangeNotifier implements ChatFeed {
   bool get isStreaming => _agent?.status == CommandStatus.running;
 
   @override
+  bool get isUnprompted => false;
+
+  @override
   bool get canEditMessages => false;
 
   @override
@@ -127,9 +133,6 @@ class SubagentFeed extends ChangeNotifier implements ChatFeed {
 
   @override
   void editMessage(int index, ComposerMessage message) {}
-
-  @override
-  void cancelQueued(int index) {}
 
   @override
   VoidCallback? moveToBackgroundAt(int index) => switch (_items[index]) {

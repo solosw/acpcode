@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "upstreams": [
+    {
+      "id": "ymeng",
+      "name": "YMeng CC",
+      "url": "https://ymeng.cc/sign-up?aff=qb45",
+      "logo": "ymeng.png",
+      "description": {
+        "en": "Every frontier model, one key",
+        "zh": "Claude、GPT、Gemini、Grok 齐全，一站接入"
+      },
+      "hosts": [
+        "api.ymeng.cc"
+      ]
+    }
+  ]
+}

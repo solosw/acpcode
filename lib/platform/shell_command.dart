@@ -67,6 +67,17 @@ abstract final class ShellCommand {
   /// Removes it, when it is ours; another app's is left as it is.
   static Future<void> uninstall() async => _installer?.uninstall();
 
+  /// A script of ours an older version installed, written anew as this one
+  /// would, where that asks no password (one root's stays until installed
+  /// again). Never throws: run as the app starts.
+  static Future<void> refresh() async {
+    try {
+      await _installer?.refresh();
+    } on Object catch (error) {
+      debugPrint('shell command: $error');
+    }
+  }
+
   /// Where it is, or would be, installed; empty where it cannot be.
   static String get location => _installer?.location ?? '';
 
@@ -87,4 +98,7 @@ abstract interface class ShellCommandInstaller {
   Future<void> install({bool overwrite = false});
 
   Future<void> uninstall();
+
+  /// See [ShellCommand.refresh].
+  Future<void> refresh();
 }

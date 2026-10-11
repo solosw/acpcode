@@ -1,0 +1,155 @@
+# Builds the remote server (baocode-server, the app's side on an SSH host)
+# for Linux and macOS, x64 and arm64, and runs it on each. docs/ssh-remote.md
+# (9.3) has where the builds go and how the app finds them.
+#
+#   git tag server-foo && git push origin server-foo
+#                                      build, and publish the builds at
+#                                      dl.baocode.dev/releases/remote/
+#                                      <VERSION>/, latest.json there naming
+#                                      them: for apps packaged locally with
+#                                      --remote-release (tool/build_*.dart)
+#   Actions → Remote server → Run workflow
+#                                      build only, to try the build
+#
+# Release (release.yml) calls it too, for the builds both apps name; it
+# publishes them itself, with the release.
+name: Remote server
+
+on:
+  push:
+    tags: ['server-*']
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.47.5
+
+jobs:
+  build:
+    name: Build the remote server
+    # A Mac, as only one builds for macOS: the Linux builds are
+    # cross-compiled, the macOS x64 one by an x64 Dart SDK under Rosetta.
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Get the x64 Dart SDK of Flutter's version
+        run: |
+          softwareupdate --install-rosetta --agree-to-license > /dev/null 2>&1 || true
+          version=$(dart --version 2>&1 | sed -n 's/^Dart SDK version: \([^ ]*\) (\([a-z]*\)).*/\1 \2/p')
+          read -r dart channel <<< "$version"
+          echo "Dart $dart ($channel)"
+          curl -fsSL -o "$RUNNER_TEMP/dart-x64.zip" \
+            "https://storage.googleapis.com/dart-archive/channels/$channel/release/$dart/sdk/dartsdk-macos-x64-release.zip"
+          unzip -q "$RUNNER_TEMP/dart-x64.zip" -d "$RUNNER_TEMP/dart-x64"
+          "$RUNNER_TEMP/dart-x64/dart-sdk/bin/dart" --version
+      # Once, for both apps: they carry its servers.json, and download the
+      # build a host needs from dl.baocode.dev (docs/ssh-remote.md, 9.3).
+      - name: Build for Linux and macOS, x64 and arm64
+        run: |
+          dart run tool/build_remote_server.dart --out build/remote --all \
+            --macos-x64-dart "$RUNNER_TEMP/dart-x64/dart-sdk/bin/dart"
+      - id: version
+        run: echo "version=$(cat build/remote/VERSION)" >> "$GITHUB_OUTPUT"
+      - name: Run the macOS builds here
+        run: tool/test_remote_server_macos.sh build/remote
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote
+          if-no-files-found: error
+          path: |
+            build/remote/VERSION
+            build/remote/servers.json
+            build/remote/*.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-linux
+          if-no-files-found: error
+          path: |
+            build/remote/VERSION
+            build/remote/baocode-server-linux-*
+            !build/remote/*.gz
+
+  linux:
+    name: Run the remote server on Linux
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: remote-linux
+          path: build/remote
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Run it on Linux distributions, in Docker
+        run: |
+          # Artifacts keep no modes.
+          chmod 755 build/remote/baocode-server-linux-*
+          tool/test_remote_server.sh build/remote
+
+  publish:
+    name: Publish to dl.baocode.dev/releases/remote/
+    needs: [build, linux]
+    # Its own server-* tag only: called by Release, the release publishes.
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'server-')
+    runs-on: ubuntu-latest
+    # The release environment's R2 token (it has to let server-* tags in).
+    environment: release
+    concurrency:
+      group: remote-publish
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_ENDPOINT_URL: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      # R2 does not take every checksum newer AWS CLIs send by default.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: remote
+          path: dist/remote
+      - name: Upload the builds and their servers.json
+        run: |
+          # Named by what was built, so never changed once there.
+          aws s3 cp dist/remote "s3://$R2_BUCKET/releases/remote/$VERSION/" \
+            --recursive --cache-control 'public, max-age=31536000, immutable'
+      - name: Check they are served
+        run: |
+          jq -r '.files[] | "\(.url) \(.size)"' dist/remote/servers.json |
+          while read -r url expected; do
+            served=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" { print $2 }')
+            echo "$url: $served bytes (expected $expected)"
+            [ "$served" = "$expected" ] || { echo "::error::$url is not served as uploaded"; exit 1; }
+          done
+      - name: Name them in latest.json, last
+        run: |
+          jq -n --arg version "$VERSION" --arg tag "$GITHUB_REF_NAME" --arg commit "$GITHUB_SHA" \
+            '{version: $version, tag: $tag, commit: $commit}' > latest.json
+          aws s3 cp latest.json "s3://$R2_BUCKET/releases/remote/latest.json" \
+            --cache-control 'public, max-age=60' --content-type application/json
+          {
+            echo "## Remote server \`$VERSION\` (\`$GITHUB_REF_NAME\`, ${GITHUB_SHA::7})"
+            echo
+            echo "Package an app that downloads it:"
+            echo
+            echo '```'
+            echo "dart run tool/build_windows.dart --remote-release $VERSION"
+            echo "dart run tool/build_macos.dart --remote-release $VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

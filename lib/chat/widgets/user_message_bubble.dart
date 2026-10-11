@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
-import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../chat_models.dart';
 import '../composer/composer_embeds.dart';
@@ -36,19 +35,11 @@ class UserMessageBubble extends StatefulWidget {
     required this.text,
     this.images = const [],
     this.onEdit,
-    this.queued = false,
-    this.onCancel,
   });
 
   final String text;
   final List<ImageAttachment> images;
   final VoidCallback? onEdit;
-
-  /// Waiting for the agent to finish what it is doing.
-  final bool queued;
-
-  /// Takes the queued message back.
-  final VoidCallback? onCancel;
 
   /// Its corners; what answers it is inset this much at either side.
   static const radius = 8.0;
@@ -163,12 +154,6 @@ class _UserMessageBubbleState extends State<UserMessageBubble> {
   final _selection = _MessageSelectionDelegate();
   Offset? _pressedAt;
 
-  /// The bubble's, moved rather than built anew as the message leaves the
-  /// queue: a selection container built anew around [_selection] would ask
-  /// it about text still laid out in the old one, before it has a size of
-  /// its own, and fail to build.
-  final GlobalKey _bubbleKey = GlobalKey();
-
   @override
   void dispose() {
     _selection.dispose();
@@ -211,58 +196,17 @@ class _UserMessageBubbleState extends State<UserMessageBubble> {
 
   Widget _build(BuildContext context, UserMessageStyle style) {
     final fitted = style == UserMessageStyle.bubble;
-    final message = KeyedSubtree(
-      key: _bubbleKey,
-      child: _buildBubble(context, fitted: fitted),
-    );
+    final message = _buildBubble(context, fitted: fitted);
     // As tall a tree either way, the bubble moving nowhere as the style
     // changes. Fitted: at the right, as wide as its text up to most of the
     // column; the Align takes the column's width, which centers what is
     // narrower.
-    final bubble = Align(
+    return Align(
       alignment: Alignment.centerRight,
       child: _WidthFactor(
         maxWidthFactor: fitted ? _fittedWidth : 1,
         child: message,
       ),
-    );
-    if (!widget.queued) return bubble;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Opacity(opacity: 0.6, child: bubble),
-        Padding(
-          padding: const EdgeInsets.only(top: 4, right: 2),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Icon(
-                Icons.schedule_rounded,
-                size: 12,
-                color: AppColors.textFaint,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                context.l10n.messageQueued,
-                style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
-              ),
-              if (widget.onCancel case final cancel?) ...[
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: cancel,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: Text(
-                      context.l10n.commonCancel,
-                      style: TextStyle(color: AppColors.accent, fontSize: 11.5),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
     );
   }
 

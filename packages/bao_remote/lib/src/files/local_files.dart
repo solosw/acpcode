@@ -33,7 +33,7 @@ class LocalFiles {
   // Reads and writes share a queue so an old read cannot replace a newer save's
   // baseline. Failed operations must not poison the queue.
   Future<T> _serialize<T>(Future<T> Function() operation) {
-    final result = _operations.then((_) => operation());
+    final result = _operations.then((_) => _permitted(operation));
     _operations = result.then<void>(
       (_) {},
       onError: (Object _, StackTrace _) {},
@@ -55,7 +55,10 @@ class LocalFiles {
     return target;
   }
 
-  Future<List<IdeFile>> list(String directory) async {
+  Future<List<IdeFile>> list(String directory) =>
+      _permitted(() => _list(directory), path: directory);
+
+  Future<List<IdeFile>> _list(String directory) async {
     final resolved = await _resolved(directory);
     final entries = await Directory(resolved).list(followLinks: false).toList();
     final files = <IdeFile>[
@@ -277,6 +280,23 @@ class LocalFiles {
     _snapshots.remove(_key(path));
   });
 
+  /// [operation], what the system refuses this user for want of
+  /// permission thrown as [IdeFileAccessDeniedException].
+  static Future<T> _permitted<T>(
+    Future<T> Function() operation, {
+    String? path,
+  }) async {
+    try {
+      return await operation();
+    } on FileSystemException catch (error) {
+      if (!isAccessDenied(error)) rethrow;
+      final denied = error.path ?? path;
+      throw IdeFileAccessDeniedException(
+        denied == null || denied.isEmpty ? '' : p.normalize(denied),
+      );
+    }
+  }
+
   static String _key(String path) => p.normalize(p.absolute(path));
 
   static String _lf(String text) => text.replaceAll(RegExp(r'\r\n?'), '\n');
@@ -332,6 +352,15 @@ class _FileSnapshot {
   /// Opened anyway: saved without the binary and size checks.
   final bool forced;
 }
+
+/// Whether the system refused [error]'s operation to this user: EACCES
+/// or EPERM, or Windows' ERROR_ACCESS_DENIED.
+bool isAccessDenied(FileSystemException error) =>
+    switch (error.osError?.errorCode) {
+      1 || 13 => !Platform.isWindows,
+      5 => Platform.isWindows,
+      _ => false,
+    };
 
 /// [path]'s bytes, whole; throws [IdeFileNotFoundException] when there is
 /// no such file.

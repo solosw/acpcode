@@ -13,13 +13,35 @@ class SidebarMenuItem {
     this.icon,
     this.checked = false,
     this.destructive = false,
-  });
+    this.detail,
+    this.leading,
+  }) : divider = false;
+
+  /// A line between items.
+  const SidebarMenuItem.divider()
+    : label = '',
+      onSelected = _none,
+      icon = null,
+      checked = false,
+      destructive = false,
+      detail = null,
+      leading = null,
+      divider = true;
+
+  static void _none() {}
 
   final String label;
   final VoidCallback onSelected;
   final IconData? icon;
   final bool checked;
   final bool destructive;
+
+  /// Fainter, after the label.
+  final String? detail;
+
+  /// In place of [icon].
+  final Widget? leading;
+  final bool divider;
 }
 
 /// Opens a menu of [items] from [child]: [builder] gets the state, whose
@@ -133,7 +155,14 @@ class SidebarMenuState extends State<SidebarMenu> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final item in items)
-            _MenuRow(item: item, onTap: () => _select(item)),
+            if (item.divider)
+              Container(
+                height: 1,
+                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                color: colors['menu.separatorBackground'],
+              )
+            else
+              _MenuRow(item: item, onTap: () => _select(item)),
         ],
       ),
     );
@@ -186,7 +215,10 @@ class _MenuRowState extends State<_MenuRow> {
                 ),
           child: Row(
             children: [
-              if (item.icon case final icon?) ...[
+              if (item.leading case final leading?) ...[
+                SizedBox.square(dimension: 14, child: Center(child: leading)),
+                const SizedBox(width: 8),
+              ] else if (item.icon case final icon?) ...[
                 Icon(
                   icon,
                   size: 14,
@@ -202,8 +234,17 @@ class _MenuRowState extends State<_MenuRow> {
                   style: TextStyle(color: color, fontSize: 12.5),
                 ),
               ),
-              if (item.checked)
+              if (item.detail case final detail?) ...[
+                const SizedBox(width: 8),
+                Text(
+                  detail,
+                  style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+                ),
+              ],
+              if (item.checked) ...[
+                const SizedBox(width: 6),
                 Icon(Icons.check_rounded, size: 14, color: color),
+              ],
             ],
           ),
         ),

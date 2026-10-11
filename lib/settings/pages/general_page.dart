@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../ide/ide_button.dart';
 import '../../ide/ide_menu.dart';
 import '../../ide/ide_notifications.dart' show IdeSeverity;
+import '../../kernel/claude_code/claude_path_setting.dart';
 import '../../kernel/commit_attribution.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
@@ -26,13 +28,23 @@ import 'settings_widgets.dart';
 /// come back and close (`window.*`), who the commits and pull requests
 /// agents write credit (`chat.commitAttribution` in settings.json), whether
 /// the app sends its usage data (`telemetry.telemetryLevel`), the
-/// `code` shell command, and Open with BaoCode in Finder's or Explorer's
-/// context menu. A choice is written at once; the default is not written.
+/// Claude Code to run (`claudeCode.path`), the `code` shell command, and
+/// Open with BaoCode in Finder's or Explorer's context menu. A choice is
+/// written at once; the default is not written.
 class GeneralSettingsPage extends StatelessWidget {
-  const GeneralSettingsPage({super.key, this.settings, this.tips});
+  const GeneralSettingsPage({
+    super.key,
+    this.settings,
+    this.tips,
+    this.claudeStatus,
+  });
 
   /// settings.json; none under test, where choices are not kept.
   final UserSettings? settings;
+
+  /// The Claude Code that runs now ([localClaudeStatus]); none under
+  /// test and on the web, where the path is not shown.
+  final Future<LocalClaudeStatus?> Function()? claudeStatus;
 
   /// The feature tips: those not on yet are listed first.
   final FeatureTipsController? tips;
@@ -285,6 +297,26 @@ class GeneralSettingsPage extends StatelessWidget {
                 ),
               ],
             ),
+            if (claudeStatus case final claudeStatus? when !kIsWeb)
+              SettingsGroup(
+                title: 'Claude Code',
+                children: [
+                  SettingsCard(
+                    children: [
+                      _ClaudePathSetting(
+                        path: ClaudePathSetting.parse(
+                          settings?[ClaudePathSetting.settingKey],
+                        ),
+                        status: claudeStatus,
+                        onChanged: (path) => _write(
+                          ClaudePathSetting.settingKey,
+                          path.isEmpty ? null : path,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             SettingsGroup(
               title: l10n.generalSettingsWindows,
               children: _windowRows(context),
@@ -504,6 +536,86 @@ class _ContextMenuSettingState extends State<_ContextMenuSetting> {
               onPressed: () => unawaited(openSystemSettings()),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The Claude Code to run: the path set (none for the newest found), and
+/// under it the one that runs now, read again as the path changes.
+class _ClaudePathSetting extends StatefulWidget {
+  const _ClaudePathSetting({
+    required this.path,
+    required this.status,
+    required this.onChanged,
+  });
+
+  final String? path;
+  final Future<LocalClaudeStatus?> Function() status;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_ClaudePathSetting> createState() => _ClaudePathSettingState();
+}
+
+class _ClaudePathSettingState extends State<_ClaudePathSetting> {
+  late Future<LocalClaudeStatus?> _status = widget.status();
+
+  @override
+  void didUpdateWidget(_ClaudePathSetting old) {
+    super.didUpdateWidget(old);
+    if (old.path != widget.path) _status = widget.status();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return SettingsRow(
+      label: l10n.claudePathSetting,
+      description: l10n.claudePathSettingDescription,
+      below: [
+        FutureBuilder(
+          future: _status,
+          builder: (context, snapshot) {
+            final (text, failed) = switch (snapshot.data) {
+              _ when snapshot.connectionState != ConnectionState.done => (
+                l10n.claudePathChecking,
+                false,
+              ),
+              LocalClaudeFound(:final version?, downloaded: true) => (
+                l10n.claudePathInUseDownloaded(version),
+                false,
+              ),
+              LocalClaudeFound(:final path, :final version?) => (
+                l10n.claudePathInUse(path, version),
+                false,
+              ),
+              LocalClaudeFound(:final path) => (
+                l10n.claudePathInUseUnknown(path),
+                false,
+              ),
+              LocalClaudeMissing() => (l10n.claudePathMissing, false),
+              LocalClaudeFailed(:final message) => (message, true),
+              null => ('', false),
+            };
+            if (text.isEmpty) return const SizedBox.shrink();
+            return SelectableText(
+              text,
+              style: failed
+                  ? SettingsText.path.copyWith(
+                      color: themeColors['errorForeground'],
+                    )
+                  : SettingsText.path,
+            );
+          },
+        ),
+      ],
+      trailing: SettingsTextField(
+        value: widget.path ?? '',
+        hint: l10n.claudePathSettingHint,
+        semanticLabel: 'Claude Code ${l10n.claudePathSetting}',
+        width: 260,
+        onSubmitted: widget.onChanged,
       ),
     );
   }

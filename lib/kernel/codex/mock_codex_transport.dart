@@ -195,7 +195,11 @@ class MockCodexTransport implements CodexTransport {
     final target =
         RegExp(r'@(\S+)').firstMatch(prompt)?.group(1) ??
         'lib/chat/chat_screen.dart';
-    if (!await _reasoning(run, MockScript.thoughtFor(target))) return;
+    // Codex thinks in summaries, each under a bold title.
+    final thought =
+        '**Reviewing ${target.split('/').last}**\n\n'
+        '${MockScript.thoughtFor(target)}';
+    if (!await _reasoning(run, thought)) return;
     if (!await _wait(run, 500)) return;
     _command("sed -n '1,200p' $target", [
       {'type': 'read', 'name': target.split('/').last, 'path': target},

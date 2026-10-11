@@ -71,12 +71,19 @@ const std::string& AgentRequestMarker() {
   return marker;
 }
 
+const std::string& ImportRequestMarker() {
+  static const std::string marker("\0import", 7);
+  return marker;
+}
+
 // |request| (see IsRequest) as Flutter takes it: its flag the marker.
 void AddRequest(flutter::EncodableList& list,
                 std::vector<std::string> request) {
-  list.push_back(flutter::EncodableValue(request.front() == kAgentRequestFlag
-                                             ? AgentRequestMarker()
-                                             : CodeRequestMarker()));
+  const std::string& flag = request.front();
+  list.push_back(flutter::EncodableValue(
+      flag == kAgentRequestFlag  ? AgentRequestMarker()
+      : flag == kLinkRequestFlag ? ImportRequestMarker()
+                                 : CodeRequestMarker()));
   for (size_t index = 1; index < request.size(); index++) {
     list.push_back(flutter::EncodableValue(std::move(request[index])));
   }
@@ -86,7 +93,8 @@ void AddRequest(flutter::EncodableList& list,
 
 bool IsRequest(const std::vector<std::string>& paths) {
   return !paths.empty() && (paths.front() == kCodeRequestFlag ||
-                            paths.front() == kAgentRequestFlag);
+                            paths.front() == kAgentRequestFlag ||
+                            paths.front() == kLinkRequestFlag);
 }
 
 OpenRequests::OpenRequests(flutter::BinaryMessenger* messenger,
@@ -168,6 +176,17 @@ std::vector<std::string> OpenPathsFromCommandLine() {
       if (!argument.empty()) {
         paths.push_back(std::move(argument));
       }
+    }
+    ::LocalFree(arguments);
+    return paths;
+  }
+  // From a baocode: link, its flag first, then the link as it came (not a
+  // path to make absolute).
+  if (count > 2 && Utf8FromUtf16(arguments[1]) == kLinkRequestFlag) {
+    std::string link = Utf8FromUtf16(arguments[2]);
+    if (!link.empty()) {
+      paths.push_back(kLinkRequestFlag);
+      paths.push_back(std::move(link));
     }
     ::LocalFree(arguments);
     return paths;

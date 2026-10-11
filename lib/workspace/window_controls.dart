@@ -312,6 +312,49 @@ abstract final class WindowControls {
     }
   }
 
+  /// Whether [startFileDrag] can drag files out to other apps.
+  static bool get canDragFilesOut => isDesktop;
+
+  /// Goes on dragging [paths] from [viewId]'s window as the system drags
+  /// files, to let go in another app (Finder, Mail…) or back in this one:
+  /// the pointer, held down, has left the window. Whether it began.
+  static Future<bool> startFileDrag(List<String> paths, {int? viewId}) async {
+    if (!canDragFilesOut || paths.isEmpty) return false;
+    try {
+      return await _of(viewId)
+              .invokeMethod<bool>('startFileDrag', {'paths': paths}) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Has [viewId]'s window watch the drag of files that began in it: once
+  /// the pointer leaves the window it drags [paths] on itself, as Finder
+  /// drags files (when null: they are not this machine's yet, it only says
+  /// so), and tells [FileDrops.setDragOut]'s. Whether it watches; when not,
+  /// the app finds the pointer out of the window itself.
+  static Future<bool> armFileDrag(List<String>? paths, {int? viewId}) async {
+    if (!canDragFilesOut) return false;
+    try {
+      return await _of(viewId)
+              .invokeMethod<bool>('armFileDrag', {'paths': paths}) ??
+          false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// The drag [armFileDrag] had watched ended.
+  static Future<void> disarmFileDrag({int? viewId}) async {
+    if (!canDragFilesOut) return;
+    try {
+      await _of(viewId).invokeMethod<void>('disarmFileDrag');
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests), or one that watches none.
+    }
+  }
+
   /// Whether [revealInFileManager] can show a file (Finder, or File
   /// Explorer on Windows).
   static bool get canRevealInFileManager => isDesktop;
@@ -517,6 +560,17 @@ abstract final class WindowControls {
     if (!hasEditMenu) return;
     try {
       await _main.invokeMethod<void>('setFileMenuTitles', titles);
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
+  }
+
+  /// Which of the macOS File menu's items are ticked, by the key of their
+  /// title (see [setFileMenuTitles]): `autoSave`.
+  static Future<void> setFileMenuChecked(Map<String, bool> checked) async {
+    if (!hasEditMenu) return;
+    try {
+      await _main.invokeMethod<void>('setFileMenuChecked', checked);
     } on MissingPluginException {
       // A host without the channel (e.g. tests).
     }

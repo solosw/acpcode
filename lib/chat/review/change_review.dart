@@ -5,6 +5,7 @@ import 'package:bao_remote/client.dart' show RemoteReviewStore;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../remote/remote_location.dart';
 import '../chat_models.dart';
 import 'review_store.dart';
 
@@ -60,20 +61,21 @@ class _Entry {
 /// Kept, a change is only no longer listed: nothing is written, staged or
 /// committed. Undone, the file is put back.
 class ChangeReview extends ChangeNotifier {
+  /// Its files' paths as the project's host spells them. Remote stores
+  /// use POSIX paths even when the client is running on Windows.
   ChangeReview(this._store, {p.Context? paths})
-    : paths = paths ?? (_store is RemoteReviewStore ? p.posix : p.context);
-
-  /// How the project's host spells paths, not the machine showing the
-  /// review. Remote stores are on Linux or macOS, even on a Windows client.
-  final p.Context paths;
+    : _paths = paths ?? (_store is RemoteReviewStore ? p.posix : p.context);
 
   /// The review of the project at [root], continuing what [session] left;
   /// null where there can be none (see [openReviewStore]).
   static Future<ChangeReview?> open(String root, {String? session}) async {
     final store = await openReviewStore(root);
     if (store == null) return null;
-    if (session == null) return ChangeReview(store);
-    return resume(store, session);
+    // A remote project's paths are its host's (POSIX), whatever this
+    // machine spells its own with.
+    final paths = RemoteLocation.pathsOf(root);
+    if (session == null) return ChangeReview(store, paths: paths);
+    return resume(store, session, paths: paths);
   }
 
   /// The review over [store], with the changes [session] left pending.
@@ -88,6 +90,10 @@ class ChangeReview extends ChangeNotifier {
   }
 
   final ReviewStore _store;
+  final p.Context _paths;
+
+  /// How its files' paths are spelled.
+  p.Context get paths => _paths;
 
   String get root => _store.root;
 
@@ -468,12 +474,12 @@ class ChangeReview extends ChangeNotifier {
   /// `/`; null outside it.
   String? _relative(String path) {
     final absolute = _absolute(path);
-    if (!paths.isWithin(root, absolute)) return null;
-    return paths.split(paths.relative(absolute, from: root)).join('/');
+    if (!_paths.isWithin(root, absolute)) return null;
+    return _paths.split(_paths.relative(absolute, from: root)).join('/');
   }
 
-  String _absolute(String path) => paths.normalize(
-    paths.isAbsolute(path) ? path : paths.joinAll([root, ...path.split('/')]),
+  String _absolute(String path) => _paths.normalize(
+    _paths.isAbsolute(path) ? path : _paths.joinAll([root, ...path.split('/')]),
   );
 
   /// Drops what it kept between runs, once what is under way is done: the

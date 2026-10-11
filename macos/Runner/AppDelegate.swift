@@ -60,12 +60,18 @@ class AppDelegate: FlutterAppDelegate {
     let requests = urls.compactMap(OpenRequests.request(from:))
     if !paths.isEmpty || !requests.isEmpty {
       let atLaunch = OpenRequests.shared.atLaunch
+      // A site's import alone asks in the main window: the app launches
+      // for it as it does by itself.
+      let importsOnly = paths.isEmpty && requests.allSatisfy(OpenRequests.isImport)
       if !paths.isEmpty { OpenRequests.shared.deliver(paths) }
       for request in requests { OpenRequests.shared.deliver(request: request) }
-      if atLaunch {
+      if atLaunch && importsOnly {
+        // Shown as at any launch (see MainFlutterWindow).
+      } else if atLaunch {
         // Launched for them, the app opens to what they open alone (see
         // OpenRequests.launchRequest): the main window stays out of sight
-        // unless Flutter shows it (it does without the IDE's windows).
+        // (held back until now, see MainFlutterWindow) unless Flutter shows
+        // it (it does without the IDE's windows).
         AppWindows.shared?.main.orderOut(nil)
         NSApp.activate(ignoringOtherApps: true)
       } else if AppWindows.shared?.started ?? false {
@@ -114,6 +120,9 @@ final class OpenRequests {
   /// not asked yet (see `launchRequest`).
   var atLaunch: Bool { !launchAsked }
 
+  /// Whether the app was launched to open something (see `launchRequest`).
+  var launchedForRequest: Bool { launchRequest != nil }
+
   /// Answers Flutter over [messenger]'s `baocode/open` (see
   /// MainFlutterWindow.swift).
   func attach(to messenger: FlutterBinaryMessenger) {
@@ -158,7 +167,7 @@ final class OpenRequests {
   /// Hands a request (see [request(from:)]) to Flutter, or keeps it until
   /// it is ready.
   func deliver(request: [String]) {
-    if atLaunch && launchRequest == nil {
+    if atLaunch && launchRequest == nil && !OpenRequests.isImport(request) {
       launchRequest = request.first == "\u{0}agent" ? "agent" : "ide"
     }
     if ready, let channel {
@@ -168,17 +177,31 @@ final class OpenRequests {
     }
   }
 
-  /// What a `baocode://` URL of the Finder extension asks (see
+  /// The marker of a site's import of an upstream (code_args.dart's
+  /// importRequestMarker).
+  static let importMarker = "\u{0}import"
+
+  static func isImport(_ request: [String]) -> Bool {
+    request.first == importMarker
+  }
+
+  /// What a `baocode://` URL asks. The Finder extension's (see
   /// FinderExtension/FinderSync.swift), as the request Explorer's menu
   /// makes on Windows (see open_requests.cpp and code_args.dart): `agent`,
   /// Open with BaoCode, a new agent with the paths (its marker, then them);
   /// `ide`, Open with Fast Ide, the paths in a new window as `code -n`
   /// opens them (the `code` command's marker, a folder to start from, `-n`,
-  /// then them). Nil for any other URL, or one without absolute paths.
+  /// then them). A site's (baocode.dev/import): `provider/import`, an
+  /// upstream to add, the link as it came after its marker, which Flutter
+  /// reads (upstream_import.dart). Nil for any other URL, or one without
+  /// absolute paths.
   static func request(from url: URL) -> [String]? {
     guard url.scheme == "baocode",
       let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
     else { return nil }
+    if components.host == "provider" {
+      return components.path == "/import" ? [importMarker, url.absoluteString] : nil
+    }
     let paths = (components.queryItems ?? [])
       .filter { $0.name == "path" }
       .compactMap(\.value)

@@ -144,7 +144,8 @@ class _FilePreviewState extends State<FilePreview> {
   final _editor = GlobalKey<IdeCodeEditorState>();
 
   FileOpenRequest get _request => widget.request;
-  bool get _image => !_request.diff && ideIsImagePath(_request.path);
+  /// An image shows as it is, its changes too: there is no text to compare.
+  bool get _image => ideIsImagePath(_request.path);
   bool get _isMarkdown => !_request.diff && isMarkdownPath(_request.path);
 
   /// The file's own text shows, to edit: not its changes, nor the index's.

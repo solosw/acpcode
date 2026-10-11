@@ -207,9 +207,9 @@ class SshLauncher {
   final List<String> options;
 
   /// Answers what `ssh` asks while signing in (a password, a key's
-  /// passphrase); without one, or on Windows, nothing is asked and a host
-  /// that wants a password refuses. A host key `ssh` does not know is
-  /// refused all the same.
+  /// passphrase); without one, or with an `ssh` older than OpenSSH 8.4 on
+  /// Windows, nothing is asked and a host that wants a password refuses.
+  /// A host key `ssh` does not know is refused all the same.
   final SshPrompter? prompter;
 
   /// Extra arguments for a host the app configured itself (user, key).
@@ -218,8 +218,37 @@ class SshLauncher {
   final SshConnectOptions Function(SshTarget target)? optionsFor;
   final SshAskpass _askpass;
 
-  /// Whether what `ssh` asks is answered (by a script of `sh`'s).
-  bool get _prompts => prompter != null && !Platform.isWindows;
+  /// Whether what `ssh` asks is answered (by [SshAskpass]'s script).
+  bool get _prompts => prompter != null && (!_askpass.windows || _forced);
+
+  /// On Windows, whether `ssh` takes `SSH_ASKPASS_REQUIRE=force` (OpenSSH
+  /// 8.4 and later): one older reads a password from its console, which
+  /// none would answer. Known once [_checkForced] is done.
+  bool _forced = false;
+  Future<void>? _checked;
+
+  /// What `ssh -V` said, for an [SshFailure.authentication] too old to be
+  /// asked.
+  String? _version;
+
+  Future<void> _checkForced() => _checked ??= () async {
+    try {
+      final result = await Process.run(ssh, const ['-V']);
+      _version = '${result.stderr}${result.stdout}'.trim();
+      _forced = takesForcedAskpass(_version!);
+    } on ProcessException {
+      // No ssh: said when it is started.
+    }
+  }();
+
+  /// Whether `ssh -V`'s [version] is OpenSSH 8.4 or later.
+  static bool takesForcedAskpass(String version) {
+    final match = RegExp(r'OpenSSH_(?:for_Windows_)?(\d+)\.(\d+)')
+        .firstMatch(version);
+    if (match == null) return false;
+    final (major, minor) = (int.parse(match[1]!), int.parse(match[2]!));
+    return major > 8 || (major == 8 && minor >= 4);
+  }
 
   /// No prompts (a password, an unknown host key fail instead), keepalives
   /// that notice a dead connection, and no escape character on the binary
@@ -286,7 +315,8 @@ class SshLauncher {
     String command,
   ) async {
     final prompter = _prompterFor(target);
-    final askpass = prompter != null && !Platform.isWindows
+    if (prompter != null && _askpass.windows) await _checkForced();
+    final askpass = prompter != null && (!_askpass.windows || _forced)
         ? await _askpass.start(target, prompter)
         : null;
     try {
@@ -295,6 +325,9 @@ class SshLauncher {
         arguments(target, command),
         environment: askpass?.environment,
       );
+      // Cancelled: ended, lest it ask again (up to NumberOfPasswordPrompts
+      // times for each way of signing in).
+      askpass?.onCancelled = process.kill;
       return (process, askpass);
     } on ProcessException catch (error) {
       await askpass?.close();
@@ -486,13 +519,11 @@ exit 0
       await askpass?.close();
     }
     final result = (exitCode: code, stdout: await stdout, stderr: await stderr);
-    // ssh's own failure: the connection, not the command.
-    if (code == 255) {
-      throw _failure(
-        code,
-        result.stderr,
-        cancelled: askpass?.cancelled ?? false,
-      );
+    final cancelled = askpass?.cancelled ?? false;
+    // ssh's own failure: the connection, not the command; or ended, the
+    // signing in cancelled.
+    if (code == 255 || cancelled) {
+      throw _failure(code, result.stderr, cancelled: cancelled);
     }
     return result;
   }
@@ -520,6 +551,8 @@ exit 0
   }) {
     final detail = _tail(stderr);
     final failure = switch (stderr) {
+      // Ended when cancelled, before ssh could say it was refused.
+      _ when cancelled => SshFailure.authentication,
       _ when stderr.contains('Permission denied') => SshFailure.authentication,
       _
           when stderr.contains('Host key verification failed') ||
@@ -542,6 +575,10 @@ exit 0
       SshFailure.authentication when cancelled => 'Signing in was cancelled.',
       SshFailure.authentication when _prompts =>
         'The host refused to sign in: the key, or the password given.',
+      SshFailure.authentication when prompter != null && _version != null =>
+        'The host refused the key, and this ssh ($_version) cannot be '
+            'asked for a password: OpenSSH 8.4 or later can. Update it, or '
+            'set up a key or ssh-agent.',
       SshFailure.authentication =>
         'The host refused the key: no password is asked here. Set up a key '
             'or ssh-agent for it.',

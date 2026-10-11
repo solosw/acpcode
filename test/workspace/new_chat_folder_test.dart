@@ -187,22 +187,48 @@ void main() {
     },
   );
 
-  testWidgets('projects on SSH hosts are under Remote, with Open Remote '
-      'Project…, which asks for a host', (tester) async {
+  testWidgets('SSH hosts are under Remote, their projects at their side '
+      'under Choose Folder…, with Open Remote Project…, which asks for a '
+      'host', (tester) async {
     final workspace = await _pumpNew(tester);
     await workspace.openFolder('ssh://dev/home/me/app');
+    await workspace.openFolder('ssh://dev/home/me/api');
+    await workspace.openFolder('ssh://prod/srv/web');
     await tester.pumpAndSettle();
-    expect(workspace.selected.project.host, 'dev');
+    expect(workspace.selected.project.host, 'prod');
+    await workspace.openFolder('ssh://dev/home/me/app');
+    await tester.pumpAndSettle();
 
     await tester.tap(find.descendant(of: _bar, matching: find.text('app')));
     await tester.pumpAndSettle();
     final remote = tester.getTopLeft(find.text('Remote')).dy;
-    // This machine's first, without a heading; the host's under Remote.
+    // This machine's first, without a heading; a row for each host under
+    // Remote, not one for each project.
     expect(tester.getTopLeft(find.text('No folder')).dy, lessThan(remote));
+    expect(tester.getTopLeft(find.text('2 projects')).dy, greaterThan(remote));
+    expect(find.text('1 project'), findsOneWidget);
+    expect(find.text('/home/me/app'), findsNothing);
+
+    // Picked, a host shows its projects at its side, under a folder there
+    // to pick; one picked there is moved to.
+    await tester.tap(find.text('2 projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('/home/me/app'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('dev:/home/me/app')).dy,
-      greaterThan(remote),
+      tester.getTopLeft(find.text('Choose Folder…')).dy,
+      lessThan(tester.getTopLeft(find.text('app').last).dy),
     );
+    expect(
+      tester.getTopLeft(find.text('/home/me/api')).dx,
+      greaterThan(tester.getTopRight(find.text('2 projects')).dx),
+    );
+    await tester.tap(find.text('/home/me/api'));
+    await tester.pumpAndSettle();
+    expect(workspace.selected.project.path, 'ssh://dev/home/me/api');
+    expect(find.text('/home/me/api'), findsNothing);
+
+    await tester.tap(find.descendant(of: _bar, matching: find.text('api')));
+    await tester.pumpAndSettle();
     expect(find.text('Open Remote Project...'), findsOneWidget);
 
     // Picking it walks to a host; nothing is connected to yet.

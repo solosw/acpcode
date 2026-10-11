@@ -27,6 +27,8 @@
 //   writePasteboardImage (…)      put an image on the clipboard
 //   readPasteboardFiles           the files copied to the clipboard
 //   writePasteboardFiles (paths)  copy files to the clipboard, as Explorer
+//   startFileDrag (paths)         drag files on out of the window, as
+//                                 Explorer drags them (see drag_source.h)
 //   readImageFile (path)          an image file as the composer takes one
 //   pickFiles                     the files the user chose, or none
 //   pickOpenFiles (directory?,    the paths of the files the user chose to
@@ -48,7 +50,8 @@
 // Flutter draws carries.
 class WindowChannel {
  public:
-  WindowChannel(flutter::BinaryMessenger* messenger, HWND window,
+  // |view| is the Flutter view's window, in |window|.
+  WindowChannel(flutter::BinaryMessenger* messenger, HWND window, HWND view,
                 const std::string& name = "baocode/window");
   ~WindowChannel();
 
@@ -94,6 +97,7 @@ class WindowChannel {
   // The window the commands act on: the runner's own, not the Flutter view
   // it holds.
   HWND window_;
+  HWND view_;
 
   // Where Flutter's header is (see setHitTestAreas).
   CaptionAreas areas_;

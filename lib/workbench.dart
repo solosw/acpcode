@@ -6,6 +6,7 @@ import 'package:bao_remote/client.dart' show SshPrompt;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
@@ -18,6 +19,7 @@ import 'chat/composer/composer_files.dart' show ComposerFile;
 import 'chat/composer/composer_mock_data.dart' show Suggestion;
 import 'chat/composer/file_drop.dart';
 import 'chat/composer/file_mentions.dart';
+import 'chat/open_editor.dart';
 import 'chat/panels/interaction_panel.dart';
 import 'chat/side_panel/file_open.dart';
 import 'chat/side_panel/side_panel_controller.dart';
@@ -33,6 +35,7 @@ import 'ide/ide_chat_title.dart';
 import 'ide/ide_color_theme_picker.dart';
 import 'ide/ide_commands.dart';
 import 'ide/ide_dialog.dart';
+import 'models/upstream_import.dart';
 import 'ide/ide_modern_ui.dart';
 import 'ide/ide_notifications.dart';
 import 'ide/git/commit_message.dart';
@@ -65,10 +68,13 @@ import 'search/search_palette.dart';
 import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
 import 'settings/jsonc_file.dart';
+import 'settings/pages/models_page.dart';
+import 'settings/pages/upstream_import_dialog.dart';
 import 'settings/settings_dialog.dart';
 import 'settings/shell_command_actions.dart';
 import 'sidebar/sidebar.dart';
 import 'theme/codicons.dart';
+import 'icons/project_icon_view.dart';
 import 'theme/app_theme.dart';
 import 'theme/workbench_theme.dart' show WorkbenchThemeService, themeColors;
 import 'tips/feature_tip.dart';
@@ -80,6 +86,7 @@ import 'window/code_args.dart';
 import 'window/window_settings.dart';
 import 'remote/open_remote.dart';
 import 'remote/project_host.dart';
+import 'remote/remote_customization_disk.dart';
 import 'remote/remote_location.dart';
 import 'remote/remote_status.dart';
 import 'remote/ssh_host.dart';
@@ -618,6 +625,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
     _drag.dispose();
     _width.dispose();
+    _looseChatFolder.dispose();
     _lifecycle?.dispose();
     _attention?.dispose();
     _starPrompt?.dispose();
@@ -679,6 +687,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// A settings file that stops parsing is told of once per error (what
   /// was last read from it stays in effect); fixed, its notification goes.
   void _settingsFilesChanged() {
+    _syncAutoSave();
     final files = widget.settings?.files;
     if (files == null) return;
     for (final file in files.userFiles) {
@@ -959,6 +968,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   CustomizationKind _customizeKind = CustomizationKind.skills;
   final GlobalKey<CustomizeViewState> _customizeKey = GlobalKey();
 
+  /// The customizations of each remote host the sidebar has been on.
+  final Map<String, CustomizationStore> _hostCustomizations = {};
+
   void _showCustomize([CustomizationKind? kind]) {
     _closeDrawer();
     if (kind != null) _customizeKey.currentState?.show(kind);
@@ -1084,7 +1096,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
     return [
       ?action(ChatCommandIds.newChat, Codicons.add),
-      ?action(_customizeCommand, Codicons.extensions),
+      ?action(_customizeCommand, Codicons.plug),
       ?action(openSettingsCommandId, Codicons.settingsGear),
       ?action(openKeybindingsCommandId, Codicons.keyboard),
       ?action(ideSelectColorThemeCommandId, Codicons.symbolColor),
@@ -1132,7 +1144,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         for (final kind in CustomizationKind.values)
           PaletteAction(
             id: 'customize.${kind.name}',
-            label: '${l10n.sidebarCustomize}: ${kind.label(l10n)}',
+            label: '${l10n.customizeTitle}: ${kind.label(l10n)}',
             icon: kind.icon,
             run: () => _showCustomize(kind),
           ),
@@ -1597,6 +1609,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             'workbench.action.clearRecentlyOpened',
             () => unawaited(_clearRecent()),
           ),
+          command(toggleAutoSaveCommandId, _toggleAutoSave),
           for (final MapEntry(key: id, value: run) in _windowCommands().entries)
             command(id, run),
           if (folder != _noFolder) ...[
@@ -1701,6 +1714,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// whichever the main window is; the chat is left as it was. With the
   /// app's windows, as they open them (see [AppWindows.openRequested]).
   Future<void> _openPaths(List<String> paths) async {
+    if (paths.firstOrNull == CodeArgs.importRequestMarker) {
+      for (final link in paths.skip(1)) {
+        await _importUpstream(link);
+      }
+      return;
+    }
     if (_windows case final windows?) return windows.openRequested(paths);
     final folders = <String>[];
     final files = <String>[];
@@ -1834,6 +1853,41 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   static const _recentMenuItems = 10;
 
+  /// Whether `files.autoSave` is on, in any of its modes: the File menu's
+  /// Auto Save ticked.
+  bool get _autoSaveOn =>
+      switch (widget.settings?.files?.settings['files.autoSave']) {
+        final String mode => mode != 'off',
+        _ => false,
+      };
+
+  /// [_autoSaveOn] as the File menus last showed it.
+  bool? _autoSaveShown;
+  void _syncAutoSave() {
+    final on = _autoSaveOn;
+    if (on == _autoSaveShown) return;
+    final first = _autoSaveShown == null;
+    _autoSaveShown = on;
+    if (_main) unawaited(WindowControls.setFileMenuChecked({'autoSave': on}));
+    if (!first && mounted) setState(() {});
+  }
+
+  /// Toggle Auto Save, as VS Code's: `afterDelay` when off, else off (the
+  /// setting removed, off being its default).
+  void _toggleAutoSave() {
+    final settings = widget.settings?.files?.settings;
+    if (settings == null) return;
+    unawaited(
+      settings
+          .update('files.autoSave', _autoSaveOn ? null : 'afterDelay')
+          .catchError((Object error) {
+            // A settings file that does not parse is left as it is; its
+            // error is shown.
+            debugPrint('files.autoSave not kept: $error');
+          }),
+    );
+  }
+
   /// The macOS File menu's titles, in the language they were last set in.
   String? _fileMenuLocale;
   void _syncFileMenu(AppLocalizations l10n) {
@@ -1848,6 +1902,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         'openRecent': l10n.cmdOpenRecent,
         'save': l10n.cmdSave,
         'saveAs': l10n.cmdSaveAs,
+        'autoSave': l10n.menuAutoSave,
         'closeFolder': l10n.cmdCloseFolder,
         'clearRecent': l10n.cmdClearRecentlyOpened,
         'more': l10n.menuMore,
@@ -1877,16 +1932,29 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _focusChat(thread);
   }
 
-  /// The IDE's chat in [folder]: its tabs over the one shown. Without a
-  /// folder, a way to open one.
+  /// The IDE's chat in [folder]: its tabs over the one shown, the agent
+  /// told of the file open in its editor. Without a folder, in that of the
+  /// file in front (see [_looseChatFolder]); a way to open one until there
+  /// is one.
   Widget _buildIdeChat(String folder) {
+    OpenEditor? openEditor() => _ideKeys[folder]?.currentState?.openEditor;
     if (folder == _noFolder) {
-      return _IdeNoFolderChat(
-        onOpenFolder: WindowControls.canPickDirectory
-            ? () => unawaited(_pickIdeFolder())
-            : null,
+      return ValueListenableBuilder(
+        valueListenable: _looseChatFolder,
+        builder: (context, loose, _) => loose == null
+            ? _IdeNoFolderChat(
+                onOpenFolder: WindowControls.canPickDirectory
+                    ? () => unawaited(_pickIdeFolder())
+                    : null,
+              )
+            : _ideChatIn(loose, openEditor),
       );
     }
+    return _ideChatIn(folder, openEditor);
+  }
+
+  /// The IDE's chat tabs in [folder] over the one shown.
+  Widget _ideChatIn(String folder, OpenEditor? Function() openEditor) {
     final current = _workspace.ideChat(folder);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1908,10 +1976,39 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         Expanded(
           child: current == null
               ? const SizedBox.shrink()
-              : _buildChat(showToggle: false, embedded: true, pane: current),
+              : _buildChat(
+                  showToggle: false,
+                  embedded: true,
+                  pane: current,
+                  openEditor: openEditor,
+                ),
         ),
       ],
     );
+  }
+
+  /// A site's one-click import of an upstream ([UpstreamImport]): asked
+  /// about in this window, brought in front; once added, its page in
+  /// Settings → Models.
+  Future<void> _importUpstream(String link) async {
+    _windows?.showChat();
+    final l10n = context.l10n;
+    final import = UpstreamImport.parse(link);
+    if (import == null) {
+      await showIdeDialog(
+        context,
+        message: l10n.modelsImportInvalid,
+        detail: l10n.modelsImportInvalidDetail,
+        buttons: [l10n.commonOk],
+        cancel: null,
+        type: IdeDialogType.error,
+      );
+      return;
+    }
+    final id = await showUpstreamImportDialog(context, import);
+    if (id == null || !mounted) return;
+    ModelsSettingsPage.reveal.value = id;
+    await openSettings(SettingsSection.models);
   }
 
   bool _settingsOpen = false;
@@ -2013,7 +2110,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         // The model picker's Manage Models… opens the settings.
         return SettingsOpener(
           open: (section) => unawaited(openSettings(section)),
-          child: content,
+          // The side panel explorer's uploads and downloads show their
+          // progress in the window's toasts.
+          child: IdeNotificationsScope(
+            notifications: _notifications,
+            child: content,
+          ),
         );
       },
     );
@@ -2292,6 +2394,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         onOpened?.call();
       },
       onOpenFolder: WindowControls.canPickDirectory ? _openFolder : null,
+      onAddSshHost: WindowControls.canPickDirectory
+          ? () => _openRemoteProject(switchTo: true)
+          : null,
+      onOpenFolderOn: WindowControls.canPickDirectory
+          ? (host) => _openRemoteProject(host: host)
+          : null,
       onOpenSettings: () => unawaited(openSettings()),
       updates: widget.settings?.updates?.service,
       onUpdate: _restartToUpdate,
@@ -2355,8 +2463,30 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         ..restore(kept);
     }
     if (_ideWindow) _trackEdited(space);
+    if (folder == _noFolder) space.addListener(() => _followLooseFile(space));
     return space..askSavePath = (doc) => _askSavePath(space, doc);
   });
+
+  /// Where the IDE's chat is without a folder open: in that of the file in
+  /// front in the editor, once there is one; kept as its files close.
+  final ValueNotifier<String?> _looseChatFolder = ValueNotifier(null);
+
+  void _followLooseFile(IdeWorkspace space) {
+    if (!mounted) return;
+    // Told while building: once built.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      return WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _followLooseFile(space),
+      );
+    }
+    final doc = space.active;
+    if (doc == null || doc.isUntitled || doc.openError != null) return;
+    final folder = p.dirname(doc.path);
+    if (folder == _looseChatFolder.value) return;
+    _workspace.ensureIdeChat(folder);
+    _looseChatFolder.value = folder;
+  }
 
   /// Finds the repositories of an IDE's folders' subfolders on [host], as
   /// settings.json's `git.autoRepositoryDetection` says when it opens.
@@ -2458,6 +2588,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ? (command) => _chatCommands()[command]?.call()
           : null,
       onFileCommand: _runMenuCommand,
+      autoSave: _autoSaveOn,
       compact: _narrow,
       title: _titleInHeader
           ? (agent ?? _workspace.current)?.localizedTitle(context.l10n)
@@ -2530,25 +2661,52 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }
 
   /// Open Remote Project…: a folder of a host reached over SSH, opened as
-  /// a project (in the IDE when asked [inIde]), or given to [onOpen].
-  void _openRemoteProject({bool inIde = false, ValueChanged<String>? onOpen}) {
+  /// a project (in the IDE when asked [inIde]), or given to [onOpen]. The
+  /// host is kept among the sidebar's once connected, and switched to when
+  /// asked [switchTo]; [host] one known, not asked for.
+  void _openRemoteProject({
+    bool inIde = false,
+    ValueChanged<String>? onOpen,
+    String? host,
+    bool switchTo = false,
+  }) {
     final held = _newWindowHeld;
-    unawaited(
-      OpenRemoteFlow(
-        show: showQuickPick,
-        l10n: context.l10n,
-        onOpen: (location) {
-          if (!mounted) return;
-          if (onOpen != null) {
-            onOpen(location);
-          } else if (inIde) {
-            _openIdeFolder(location, held: held);
-          } else {
-            unawaited(_workspace.openFolder(location));
-          }
-        },
-      ).start(),
+    final flow = OpenRemoteFlow(
+      show: showQuickPick,
+      l10n: context.l10n,
+      added: _workspace.sshHosts,
+      labelOf: _workspace.hostLabel,
+      iconOf: (host) =>
+          switch (_workspace.iconOf(_workspace.hostIconProject(host))) {
+            null => null,
+            final icon => ProjectIconView(
+              icon: icon,
+              library: _workspace.icons,
+              size: 16,
+              color: AppColors.textMuted,
+            ),
+          },
+      onConnected: (host) {
+        if (!mounted) return;
+        _workspace.addSshHost(host);
+        if (switchTo) _workspace.sidebarHost = host;
+      },
+      onOpen: (location) {
+        if (!mounted) return;
+        if (onOpen != null) {
+          onOpen(location);
+        } else if (inIde) {
+          _openIdeFolder(location, held: held);
+        } else {
+          unawaited(_workspace.openFolder(location));
+        }
+      },
     );
+    if (host != null) {
+      flow.startAt(host);
+    } else {
+      unawaited(flow.start());
+    }
   }
 
   Future<void> _openFolder() async {
@@ -2852,11 +3010,22 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// the sidebar's toggle by the traffic lights while it is hidden.
   Widget _buildCustomize(CustomizationStore store, {required bool showToggle}) {
     final header = WindowControls.drawsHeader;
+    // The machine the sidebar is on: a remote host's agents read its own.
+    final host = _workspace.sidebarHost;
+    final projects = _workspace.sidebarProjectsOn(host);
+    final project = _paletteProject;
     return CustomizeView(
       key: _customizeKey,
-      store: store,
-      projects: _workspace.sidebarProjects,
-      project: _paletteProject,
+      store: host == null
+          ? store
+          : _hostCustomizations[host] ??= CustomizationStore(
+              disk: RemoteCustomizationDisk(SshHosts.instance[host]),
+            ),
+      host: host == null ? null : _workspace.hostLabel(host),
+      projects: projects,
+      project: project != null && projects.contains(project)
+          ? project
+          : projects.firstOrNull,
       kind: _customizeKind,
       onClose: _closeCustomize,
       leading: !header && showToggle
@@ -2902,11 +3071,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// The chat of [pane] (by default the current agent), at [place] among
   /// the others.
+  ///
+  /// [openEditor] gives the file open beside it, for the agent to be told
+  /// of: by default the side panel's.
   Widget _buildChat({
     required bool showToggle,
     bool embedded = false,
     AgentThread? pane,
     ChatPanePlace place = _whole,
+    OpenEditor? Function()? openEditor,
   }) {
     final thread = pane ?? _workspace.current;
     // Windows keeps the toggle, the pin and the editor button in its header
@@ -3019,7 +3192,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             : NewChatFolderBar(
                 workspace: _workspace,
                 thread: thread,
-                openRemote: (onOpen) => _openRemoteProject(onOpen: onOpen),
+                openRemote: (onOpen, {host}) =>
+                    _openRemoteProject(onOpen: onOpen, host: host),
               ),
         // The setup checklist, over the new agent's composer.
         startHint: switch (_tips) {
@@ -3032,10 +3206,36 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         },
         sessions: () => _mentionable(thread),
         fileMentions: _fileMentionsOf(thread.project),
+        openEditor: openEditor ?? () => _sidePanelEditor(thread),
       ),
     );
     // The side panel's rail is over the top right pane alone.
     return place.topRight ? chat : ChatColumnInset(right: 0, child: chat);
+  }
+
+  /// The file in front on the side panel, while it shows [thread]'s: on
+  /// the files page, where it is edited (its cursor and selection with
+  /// it); on the changes page, whose changes show.
+  OpenEditor? _sidePanelEditor(AgentThread thread) {
+    if (!_sidePanel.shown || _sidePanelHidden || _customizing) return null;
+    if (!identical(_agentThread ?? _workspace.current, thread)) return null;
+    final tabs = _sidePanel.tabsOf(thread.session);
+    return switch (tabs.shown) {
+      SidePanelSection.files => switch (tabs.active) {
+        SidePanelTab(:final path, edit: final edit?) => OpenEditor.at(
+          path,
+          edit.controller.document.snapshot,
+          edit.controller.value.selection,
+        ),
+        final tab? => OpenEditor(tab.path),
+        null => null,
+      },
+      SidePanelSection.changes => switch (tabs.activeDiff) {
+        final tab? => OpenEditor(tab.path),
+        null => null,
+      },
+      SidePanelSection.terminal || SidePanelSection.plan => null,
+    };
   }
 
   /// The conversations [thread]'s messages may refer to, under their

@@ -153,6 +153,10 @@ class ContextUsagePanel extends StatelessWidget {
                 ],
               ),
             ],
+            if (stats?.cache case final cache?) ...[
+              const SizedBox(height: 10),
+              _PromptCacheMeter(cache: cache),
+            ],
             if (stats != null &&
                 (stats.costUsd != null ||
                     stats.limits.isNotEmpty ||
@@ -164,6 +168,94 @@ class ContextUsagePanel extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// How the prompt cache took the last request's input, in a row as the
+/// plan's limits: a strip of it whole (read, written, neither), its hit
+/// rate, and the conversation's; the counts on hover.
+class _PromptCacheMeter extends StatelessWidget {
+  const _PromptCacheMeter({required this.cache});
+
+  final PromptCache cache;
+
+  static String _percent(CacheTokens tokens) =>
+      (tokens.hitRate * 100).toStringAsFixed(0);
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final last = cache.last;
+    final all = cache.conversation;
+    final colors = themeColors;
+    final format = ContextUsagePanel._format;
+    return IdeHover(
+      message: [
+        l10n.usageCacheLast(
+          format(last.read),
+          format(last.written),
+          format(last.uncached),
+        ),
+        l10n.usageCacheConversation(
+          format(all.read),
+          format(all.written),
+          _percent(all),
+        ),
+        l10n.usageCacheExcludes,
+      ].join('\n'),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 150,
+            child: Text(
+              l10n.usagePromptCache,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+            ),
+          ),
+          Expanded(
+            child: SizedBox(
+              height: 4,
+              child: CustomPaint(
+                painter: _UsageBarPainter(
+                  window: last.total,
+                  used: [
+                    (last.read, colors['charts.green']),
+                    (last.written, colors['charts.yellow']),
+                    (last.uncached, colors['charts.red']),
+                  ],
+                  track: colors['editorWidget.border'],
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 44,
+            child: Text(
+              '${_percent(last)}%',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: AppColors.text,
+                fontFamily: AppFonts.mono,
+                fontFamilyFallback: AppFonts.monoFallbacks,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 104,
+            child: Text(
+              l10n.usageCacheOverall(_percent(all)),
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: AppColors.textFaint, fontSize: 11),
+            ),
+          ),
+        ],
       ),
     );
   }

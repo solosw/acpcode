@@ -431,6 +431,7 @@
   "cmdReplace": "Replace",
   "cmdSave": "Save",
   "cmdSaveAll": "Save All",
+  "cmdToggleAutoSave": "Toggle Auto Save",
   "cmdCloseEditor": "Close Editor",
   "cmdCloseOtherEditors": "Close Other Editors",
   "cmdCloseEditorsToTheRight": "Close Editors to the Right",
@@ -609,6 +610,10 @@
   },
   "menuOpenFolder": "Open Folder…",
   "menuCloseWindow": "Close Window",
+  "menuAutoSave": "Auto Save",
+  "@menuAutoSave": {
+    "description": "File menu item, ticked while files.autoSave is on."
+  },
   "menuBackToChat": "Back to Chat",
   "menuShowSidebar": "Show Sidebar",
   "menuHideSidebar": "Hide Sidebar",
@@ -987,6 +992,16 @@
   "iconPickerDropHere": "Drop the image here",
   "iconPickerUploaded": "Uploaded",
   "iconPickerDeleteFromLibrary": "Delete from Library",
+  "iconPickerBrands": "Logos",
+  "iconPickerSiteIcon": "Use the site's icon",
+  "iconPickerSiteIconNone": "No icon found on {host}",
+  "@iconPickerSiteIconNone": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
   "iconUploadTooLarge": "The file is larger than 5 MB",
   "iconUploadUnsupported": "Not a PNG, JPG, WebP, GIF or SVG image",
   "iconUploadUnreadable": "The file could not be read",
@@ -1471,6 +1486,47 @@
     }
   },
   "usageReservedForCompaction": "Reserved for compaction",
+  "usagePromptCache": "Prompt cache",
+  "usageCacheLast": "Last request: {read} read · {written} written · {uncached} uncached",
+  "@usageCacheLast": {
+    "description": "The counts are formatted (8.2k).",
+    "placeholders": {
+      "read": {
+        "type": "String"
+      },
+      "written": {
+        "type": "String"
+      },
+      "uncached": {
+        "type": "String"
+      }
+    }
+  },
+  "usageCacheOverall": "main chat {percent}%",
+  "@usageCacheOverall": {
+    "description": "percent a whole number: what of the main conversation's input was read from the cache.",
+    "placeholders": {
+      "percent": {
+        "type": "String"
+      }
+    }
+  },
+  "usageCacheConversation": "Main conversation: {read} read · {written} written · {percent}% hit",
+  "@usageCacheConversation": {
+    "description": "read and written are formatted counts (8.2k); percent a whole number.",
+    "placeholders": {
+      "read": {
+        "type": "String"
+      },
+      "written": {
+        "type": "String"
+      },
+      "percent": {
+        "type": "String"
+      }
+    }
+  },
+  "usageCacheExcludes": "Not counting subagents, compaction or the CLI's side requests",
   "usagePlanUsage": "Plan usage",
   "usageThisSession": "This session",
   "usageCheckingLimits": "Checking limits…",
@@ -1581,6 +1637,8 @@
   "interactionSubmit": "Submit",
   "interactionNext": "Next",
   "interactionBack": "Back",
+  "interactionCollapse": "Collapse",
+  "interactionExpand": "Expand",
   "interactionMoreLines": "{count, plural, =1{… 1 more line} other{… {count} more lines}}",
   "@interactionMoreLines": {
     "placeholders": {
@@ -1612,6 +1670,29 @@
   "mcpSignIn": "Sign in",
   "mcpEnable": "Enable",
   "mcpDisable": "Disable",
+  "mcpTest": "Test connection",
+  "mcpTestAll": "Test all",
+  "mcpViewLog": "View log",
+  "mcpExitCode": "Exited with code {code}",
+  "@mcpExitCode": {
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
+  "mcpTimedOut": "No answer within {seconds} seconds",
+  "@mcpTimedOut": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "mcpLog": "Output (stderr)",
+  "mcpNoLog": "It wrote nothing.",
+  "mcpSignInHint": "Sign in from a chat's MCP servers panel, or with /mcp.",
+  "mcpProbeNote": "Started and greeted with MCP's initialize, as `claude mcp list` checks it.",
   "todoCount": "Todos {done}/{total}",
   "@todoCount": {
     "placeholders": {
@@ -1623,7 +1704,25 @@
       }
     }
   },
-  "messageQueued": "Queued",
+  "queuedMessages": "{count, plural, =1{1 queued} other{{count} queued}} · sent when the agent is done",
+  "@queuedMessages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuedImages": "{count, plural, =1{1 image} other{{count} images}}",
+  "@queuedImages": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "queuedEdit": "Take back to edit",
+  "queuedSendNow": "Stop the agent and send this now",
+  "queuedRemove": "Remove from the queue",
   "tabClose": "Close",
   "tabCloseOthers": "Close Others",
   "tabCloseToTheRight": "Close to the Right",
@@ -1885,6 +1984,29 @@
   "explorerTrashFailed": "Failed to delete using the Trash. Do you want to permanently delete instead?",
   "explorerDeletePermanently": "Delete Permanently",
   "explorerPasteIntoAncestor": "File to paste is an ancestor of the destination folder",
+  "explorerUploading": "Uploading files... {done}/{total}",
+  "@explorerUploading": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "explorerDownloading": "Downloading files... {done}/{total}",
+  "@explorerDownloading": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "explorerPreparingTransfer": "Preparing files...",
   "explorerNewFile": "New File...",
   "explorerNewFolder": "New Folder...",
   "explorerRevealInFinder": "Reveal in Finder",
@@ -3689,7 +3811,7 @@
   "ideClearRecentConfirm": "Do you want to clear all recently opened files and folders?",
   "ideClearRecentDetail": "This action is irreversible!",
   "ideClearRecent": "Clear",
-  "ideChatNoFolder": "Open a folder to chat with an agent in it.",
+  "ideChatNoFolder": "Open a file or a folder to chat with an agent about it.",
   "ideCannotOpen": "Cannot open {path}: {error}",
   "@ideCannotOpen": {
     "placeholders": {
@@ -3798,6 +3920,40 @@
   "generalSettingsMainWindowIde": "Always IDE",
   "generalSettingsMainWindowLast": "Where you left off",
   "generalSettingsWindows": "Windows",
+  "claudePathSetting": "Path",
+  "claudePathSettingDescription": "Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)",
+  "claudePathSettingHint": "Automatic",
+  "claudePathChecking": "Checking…",
+  "claudePathInUse": "In use: {path} ({version})",
+  "@claudePathInUse": {
+    "description": "Under the Claude Code path setting: the build conversations run, and its version.",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      },
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "claudePathInUseUnknown": "In use: {path}",
+  "@claudePathInUseUnknown": {
+    "description": "As claudePathInUse, for a build that does not say its version.",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "claudePathInUseDownloaded": "In use: Claude Code {version}, downloaded by BaoCode",
+  "@claudePathInUseDownloaded": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "claudePathMissing": "None found yet: Claude Code is downloaded as the first conversation starts.",
   "generalSettingsIdeWindows": "Fast Ide Windows",
   "generalSettingsIdeWindowsDescription": "Where the Fast Ide opens: in windows of its own, one per folder (New Window, ⇧⌘N / Ctrl+Shift+N, opens an empty one), or in the main window in place of the chat, one folder at a time. Applies at once. (window.ideWindows)",
   "generalSettingsIdeWindowsSeparate": "Separate windows",
@@ -3875,7 +4031,8 @@
   "generalSettingsShellCommandUninstall": "Uninstall",
   "menuMore": "More…",
   "sidebarSearch": "Search",
-  "sidebarCustomize": "Customize",
+  "sidebarCustomize": "Skills",
+  "sidebarOpenProject": "Open Project",
   "palettePlaceholder": "Search agents, conversations, files, actions…",
   "paletteFilterAll": "All",
   "paletteFilterAgents": "Agents",
@@ -3953,7 +4110,8 @@
     }
   },
   "customizeNameHint": "name",
-  "customizeNameInvalid": "Letters, digits, - and _ only (up to 64)",
+  "customizeNameInvalid": "Starts with a letter or digit; no spaces or / \\ : * ? \" < > | (up to 64)",
+  "customizeNameUnofficial": "Officially lowercase, digits and - only; claude.ai may reject it",
   "customizeNameTaken": "One by that name already exists",
   "customizeCreate": "Create",
   "customizeLoadFailed": "Couldn't read: {error}",
@@ -3999,7 +4157,6 @@
   "customizeConnectorReadOnly": "Read only: a claude.ai connector, managed in claude.ai's settings, under Connectors.",
   "settingsSectionModels": "Models",
   "modelsTitle": "Models",
-  "modelsDescription": "Where Claude Code's models come from: Claude Code as set up on this machine, and upstreams you add. Anthropic-compatible upstreams are spoken to by Claude Code itself; OpenAI's APIs through a local proxy of BaoCode's that translates.",
   "modelsDefault": "Default Model for New Sessions",
   "modelsDefaultDescription": "Unset, a new session starts with the model last picked.",
   "modelsDefaultLast": "Last picked",
@@ -4027,6 +4184,55 @@
       }
     }
   },
+  "modelsFeaturedWhy": "Why am I seeing this?",
+  "modelsFeaturedNote": "These sites are officially listed by BaoCode",
+  "modelsFeaturedNoteHow": "Add the one-click import to be listed too, for free",
+  "modelsFeaturedNoteLink": "List My Site Too",
+  "modelsImportTitle": "Import an upstream from {host}",
+  "@modelsImportTitle": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsImportProtocol": "Protocol",
+  "modelsImportUrl": "Base URL",
+  "modelsImportKeyLabel": "Key",
+  "modelsImportListedBadge": "Officially listed",
+  "modelsImportNoKey": "none, add it afterwards",
+  "modelsImportExisting": "You have this upstream already: {name}.",
+  "@modelsImportExisting": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsImportNamePlaceholder": "Name",
+  "modelsImportAdd": "Import Models",
+  "modelsImportFinish": "Import",
+  "modelsImportWithoutModels": "Import Without Models",
+  "modelsImportPreparing": "Getting your models ready…",
+  "modelsImportUpdateKey": "Update {name}'s Key",
+  "@modelsImportUpdateKey": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsImportOpenExisting": "Open {name}",
+  "@modelsImportOpenExisting": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsImportAsNew": "Add as New Upstream",
+  "modelsImportInvalid": "This import link can't be used",
+  "modelsImportInvalidDetail": "It needs a base URL (http or https) and a protocol BaoCode knows. Ask the site for a new link, or add the upstream by hand in Settings → Models.",
   "modelsAddProvider": "Add Upstream",
   "modelsNewProviderName": "New Upstream",
   "modelsProviderNoUrl": "No base URL",
@@ -4164,6 +4370,9 @@
   "modelsProtocolAnthropic": "Anthropic-compatible",
   "modelsConnection": "Connection",
   "modelsName": "Name",
+  "modelsIcon": "Icon",
+  "modelsIconDescription": "Heads its models in the model picker: a maker's logo, the site's icon or a picture of your own. Unset, the maker's logo its base URL names.",
+  "modelsIconChange": "Change Icon",
   "modelsProtocol": "Protocol",
   "modelsProtocolDescription": "OpenAI's APIs go through the local proxy, which translates Claude Code's requests and the answers.",
   "modelsBaseUrl": "Base URL",
@@ -4262,7 +4471,7 @@
   "modelsRoleHaikuDescription": "ANTHROPIC_DEFAULT_HAIKU_MODEL: Claude Code's background work, and agents' titles.",
   "modelsRoleHaikuWarning": "Unset, background work runs on the model picked, which may be slower and cost more. Pick a small, fast model.",
   "modelsRoleSubagent": "Subagents",
-  "modelsRoleSubagentDescription": "CLAUDE_CODE_SUBAGENT_MODEL: the model subagents run on.",
+  "modelsRoleSubagentDescription": "CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent's call names (but inherit).",
   "modelsAdvanced": "Advanced",
   "modelsAuth": "Authentication",
   "modelsAuthDescription": "How the key is sent. Automatic: x-api-key to api.anthropic.com, a bearer token elsewhere.",
@@ -4503,6 +4712,78 @@
   "updateModeNone": "Off",
   "@updateModeNone": {
     "description": "Update mode: never checks."
+  },
+  "diagnosticsTitle": "Diagnostic Logs",
+  "diagnosticsDescription": "Send BaoCode's error logs to its developers to help track down a problem. Nothing is sent until you upload.",
+  "diagnosticsUpload": "Upload…",
+  "diagnosticsDialogTitle": "Upload Diagnostic Logs",
+  "diagnosticsNotePlaceholder": "Note (optional): what went wrong, and how to make it happen again",
+  "diagnosticsFiles": "{count, plural, =1{1 log file} other{{count} log files}} ({size}) will be uploaded.",
+  "@diagnosticsFiles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "diagnosticsNoFiles": "There are no logs yet: only the note and the version details are uploaded.",
+  "diagnosticsDumps": "Include hang memory dumps ({count}, {size})",
+  "@diagnosticsDumps": {
+    "description": "Windows only: the minidumps written when the app hung.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "diagnosticsDumpsDetail": "Memory dumps may contain parts of open files and paths. Over 10 MB, only the newest are included.",
+  "diagnosticsPrivacy": "Your home folder is written as ~. The app's version, system and language are sent with the logs, but not the usage statistics' install ID. Kept on the server for 90 days.",
+  "diagnosticsSend": "Upload",
+  "diagnosticsUploading": "Uploading…",
+  "diagnosticsUploaded": "Uploaded. Report ID:",
+  "diagnosticsUploadedDetail": "Give this ID to BaoCode's developers so they can find these logs.",
+  "diagnosticsOmittedDumps": "{count, plural, =1{1 older memory dump was} other{{count} older memory dumps were}} left out: over 10 MB.",
+  "@diagnosticsOmittedDumps": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "diagnosticsCopyId": "Copy ID",
+  "diagnosticsCopied": "Copied",
+  "diagnosticsRetry": "Retry",
+  "diagnosticsTooLarge": "The logs are over 10 MB and cannot be uploaded.",
+  "diagnosticsRateLimited": "Too many uploads just now. Try again later.",
+  "diagnosticsRefused": "The server did not accept the logs (HTTP {status}).",
+  "@diagnosticsRefused": {
+    "placeholders": {
+      "status": {
+        "type": "int"
+      }
+    }
+  },
+  "diagnosticsServerError": "The server could not take the logs ({status}). Try again later.",
+  "@diagnosticsServerError": {
+    "placeholders": {
+      "status": {
+        "type": "String"
+      }
+    }
+  },
+  "diagnosticsFailed": "Could not upload: {error}",
+  "@diagnosticsFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   },
   "cmdCheckForUpdates": "Check for Updates...",
   "@cmdCheckForUpdates": {
@@ -4755,6 +5036,15 @@
       }
     }
   },
+  "localDownloadingClaude": "Downloading Claude Code… {percent}%",
+  "@localDownloadingClaude": {
+    "description": "Shown over the chat while Claude Code is downloaded into BaoCode's data folder, the user having none that runs (or only one too old), before the agent starts.",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "remoteUploadingClaude": "Sending Claude Code to {host}… {percent}%",
   "@remoteUploadingClaude": {
     "description": "The host cannot download Claude Code itself: this machine downloaded it and sends it over the SSH connection.",
@@ -4901,6 +5191,20 @@
       }
     }
   },
+  "newChatHostProjects": "{count, plural, =1{1 project} other{{count} projects}}",
+  "@newChatHostProjects": {
+    "description": "Under an SSH host in the menu of where a new chat works: how many of its projects are listed at its side.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "newChatPickRemoteFolder": "Choose Folder…",
+  "@newChatPickRemoteFolder": {
+    "description": "First at an SSH host's side in the menu of where a new chat works: picks a folder on that host."
+  },
+  "newChatPickRemoteFolderDetail": "Open a folder on this host",
   "newChatCreateWorkspace": "Create Workspace…",
   "@newChatCreateWorkspace": {
     "description": "The menu's choice that makes a workspace of several folders for a new chat to work in."
@@ -5269,5 +5573,67 @@
   },
   "extsPopularThemes": "Popular Themes",
   "extsTabThemes": "Themes",
-  "extsTabLanguageServers": "Language Servers"
+  "extsTabLanguageServers": "Language Servers",
+  "sidebarThisMachine": "This Computer",
+  "sidebarSwitchHost": "Switch between this computer and SSH hosts",
+  "sidebarAddSshHost": "Add SSH Host...",
+  "sidebarOpenFolderOn": "Open Folder on {host}...",
+  "@sidebarOpenFolderOn": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "sidebarNoProjectsOn": "No projects on {host} yet.",
+  "@sidebarNoProjectsOn": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "sidebarHostConnected": "Connected",
+  "sidebarHostConnecting": "Connecting...",
+  "sidebarHostDisconnected": "Disconnected",
+  "sidebarHostIdle": "Not connected",
+  "sidebarDisconnectHost": "Disconnect",
+  "sidebarRemoveHost": "Remove Host",
+  "sidebarRemoveHostTitle": "Remove {host}?",
+  "@sidebarRemoveHostTitle": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "sidebarRemoveHostMessage": "Its projects are taken off the sidebar. Their conversations are kept, and come back once the host is added again.",
+  "sidebarRemove": "Remove",
+  "sidebarElsewhereNeedsYou": "{count, plural, =1{1 agent on another machine needs you} other{{count} agents on other machines need you}}",
+  "@sidebarElsewhereNeedsYou": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sidebarRenameHost": "Rename Host",
+  "explorerNoPermission": "No permission to read this folder",
+  "fileErrorAccessDenied": "Permission denied: {path}",
+  "@fileErrorAccessDenied": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteAddedHosts": "Added",
+  "explorerUndoCreateChanged": "{name} has changed since it was made. Undo deletes it anyway?",
+  "@explorerUndoCreateChanged": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  }
 }

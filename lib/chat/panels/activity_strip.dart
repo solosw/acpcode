@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
@@ -24,6 +25,7 @@ class ActivityStrip extends StatefulWidget {
     required this.changes,
     required this.onKeep,
     this.root = '.',
+    this.paths,
     this.onUndo,
     this.onKeepFiles,
     this.onUndoFiles,
@@ -39,6 +41,9 @@ class ActivityStrip extends StatefulWidget {
 
   /// The project's directory, which [changes]' paths are in.
   final String root;
+
+  /// How [root] and [changes]' paths are spelled; this machine's when null.
+  final p.Context? paths;
 
   /// Stops a running task; null when tasks cannot be stopped.
   final ValueChanged<KernelTask>? onStopTask;
@@ -170,6 +175,7 @@ class _ActivityStripState extends State<ActivityStrip> {
                 padding: const EdgeInsets.only(bottom: 2),
                 child: ChangeTree(
                   root: widget.root,
+                  paths: widget.paths,
                   changes: changes,
                   onOpen: widget.onOpenFile,
                   onKeep: widget.onKeepFiles,

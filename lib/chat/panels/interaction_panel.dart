@@ -87,6 +87,9 @@ class _InteractionPanelState extends State<InteractionPanel>
   int _step = 0;
   int _highlighted = 0;
 
+  /// Folded to its header, to read the chat above; the picks are kept.
+  bool _collapsed = false;
+
   _Step get _current => _steps[_step];
   bool get _isLast => _step == _steps.length - 1;
 
@@ -289,6 +292,11 @@ class _InteractionPanelState extends State<InteractionPanel>
 
   void _dismiss() => widget.onAnswer(_answer(dismissed: true));
 
+  void _toggleCollapsed() {
+    setState(() => _collapsed = !_collapsed);
+    _focusNode.requestFocus();
+  }
+
   void _moveHighlight(int step) {
     final count = _current.rows.length;
     setState(() => _highlighted = (_highlighted + step + count) % count);
@@ -311,15 +319,22 @@ class _InteractionPanelState extends State<InteractionPanel>
     _ => null,
   };
 
+  /// Folded, the options are out of sight: Enter unfolds them, not picks
+  /// one unseen; Esc still dismisses.
   @override
-  Map<String, VoidCallback> get chatCommands => {
-    ChatCommandIds.interactionFocusNext: () => _moveHighlight(1),
-    ChatCommandIds.interactionFocusPrevious: () => _moveHighlight(-1),
-    ChatCommandIds.interactionBack: _back,
-    ChatCommandIds.interactionToggle: () => _pick(_highlighted),
-    ChatCommandIds.interactionAccept: _continue,
-    ChatCommandIds.interactionDismiss: _dismiss,
-  };
+  Map<String, VoidCallback> get chatCommands => _collapsed
+      ? {
+          ChatCommandIds.interactionAccept: _toggleCollapsed,
+          ChatCommandIds.interactionDismiss: _dismiss,
+        }
+      : {
+          ChatCommandIds.interactionFocusNext: () => _moveHighlight(1),
+          ChatCommandIds.interactionFocusPrevious: () => _moveHighlight(-1),
+          ChatCommandIds.interactionBack: _back,
+          ChatCommandIds.interactionToggle: () => _pick(_highlighted),
+          ChatCommandIds.interactionAccept: _continue,
+          ChatCommandIds.interactionDismiss: _dismiss,
+        };
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
@@ -328,6 +343,7 @@ class _InteractionPanelState extends State<InteractionPanel>
     final keyboard = HardwareKeyboard.instance;
     final digit = int.tryParse(event.character ?? '');
     if (_focusNode.hasPrimaryFocus &&
+        !_collapsed &&
         digit != null &&
         digit >= 1 &&
         digit <= _current.rows.length &&
@@ -413,172 +429,228 @@ class _InteractionPanelState extends State<InteractionPanel>
         builder: (context, _) => PanelCard(
           highlighted: _focusNode.hasFocus || _textFocus.hasFocus,
           maxBodyHeight: 360,
-          header: Row(
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 6),
-              // All the room there is, so the count sits at the end.
-              Expanded(
-                child: Row(
-                  children: [
-                    Flexible(
+          collapsed: _collapsed,
+          header: _buildHeader(context, step, total, icon, color),
+          child: _buildBody(context, step, total, dismiss, submit),
+        ),
+      ),
+    );
+  }
+
+  /// The title, the steps, and the fold: a click anywhere on it folds the
+  /// card to this line, which then says the question it waits on.
+  Widget _buildHeader(
+    BuildContext context,
+    _Step step,
+    int total,
+    IconData icon,
+    Color color,
+  ) {
+    final toggle = _collapsed
+        ? context.l10n.interactionExpand
+        : context.l10n.interactionCollapse;
+    final summary = step.prompt.isNotEmpty ? step.prompt : step.header;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleCollapsed,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            // All the room there is, so the count sits at the end.
+            Expanded(
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      switch (widget.request) {
+                        PlanReviewRequest() =>
+                          context.l10n.interactionPlanTitle,
+                        final request => request.title,
+                      },
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  if (total > 1) ...[
+                    const SizedBox(width: 8),
+                    for (var i = 0; i < total; i++)
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        margin: const EdgeInsets.only(right: 4),
+                        width: i == _step ? 14 : 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: i <= _step
+                              ? AppColors.accent
+                              : AppColors.borderStrong,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                  ],
+                  if (_collapsed && summary.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
                       child: Text(
-                        switch (widget.request) {
-                          PlanReviewRequest() =>
-                            context.l10n.interactionPlanTitle,
-                          final request => request.title,
-                        },
+                        summary,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: AppColors.text,
+                          color: AppColors.textMuted,
                           fontSize: 12,
-                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ),
-                    if (total > 1) ...[
-                      const SizedBox(width: 8),
-                      for (var i = 0; i < total; i++)
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          margin: const EdgeInsets.only(right: 4),
-                          width: i == _step ? 14 : 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: i <= _step
-                                ? AppColors.accent
-                                : AppColors.borderStrong,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        ),
-                    ],
                   ],
-                ),
+                ],
               ),
-              if (total > 1) ...[
-                const SizedBox(width: 8),
-                Text(
-                  context.l10n.interactionStepOf(_step + 1, total),
-                  style: TextStyle(color: AppColors.textFaint, fontSize: 11),
-                ),
-              ],
+            ),
+            if (total > 1) ...[
+              const SizedBox(width: 8),
+              Text(
+                context.l10n.interactionStepOf(_step + 1, total),
+                style: TextStyle(color: AppColors.textFaint, fontSize: 11),
+              ),
             ],
-          ),
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: _focusNode.requestFocus,
+            const SizedBox(width: 6),
+            IdeHover(
+              message: toggle,
+              excludeFromSemantics: true,
+              child: Icon(
+                _collapsed
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                size: 16,
+                color: AppColors.textFaint,
+                semanticLabel: toggle,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody(
+    BuildContext context,
+    _Step step,
+    int total,
+    String dismiss,
+    String submit,
+  ) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _focusNode.requestFocus,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          KeyedSubtree(
+            key: ValueKey(_step),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                KeyedSubtree(
-                  key: ValueKey(_step),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (step.detail case final detail?)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                          child: detail,
-                        ),
-                      if (step.prompt.isNotEmpty || step.header.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
-                          child: Text.rich(
-                            TextSpan(
-                              children: [
-                                if (step.header.isNotEmpty)
-                                  WidgetSpan(
-                                    alignment: PlaceholderAlignment.middle,
-                                    child: _HeaderChip(step.header),
-                                  ),
-                                TextSpan(
-                                  text:
-                                      step.prompt +
-                                      (step.multiple ? '（可多选）' : ''),
-                                ),
-                              ],
-                            ),
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 13.5,
-                              height: 1.45,
-                            ),
-                          ),
-                        ),
-                      for (var i = 0; i < step.rows.length; i++)
-                        _OptionRow(
-                          index: i,
-                          row: step.rows[i],
-                          multiple: step.multiple,
-                          selected: _picks[_step].contains(i),
-                          highlighted: _focusNode.hasFocus && i == _highlighted,
-                          text: _texts[_step],
-                          textFocus: _textFocus,
-                          onTextSubmitted: _advance,
-                          onTextEscape: _focusNode.requestFocus,
-                          onHover: () => setState(() => _highlighted = i),
-                          tooltip: _optionTooltip(i, step.rows[i]),
-                          onTap: () {
-                            _focusNode.requestFocus();
-                            _pick(i);
-                          },
-                        ),
-                    ],
+                if (step.detail case final detail?)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                    child: detail,
                   ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _keysHint(context.l10n),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: AppColors.textFaint,
-                          fontSize: 11,
-                        ),
+                if (step.prompt.isNotEmpty || step.header.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 2, 4, 8),
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          if (step.header.isNotEmpty)
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: _HeaderChip(step.header),
+                            ),
+                          TextSpan(
+                            text: step.prompt + (step.multiple ? '（可多选）' : ''),
+                          ),
+                        ],
+                      ),
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13.5,
+                        height: 1.45,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    // Shown on every question, disabled on the first, so the
-                    // row does not shift as one moves between them.
-                    if (total > 1) ...[
-                      PanelButton(
-                        label: context.l10n.interactionBack,
-                        tooltip: ChatKeys.titleWithKey(
-                          context.l10n.interactionBack,
-                          ChatCommandIds.interactionBack,
-                          _optionsKeys,
-                        ),
-                        onTap: _step == 0 ? null : _back,
-                      ),
-                      const SizedBox(width: 6),
-                    ],
-                    PanelButton(
-                      label: dismiss,
-                      tooltip: _dismissTooltip(dismiss),
-                      onTap: _dismiss,
-                    ),
-                    const SizedBox(width: 6),
-                    // Enter goes on as it does, a pick made.
-                    PanelButton(
-                      label: submit,
-                      tooltip: ChatKeys.titleWithKey(
-                        submit,
-                        ChatCommandIds.interactionAccept,
-                        _optionsKeys,
-                      ),
-                      primary: true,
-                      onTap: _picks[_step].isEmpty ? null : _advance,
-                    ),
-                  ],
-                ),
+                  ),
+                for (var i = 0; i < step.rows.length; i++)
+                  _OptionRow(
+                    index: i,
+                    row: step.rows[i],
+                    multiple: step.multiple,
+                    selected: _picks[_step].contains(i),
+                    highlighted: _focusNode.hasFocus && i == _highlighted,
+                    text: _texts[_step],
+                    textFocus: _textFocus,
+                    onTextSubmitted: _advance,
+                    onTextEscape: _focusNode.requestFocus,
+                    onHover: () => setState(() => _highlighted = i),
+                    tooltip: _optionTooltip(i, step.rows[i]),
+                    onTap: () {
+                      _focusNode.requestFocus();
+                      _pick(i);
+                    },
+                  ),
               ],
             ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _keysHint(context.l10n),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textFaint, fontSize: 11),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Shown on every question, disabled on the first, so the
+              // row does not shift as one moves between them.
+              if (total > 1) ...[
+                PanelButton(
+                  label: context.l10n.interactionBack,
+                  tooltip: ChatKeys.titleWithKey(
+                    context.l10n.interactionBack,
+                    ChatCommandIds.interactionBack,
+                    _optionsKeys,
+                  ),
+                  onTap: _step == 0 ? null : _back,
+                ),
+                const SizedBox(width: 6),
+              ],
+              PanelButton(
+                label: dismiss,
+                tooltip: _dismissTooltip(dismiss),
+                onTap: _dismiss,
+              ),
+              const SizedBox(width: 6),
+              // Enter goes on as it does, a pick made.
+              PanelButton(
+                label: submit,
+                tooltip: ChatKeys.titleWithKey(
+                  submit,
+                  ChatCommandIds.interactionAccept,
+                  _optionsKeys,
+                ),
+                primary: true,
+                onTap: _picks[_step].isEmpty ? null : _advance,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

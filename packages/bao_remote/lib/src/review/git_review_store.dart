@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -273,16 +274,33 @@ class GitReviewStore implements ReviewStore {
       FileSystemEntity.typeSync(_full(path), followLinks: false) !=
       FileSystemEntityType.notFound;
 
-  bool _tooLarge(String path) {
+  bool _tooLarge(String path) => _isLarge(_full(path), maxFileBytes);
+
+  /// Whether [full] is a file of more than [maxBytes].
+  static bool _isLarge(String full, int maxBytes) {
     try {
-      final file = File(_full(path));
-      return FileSystemEntity.typeSync(file.path, followLinks: false) ==
+      return FileSystemEntity.typeSync(full, followLinks: false) ==
               FileSystemEntityType.file &&
-          file.lengthSync() > maxFileBytes;
+          File(full).lengthSync() > maxBytes;
     } on FileSystemException {
       return false;
     }
   }
+
+  /// Those of [paths] (relative to [root]) that are files of more than
+  /// [maxBytes], looked at on an isolate of their own: a first snapshot
+  /// lists every file of the project, and a look at each, here, would hold
+  /// up the app (the UI, in the app) for seconds.
+  static Future<Set<String>> _largeFiles(
+    String root,
+    List<String> paths,
+    int maxBytes,
+  ) => Isolate.run(
+    () => {
+      for (final path in paths)
+        if (_isLarge(p.join(root, path), maxBytes)) path,
+    },
+  );
 
   // --- Snapshots -------------------------------------------------------------
 
@@ -406,8 +424,15 @@ class GitReviewStore implements ReviewStore {
         timeout: const Duration(minutes: 5),
       )).records;
       specs.addAll(everything);
-      for (final path in changed) {
-        if (_tooLarge(inRoot(path))) specs.add(':(exclude,literal)$path');
+      if (changed.isNotEmpty) {
+        final large = await _largeFiles(root, [
+          for (final path in changed) inRoot(path),
+        ], maxFileBytes);
+        for (final path in changed) {
+          if (large.contains(inRoot(path))) {
+            specs.add(':(exclude,literal)$path');
+          }
+        }
       }
       return (specs: specs, changed: changed.length);
     }

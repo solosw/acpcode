@@ -372,4 +372,36 @@ void main() {
     },
     skip: !hasGit,
   );
+
+  test(
+    'leaves large files out of a whole snapshot, in repositories inside too',
+    () async {
+      final limit = GitReviewStore.maxFileBytes;
+      GitReviewStore.maxFileBytes = 20;
+      addTearDown(() => GitReviewStore.maxFileBytes = limit);
+      write('big.bin', 'x' * 21);
+      write('web/small.txt', 's\n');
+      write('web/big.bin', 'x' * 21);
+      for (final arguments in [
+        ['init', '-q'],
+        ['add', 'small.txt'],
+        ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'i'],
+      ]) {
+        final result = await Process.run(
+          'git',
+          arguments,
+          workingDirectory: path('web'),
+        );
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+      }
+
+      final store = await GitReviewStore.open(root, checkpoints: checkpoints);
+      final tree = await store!.snapshot();
+      expect(await store.contains(tree, 'a.txt'), isTrue);
+      expect(await store.contains(tree, 'web/small.txt'), isTrue);
+      expect(await store.contains(tree, 'big.bin'), isFalse);
+      expect(await store.contains(tree, 'web/big.bin'), isFalse);
+    },
+    skip: !hasGit,
+  );
 }

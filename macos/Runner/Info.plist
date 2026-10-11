@@ -26,7 +26,8 @@
 		</dict>
 	</array>
 	<!-- baocode://, by which the Finder extension hands the app what its
-	     context menu is on (see AppDelegate.swift). -->
+	     context menu is on, and a site's one-click import an upstream (see
+	     AppDelegate.swift). -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -60,6 +61,13 @@
 	<false/>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<!-- Programs the app runs (an agent's commands, the terminal) count as
+	     the app for privacy permissions, so when one sends Apple Events
+	     (osascript, a tool driving Hopper) macOS asks on the app's behalf.
+	     Without this string it refuses at once, with no dialog and no
+	     entry under Privacy & Security → Automation. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>A program run in BaoCode wants to control another app.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSMainNibFile</key>

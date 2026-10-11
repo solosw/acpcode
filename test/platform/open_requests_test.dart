@@ -116,6 +116,19 @@ void main() {
     ]);
   });
 
+  test("a site's import goes as a request of its own, the link as it "
+      'came', () async {
+    const link = 'baocode://provider/import?v=1&url=https%3A%2F%2Fapi.x.com';
+    pending = [r'C:\a.txt', CodeArgs.importRequestMarker, link];
+    final opened = <List<String>>[];
+    OpenRequests.listen(opened.add);
+    await pumpEventQueue();
+    expect(opened, [
+      [r'C:\a.txt'],
+      [CodeArgs.importRequestMarker, link],
+    ]);
+  });
+
   test('stopped, it delivers nothing and tells the window', () async {
     final opened = <List<String>>[];
     OpenRequests.listen(opened.add);

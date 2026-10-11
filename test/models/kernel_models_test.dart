@@ -92,6 +92,16 @@ void main() {
     expect(launch.thinking, isNull);
     expect(environments, [('gw', 'gpt-5(high)')]);
     expect(kernel.model.selected, '@gw/gpt-5');
+    // Each name it may be switched to, known: else Claude Code asks the
+    // model once (a request of its own) for each before it takes it.
+    final picker = launch.settings['modelPicker'] as Map<String, Object?>;
+    final options = [
+      for (final row in picker['options']! as List<Object?>)
+        (row! as Map<String, Object?>)['model'],
+    ];
+    expect(options, containsAll(['gpt-5', 'gpt-5(high)', 'plain(low)']));
+    expect(options, isNot(contains('plain(medium)')));
+    expect(options.where((model) => '$model'.startsWith('off')), isEmpty);
     kernel.dispose();
   });
 
@@ -137,6 +147,42 @@ void main() {
       kernel.model.options.map((o) => o.group?.id),
       isNot(contains(builtinProviderId)),
     );
+    kernel.dispose();
+  });
+
+  test('Claude Code with no models of its own (not logged in) is left out '
+      'for a provider\'s, unless in use; each heading and model has an '
+      'icon', () async {
+    final clis = <FakeCli>[];
+    final kernel = ClaudeCodeKernel(
+      MockKernels.claudeCode,
+      const KernelContext(cwd: '/p'),
+      start: (launch) async {
+        final cli = FakeCli(
+          answers: {
+            'initialize': {'commands': const [], 'models': const []},
+          },
+        );
+        clis.add(cli);
+        return cli;
+      },
+      providers: providers,
+      providerEnvironment: (provider, model) async => const {},
+    );
+    kernel.prepare();
+    await pumpEventQueue();
+    // In use: its "Default" stays, to show what is.
+    expect(kernel.model.options.first.id, 'default');
+    expect(kernel.model.options.first.group!.iconBuilder, isNotNull);
+    kernel.model.select('@gw/gpt-5');
+    await pumpEventQueue();
+    final options = kernel.model.options;
+    expect(options.map((o) => o.id), isNot(contains('default')));
+    expect(options.map((o) => o.group?.id), isNot(contains(builtinProviderId)));
+    for (final option in options) {
+      expect(option.iconBuilder, isNotNull, reason: option.id);
+      expect(option.group!.iconBuilder, isNotNull, reason: option.id);
+    }
     kernel.dispose();
   });
 
@@ -283,6 +329,44 @@ void main() {
     (kernel as SelectsEffort).effort.select('@gw/gpt-5', 'high');
     await pumpEventQueue();
     expect(clis.single.requests('set_model').last['model'], 'gpt-5(high)');
+    kernel.dispose();
+  });
+
+  test('each model keeps its own effort and context: switched back to, it '
+      'takes them up, not the ones before\'s', () async {
+    final (:kernel, :launches, :clis, environments: _) = start(providers, {
+      'model': '@gw/gpt-5',
+      // Kept from before: the other model's own.
+      modelSettingKey(KernelChoiceKind.effort, '@other/m'): 'xhigh',
+    });
+    kernel.prepare();
+    await pumpEventQueue();
+    final effort = (kernel as SelectsEffort).effort;
+    final contextSize = (kernel as SelectsContextSize).contextSize;
+    effort.select('@gw/gpt-5', 'high');
+    contextSize.select('@gw/gpt-5', '1000000');
+    await pumpEventQueue();
+    expect(effort.selectedFor('@other/m'), 'xhigh');
+
+    // One never picked goes on with what there is.
+    kernel.model.select('@gw/plain');
+    await pumpEventQueue();
+    expect(clis.single.requests('set_model').last['model'], 'plain(high)');
+    effort.select('@gw/plain', 'low');
+    await pumpEventQueue();
+    expect(clis.single.requests('set_model').last['model'], 'plain(low)');
+    // The menu shows each model's own.
+    expect(effort.selectedFor('@gw/gpt-5'), 'high');
+    expect(contextSize.selectedFor('@gw/gpt-5'), '1000000');
+    expect(effort.selectedFor('@gw/plain'), 'low');
+
+    kernel.model.select('@gw/gpt-5');
+    await pumpEventQueue();
+    expect(clis.single.requests('set_model').last['model'], 'gpt-5(high)');
+    expect(effort.selected, 'high');
+    expect(contextSize.selected, '1000000');
+    expect(effort.selectedFor('@gw/plain'), 'low');
+    expect(launches, hasLength(1));
     kernel.dispose();
   });
 

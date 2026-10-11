@@ -325,7 +325,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     _restoreChatView();
     if (_selected == null && _projects.isNotEmpty) {
-      create(project: sidebarProjects.firstOrNull ?? _projects.first);
+      create();
     } else {
       notifyListeners();
     }
@@ -399,6 +399,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       // Listed again next run, if no kernel keeps a session there by then.
       if (!_folders.contains(path)) {
         _folders.add(path);
+        _save();
+      }
+      if (project.host case final host? when !_sshHosts.contains(host)) {
+        _sshHosts.add(host);
         _save();
       }
       unawaited(_listKept(project));
@@ -968,6 +972,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (thread.id == null) _ideChatsUnkept.add(thread);
   }
 
+  /// A chat for [folder]'s panel, where it has none: the IDE's without a
+  /// folder, in that of its file in front.
+  void ensureIdeChat(String folder) {
+    if (ideChats(folder).isNotEmpty) return;
+    _ensureIdeChat(folder);
+    _save();
+    notifyListeners();
+  }
+
   /// A chat for [folder]'s panel, where it has none.
   void _ensureIdeChat(String folder) {
     if (ideChats(folder).isNotEmpty) return;
@@ -1248,6 +1261,99 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     ];
   }
 
+  // --- SSH hosts ------------------------------------------------------------
+
+  /// The SSH hosts the user added, in that order.
+  final List<String> _sshHosts = [];
+
+  /// The SSH hosts the sidebar switches to, besides this machine: those
+  /// added, then those of listed projects (opened before hosts were kept).
+  List<String> get sshHosts => {
+    ..._sshHosts,
+    for (final project in sidebarProjects) ?project.host,
+  }.toList();
+
+  /// Keeps [host] among [sshHosts], with no project there yet; its
+  /// projects taken off with it ([removeSshHost]) are listed again.
+  void addSshHost(String host) {
+    final unhidden = _projects
+        .where((project) => project.host == host && isHidden(project))
+        .map((project) => project.path)
+        .toList();
+    if (_sshHosts.contains(host) && unhidden.isEmpty) return;
+    if (!_sshHosts.contains(host)) _sshHosts.add(host);
+    unhidden.forEach(_hiddenProjects.remove);
+    _save();
+    notifyListeners();
+  }
+
+  /// Takes [host] off, its projects off the sidebar ([hideProject]):
+  /// nothing of them is deleted.
+  void removeSshHost(String host) {
+    _sshHosts.remove(host);
+    final now = DateTime.now();
+    for (final project in _projects) {
+      if (project.host == host) _hiddenProjects[project.path] = now;
+    }
+    if (_sidebarHost == host) _sidebarHost = null;
+    _save();
+    notifyListeners();
+  }
+
+  /// The SSH host whose projects and agents the sidebar lists; null for
+  /// this machine's (and while there is no host to switch to).
+  String? get sidebarHost =>
+      _sidebarHost != null && sshHosts.contains(_sidebarHost)
+      ? _sidebarHost
+      : null;
+  String? _sidebarHost;
+  set sidebarHost(String? host) {
+    if (host == _sidebarHost) return;
+    _sidebarHost = host;
+    _save();
+    notifyListeners();
+  }
+
+  /// Names the user gave SSH hosts, by host.
+  final Map<String, String> _hostNames = {};
+
+  /// What the app calls [host]: the name the user gave it, else itself.
+  String hostLabel(String host) => _hostNames[host] ?? host;
+
+  /// Calls [host] [name]; by itself again when null or empty.
+  void renameHost(String host, String? name) {
+    name = name?.trim();
+    final before = _hostNames[host];
+    if (name == null || name.isEmpty || name == host) {
+      _hostNames.remove(host);
+    } else {
+      _hostNames[host] = name;
+    }
+    if (_hostNames[host] == before) return;
+    _save();
+    notifyListeners();
+  }
+
+  /// What an SSH host's icon is kept under, as a project's is (see
+  /// [iconOf], [setIcon]): a project of no folder, named after it.
+  Project hostIconProject(String host) =>
+      Project(hostLabel(host), '$_hostIcon$host');
+  static const _hostIcon = 'ssh-host:';
+
+  /// [sidebarProjects] on [host] (this machine's for null).
+  List<Project> sidebarProjectsOn(String? host) => [
+    for (final project in sidebarProjects)
+      if (project.host == host) project,
+  ];
+
+  /// The sidebar lists where an agent picked is: its host's.
+  void _followInSidebar(AgentThread thread) {
+    final host = thread.project.host;
+    if (host == sidebarHost || isHidden(thread.project)) return;
+    _sidebarHost = host;
+    _save();
+  }
+
   /// Moves [project] to [index] of [sidebarProjects]: all listed are in
   /// the user's order from then on.
   void moveProject(Project project, int index) {
@@ -1280,20 +1386,21 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// Unarchives every archived agent.
-  void unarchiveAll() {
+  /// Unarchives every archived agent ([where] there is one, those it takes).
+  void unarchiveAll({bool Function(AgentThread thread)? where}) {
     for (final thread in _threads) {
-      if (!thread.archived) continue;
+      if (!thread.archived || !(where?.call(thread) ?? true)) continue;
       thread.archived = false;
       _keepMarks(thread);
     }
     notifyListeners();
   }
 
-  /// Deletes every archived agent, each as [delete] does.
-  void deleteArchived() {
+  /// Deletes every archived agent ([where] there is one, those it takes),
+  /// each as [delete] does.
+  void deleteArchived({bool Function(AgentThread thread)? where}) {
     for (final thread in [..._threads]) {
-      if (thread.archived) delete(thread);
+      if (thread.archived && (where?.call(thread) ?? true)) delete(thread);
     }
   }
 
@@ -1438,17 +1545,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _projectIcons.remove(project.path);
     } else {
       _projectIcons[project.path] = icon;
-      if (remember) {
-        _recentIcons
-          ..remove(icon)
-          ..insert(0, icon);
-        if (_recentIcons.length > _keptRecentIcons) {
-          _recentIcons.removeRange(_keptRecentIcons, _recentIcons.length);
-        }
-      }
+      if (remember) _remember(icon);
     }
     _save();
     notifyListeners();
+  }
+
+  /// Notes [icon], picked for something else than a project (an upstream
+  /// of models), among the [recentIcons].
+  void rememberIcon(ProjectIcon icon) {
+    _remember(icon);
+    _save();
+    notifyListeners();
+  }
+
+  void _remember(ProjectIcon icon) {
+    _recentIcons
+      ..remove(icon)
+      ..insert(0, icon);
+    if (_recentIcons.length > _keptRecentIcons) {
+      _recentIcons.removeRange(_keptRecentIcons, _recentIcons.length);
+    }
   }
 
   /// Whose pictures the emoji are drawn from ([EmojiSheet.style]); null
@@ -1515,7 +1632,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _projectOrder.retainWhere(paths.contains);
     _hiddenProjects.removeWhere((path, _) => !paths.contains(path));
     _order.removeWhere((path, _) => !paths.contains(path));
-    _projectIcons.removeWhere((path, _) => !paths.contains(path));
+    _projectIcons.removeWhere(
+      (path, _) => !paths.contains(path) && !path.startsWith(_hostIcon),
+    );
     for (final order in _order.values) {
       order.retainWhere(titles.containsKey);
     }
@@ -1735,6 +1854,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _folders.addAll(list('folders'));
       _expandedGroups.addAll(list('expanded'));
       _projectOrder.addAll(list('projectOrder'));
+      _sshHosts.addAll(list('sshHosts'));
+      _hostNames.addAll(strings(sidebar['hostNames']));
+      if (sidebar['host'] case final String host) _sidebarHost = host;
       for (final MapEntry(:key, :value) in strings(
         sidebar['hiddenProjects'],
       ).entries) {
@@ -1834,6 +1956,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         'folders': [..._folders],
         'expanded': [..._expandedGroups],
         'projectOrder': [..._projectOrder],
+        'sshHosts': [..._sshHosts],
+        'hostNames': {..._hostNames},
+        'host': ?_sidebarHost,
         'hiddenProjects': {
           for (final MapEntry(:key, :value) in _hiddenProjects.entries)
             key: value.toIso8601String(),
@@ -1996,6 +2121,19 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       remember(KernelChoiceKind.model, before.model, snapshot.model);
       remember(KernelChoiceKind.effort, before.effort, snapshot.effort);
       remember(KernelChoiceKind.context, before.context, snapshot.context);
+      // And each model's own, for it to go back to (see modelSettingKey).
+      if (snapshot.model case final model?) {
+        for (final (kind, value) in [
+          (KernelChoiceKind.effort, snapshot.effort),
+          (KernelChoiceKind.context, snapshot.context),
+        ]) {
+          final key = modelSettingKey(kind, model);
+          if (value != null && _settings[key] != value) {
+            _settings[key] = value;
+            changed = true;
+          }
+        }
+      }
       if (before.status != snapshot.status) thread.updatedAt = DateTime.now();
     }
     _rememberAcpSession(thread);
@@ -2172,6 +2310,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// place of the focused one.
   void select(AgentThread thread) {
     _focus(thread);
+    _followInSidebar(thread);
     notifyListeners();
   }
 
@@ -2217,12 +2356,18 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// Opens a new, empty agent in [project] (by default the current one's).
-  /// An untouched new agent there is reused rather than piling up.
+  /// Opens a new, empty agent in [project] (by default the current one's,
+  /// if it is where the sidebar lists: else the first project there). An
+  /// untouched new agent there is reused rather than piling up.
   AgentThread create({Project? project}) {
+    final host = sidebarHost;
     project ??= switch (_selected?.project) {
-      final current? when !isHidden(current) => current,
-      _ => sidebarProjects.firstOrNull ?? _projects.firstOrNull,
+      final current? when !isHidden(current) && current.host == host => current,
+      final current =>
+        sidebarProjectsOn(host).firstOrNull ??
+            (current != null && !isHidden(current) ? current : null) ??
+            sidebarProjects.firstOrNull ??
+            _projects.firstOrNull,
     };
     if (project == null) {
       throw StateError('No project to create an agent in');

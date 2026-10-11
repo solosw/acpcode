@@ -49,6 +49,10 @@ Map<String, String> launchEnvironment({
     // The background work: the model picked, unless one is set for it.
     ClaudeModelVariables.haiku: roles.haiku ?? model,
     ClaudeModelVariables.subagent: ?roles.subagent,
+    // Over the model a subagent's definition names, or the agent asks for
+    // ("sonnet", "haiku": the model picked, here): else the one set for
+    // subagents is used only where neither says.
+    if (roles.subagent != null) ClaudeModelVariables.subagentForce: '1',
     // Unknown Anthropic-compatible models can still accept output_config.effort.
     if (!provider.protocol.proxied)
       ClaudeModelVariables.alwaysEnableEffort: '1',
@@ -90,6 +94,10 @@ abstract final class ClaudeModelVariables {
   static const sonnet = 'ANTHROPIC_DEFAULT_SONNET_MODEL';
   static const haiku = 'ANTHROPIC_DEFAULT_HAIKU_MODEL';
   static const subagent = 'CLAUDE_CODE_SUBAGENT_MODEL';
+
+  /// [subagent] for every subagent, whatever its definition or the call
+  /// names (but `inherit`).
+  static const subagentForce = 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE';
   static const alwaysEnableEffort = 'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT';
   static const nonessentialTraffic = 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC';
 
@@ -121,6 +129,7 @@ abstract final class ClaudeModelVariables {
     sonnet,
     haiku,
     subagent,
+    subagentForce,
     ...cleared,
   ];
 }

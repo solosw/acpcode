@@ -4,6 +4,8 @@
 /// the system's keychain ([SecretStore]), under [ModelProvider.keyRef].
 library;
 
+import '../icons/project_icon.dart';
+
 /// How an upstream is spoken to.
 enum ProviderProtocol {
   /// Anthropic's Messages API: Claude Code talks to it itself.
@@ -468,6 +470,7 @@ class ModelProvider {
     this.accounts = const [],
     this.balance = AccountBalance.roundRobin,
     this.clientVersion,
+    this.icon,
   });
 
   /// Its own, made once; models are picked as `@<id>/<model>`.
@@ -508,6 +511,11 @@ class ModelProvider {
   /// Codex: the Codex CLI's version it speaks as (`0.159.0`), for models
   /// the backend offers only to a newer one; the app's when null.
   final String? clientVersion;
+
+  /// What the picker heads its models with, picked in the icon picker
+  /// (the site's icon among its choices); its maker's logo, as its base URL
+  /// says, when null ([ModelBrand.ofProvider]).
+  final ProjectIcon? icon;
 
   /// Whether [text] can be a [clientVersion]: digits, letters, `.+-`.
   static bool isClientVersion(String text) =>
@@ -557,6 +565,7 @@ class ModelProvider {
     List<ProviderAccount>? accounts,
     AccountBalance? balance,
     String? Function()? clientVersion,
+    ProjectIcon? Function()? icon,
   }) => ModelProvider(
     id: id,
     name: name ?? this.name,
@@ -574,6 +583,7 @@ class ModelProvider {
     accounts: accounts ?? this.accounts,
     balance: balance ?? this.balance,
     clientVersion: clientVersion == null ? this.clientVersion : clientVersion(),
+    icon: icon == null ? this.icon : icon(),
   );
 
   /// With [account] in place of the one of its id, or added.
@@ -613,6 +623,7 @@ class ModelProvider {
       'accounts': [for (final account in accounts) account.toJson()],
     if (balance != AccountBalance.roundRobin) 'balance': balance.id,
     'clientVersion': ?clientVersion,
+    'icon': ?icon?.toJson(),
   };
 
   static ModelProvider? fromJson(Object? json) {
@@ -652,6 +663,7 @@ class ModelProvider {
           version.trim(),
         _ => null,
       },
+      icon: ProjectIcon.fromJson(json['icon']),
     );
   }
 

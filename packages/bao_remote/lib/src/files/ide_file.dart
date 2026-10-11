@@ -52,6 +52,16 @@ class IdeFileTooLargeException implements Exception {
   String toString() => 'Files over 5 MB cannot be edited: $path';
 }
 
+/// A file or folder the system will not let this user read or change.
+class IdeFileAccessDeniedException implements Exception {
+  const IdeFileAccessDeniedException(this.path);
+
+  final String path;
+
+  @override
+  String toString() => 'Permission denied: $path';
+}
+
 /// A file operation's target is taken.
 class IdeFileExistsException implements Exception {
   const IdeFileExistsException(this.path);

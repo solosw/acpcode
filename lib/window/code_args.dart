@@ -12,13 +12,18 @@ import 'package:path/path.dart' as p;
 ///                                 the file, at the line and column
 ///   code                          the last used window, or a new one
 ///
-/// Options it does not know are left out, as are their values.
+/// Options it does not know are left out, as are the values of those VS
+/// Code's take. Those that ask VS Code about itself or its extensions
+/// (`--version`, `--list-extensions`, `--install-extension <id>`…), which
+/// tools run in the background to find out what editor there is, open
+/// nothing: see [opensNothing].
 class CodeArgs {
   const CodeArgs({
     this.paths = const [],
     this.newWindow = false,
     this.reuseWindow = false,
     this.goto = false,
+    this.opensNothing = false,
   });
 
   /// The paths, absolute, each with the line and column `-g` gave it.
@@ -28,6 +33,51 @@ class CodeArgs {
 
   /// Whether the paths were given as `file:line[:col]`.
   final bool goto;
+
+  /// Whether it asked something of VS Code's CLI that is no window's to
+  /// show ([queryOptions]): an empty window, or one of a file named after
+  /// an extension, would open out of nowhere.
+  final bool opensNothing;
+
+  /// VS Code's options that do their work in the terminal, not a window.
+  static const queryOptions = {
+    '-h',
+    '--help',
+    '-v',
+    '--version',
+    '-s',
+    '--status',
+    '--list-extensions',
+    '--show-versions',
+    '--install-extension',
+    '--uninstall-extension',
+    '--update-extensions',
+    '--locate-extension',
+    '--locate-shell-integration-path',
+    '--telemetry',
+    '--add-mcp',
+  };
+
+  /// VS Code's options that take a value (unless given as `--option=value`),
+  /// which is not a path to open.
+  static const _valueOptions = {
+    '--locale',
+    '--user-data-dir',
+    '--profile',
+    '--extensions-dir',
+    '--category',
+    '--install-extension',
+    '--uninstall-extension',
+    '--locate-extension',
+    '--enable-proposed-api',
+    '--disable-extension',
+    '--log',
+    '--sync',
+    '--remove',
+    '--locate-shell-integration-path',
+    '--add-mcp',
+    '--crash-reporter-directory',
+  };
 
   /// The marker of a request the `code` command sends (see [isRequest]):
   /// the working directory comes next, then its arguments as typed.
@@ -53,8 +103,19 @@ class CodeArgs {
   /// hands it over as a request ([agentRequestMarker]).
   static const windowsAgentFlag = '--baocode-agent';
 
+  /// The marker of a site's one-click import of an upstream (a
+  /// `baocode://provider/import?…` link, see UpstreamImport), the link
+  /// next: asked about in the main window, which comes in front for it.
+  static const importRequestMarker = '\u0000import';
+
+  /// The flag Windows starts the app with for a `baocode://` link (the URL
+  /// scheme the installer registers), the link next; the runner hands it
+  /// over as a request ([importRequestMarker]).
+  static const windowsLinkFlag = '--baocode-link';
+
   /// Whether [argument] starts a request ([requestMarker],
-  /// [agentRequestMarker]) among what the system hands over.
+  /// [agentRequestMarker], [importRequestMarker]) among what the system
+  /// hands over.
   static bool isMarker(String argument) => argument.startsWith('\u0000');
 
   /// Whether [paths], as the system hands them over, are a request of the
@@ -81,14 +142,23 @@ class CodeArgs {
   /// Reads [args] as typed in [cwd].
   static CodeArgs parse(List<String> args, {required String cwd}) {
     var newWindow = false, reuseWindow = false, goto = false;
-    var options = true;
+    var options = true, value = false;
     final raw = <String>[];
     for (final arg in args) {
+      if (value) {
+        value = false;
+        continue;
+      }
       if (options && arg == '--') {
         options = false;
         continue;
       }
       if (options && arg.startsWith('-') && arg.length > 1) {
+        final name = arg.split('=').first;
+        if (queryOptions.contains(name)) {
+          return const CodeArgs(opensNothing: true);
+        }
+        value = name == arg && _valueOptions.contains(name);
         switch (arg) {
           case '-n' || '--new-window':
             newWindow = true;
@@ -179,6 +249,8 @@ enum LaunchRequest {
     final first = arguments.firstOrNull;
     if (first == CodeArgs.windowsAgentFlag) return agent;
     if (first == CodeArgs.windowsRequestFlag) return ide;
+    // A link asks in the main window, as the app shows at any launch.
+    if (first == CodeArgs.windowsLinkFlag) return none;
     final paths = arguments.where((a) => a.isNotEmpty && !a.startsWith('-'));
     return paths.isEmpty ? none : ide;
   }

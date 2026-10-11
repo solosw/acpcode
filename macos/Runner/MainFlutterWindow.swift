@@ -192,6 +192,18 @@ class BaoWindow: NSWindow {
       let pasteboard = NSPasteboard.general
       pasteboard.clearContents()
       result(!urls.isEmpty && pasteboard.writeObjects(urls))
+    case "armFileDrag":
+      // Files dragged in the app: watched, to go on out of the window.
+      let paths = (call.arguments as? [String: Any])?["paths"] as? [String]
+      drops?.arm(paths, flutter: flutterViewController)
+      result(drops != nil)
+    case "disarmFileDrag":
+      drops?.disarm()
+      result(nil)
+    case "startFileDrag":
+      // Files dragged in the app, out of the window: on as Finder drags them.
+      let paths = (call.arguments as? [String: Any])?["paths"] as? [String] ?? []
+      result(drops?.drag(paths, flutter: flutterViewController) ?? false)
     case "readImageFile":
       // An image file dropped or pasted, as the composer takes it.
       guard let path = call.arguments as? String else {
@@ -463,14 +475,19 @@ class MainFlutterWindow: BaoWindow {
     // The IDE's windows, views of this one's engine (see AppWindows.swift).
     // Shown or not at launch as the app last said: the IDE's windows
     // alone, it stays hidden (Flutter shows it if it is to after all).
+    // Held back until the app has finished launching either way: what the
+    // system launched it to open comes before then (application(_:open:)),
+    // and the app opens to that alone; shown by the nib, the window would
+    // come and go at once.
     AppWindows.shared = AppWindows(engine: flutterViewController.engine, main: self)
-    holdingBack = !AppWindows.mainShownAtLaunch
-    if holdingBack {
-      DispatchQueue.main.async { [weak self] in self?.holdingBack = false }
-      // The view controller starts the engine only as its view appears:
-      // started here, for Flutter to open the windows that show instead.
-      flutterViewController.engine.run(withEntrypoint: nil)
-    }
+    shownAtLaunch = AppWindows.mainShownAtLaunch
+    holdingBack = true
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(finishedLaunching),
+      name: NSApplication.didFinishLaunchingNotification, object: nil)
+    // The view controller starts the engine only as its view appears:
+    // started here, for Flutter to open the windows that show instead.
+    flutterViewController.engine.run(withEntrypoint: nil)
 
     // The menu bar's File menu, once the nib has made the menu bar (it
     // has none of its own; see FileMenu).
@@ -501,6 +518,9 @@ class MainFlutterWindow: BaoWindow {
     case "setRecentItems":
       fileMenu?.setRecent(call.arguments as? [String] ?? [])
       result(nil)
+    case "setFileMenuChecked":
+      fileMenu?.setChecked(call.arguments as? [String: Bool] ?? [:])
+      result(nil)
     default:
       super.handle(call, result: result)
     }
@@ -510,9 +530,24 @@ class MainFlutterWindow: BaoWindow {
 
   private var attention: Attention?
 
-  /// Kept out of sight while the nib shows it at launch, when the app
-  /// last said so (setMainShownAtLaunch).
+  /// Kept out of sight while the nib shows it at launch, until the app
+  /// has finished launching (see awakeFromNib).
   private var holdingBack = false
+
+  /// Whether the window shows at launch, as the app last said
+  /// (setMainShownAtLaunch).
+  private var shownAtLaunch = true
+
+  /// Let go once the app has launched: shown if it shows at launch, unless
+  /// the app was launched to open something.
+  @objc private func finishedLaunching() {
+    NotificationCenter.default.removeObserver(
+      self, name: NSApplication.didFinishLaunchingNotification, object: nil)
+    holdingBack = false
+    if shownAtLaunch && !OpenRequests.shared.launchedForRequest {
+      makeKeyAndOrderFront(nil)
+    }
+  }
 
   override func makeKeyAndOrderFront(_ sender: Any?) {
     if holdingBack { return }
@@ -601,7 +636,12 @@ private class FileDropView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
   /// Takes no more drags (its window is gone).
-  func stop() { unregisterDraggedTypes() }
+  func stop() {
+    unregisterDraggedTypes()
+    armed = nil
+    if let monitor { NSEvent.removeMonitor(monitor) }
+    monitor = nil
+  }
 
   /// Where the drag is, as Flutter counts: from the top left, in points.
   private func position(_ sender: NSDraggingInfo) -> [String: Any] {
@@ -703,6 +743,117 @@ private class FileDropView: NSView {
     let directory = (values?.isDirectory ?? false) && !(values?.isPackage ?? false)
     return ["path": url.path, "directory": directory]
   }
+
+  // --- Dragging out ----------------------------------------------------------
+
+  /// The Flutter view whose drag the system's goes on with.
+  private weak var dragFlutter: FlutterViewController?
+
+  /// Flutter's drag of files, watched for the pointer to leave the window:
+  /// their paths (none while they are not this machine's yet).
+  private var armed: (paths: [String]?, flutter: FlutterViewController?)?
+
+  /// Sees the pointer's moves while the button is down, out of the window
+  /// too, before Flutter does.
+  private var monitor: Any?
+
+  /// Watches Flutter's drag of [paths]: the moment the pointer leaves the
+  /// window, the system drags them on, with that move (asked later, of an
+  /// event made up, it may not); Flutter is told (`dragOut`), to download
+  /// them first when there are none.
+  func arm(_ paths: [String]?, flutter: FlutterViewController?) {
+    armed = (paths, flutter)
+    guard monitor == nil else { return }
+    monitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.leftMouseDragged, .leftMouseUp]
+    ) { [weak self] event in
+      self?.watch(event) ?? event
+    }
+  }
+
+  func disarm() { armed = nil }
+
+  private func watch(_ event: NSEvent) -> NSEvent? {
+    guard let armed, let window, event.window == nil || event.window === window
+    else { return event }
+    if event.type == .leftMouseUp {
+      self.armed = nil
+      return event
+    }
+    let at = convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+    if bounds.contains(at) { return event }
+    self.armed = nil
+    let began = armed.paths.map { drag($0, flutter: armed.flutter, event: event) } ?? false
+    channel.invokeMethod("dragOut", arguments: ["began": began])
+    return event
+  }
+
+  /// Goes on with Flutter's drag of [paths] (the pointer, held down, left
+  /// the window) as the system drags files: let go in Finder they are
+  /// copied, in Mail attached; back over the window, Flutter takes them as
+  /// it takes other apps' files. Whether it began.
+  func drag(_ paths: [String], flutter: FlutterViewController?, event moved: NSEvent? = nil)
+    -> Bool
+  {
+    guard !paths.isEmpty, let window else { return false }
+    let mouse = window.mouseLocationOutsideOfEventStream
+    let current = NSApp.currentEvent.flatMap {
+      $0.type == .leftMouseDragged || $0.type == .leftMouseDown ? $0 : nil
+    }
+    guard
+      let event = moved ?? current
+        ?? NSEvent.mouseEvent(
+          with: .leftMouseDragged, location: mouse, modifierFlags: [],
+          timestamp: ProcessInfo.processInfo.systemUptime,
+          windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+          clickCount: 1, pressure: 1)
+    else { return false }
+    let at = convert(mouse, from: nil)
+    let size: CGFloat = 32
+    let items = paths.enumerated().map { index, path in
+      let item = NSDraggingItem(pasteboardWriter: URL(fileURLWithPath: path) as NSURL)
+      let offset = CGFloat(min(index, 4)) * 4
+      item.setDraggingFrame(
+        NSRect(x: at.x - size / 2 + offset, y: at.y - size / 2 - offset, width: size, height: size),
+        contents: NSWorkspace.shared.icon(forFile: path))
+      return item
+    }
+    dragFlutter = flutter
+    let session = beginDraggingSession(with: items, event: event, source: self)
+    session.animatesToStartingPositionsOnCancelOrFail = false
+    session.draggingFormation = .pile
+    return true
+  }
+}
+
+extension FileDropView: NSDraggingSource {
+  func draggingSession(
+    _ session: NSDraggingSession,
+    sourceOperationMaskFor context: NSDraggingContext
+  ) -> NSDragOperation {
+    // Copied, as VS Code's explorer gives them: never moved out of the project.
+    .copy
+  }
+
+  func draggingSession(
+    _ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation
+  ) {
+    // Flutter saw the button go down, not up (the system's drag took the
+    // mouse): it is told it went up, away from all, so its own drag ends
+    // with nothing taking it; after the drop, which Flutter is told first.
+    let flutter = dragFlutter
+    dragFlutter = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+      guard let flutter, let window = self?.window,
+            let up = NSEvent.mouseEvent(
+              with: .leftMouseUp, location: NSPoint(x: -100_000, y: -100_000),
+              modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+              windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+              clickCount: 1, pressure: 0)
+      else { return }
+      flutter.mouseUp(with: up)
+    }
+  }
 }
 
 /// The menu bar's File menu, which MainMenu.xib has none of: its items
@@ -727,6 +878,7 @@ private class FileMenu: NSObject {
     "openRecent": "Open Recent",
     "save": "Save",
     "saveAs": "Save As…",
+    "autoSave": "Auto Save",
     "closeFolder": "Close Folder",
     "newWindow": "New Window",
     "closeWindow": "Close Window",
@@ -735,6 +887,9 @@ private class FileMenu: NSObject {
     "checkForUpdates": "Check for Updates…",
   ]
   private var recent: [String] = []
+
+  /// The keys of the items ticked (`setFileMenuChecked`): Auto Save's.
+  private var checked: Set<String> = []
 
   /// The menu's items: the key of each one's title and the command it
   /// runs (Open Recent's is its submenu); an empty key is a separator.
@@ -748,6 +903,8 @@ private class FileMenu: NSObject {
     ("", ""),
     ("save", "workbench.action.files.save"),
     ("saveAs", "workbench.action.files.saveAs"),
+    ("", ""),
+    ("autoSave", "workbench.action.toggleAutoSave"),
     ("", ""),
     ("closeFolder", "workbench.action.closeFolder"),
     ("closeWindow", "workbench.action.closeWindow"),
@@ -781,6 +938,13 @@ private class FileMenu: NSObject {
     build()
   }
 
+  func setChecked(_ items: [String: Bool]) {
+    for (key, on) in items {
+      if on { checked.insert(key) } else { checked.remove(key) }
+    }
+    build()
+  }
+
   func setRecent(_ paths: [String]) {
     recent = paths
     buildRecent()
@@ -806,6 +970,7 @@ private class FileMenu: NSObject {
         item.action = #selector(runCommand(_:))
         item.target = self
         item.representedObject = command
+        item.state = checked.contains(key) ? .on : .off
       }
       menu.addItem(item)
     }

@@ -82,10 +82,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// Folds the user opened (true) or closed (false); others are closed.
   final Map<(StepFoldKind, int), bool> _foldOpen = {};
 
-  /// Where the work of the turn that ended while the user read further up
+  /// Where the work of the turns that ended while the user read further up
   /// starts: it stays open, not to fold the history away under them, until
-  /// they are back at the bottom or send again.
-  int? _unfoldedTurn;
+  /// they are back at the bottom or send again. (Turns the agent takes up on
+  /// its own, one after another, may end meanwhile.)
+  final Set<int> _unfoldedTurns = {};
 
   /// Whether a turn was under way, as last seen: to tell when it ends.
   bool _wasLive = false;
@@ -98,7 +99,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   bool _isFoldOpen(StepFold fold) =>
       _foldOpen[fold.key] ??
-      (fold.kind == StepFoldKind.work && fold.start == _unfoldedTurn);
+      (fold.kind == StepFoldKind.work && _unfoldedTurns.contains(fold.start));
 
   void _toggleFold(StepFold fold) {
     for (var index = fold.start; index < fold.end; index++) {
@@ -324,7 +325,6 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// Where a drag on the list's text began, to check what it selected.
   Offset? _dragFrom;
   bool _isPointerInside = false;
-  bool _wasStreaming = false;
   bool _shownAtBottom = true;
 
   /// Content extends below the viewport, so the bottom fade is needed. Unlike
@@ -392,7 +392,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _editingIndex = null;
       _closingIndex = null;
       _foldOpen.clear();
-      _unfoldedTurn = null;
+      _unfoldedTurns.clear();
       _wasLive = widget.feed.isStreaming;
       _refold();
       _seeItems();
@@ -501,8 +501,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       setState(() => _shownAtBottom = _atBottom);
     }
     // Back at the bottom: the turn read meanwhile folds.
-    if (_atBottom && _unfoldedTurn != null) {
-      setState(() => _unfoldedTurn = null);
+    if (_atBottom && _unfoldedTurns.isNotEmpty) {
+      setState(_unfoldedTurns.clear);
     }
     _syncEdgeFades();
     _scheduleStickyUpdate();
@@ -739,14 +739,17 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   }
 
   void _handleSessionChanged() {
-    // Sending a message always brings the live turn into view.
-    final startedStreaming = _feed.isStreaming && !_wasStreaming;
-    _wasStreaming = _feed.isStreaming;
+    final startedStreaming = _feed.isStreaming && !_wasLive;
     final ended = _wasLive && !_feed.isStreaming;
     _wasLive = _feed.isStreaming;
+    // A turn the agent took up on its own (a background task's report)
+    // leaves the user reading where they are, the turns they read open.
+    final sent = _feed.isStreaming && !_feed.isUnprompted;
     _refold();
-    if (_feed.isStreaming) _unfoldedTurn = null;
-    if (ended && !_atBottom) _unfoldedTurn = _lastTurnWork()?.start;
+    if (sent) _unfoldedTurns.clear();
+    if (ended && !_atBottom) {
+      if (_lastTurnWork() case final fold?) _unfoldedTurns.add(fold.start);
+    }
     final editing = _editingIndex;
     if (startedStreaming) _closingIndex = null;
     if (startedStreaming ||
@@ -756,7 +759,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _editingIndex = null;
       _feed.editing = null;
     }
-    if (startedStreaming) _jumpToBottom();
+    // Sending a message always brings the live turn into view.
+    if (startedStreaming && sent) _jumpToBottom();
     _itemsCame();
     _scheduleStickyUpdate();
     setState(() {});
@@ -1262,7 +1266,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       // Everything after the message is replaced; so are its steps.
       _expanded.removeWhere((i, _) => i > index);
       _foldOpen.removeWhere((key, _) => key.$2 > index);
-      _unfoldedTurn = null;
+      _unfoldedTurns.clear();
     });
     _feed.editMessage(index, message);
   }
@@ -1293,7 +1297,6 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         expanded: _isExpanded(index),
         onToggle: () => _toggle(index),
         onEdit: item is UserMessageItem ? () => _startEditing(index) : null,
-        onCancelQueued: () => _feed.cancelQueued(index),
         onMoveToBackground: _feed.moveToBackgroundAt(index),
         onStop: _feed.stopAt(index),
         onOpen: switch ((item, widget.onOpenAgent)) {
@@ -1364,6 +1367,19 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       top: _gapBetween(previous, status) - _gapBefore(index),
     );
   }
+
+  /// The height taken for item [index] until it is laid out, toward the
+  /// list's extent (and so its scrollbar): none for one a closed fold
+  /// hides. A long conversation is mostly turns' work folded away; taken at
+  /// the list's default for each, the bar would stand for many times the
+  /// height there is, a small drag on it going far, and the list correcting
+  /// itself all the way up. (Asked with no index, the list wants one height
+  /// for all, unless none: 0.)
+  double _estimateExtent(int? index, double crossAxisExtent) => switch (index) {
+    null => 0,
+    _ when index < _feed.itemCount && _isHidden(index) => 0,
+    _ => 100,
+  };
 
   void _jumpToBottom() {
     _setAnchored(true);
@@ -1501,6 +1517,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                                 key: _listKey,
                                 controller: _scrollController,
                                 itemCount: _feed.itemCount,
+                                extentEstimation: _estimateExtent,
                                 cacheExtent: 900,
                                 padding: EdgeInsets.fromLTRB(
                                   _gutter,

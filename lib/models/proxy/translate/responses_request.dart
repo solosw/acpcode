@@ -16,6 +16,10 @@ import 'util.dart';
 /// Longest name or `call_id` the Responses API takes.
 const _nameLimit = 64;
 
+/// What summary of its reasoning a GPT model is asked for, to show as its
+/// thinking: unasked, it gives none, its reasoning only encrypted.
+const reasoningSummary = 'auto';
+
 /// An Anthropic Messages request ([request], decoded or as JSON text) as an
 /// OpenAI Responses request for [model], streamed.
 ///
@@ -290,7 +294,7 @@ Map<String, Object?> convertClaudeRequestToResponses(
           if (convertBudgetToLevel(0) case final level?) effort = level;
       }
     }
-    out['reasoning'] = {'effort': effort};
+    out['reasoning'] = {'effort': effort, 'summary': reasoningSummary};
   }
   var serviceTier = _normalizeServiceTier(root.get('service_tier'));
   final speed = root.get('speed');

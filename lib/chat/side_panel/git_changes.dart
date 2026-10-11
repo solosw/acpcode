@@ -257,13 +257,7 @@ class _GitChangeListState extends State<GitChangeList> {
     );
   }
 
-  static bool _deleted(IdeGitResource resource) => switch (resource.status) {
-    IdeGitStatus.deleted ||
-    IdeGitStatus.indexDeleted ||
-    IdeGitStatus.deletedByUs ||
-    IdeGitStatus.bothDeleted => true,
-    _ => false,
-  };
+  static bool _deleted(IdeGitResource resource) => resource.status.fileGone;
 
   Future<void> _run(Future<void> Function() operation) async {
     try {

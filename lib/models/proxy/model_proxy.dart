@@ -201,7 +201,9 @@ class ModelProxy {
         body,
         reasoning: thinking,
       );
-      if (thinking) outgoing['reasoning'] = {'effort': effort};
+      if (thinking) {
+        outgoing['reasoning'] = {'effort': effort, 'summary': reasoningSummary};
+      }
     }
     if (provider.promptCacheKey) {
       if (promptCacheKey(body) case final key?) {

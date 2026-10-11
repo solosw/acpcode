@@ -7,6 +7,8 @@ abstract final class ProcessTransport {
         detail: 'The browser cannot start local processes.',
       );
 
+  static Future<bool> rejectTooOld(String executable) async => false;
+
   static Future<String?> usageOffBy() async => null;
 
   /// No processes to stop on the web.

@@ -157,6 +157,27 @@ class IdeNotification {
       other.source == source;
 }
 
+/// Where what is under it shows its notifications: the nearest
+/// workbench's (the IDE's, else the app window's).
+class IdeNotificationsScope extends InheritedWidget {
+  const IdeNotificationsScope({
+    super.key,
+    required this.notifications,
+    required super.child,
+  });
+
+  final IdeNotifications notifications;
+
+  /// The nearest one's notifications; none outside a workbench.
+  static IdeNotifications? maybeOf(BuildContext context) => context
+      .getInheritedWidgetOfExactType<IdeNotificationsScope>()
+      ?.notifications;
+
+  @override
+  bool updateShouldNotify(IdeNotificationsScope oldWidget) =>
+      !identical(notifications, oldWidget.notifications);
+}
+
 /// The notifications of a workbench.
 class IdeNotifications extends ChangeNotifier {
   /// `PURGE_TIMEOUT`: how long a toast that is not sticky stays.
@@ -290,8 +311,9 @@ class IdeNotifications extends ChangeNotifier {
     bool clearProgress = false,
   }) {
     if (!_all.contains(notification)) return;
-    if (message != null)
+    if (message != null) {
       notification._message = IdeNotification._limit(message);
+    }
     if (progress != null || clearProgress) notification.progress = progress;
     if (!_disposed) notifyListeners();
   }

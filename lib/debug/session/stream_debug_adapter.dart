@@ -70,7 +70,7 @@ final class StdioDebugAdapterTransport extends EmitterDebugAdapterTransport {
     );
     _stdout = process.stdout.listen(reader.add);
     _stderr = process.stderr
-        .transform(utf8.decoder)
+        .transform(const Utf8Decoder(allowMalformed: true))
         .listen((text) => onStderr?.call(text));
     unawaited(
       process.exitCode.then((code) {
@@ -103,8 +103,10 @@ final class StdioDebugAdapterTransport extends EmitterDebugAdapterTransport {
       // Gone already.
     }
     // Give it a moment to exit on its own (after `disconnect`).
-    final exited = await process.exitCode
-        .timeout(const Duration(seconds: 2), onTimeout: () => -1);
+    final exited = await process.exitCode.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () => -1,
+    );
     if (exited == -1) process.kill();
   }
 

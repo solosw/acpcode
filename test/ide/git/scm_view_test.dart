@@ -176,7 +176,13 @@ void main() {
     expect(find.text('10K'), findsWidgets);
     expect(find.byType(IdeListRow).evaluate().length, lessThan(100));
 
-    await tester.drag(text('f0.txt'), const Offset(0, -2000));
+    // The wheel's: dragging a row drags its file out.
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(text('f0.txt')),
+        scrollDelta: const Offset(0, 2000),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(text('f0.txt'), findsNothing);
     expect(find.byType(IdeListRow).evaluate().length, lessThan(100));

@@ -11,12 +11,16 @@ class PanelCard extends StatelessWidget {
     required this.child,
     this.highlighted = false,
     this.maxBodyHeight = 280,
+    this.collapsed = false,
   });
 
   final Widget header;
   final Widget child;
   final bool highlighted;
   final double maxBodyHeight;
+
+  /// The header alone, so the chat above it has the room.
+  final bool collapsed;
 
   @override
   Widget build(BuildContext context) {
@@ -36,16 +40,17 @@ class PanelCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 9, 10, 6),
+            padding: EdgeInsets.fromLTRB(12, 9, 10, collapsed ? 9 : 6),
             child: header,
           ),
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxBodyHeight),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(8, 0, 10, 10),
-              child: child,
+          if (!collapsed)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxBodyHeight),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(8, 0, 10, 10),
+                child: child,
+              ),
             ),
-          ),
         ],
       ),
     );

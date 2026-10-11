@@ -24,6 +24,7 @@ abstract final class KernelRegistry {
       readGoal: readClaudeGoal,
       forkSession: forkClaudeSession,
       usageOffBy: () => claudeUsageOffByAt(context.cwd),
+      rejectTooOld: rejectTooOldClaude,
     ),
     catalog: const ClaudeCatalog(),
   );

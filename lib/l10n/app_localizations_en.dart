@@ -1020,6 +1020,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdSaveAll => 'Save All';
 
   @override
+  String get cmdToggleAutoSave => 'Toggle Auto Save';
+
+  @override
   String get cmdCloseEditor => 'Close Editor';
 
   @override
@@ -1374,6 +1377,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get menuCloseWindow => 'Close Window';
+
+  @override
+  String get menuAutoSave => 'Auto Save';
 
   @override
   String get menuBackToChat => 'Back to Chat';
@@ -1828,6 +1834,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get iconPickerDeleteFromLibrary => 'Delete from Library';
+
+  @override
+  String get iconPickerBrands => 'Logos';
+
+  @override
+  String get iconPickerSiteIcon => 'Use the site\'s icon';
+
+  @override
+  String iconPickerSiteIconNone(String host) {
+    return 'No icon found on $host';
+  }
 
   @override
   String get iconUploadTooLarge => 'The file is larger than 5 MB';
@@ -2436,6 +2453,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get usageReservedForCompaction => 'Reserved for compaction';
 
   @override
+  String get usagePromptCache => 'Prompt cache';
+
+  @override
+  String usageCacheLast(String read, String written, String uncached) {
+    return 'Last request: $read read · $written written · $uncached uncached';
+  }
+
+  @override
+  String usageCacheOverall(String percent) {
+    return 'main chat $percent%';
+  }
+
+  @override
+  String usageCacheConversation(String read, String written, String percent) {
+    return 'Main conversation: $read read · $written written · $percent% hit';
+  }
+
+  @override
+  String get usageCacheExcludes =>
+      'Not counting subagents, compaction or the CLI\'s side requests';
+
+  @override
   String get usagePlanUsage => 'Plan usage';
 
   @override
@@ -2556,6 +2595,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get interactionBack => 'Back';
 
   @override
+  String get interactionCollapse => 'Collapse';
+
+  @override
+  String get interactionExpand => 'Expand';
+
+  @override
   String interactionMoreLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -2608,12 +2653,73 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mcpDisable => 'Disable';
 
   @override
+  String get mcpTest => 'Test connection';
+
+  @override
+  String get mcpTestAll => 'Test all';
+
+  @override
+  String get mcpViewLog => 'View log';
+
+  @override
+  String mcpExitCode(int code) {
+    return 'Exited with code $code';
+  }
+
+  @override
+  String mcpTimedOut(int seconds) {
+    return 'No answer within $seconds seconds';
+  }
+
+  @override
+  String get mcpLog => 'Output (stderr)';
+
+  @override
+  String get mcpNoLog => 'It wrote nothing.';
+
+  @override
+  String get mcpSignInHint =>
+      'Sign in from a chat\'s MCP servers panel, or with /mcp.';
+
+  @override
+  String get mcpProbeNote =>
+      'Started and greeted with MCP\'s initialize, as `claude mcp list` checks it.';
+
+  @override
   String todoCount(int done, int total) {
     return 'Todos $done/$total';
   }
 
   @override
-  String get messageQueued => 'Queued';
+  String queuedMessages(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count queued',
+      one: '1 queued',
+    );
+    return '$_temp0 · sent when the agent is done';
+  }
+
+  @override
+  String queuedImages(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count images',
+      one: '1 image',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get queuedEdit => 'Take back to edit';
+
+  @override
+  String get queuedSendNow => 'Stop the agent and send this now';
+
+  @override
+  String get queuedRemove => 'Remove from the queue';
 
   @override
   String get tabClose => 'Close';
@@ -2882,6 +2988,19 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get explorerPasteIntoAncestor =>
       'File to paste is an ancestor of the destination folder';
+
+  @override
+  String explorerUploading(int done, int total) {
+    return 'Uploading files... $done/$total';
+  }
+
+  @override
+  String explorerDownloading(int done, int total) {
+    return 'Downloading files... $done/$total';
+  }
+
+  @override
+  String get explorerPreparingTransfer => 'Preparing files...';
 
   @override
   String get explorerNewFile => 'New File...';
@@ -5186,7 +5305,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get ideClearRecent => 'Clear';
 
   @override
-  String get ideChatNoFolder => 'Open a folder to chat with an agent in it.';
+  String get ideChatNoFolder =>
+      'Open a file or a folder to chat with an agent about it.';
 
   @override
   String ideCannotOpen(String path, String error) {
@@ -5287,6 +5407,38 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsWindows => 'Windows';
+
+  @override
+  String get claudePathSetting => 'Path';
+
+  @override
+  String get claudePathSettingDescription =>
+      'Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)';
+
+  @override
+  String get claudePathSettingHint => 'Automatic';
+
+  @override
+  String get claudePathChecking => 'Checking…';
+
+  @override
+  String claudePathInUse(String path, String version) {
+    return 'In use: $path ($version)';
+  }
+
+  @override
+  String claudePathInUseUnknown(String path) {
+    return 'In use: $path';
+  }
+
+  @override
+  String claudePathInUseDownloaded(String version) {
+    return 'In use: Claude Code $version, downloaded by BaoCode';
+  }
+
+  @override
+  String get claudePathMissing =>
+      'None found yet: Claude Code is downloaded as the first conversation starts.';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide Windows';
@@ -5462,7 +5614,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarSearch => 'Search';
 
   @override
-  String get sidebarCustomize => 'Customize';
+  String get sidebarCustomize => 'Skills';
+
+  @override
+  String get sidebarOpenProject => 'Open Project';
 
   @override
   String get palettePlaceholder =>
@@ -5623,7 +5778,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get customizeNameHint => 'name';
 
   @override
-  String get customizeNameInvalid => 'Letters, digits, - and _ only (up to 64)';
+  String get customizeNameInvalid =>
+      'Starts with a letter or digit; no spaces or / \\ : * ? \" < > | (up to 64)';
+
+  @override
+  String get customizeNameUnofficial =>
+      'Officially lowercase, digits and - only; claude.ai may reject it';
 
   @override
   String get customizeNameTaken => 'One by that name already exists';
@@ -5691,10 +5851,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsTitle => 'Models';
 
   @override
-  String get modelsDescription =>
-      'Where Claude Code\'s models come from: Claude Code as set up on this machine, and upstreams you add. Anthropic-compatible upstreams are spoken to by Claude Code itself; OpenAI\'s APIs through a local proxy of BaoCode\'s that translates.';
-
-  @override
   String get modelsDefault => 'Default Model for New Sessions';
 
   @override
@@ -5729,6 +5885,80 @@ class AppLocalizationsEn extends AppLocalizations {
   String modelsEnableProvider(String name) {
     return 'Offer $name in the model picker';
   }
+
+  @override
+  String get modelsFeaturedWhy => 'Why am I seeing this?';
+
+  @override
+  String get modelsFeaturedNote =>
+      'These sites are officially listed by BaoCode';
+
+  @override
+  String get modelsFeaturedNoteHow =>
+      'Add the one-click import to be listed too, for free';
+
+  @override
+  String get modelsFeaturedNoteLink => 'List My Site Too';
+
+  @override
+  String modelsImportTitle(String host) {
+    return 'Import an upstream from $host';
+  }
+
+  @override
+  String get modelsImportProtocol => 'Protocol';
+
+  @override
+  String get modelsImportUrl => 'Base URL';
+
+  @override
+  String get modelsImportKeyLabel => 'Key';
+
+  @override
+  String get modelsImportListedBadge => 'Officially listed';
+
+  @override
+  String get modelsImportNoKey => 'none, add it afterwards';
+
+  @override
+  String modelsImportExisting(String name) {
+    return 'You have this upstream already: $name.';
+  }
+
+  @override
+  String get modelsImportNamePlaceholder => 'Name';
+
+  @override
+  String get modelsImportAdd => 'Import Models';
+
+  @override
+  String get modelsImportFinish => 'Import';
+
+  @override
+  String get modelsImportWithoutModels => 'Import Without Models';
+
+  @override
+  String get modelsImportPreparing => 'Getting your models ready…';
+
+  @override
+  String modelsImportUpdateKey(String name) {
+    return 'Update $name\'s Key';
+  }
+
+  @override
+  String modelsImportOpenExisting(String name) {
+    return 'Open $name';
+  }
+
+  @override
+  String get modelsImportAsNew => 'Add as New Upstream';
+
+  @override
+  String get modelsImportInvalid => 'This import link can\'t be used';
+
+  @override
+  String get modelsImportInvalidDetail =>
+      'It needs a base URL (http or https) and a protocol BaoCode knows. Ask the site for a new link, or add the upstream by hand in Settings → Models.';
 
   @override
   String get modelsAddProvider => 'Add Upstream';
@@ -5909,6 +6139,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsName => 'Name';
 
   @override
+  String get modelsIcon => 'Icon';
+
+  @override
+  String get modelsIconDescription =>
+      'Heads its models in the model picker: a maker\'s logo, the site\'s icon or a picture of your own. Unset, the maker\'s logo its base URL names.';
+
+  @override
+  String get modelsIconChange => 'Change Icon';
+
+  @override
   String get modelsProtocol => 'Protocol';
 
   @override
@@ -6085,7 +6325,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL: the model subagents run on.';
+      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).';
 
   @override
   String get modelsAdvanced => 'Advanced';
@@ -6421,6 +6661,107 @@ class AppLocalizationsEn extends AppLocalizations {
   String get updateModeNone => 'Off';
 
   @override
+  String get diagnosticsTitle => 'Diagnostic Logs';
+
+  @override
+  String get diagnosticsDescription =>
+      'Send BaoCode\'s error logs to its developers to help track down a problem. Nothing is sent until you upload.';
+
+  @override
+  String get diagnosticsUpload => 'Upload…';
+
+  @override
+  String get diagnosticsDialogTitle => 'Upload Diagnostic Logs';
+
+  @override
+  String get diagnosticsNotePlaceholder =>
+      'Note (optional): what went wrong, and how to make it happen again';
+
+  @override
+  String diagnosticsFiles(int count, String size) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count log files',
+      one: '1 log file',
+    );
+    return '$_temp0 ($size) will be uploaded.';
+  }
+
+  @override
+  String get diagnosticsNoFiles =>
+      'There are no logs yet: only the note and the version details are uploaded.';
+
+  @override
+  String diagnosticsDumps(int count, String size) {
+    return 'Include hang memory dumps ($count, $size)';
+  }
+
+  @override
+  String get diagnosticsDumpsDetail =>
+      'Memory dumps may contain parts of open files and paths. Over 10 MB, only the newest are included.';
+
+  @override
+  String get diagnosticsPrivacy =>
+      'Your home folder is written as ~. The app\'s version, system and language are sent with the logs, but not the usage statistics\' install ID. Kept on the server for 90 days.';
+
+  @override
+  String get diagnosticsSend => 'Upload';
+
+  @override
+  String get diagnosticsUploading => 'Uploading…';
+
+  @override
+  String get diagnosticsUploaded => 'Uploaded. Report ID:';
+
+  @override
+  String get diagnosticsUploadedDetail =>
+      'Give this ID to BaoCode\'s developers so they can find these logs.';
+
+  @override
+  String diagnosticsOmittedDumps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count older memory dumps were',
+      one: '1 older memory dump was',
+    );
+    return '$_temp0 left out: over 10 MB.';
+  }
+
+  @override
+  String get diagnosticsCopyId => 'Copy ID';
+
+  @override
+  String get diagnosticsCopied => 'Copied';
+
+  @override
+  String get diagnosticsRetry => 'Retry';
+
+  @override
+  String get diagnosticsTooLarge =>
+      'The logs are over 10 MB and cannot be uploaded.';
+
+  @override
+  String get diagnosticsRateLimited =>
+      'Too many uploads just now. Try again later.';
+
+  @override
+  String diagnosticsRefused(int status) {
+    return 'The server did not accept the logs (HTTP $status).';
+  }
+
+  @override
+  String diagnosticsServerError(String status) {
+    return 'The server could not take the logs ($status). Try again later.';
+  }
+
+  @override
+  String diagnosticsFailed(String error) {
+    return 'Could not upload: $error';
+  }
+
+  @override
   String get cmdCheckForUpdates => 'Check for Updates...';
 
   @override
@@ -6704,6 +7045,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String localDownloadingClaude(int percent) {
+    return 'Downloading Claude Code… $percent%';
+  }
+
+  @override
   String remoteUploadingClaude(String host, int percent) {
     return 'Sending Claude Code to $host… $percent%';
   }
@@ -6848,6 +7194,23 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0 · $names';
   }
+
+  @override
+  String newChatHostProjects(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count projects',
+      one: '1 project',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get newChatPickRemoteFolder => 'Choose Folder…';
+
+  @override
+  String get newChatPickRemoteFolderDetail => 'Open a folder on this host';
 
   @override
   String get newChatCreateWorkspace => 'Create Workspace…';
@@ -7321,4 +7684,83 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get extsTabLanguageServers => 'Language Servers';
+
+  @override
+  String get sidebarThisMachine => 'This Computer';
+
+  @override
+  String get sidebarSwitchHost => 'Switch between this computer and SSH hosts';
+
+  @override
+  String get sidebarAddSshHost => 'Add SSH Host...';
+
+  @override
+  String sidebarOpenFolderOn(String host) {
+    return 'Open Folder on $host...';
+  }
+
+  @override
+  String sidebarNoProjectsOn(String host) {
+    return 'No projects on $host yet.';
+  }
+
+  @override
+  String get sidebarHostConnected => 'Connected';
+
+  @override
+  String get sidebarHostConnecting => 'Connecting...';
+
+  @override
+  String get sidebarHostDisconnected => 'Disconnected';
+
+  @override
+  String get sidebarHostIdle => 'Not connected';
+
+  @override
+  String get sidebarDisconnectHost => 'Disconnect';
+
+  @override
+  String get sidebarRemoveHost => 'Remove Host';
+
+  @override
+  String sidebarRemoveHostTitle(String host) {
+    return 'Remove $host?';
+  }
+
+  @override
+  String get sidebarRemoveHostMessage =>
+      'Its projects are taken off the sidebar. Their conversations are kept, and come back once the host is added again.';
+
+  @override
+  String get sidebarRemove => 'Remove';
+
+  @override
+  String sidebarElsewhereNeedsYou(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count agents on other machines need you',
+      one: '1 agent on another machine needs you',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get sidebarRenameHost => 'Rename Host';
+
+  @override
+  String get explorerNoPermission => 'No permission to read this folder';
+
+  @override
+  String fileErrorAccessDenied(String path) {
+    return 'Permission denied: $path';
+  }
+
+  @override
+  String get remoteAddedHosts => 'Added';
+
+  @override
+  String explorerUndoCreateChanged(String name) {
+    return '$name has changed since it was made. Undo deletes it anyway?';
+  }
 }

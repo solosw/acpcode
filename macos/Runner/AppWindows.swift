@@ -101,6 +101,7 @@ final class AppWindows: NSObject {
       result(nil)
     case "focus":
       if let viewId = Self.id(call.arguments), let window = window(viewId) {
+        window.alphaValue = 1
         show(window)
       }
       result(nil)
@@ -181,7 +182,9 @@ final class AppWindows: NSObject {
     viewId == 0 ? main : windows[viewId]
   }
 
-  /// A window for a view of its own, shown in front: the view's id.
+  /// A window for a view of its own, in front but not seen until Flutter
+  /// focuses it, once it has drawn it (as the Windows app's, made hidden):
+  /// the view's id.
   private func create(title: String, frame: [String: Any]?, width: Double? = nil) -> Int64? {
     guard started else { return nil }
     let flutter = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
@@ -209,6 +212,15 @@ final class AppWindows: NSObject {
       // Down and right of the one in front, as a document window.
       window.setFrameTopLeftPoint(front.cascadeTopLeft(
         from: NSPoint(x: front.frame.minX, y: front.frame.maxY)))
+    }
+    // On screen, for Flutter to draw into, but see-through: shown empty,
+    // it would flash its bare background first. Full screen goes as it is
+    // (its Space would be empty anyway); one never focused shows after all.
+    if !fullScreen {
+      window.alphaValue = 0
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak window] in
+        window?.alphaValue = 1
+      }
     }
     show(window)
     if fullScreen { window.toggleFullScreen(nil) }

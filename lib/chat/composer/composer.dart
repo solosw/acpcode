@@ -14,7 +14,6 @@ import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../keybindings/chat_keybindings.dart';
 import '../../l10n/l10n.dart';
-import '../../models/model_provider.dart' show builtinProviderId;
 import '../../settings/settings_dialog.dart'
     show SettingsOpener, SettingsSection;
 import '../../theme/app_theme.dart';
@@ -22,6 +21,7 @@ import '../../theme/workbench_theme.dart' show WorkbenchColors, themeColors;
 import '../chat_keys.dart';
 import '../chat_models.dart';
 import '../chat_session.dart';
+import '../open_editor.dart';
 import '../floating/floating_layer.dart';
 import '../floating/floating_placement.dart';
 import '../floating/floating_registry.dart';
@@ -84,6 +84,7 @@ class ChatComposer extends StatefulWidget {
     this.onCancel,
     this.tapRegionGroupId,
     this.draft,
+    this.openEditor,
   });
 
   final ChatSession session;
@@ -106,6 +107,9 @@ class ChatComposer extends StatefulWidget {
   /// Where what is typed is kept while the composer is gone; once saved,
   /// it starts from there rather than [initialText] and [initialImages].
   final ComposerDraft? draft;
+
+  /// The file open in the editor beside the chat (see [ChatSession.send]).
+  final OpenEditor? Function()? openEditor;
 
   @override
   State<ChatComposer> createState() => ChatComposerState();
@@ -325,6 +329,7 @@ class ChatComposerState extends State<ChatComposer>
       if (!mounted) return;
       _focusNode.requestFocus();
       _takeDraftFiles();
+      _takeDraftMessage();
     });
   }
 
@@ -545,6 +550,48 @@ class ChatComposerState extends State<ChatComposer>
     if (files.isNotEmpty) unawaited(insertFiles(files));
   }
 
+  /// The message put back in the draft to be edited (see
+  /// [ComposerDraft.restore]): after what is typed, the caret at its end.
+  void _takeDraftMessage() {
+    final message = widget.draft?.takeMessage();
+    if (message == null) return;
+    _pool = {
+      for (final image in message.images) ?image.number: image,
+      ..._pool,
+    };
+    var text = message.text;
+    final referred = {
+      for (final match in imageReferencePattern.allMatches(text))
+        int.parse(match[1]!),
+    };
+    final unreferred = [
+      for (final image in message.images)
+        if (image.number case final number? when !referred.contains(number))
+          number,
+    ];
+    if (unreferred.isNotEmpty) {
+      text = [unreferred.map(imageReference).join(' '), text].join(' ');
+    }
+    final content = composerDeltaFromText(
+      text,
+      ComposerVocabulary.read(context),
+      images: _pool.keys.toSet(),
+    );
+    final current = _controller.document.toDelta();
+    final typed = _controller.document.length > 1;
+    _controller
+      ..compose(
+        current.diff(typed ? current.concat(content) : content),
+        _controller.selection,
+        ChangeSource.local,
+      )
+      ..updateSelection(
+        TextSelection.collapsed(offset: _controller.document.length - 1),
+        ChangeSource.local,
+      );
+    _focusNode.requestFocus();
+  }
+
   /// Keeps what is typed, and where the caret is, in the draft.
   void _saveDraft() {
     if (_takingDraft) return;
@@ -564,6 +611,7 @@ class ChatComposerState extends State<ChatComposer>
   void _handleDraftChanged() {
     final draft = widget.draft;
     if (draft != null && draft.pendingFiles.isNotEmpty) _takeDraftFiles();
+    if (draft?.pendingMessage != null) _takeDraftMessage();
     if (draft == null || identical(draft.savedBy, this) || !draft.saved) {
       return;
     }
@@ -1178,7 +1226,7 @@ class ChatComposerState extends State<ChatComposer>
       onSubmit(message);
       return;
     }
-    widget.session.send(message);
+    widget.session.send(message, editor: widget.openEditor);
     _pool = {};
     _controller.clear();
     _leaveHistory();
@@ -1683,13 +1731,9 @@ class ChatComposerState extends State<ChatComposer>
                       options: model.options,
                       selected: model.selected,
                       label: _modelLabel(model.selected, model.options),
-                      // The id and the context window: once there are
-                      // upstreams' models.
-                      describes: model.options.any(
-                        (option) =>
-                            option.group != null &&
-                            option.group!.id != builtinProviderId,
-                      ),
+                      // Each its name alone, one line; its maker's logo
+                      // and its upstream's heading tell the rest.
+                      describes: false,
                       settingsOf: (option) => [
                         for (final setting in session.modelSettings(option.id))
                           ModelSettingChoice(

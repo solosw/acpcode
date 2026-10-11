@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,8 +11,10 @@ import '../chat/floating/floating_placement.dart';
 import '../chat/widgets/hover_builder.dart';
 import '../ide/ide_code_editor.dart';
 import '../ide/ide_dialog.dart';
+import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
 import '../platform/app_platform.dart';
+import '../remote/remote_location.dart';
 import '../sidebar/sidebar.dart' show SidebarIconButton;
 import '../sidebar/sidebar_menu.dart';
 import '../theme/app_theme.dart';
@@ -22,6 +25,7 @@ import '../workspace/title_bar_double_click.dart';
 import '../workspace/workspace.dart';
 import 'customization_store.dart';
 import 'customizations.dart';
+import 'mcp_probe.dart';
 
 extension CustomizationKindLabels on CustomizationKind {
   String label(AppLocalizations l10n) => switch (this) {
@@ -71,11 +75,18 @@ class CustomizeView extends StatefulWidget {
     this.leading,
     this.titleBarInset = 12,
     this.onOpenFile,
+    this.host,
   });
 
+  /// The customizations of the machine shown: this one's, or [host]'s.
   final CustomizationStore store;
 
-  /// The projects whose customizations can be shown beside the user's.
+  /// The remote host whose customizations these are, as the sidebar names
+  /// it; null for this machine's.
+  final String? host;
+
+  /// The projects whose customizations can be shown beside the user's:
+  /// those of the machine shown.
   final List<Project> projects;
 
   /// The one shown first; the user's alone when null.
@@ -94,6 +105,11 @@ class CustomizeView extends StatefulWidget {
   @visibleForTesting
   static Future<bool> Function(Editor editor, String path) launch =
       openInEditor;
+
+  /// Asks an MCP server whether it answers (this machine's servers alone);
+  /// replaceable under test. None: no status shown.
+  @visibleForTesting
+  static McpProber? mcpProber = platformMcpProber;
 
   @override
   State<CustomizeView> createState() => CustomizeViewState();
@@ -123,8 +139,27 @@ class CustomizeViewState extends State<CustomizeView> {
   @override
   void didUpdateWidget(CustomizeView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.kind != widget.kind) show(widget.kind);
+    if (!identical(oldWidget.store, widget.store)) {
+      // Another machine's: from its own projects, the list again.
+      _project = widget.project;
+      _open = null;
+      _items = null;
+      _error = null;
+      if (oldWidget.kind != widget.kind) _kind = widget.kind;
+      unawaited(_load());
+    } else if (oldWidget.kind != widget.kind) {
+      show(widget.kind);
+    }
   }
+
+  /// The project's folder on its machine (a remote one's path there).
+  String? get _projectPath => switch (_project) {
+    final project? => RemoteLocation.pathOf(project.path),
+    null => null,
+  };
+
+  /// How paths are spelled where the customizations are.
+  p.Context get _paths => widget.store.isLocal ? p.context : p.posix;
 
   @override
   void dispose() {
@@ -144,12 +179,13 @@ class CustomizeViewState extends State<CustomizeView> {
   Future<void> _load() async {
     final generation = ++_generation;
     try {
-      final items = await widget.store.list(_kind, project: _project?.path);
+      final items = await widget.store.list(_kind, project: _projectPath);
       if (!mounted || generation != _generation) return;
       setState(() {
         _items = items;
         _error = null;
       });
+      _probeNew();
     } on Object catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -164,12 +200,77 @@ class CustomizeViewState extends State<CustomizeView> {
     unawaited(_load());
   }
 
+  // --- MCP servers' status ------------------------------------------------
+
+  /// What asking each MCP server found, by [_probeKey]: kept while the
+  /// page is, so a server is asked again only when asked to or changed.
+  final Map<String, McpProbeResult> _probes = {};
+
+  /// The asking under way for each, the latest winning.
+  final Map<String, int> _probing = {};
+  int _probeCount = 0;
+
+  /// A server as it is configured, for its project: changed, asked anew.
+  String _probeKey(Customization item) =>
+      jsonEncode([item.scope.name, item.name, item.server, _projectPath]);
+
+  /// Whether [item], an MCP server, can be asked: one of this machine's
+  /// with a command or URL (not a claude.ai connector), turned on.
+  bool _probeable(Customization item) =>
+      item.kind == CustomizationKind.mcps &&
+      item.server != null &&
+      item.enabled != false &&
+      widget.store.isLocal &&
+      CustomizeView.mcpProber != null;
+
+  /// Where [item], an MCP server, stands; null for none to show.
+  McpProbeResult? _statusOf(Customization item) {
+    if (item.kind != CustomizationKind.mcps) return null;
+    if (item.enabled == false) return McpProbeResult.disabled;
+    if (!_probeable(item)) return null;
+    return _probes[_probeKey(item)] ?? McpProbeResult.checking;
+  }
+
+  /// The servers listed not yet asked (new, or changed), asked.
+  void _probeNew() {
+    if (_kind != CustomizationKind.mcps) return;
+    for (final item in _items ?? const <Customization>[]) {
+      if (_probeable(item) && !_probing.containsKey(_probeKey(item))) {
+        unawaited(_probe(item));
+      }
+    }
+  }
+
+  /// Asks [item], an MCP server (again, for Test connection).
+  Future<void> _probe(Customization item) async {
+    final prober = CustomizeView.mcpProber;
+    if (prober == null || !_probeable(item)) return;
+    final key = _probeKey(item);
+    final count = _probing[key] = ++_probeCount;
+    setState(() => _probes.remove(key));
+    McpProbeResult result;
+    try {
+      result = await prober(item.server!, cwd: _projectPath);
+    } on Object catch (error) {
+      result = McpProbeResult(McpProbeStatus.failed, message: '$error');
+    }
+    if (!mounted || _probing[key] != count) return;
+    setState(() => _probes[key] = result);
+  }
+
+  void _probeAll(Iterable<Customization> items) {
+    for (final item in items) {
+      unawaited(_probe(item));
+    }
+  }
+
   Future<void> _create(CustomizationScope scope) async {
     final l10n = context.l10n;
     final name = await showDialog<String>(
       context: context,
       barrierColor: const Color(0x99000000),
       builder: (context) => _NameDialog(
+        kind: _kind,
         title: l10n.customizeNewTitle(_kind.label(l10n)),
         taken: {
           for (final item in _items ?? const <Customization>[])
@@ -188,7 +289,7 @@ class CustomizeViewState extends State<CustomizeView> {
         _kind,
         scope,
         name,
-        project: _project?.path,
+        project: _projectPath,
       );
       await _load();
       if (!mounted) return;
@@ -235,7 +336,16 @@ class CustomizeViewState extends State<CustomizeView> {
                     setState(() => _open = null);
                     unawaited(_load());
                   },
-                  onOpenFile: widget.onOpenFile,
+                  onOpenFile: widget.store.isLocal ? widget.onOpenFile : null,
+                  status: switch (_statusOf(open)) {
+                    final status? => _McpStatusPanel(
+                      status: status,
+                      onTest: _probeable(open)
+                          ? () => unawaited(_probe(open))
+                          : null,
+                    ),
+                    null => null,
+                  },
                 )
               : _buildList(context.l10n),
         ),
@@ -255,16 +365,29 @@ class CustomizeViewState extends State<CustomizeView> {
               leading,
               const SizedBox(width: 10),
             ],
-            Expanded(
-              child: Text(
-                l10n.customizeTitle,
-                style: TextStyle(
-                  color: AppColors.textMuted,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                ),
+            Text(
+              l10n.customizeTitle,
+              style: TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
               ),
             ),
+            // Whose: a remote host's, named as the sidebar names it.
+            if (widget.host case final host?) ...[
+              const SizedBox(width: 10),
+              Icon(Codicons.remote, size: 13, color: AppColors.textFaint),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  host,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textFaint, fontSize: 12.5),
+                ),
+              ),
+            ],
+            const Spacer(),
             SidebarIconButton(
               icon: Codicons.close,
               tooltip: l10n.customizeClose,
@@ -486,6 +609,22 @@ class CustomizeViewState extends State<CustomizeView> {
                   ],
                 ),
               ),
+            if (items.where(_probeable).toList() case final probeable
+                when probeable.isNotEmpty) ...[
+              _Chip(
+                outlined: true,
+                onTap: () => _probeAll(probeable),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Codicons.refresh, size: 13, color: AppColors.text),
+                    const SizedBox(width: 5),
+                    Text(l10n.mcpTestAll),
+                  ],
+                ),
+              ),
+              if (configurable) const SizedBox(width: 6),
+            ],
             if (configurable)
               _Chip(
                 outlined: true,
@@ -525,6 +664,7 @@ class CustomizeViewState extends State<CustomizeView> {
                 if (i > 0) Divider(height: 1, color: AppColors.partBorder),
                 _ItemRow(
                   item: item,
+                  status: _statusOf(item),
                   onOpen: () => setState(() => _open = item),
                   menu: () => _menu(item),
                 ),
@@ -561,7 +701,7 @@ class CustomizeViewState extends State<CustomizeView> {
   /// Opens the file [_kind] is kept in for [scope], as it is or, not there
   /// yet, as it would start.
   Future<void> _openConfig(CustomizationScope scope) async {
-    final project = _project?.path;
+    final project = _projectPath;
     final path = await widget.store.configFile(_kind, scope, project: project);
     if (path == null || !mounted) return;
     setState(
@@ -569,8 +709,8 @@ class CustomizeViewState extends State<CustomizeView> {
         kind: _kind,
         scope: scope,
         name: project == null || scope == CustomizationScope.user
-            ? p.basename(path)
-            : p.relative(path, from: project),
+            ? _paths.basename(path)
+            : _paths.relative(path, from: project),
         path: path,
         detail: _kind.configTemplate,
       ),
@@ -579,25 +719,40 @@ class CustomizeViewState extends State<CustomizeView> {
 
   List<SidebarMenuItem> _menu(Customization item) {
     final l10n = context.l10n;
+    // A remote host's files are neither opened nor shown here.
+    final local = widget.store.isLocal;
     return [
       SidebarMenuItem(
         l10n.customizeEdit,
         icon: Icons.edit_outlined,
         onSelected: () => setState(() => _open = item),
       ),
-      if (widget.onOpenFile case final open? when item.editable)
+      if (_probeable(item)) ...[
+        SidebarMenuItem(
+          l10n.mcpTest,
+          icon: Icons.refresh_rounded,
+          onSelected: () => unawaited(_probe(item)),
+        ),
+        SidebarMenuItem(
+          l10n.mcpViewLog,
+          icon: Icons.article_outlined,
+          onSelected: () => setState(() => _open = item),
+        ),
+      ],
+      if (widget.onOpenFile case final open? when item.editable && local)
         SidebarMenuItem(
           l10n.workspaceOpenIn(Editor.fastIde.localizedPlatformLabel(l10n)),
           icon: Editor.fastIde.icon,
           onSelected: () => open(item.path),
         ),
-      SidebarMenuItem(
-        l10n.revealInFileManager,
-        icon: Editor.folder.icon,
-        onSelected: () => unawaited(
-          CustomizeView.launch(Editor.folder, p.dirname(item.path)),
+      if (local)
+        SidebarMenuItem(
+          l10n.revealInFileManager,
+          icon: Editor.folder.icon,
+          onSelected: () => unawaited(
+            CustomizeView.launch(Editor.folder, p.dirname(item.path)),
+          ),
         ),
-      ),
       SidebarMenuItem(
         l10n.workspaceCopyPath,
         icon: Icons.content_copy_rounded,
@@ -714,11 +869,15 @@ class _ItemRow extends StatelessWidget {
     required this.item,
     required this.onOpen,
     required this.menu,
+    this.status,
   });
 
   final Customization item;
   final VoidCallback onOpen;
   final List<SidebarMenuItem> Function() menu;
+
+  /// An MCP server's: whether it answers.
+  final McpProbeResult? status;
 
   @override
   Widget build(BuildContext context) {
@@ -770,7 +929,10 @@ class _ItemRow extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (item.enabled case final enabled?) ...[
+                          if (status case final status?) ...[
+                            const SizedBox(width: 8),
+                            _McpStatusBadge(status),
+                          ] else if (item.enabled case final enabled?) ...[
                             const SizedBox(width: 8),
                             Text(
                               enabled
@@ -794,6 +956,19 @@ class _ItemRow extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: AppColors.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      // Why it failed, at a glance: the whole in its log.
+                      if (status?.reason(l10n) case final reason?) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          reason,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: themeColors['errorForeground'],
                             fontSize: 12,
                           ),
                         ),
@@ -826,12 +1001,16 @@ class _CustomizationEditor extends StatefulWidget {
     required this.store,
     required this.onBack,
     this.onOpenFile,
+    this.status,
   });
 
   final Customization item;
   final CustomizationStore store;
   final VoidCallback onBack;
   final ValueChanged<String>? onOpenFile;
+
+  /// Above its text: an MCP server's status and log.
+  final Widget? status;
 
   @override
   State<_CustomizationEditor> createState() => _CustomizationEditorState();
@@ -1047,6 +1226,11 @@ class _CustomizationEditorState extends State<_CustomizationEditor> {
                     ),
                   ),
                 ),
+              if (widget.status case final status?)
+                Padding(
+                  padding: const EdgeInsets.only(left: 32, bottom: 10),
+                  child: status,
+                ),
               Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(left: 32),
@@ -1069,6 +1253,185 @@ class _CustomizationEditorState extends State<_CustomizationEditor> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+extension on McpProbeResult {
+  String label(AppLocalizations l10n) => switch (status) {
+    McpProbeStatus.checking => l10n.mcpConnecting,
+    McpProbeStatus.connected => l10n.mcpConnected,
+    McpProbeStatus.needsAuth => l10n.mcpNeedsSignIn,
+    McpProbeStatus.failed => l10n.mcpFailed,
+    McpProbeStatus.disabled => l10n.mcpDisabled,
+  };
+
+  /// As the chat's MCP servers panel colors them.
+  Color get color => switch (status) {
+    McpProbeStatus.connected => AppColors.added,
+    McpProbeStatus.needsAuth => themeColors['list.warningForeground'],
+    McpProbeStatus.failed => themeColors['errorForeground'],
+    McpProbeStatus.checking || McpProbeStatus.disabled => AppColors.textFaint,
+  };
+
+  /// One line of why it failed (or what it wants); null otherwise.
+  String? reason(AppLocalizations l10n) {
+    if (status == McpProbeStatus.needsAuth) return null;
+    if (status != McpProbeStatus.failed) return null;
+    final last = log
+        .split('\n')
+        .map((line) => line.trim())
+        .lastWhere((line) => line.isNotEmpty, orElse: () => '');
+    final parts = [
+      ?message,
+      if (timedOut) l10n.mcpTimedOut(mcpProbeTimeout.inSeconds),
+      if (exitCode case final code?) l10n.mcpExitCode(code),
+      if (message == null && last.isNotEmpty) last,
+    ];
+    return parts.isEmpty ? l10n.mcpFailed : parts.join(' · ');
+  }
+}
+
+/// A dot in its color and what it says, in a server's row.
+class _McpStatusBadge extends StatelessWidget {
+  const _McpStatusBadge(this.status);
+
+  final McpProbeResult status;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final color = status.color;
+    final badge = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(
+          status.label(l10n),
+          style: TextStyle(color: color, fontSize: 11.5),
+        ),
+      ],
+    );
+    return switch (status.server) {
+      final server? when server.isNotEmpty => IdeHover(
+        message: server,
+        child: badge,
+      ),
+      _ => badge,
+    };
+  }
+}
+
+/// An MCP server's status over its entry: why it failed and what it
+/// wrote, and the way to ask again.
+class _McpStatusPanel extends StatelessWidget {
+  const _McpStatusPanel({required this.status, this.onTest});
+
+  final McpProbeResult status;
+  final VoidCallback? onTest;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final failed = status.status == McpProbeStatus.failed;
+    final reason = status.reason(l10n);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: themeColors['editorWidget.background'],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.partBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              _McpStatusBadge(status),
+              if (status.server case final server? when server.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    server,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: AppColors.textFaint, fontSize: 12),
+                  ),
+                ),
+              ],
+              const Spacer(),
+              if (onTest case final onTest?)
+                _Button(
+                  label: l10n.mcpTest,
+                  onTap: status.status == McpProbeStatus.checking
+                      ? null
+                      : onTest,
+                ),
+            ],
+          ),
+          if (reason != null) ...[
+            const SizedBox(height: 6),
+            SelectableText(
+              reason,
+              style: TextStyle(
+                color: themeColors['errorForeground'],
+                fontSize: 12,
+              ),
+            ),
+          ],
+          if (status.status == McpProbeStatus.needsAuth) ...[
+            const SizedBox(height: 6),
+            Text(
+              l10n.mcpSignInHint,
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+          ],
+          if (failed || status.log.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              l10n.mcpLog,
+              style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+            ),
+            const SizedBox(height: 4),
+            Container(
+              constraints: const BoxConstraints(maxHeight: 160),
+              decoration: BoxDecoration(
+                color: AppColors.code,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppColors.partBorder),
+              ),
+              child: SingleChildScrollView(
+                reverse: true,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: SelectableText(
+                  status.log.isEmpty ? l10n.mcpNoLog : status.log,
+                  style: AppFonts.uiCodeStyle(11.5).copyWith(
+                    color: status.log.isEmpty
+                        ? AppColors.textFaint
+                        : AppColors.text,
+                    height: 1.45,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          if (status.status != McpProbeStatus.disabled) ...[
+            const SizedBox(height: 6),
+            Text(
+              l10n.mcpProbeNote,
+              style: TextStyle(color: AppColors.textFaint, fontSize: 11),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1128,8 +1491,13 @@ class _Button extends StatelessWidget {
 
 /// Asks the name of a new skill, subagent, command or rule.
 class _NameDialog extends StatefulWidget {
-  const _NameDialog({required this.title, required this.taken});
+  const _NameDialog({
+    required this.kind,
+    required this.title,
+    required this.taken,
+  });
 
+  final CustomizationKind kind;
   final String title;
 
   /// Names already taken where it is to go.
@@ -1157,9 +1525,16 @@ class _NameDialogState extends State<_NameDialog> {
   String? _problem(AppLocalizations l10n) {
     final name = _name.text.trim();
     if (name.isEmpty) return null;
-    if (!customizationName.hasMatch(name)) return l10n.customizeNameInvalid;
+    if (!isCustomizationName(name)) return l10n.customizeNameInvalid;
     if (widget.taken.contains(name)) return l10n.customizeNameTaken;
     return null;
+  }
+
+  /// A note, not a [_problem]: the name works, but not everywhere.
+  String? _note(AppLocalizations l10n) {
+    final name = _name.text.trim();
+    if (name.isEmpty || followsOfficialNaming(widget.kind, name)) return null;
+    return l10n.customizeNameUnofficial;
   }
 
   void _submit() {
@@ -1173,6 +1548,7 @@ class _NameDialogState extends State<_NameDialog> {
     final l10n = context.l10n;
     final colors = themeColors;
     final problem = _problem(l10n);
+    final note = problem == null ? _note(l10n) : null;
     return Dialog(
       backgroundColor: AppColors.surface,
       shadowColor: colors['widget.shadow'],
@@ -1235,16 +1611,18 @@ class _NameDialogState extends State<_NameDialog> {
                   ),
                 ),
               ),
-              SizedBox(
-                height: 22,
-                child: problem == null
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 22),
+                child: problem == null && note == null
                     ? null
                     : Padding(
                         padding: const EdgeInsets.only(top: 5),
                         child: Text(
-                          problem,
+                          problem ?? note!,
                           style: TextStyle(
-                            color: colors['errorForeground'],
+                            color: problem != null
+                                ? colors['errorForeground']
+                                : AppColors.textMuted,
                             fontSize: 11.5,
                           ),
                         ),

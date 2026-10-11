@@ -44,7 +44,6 @@ bool doNotTrack(String? value) => switch (value?.trim().toLowerCase()) {
 };
 
 /// `arm64`, `x64`, …: [abi]'s processor (`macos_arm64` → `arm64`).
-@visibleForTesting
 String abiArch(Abi abi) => '$abi'.split('_').last;
 
 /// What the app reports with ([platformTelemetry]).

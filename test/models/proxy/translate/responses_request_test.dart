@@ -527,6 +527,8 @@ void main() {
       );
       expect(out.get('text.format').exists, isFalse);
       expect(out.get('reasoning.effort').string, 'high');
+      // Unasked, the model's reasoning comes with no summary to show.
+      expect(out.get('reasoning.summary').string, 'auto');
     });
 
     test('an optional property downgrades strict', () {

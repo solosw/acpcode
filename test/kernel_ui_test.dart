@@ -13,6 +13,7 @@ import 'package:baocode/chat/panels/activity_strip.dart';
 import 'package:baocode/chat/panels/interaction_panel.dart';
 import 'package:baocode/chat/panels/context_usage_panel.dart';
 import 'package:baocode/chat/panels/mcp_servers_panel.dart';
+import 'package:baocode/chat/panels/queue_panel.dart';
 import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/widgets/activity_row.dart';
@@ -27,6 +28,7 @@ import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/main.dart';
 import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/theme/app_theme.dart';
+import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:baocode/chat/agent_view.dart';
 import 'package:baocode/chat/widgets/plan_card.dart';
@@ -65,12 +67,14 @@ Finder picker(String label) =>
 
 /// A Claude Code session on a CLI the test speaks for, a message sent.
 Future<({ChatSession session, FakeCli cli})> pumpScripted(
-  WidgetTester tester,
-) async {
+  WidgetTester tester, {
+  FakeCli? cli,
+}) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final cli = FakeCli();
+  cli ??= FakeCli();
+  final fake = cli;
   late final KernelDescriptor descriptor;
   descriptor = KernelDescriptor(
     id: 'claude-code',
@@ -78,7 +82,7 @@ Future<({ChatSession session, FakeCli cli})> pumpScripted(
     icon: Icons.auto_awesome_rounded,
     description: '',
     create: (context) =>
-        ClaudeCodeKernel(descriptor, context, start: (_) async => cli),
+        ClaudeCodeKernel(descriptor, context, start: (_) async => fake),
   );
   final session = ChatSession(
     kernel: descriptor,
@@ -131,6 +135,63 @@ Map<String, Object?> result(
 };
 
 void main() {
+  testWidgets('messages sent while the agent works wait over the composer, '
+      'to be taken back to edit, sent now or removed', (tester) async {
+    final (:session, :cli) = await pumpScripted(
+      tester,
+      cli: FakeCli(
+        answers: {
+          'cancel_async_message': {'cancelled': true},
+        },
+      ),
+    );
+    session
+      ..send(const ComposerMessage(text: 'then the tests'))
+      ..send(const ComposerMessage(text: 'and lint'))
+      ..send(const ComposerMessage(text: 'and docs'));
+    await tester.pump(const Duration(milliseconds: 100));
+    final panel = find.byType(QueuePanel);
+    expect(panel, findsOneWidget);
+    // Over the composer only: not in the conversation.
+    expect(find.textContaining('then the tests'), findsOneWidget);
+    expect(
+      find.descendant(of: panel, matching: find.text('then the tests')),
+      findsOneWidget,
+    );
+
+    // Taken back, into the composer.
+    await tester.tap(find.text('then the tests'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(cli.requests('cancel_async_message'), hasLength(1));
+    final composer = tester.widget<QuillEditor>(find.byType(QuillEditor).last);
+    expect(composer.controller.document.toPlainText(), 'then the tests\n');
+    expect(composer.controller.selection.baseOffset, 14);
+    expect(
+      [for (final (_, item) in session.queued) item.text],
+      ['and lint', 'and docs'],
+    );
+
+    await tester.tap(
+      find.descendant(of: panel, matching: find.byIcon(Codicons.trash)).last,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect([for (final (_, item) in session.queued) item.text], ['and lint']);
+
+    await tester.tap(
+      find.descendant(of: panel, matching: find.byIcon(Codicons.arrowUp)),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(cli.requests('interrupt'), hasLength(1));
+    cli.push({
+      'type': 'command_lifecycle',
+      'command_uuid': session.queued.single.$1,
+      'state': 'started',
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(panel, findsNothing);
+    expect(find.textContaining('and lint', findRichText: true), findsOneWidget);
+  });
+
   testWidgets('a new agent picks its kernel until it starts', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1;

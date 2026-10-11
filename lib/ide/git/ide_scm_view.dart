@@ -36,6 +36,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../../chat/composer/composer_files.dart';
+import '../../chat/composer/file_drag.dart';
 import '../../keybindings/keybinding_service.dart';
 import '../../l10n/l10n.dart';
 import '../../settings/user_settings.dart';
@@ -1068,7 +1070,7 @@ class IdeScmViewState extends State<IdeScmView>
       () => _targets(key, group, folder.resources.toList()),
     );
     final bubble = git.decorations?.folder(folder.path)?.color;
-    return IdeListRow(
+    final row = IdeListRow(
       key: ValueKey(key),
       selected: _isSelected(key),
       focusedItem: _selected == key,
@@ -1145,7 +1147,12 @@ class IdeScmViewState extends State<IdeScmView>
         ),
       ),
     );
+    return _draggable([ComposerFile(folder.path, directory: true)], row);
   }
+
+  /// [row], dragged onto the chat's composer, puts [files] in.
+  Widget _draggable(List<ComposerFile> files, Widget row) =>
+      FileDraggable(key: row.key, files: files, child: row);
 
   /// `scm/resourceFolder/context`'s inline actions: on every change in the
   /// folder, or of the selection it is in ([targets]).
@@ -1682,7 +1689,7 @@ class IdeScmViewState extends State<IdeScmView>
     void open({bool focus = false}) =>
         unawaited(widget.onOpenChange(resource, focusEditor: focus));
 
-    return IdeListRow(
+    final row = IdeListRow(
       key: ValueKey(key),
       selected: _isSelected(key),
       focusedItem: _selected == key,
@@ -1732,6 +1739,12 @@ class IdeScmViewState extends State<IdeScmView>
         ),
       ),
     );
+    // A deleted file is not there to put in.
+    if (resource.status.fileGone) return row;
+    return _draggable([
+      for (final target in targets())
+        if (!target.status.fileGone) ComposerFile(target.path),
+    ], row);
   }
 
   /// [resource]'s menu, its actions on [targets] (it or the selection it

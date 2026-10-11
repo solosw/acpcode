@@ -171,6 +171,19 @@ Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\BaoCodeFastIde\c
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\baocode.exe"" --baocode-cli ""%V"" -n ""%V"""; \
   Tasks: contextmenu
+; The baocode: URL scheme, always: a site's one-click import of an upstream
+; (baocode.dev/import opens baocode://provider/import?…; see
+; docs/upstream-import.md). The link comes after --baocode-link, which the
+; runner hands Flutter as a request (windows/runner/open_requests.cpp).
+Root: HKA; Subkey: "Software\Classes\baocode"; ValueType: string; \
+  ValueName: ""; ValueData: "URL:BaoCode"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\baocode"; ValueType: string; \
+  ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\baocode\DefaultIcon"; ValueType: string; \
+  ValueName: ""; ValueData: """{app}\baocode.exe"",0"
+Root: HKA; Subkey: "Software\Classes\baocode\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\baocode.exe"" --baocode-link ""%1"""
 ; Unticked: what an earlier install added goes.
 Root: HKA; Subkey: "Software\Classes\*\shell\BaoCode"; ValueType: none; \
   Tasks: not contextmenu; Flags: deletekey

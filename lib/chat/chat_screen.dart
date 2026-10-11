@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'chat_history_view.dart';
 import 'chat_keys.dart';
 import 'chat_models.dart';
 import 'chat_session.dart';
+import 'open_editor.dart';
 import 'chat_width.dart';
 import 'composer/composer.dart';
 import 'composer/composer_embeds.dart';
@@ -25,6 +27,7 @@ import 'panels/health_banner.dart';
 import 'panels/interaction_panel.dart';
 import 'panels/context_usage_panel.dart';
 import 'panels/goal_panel.dart';
+import 'panels/queue_panel.dart';
 import 'panels/todo_panel.dart';
 import 'side_panel/file_link.dart';
 import 'side_panel/file_open.dart';
@@ -60,6 +63,7 @@ class ChatScreen extends StatefulWidget {
     this.startHint,
     this.sessions,
     this.fileMentions,
+    this.openEditor,
   });
 
   final String title;
@@ -136,6 +140,10 @@ class ChatScreen extends StatefulWidget {
 
   /// Where `@` looks files up, besides the kernel (see [FileMentions]).
   final FileMentions? fileMentions;
+
+  /// The file open in the editor beside it, where there is one: the agent
+  /// is told of it with the messages sent (see [ChatSession.send]).
+  final OpenEditor? Function()? openEditor;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -462,6 +470,7 @@ class _ChatScreenState extends State<ChatScreen>
       tasks: tasks,
       changes: changes,
       root: _session.root ?? '.',
+      paths: _session.paths,
       onKeep: _session.keepAllChanges,
       onUndo: _session.undoAllChanges,
       onKeepFiles: _session.keepChanges,
@@ -683,7 +692,8 @@ class _ChatScreenState extends State<ChatScreen>
                   // banner above when the agent failed on it.
                   if (!HealthBanner.shows(_session.health))
                     SshHostBanner(location: _session.kernelContext.cwd),
-                  // Claude Code being put on a remote project's host.
+                  // Claude Code being downloaded for this machine, or put on
+                  // a remote project's host.
                   ClaudeInstallBanner(location: _session.kernelContext.cwd),
                   _PanelSlot(
                     child: switch (_session.pendingInteraction) {
@@ -795,11 +805,24 @@ class _ChatScreenState extends State<ChatScreen>
               ? TodoPanel(todos: _session.todos)
               : null,
         ),
+        // Last over the composer: what is sent next.
+        _PanelSlot(
+          child: switch (_session.queued) {
+            final queued when queued.isNotEmpty => QueuePanel(
+              messages: queued,
+              onEdit: (id) => unawaited(_session.editQueued(id)),
+              onSendNow: _session.sendQueuedNow,
+              onRemove: _session.cancelQueued,
+            ),
+            _ => null,
+          },
+        ),
         _PanelSlot(gap: 0, child: _buildActivityStrip()),
         ChatComposer(
           key: _composerKey,
           session: _session,
           draft: _session.draft,
+          openEditor: widget.openEditor,
           contextPanelOpen: _contextPanelOpen,
           onToggleContextPanel: _toggleContextPanel,
         ),

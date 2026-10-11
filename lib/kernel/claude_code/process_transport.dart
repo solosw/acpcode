@@ -8,6 +8,12 @@ import 'process_transport_stub.dart'
 Future<ClaudeCodeTransport> startClaudeProcess(ClaudeLaunch launch) =>
     platform.ProcessTransport.start(launch);
 
+/// [executable], run locally, refused an option BaoCode starts it with:
+/// whether another, newer, may be run instead (one downloaded for it, if
+/// need be); false on the web.
+Future<bool> rejectTooOldClaudeProcess(String executable) =>
+    platform.ProcessTransport.rejectTooOld(executable);
+
 /// The setting that keeps Claude Code from asking for the plan usage, if
 /// the environment it runs in has it on; none on the web.
 Future<String?> claudeUsageOffBy() => platform.ProcessTransport.usageOffBy();

@@ -452,6 +452,25 @@ void main() {
       expect((answers.single as QuestionAnswer).skipped, isTrue);
     });
 
+    testWidgets('folded to its header, it shows the question; digits pick '
+        'nothing unseen and Enter unfolds it', (tester) async {
+      final answers = await pumpPanel(tester);
+      await tester.tap(find.text('Question'));
+      await tester.pump();
+      expect(find.text('Alpha'), findsNothing);
+      expect(find.text('Which one?'), findsOneWidget);
+
+      await press(tester, LogicalKeyboardKey.digit2, character: '2');
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      expect(answers, isEmpty);
+
+      await press(tester, LogicalKeyboardKey.enter);
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(answers, isEmpty);
+      await press(tester, LogicalKeyboardKey.digit2, character: '2');
+      expect(picked(answers), ['Beta']);
+    });
+
     testWidgets('rebound, J moves down and Enter no longer goes on', (
       tester,
     ) async {

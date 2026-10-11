@@ -28,17 +28,19 @@ class ChangeReviews extends ChangeNotifier {
     String? session,
     p.Context? paths,
   }) async {
-    final context =
-        paths ??
-        (roots.isEmpty ? p.context : RemoteLocation.pathsOf(roots.first));
     final distinct = <String>[];
     for (final root in roots) {
+      final context = paths ?? RemoteLocation.pathsOf(root);
       if (distinct.any((other) => context.equals(other, root))) continue;
       distinct.add(root);
     }
     final outermost = [
       for (final root in distinct)
-        if (!distinct.any((other) => context.isWithin(other, root))) root,
+        if (!distinct.any(
+          (other) =>
+              (paths ?? RemoteLocation.pathsOf(root)).isWithin(other, root),
+        ))
+          root,
     ];
     final opened = await Future.wait([
       for (final root in outermost)
@@ -133,8 +135,9 @@ class ChangeReviews extends ChangeNotifier {
   ChangeReview _partOf(String path) {
     final absolute = _absolute(path);
     for (final part in _parts) {
-      if (part.paths.equals(part.root, absolute) ||
-          part.paths.isWithin(part.root, absolute)) {
+      final paths = part.paths;
+      if (paths.equals(part.root, absolute) ||
+          paths.isWithin(part.root, absolute)) {
         return part;
       }
     }

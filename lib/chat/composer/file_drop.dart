@@ -86,6 +86,7 @@ abstract final class FileDrops {
   static void stopListening(int viewId) {
     channelFor(viewId).setMethodCallHandler(null);
     _unhandled.remove(viewId);
+    _dragOut.remove(viewId);
   }
 
   /// What takes files let go where no region is, in [viewId]'s window
@@ -105,6 +106,19 @@ abstract final class FileDrops {
   static final Map<int, bool Function(List<ComposerFile> files)> _unhandled =
       {};
 
+  /// What hears that files dragged in the app, armed to go on out
+  /// ([WindowControls.armFileDrag]), left [viewId]'s window: [began] when
+  /// the window went on dragging them itself, else for the app to start it.
+  static void setDragOut(int viewId, void Function(bool began)? onOut) {
+    if (onOut == null) {
+      _dragOut.remove(viewId);
+    } else {
+      _dragOut[viewId] = onOut;
+    }
+  }
+
+  static final Map<int, void Function(bool began)> _dragOut = {};
+
   /// What [setUnhandledDrop] set for [viewId]'s window.
   static bool Function(List<ComposerFile> files)? unhandledDropOf(int viewId) =>
       _unhandled[viewId];
@@ -123,6 +137,9 @@ abstract final class FileDrops {
       (arguments['y'] as num?)?.toDouble() ?? 0,
     );
     switch (call.method) {
+      case 'dragOut':
+        _dragOut[viewId]?.call(arguments['began'] == true);
+        return null;
       case 'dragUpdate':
         if (arguments['files'] case final List<Object?> files) {
           _files = decode(files);

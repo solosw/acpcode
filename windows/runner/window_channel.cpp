@@ -20,6 +20,7 @@
 
 #include "clipboard_images.h"
 #include "context_menu.h"
+#include "drag_source.h"
 #include "drop_target.h"
 #include "win32_window.h"
 #include "utils.h"
@@ -471,8 +472,9 @@ std::optional<std::string> PickDirectory(HWND window) {
 }  // namespace
 
 WindowChannel::WindowChannel(flutter::BinaryMessenger* messenger, HWND window,
-                             const std::string& name)
+                             HWND view, const std::string& name)
     : window_(window),
+      view_(view),
       channel_(std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, name,
           &flutter::StandardMethodCodec::GetInstance())) {
@@ -559,6 +561,30 @@ void WindowChannel::HandleMethodCall(
       }
     }
     result->Success(flutter::EncodableValue(WriteClipboardFiles(window_, paths)));
+    return;
+  }
+
+  if (method == "startFileDrag") {
+    // Files dragged in the app, out of the window: on as Explorer drags them.
+    std::vector<std::wstring> paths;
+    const auto found = arguments.find(flutter::EncodableValue("paths"));
+    if (found != arguments.end()) {
+      if (const auto* list = std::get_if<flutter::EncodableList>(&found->second)) {
+        for (const flutter::EncodableValue& value : *list) {
+          if (const auto* path = std::get_if<std::string>(&value)) {
+            paths.push_back(Utf16FromUtf8(*path));
+          }
+        }
+      }
+    }
+    Microsoft::WRL::ComPtr<IDataObject> data = FileDataObject(paths);
+    if (data == nullptr || !LeftButtonDown()) {
+      result->Success(flutter::EncodableValue(false));
+      return;
+    }
+    // Answered first: the drag has its own message loop, until let go.
+    result->Success(flutter::EncodableValue(true));
+    DragFilesOut(view_, data.Get());
     return;
   }
 

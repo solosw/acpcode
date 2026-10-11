@@ -61,9 +61,34 @@ void main() {
       isFalse,
     );
     expect(find.text('No Folder Opened'), findsOneWidget);
-    expect(find.text('Open a folder to chat with an agent in it.'), findsOne);
+    expect(
+      find.text('Open a file or a folder to chat with an agent about it.'),
+      findsOne,
+    );
     expect(find.byType(IdeChatTitle), findsNothing);
     expect(workspace.current, same(current));
+  });
+
+  testWidgets('with no folder, a file opened has the chat in its folder, '
+      'the agent told of it', (tester) async {
+    final folder = Directory.systemTemp.createTempSync('baocode-loose-file');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final file = File('${folder.path}/CN2-GIA.conf')
+      ..writeAsStringSync('[general]\nudp_drop_list = 443\n');
+    final workspace = await _pumpApp(tester);
+    await _showIde(tester, workspace);
+    await tester.runAsync(() => _ide(tester).widget.workspace.open(file.path));
+    await tester.pump();
+    await tester.pump();
+
+    final title = tester.widget<IdeChatTitle>(find.byType(IdeChatTitle));
+    expect(title.current?.project.path, folder.path);
+    expect(workspace.ideFolder, isNull);
+    expect(_ide(tester).openEditor?.path, file.path);
+    expect(
+      workspace.projects.map((project) => project.path),
+      isNot(contains(folder.path)),
+    );
   });
 
   testWidgets('New Text File opens Untitled-1, then Untitled-2', (

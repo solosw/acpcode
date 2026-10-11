@@ -76,6 +76,9 @@ class ClaudeTranslator {
   final Map<String, _Agent> _agents = {};
   final Set<String> _denied = {};
 
+  /// Calls made and not answered yet: those of a stopped turn never are.
+  final Set<String> _unanswered = {};
+
   final Map<String, KernelTask> _tasks = {};
   final Map<String, String> _taskOutputs = {};
   final Map<String, TodoEntry> _todos = {};
@@ -283,7 +286,9 @@ class ClaudeTranslator {
     }
   }
 
-  /// Settles whatever still streams, e.g. when the turn is interrupted.
+  /// Settles whatever still streams, e.g. when the turn is interrupted: a
+  /// call left unanswered shows as failed, unless a subagent at work in the
+  /// background (which goes on) made it.
   void settle() {
     for (final id in [..._thoughts.keys]) {
       _completeThought(id, null);
@@ -292,8 +297,21 @@ class ClaudeTranslator {
       _textLength.remove(id);
       emit(ItemCompleted(nextSeq(), id));
     }
+    for (final id in [..._unanswered]) {
+      if (_inBackground(id)) continue;
+      _toolResult({'tool_use_id': id, 'is_error': true}, null);
+    }
     _streamed.clear();
     _activity = null;
+  }
+
+  /// Whether the call [id] is, or is made by, a subagent at work in the
+  /// background.
+  bool _inBackground(String id) {
+    for (String? at = id; at != null; at = _tools[at]?.parent) {
+      if (_agents[at]?.item.background ?? false) return true;
+    }
+    return false;
   }
 
   // --- Items -------------------------------------------------------------------
@@ -625,6 +643,7 @@ class ClaudeTranslator {
     if (tool.parent == null && _isPlanCall(name, input)) {
       return _planCall(id, name, input);
     }
+    if (known == null && !replaying) _unanswered.add(id);
     switch (name) {
       case 'Agent' || 'Task':
         final agent = _agents[id] ??= _Agent(
@@ -886,6 +905,7 @@ class ClaudeTranslator {
     final id = block['tool_use_id'] as String?;
     final tool = id == null ? null : _tools[id];
     if (id == null || tool == null) return;
+    _unanswered.remove(id);
     final error = block['is_error'] == true;
     final text = _resultText(block['content']);
     final structured = result is Map ? result.cast<String, Object?>() : null;

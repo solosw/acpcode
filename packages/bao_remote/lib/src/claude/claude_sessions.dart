@@ -190,7 +190,9 @@ String _fork(
     };
   } else {
     leaf = entries.reversed
-        .where((e) => _kept(e) && e['isSidechain'] != true && e['uuid'] is String)
+        .where(
+          (e) => _kept(e) && e['isSidechain'] != true && e['uuid'] is String,
+        )
         .firstOrNull;
   }
   // The chain to it, every line of it as written (attachments, compaction

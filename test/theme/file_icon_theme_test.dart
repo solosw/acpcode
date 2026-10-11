@@ -12,6 +12,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import 'woff_test.dart' show toWoff;
+
 void main() {
   late Directory extension;
 
@@ -116,6 +118,66 @@ void main() {
       'root',
     );
     expect(icon(theme.folderIcon('/w/lib', light: true)), 'folder');
+  });
+
+  test('a glyph of a WOFF font, sized in `em` (the Chalice theme)', () async {
+    final font = p.join(extension.path, 'icons.woff');
+    File(font).writeAsBytesSync(
+      toWoff(File('assets/codicons/codicon.ttf').readAsBytesSync()),
+    );
+    final path = p.join(extension.path, 'glyphs.json');
+    File(path).writeAsStringSync(
+      jsonEncode({
+        'fonts': [
+          {
+            'id': 'chalice',
+            'src': [
+              {'path': './icons.woff', 'format': 'woff'},
+            ],
+            'size': '1.3em',
+          },
+        ],
+        'iconDefinitions': {
+          '_file': {'fontCharacter': r'\E002', 'fontColor': '#c5c5c5'},
+        },
+        'file': '_file',
+      }),
+    );
+    final theme = await FileIconThemeData.load('glyphs', path);
+    final file = theme.fileIcon('/w/README')!;
+    expect(file.fontCharacter, '\u{E002}');
+    expect(file.fontFamily, isNotNull);
+    expect(file.fontSize, 1.3);
+    expect(file.fontColor, const Color(0xffc5c5c5));
+  });
+
+  testWidgets('a glyph is sized from the label\'s 13px font, 150% by '
+      'default, and overflows its box unclipped', (tester) async {
+    Future<Size> glyph(double? fontSize) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Center(
+            child: SizedBox.square(
+              dimension: 16,
+              child: FileIconThemeIcon(
+                FileIconDefinition(
+                  fontCharacter: 'x',
+                  fontFamily: 'glyphs',
+                  fontSize: fontSize,
+                ),
+                size: 16,
+              ),
+            ),
+          ),
+        ),
+      );
+      return tester.getSize(find.text('x'));
+    }
+
+    expect((await glyph(null)).height, closeTo(19.5, 0.5));
+    expect((await glyph(1.3)).height, closeTo(16.9, 0.5));
+    expect(tester.getSize(find.byType(FileIconThemeIcon)), const Size(16, 16));
   });
 
   testWidgets('the theme in use draws the explorer\'s icons; the bundled '

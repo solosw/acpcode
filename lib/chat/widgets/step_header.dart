@@ -28,6 +28,7 @@ class StepHeader extends StatelessWidget {
     this.trailing,
     this.action,
     this.spans,
+    this.bold = false,
   });
 
   final String verb;
@@ -58,6 +59,9 @@ class StepHeader extends StatelessWidget {
   /// fold's counts, standing out of its words.
   final List<InlineSpan>? spans;
 
+  /// The line in bold, as a title (a summarized thought's, say).
+  final bool bold;
+
   /// Its text's size, as steps read.
   static const fontSize = 13.0;
 
@@ -68,6 +72,7 @@ class StepHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final toggle = onToggle;
+    final weight = bold ? FontWeight.w600 : null;
     // Built once: hovering must not rebuild the text, or a selection in it
     // would be lost.
     final line = spans != null
@@ -82,6 +87,7 @@ class StepHeader extends StatelessWidget {
             text(verb, object, detail),
             ellipsis: false,
             padding: EdgeInsets.zero,
+            style: TextStyle(fontWeight: weight),
           )
         : Text.rich(
             TextSpan(
@@ -90,7 +96,8 @@ class StepHeader extends StatelessWidget {
                   text: verb,
                   style: TextStyle(color: AppColors.text),
                 ),
-                if (object.isNotEmpty) TextSpan(text: ' $object'),
+                if (object.isNotEmpty)
+                  TextSpan(text: verb.isEmpty ? object : ' $object'),
                 if (detail case final detail? when detail.isNotEmpty)
                   TextSpan(
                     text: ' $detail',
@@ -100,7 +107,11 @@ class StepHeader extends StatelessWidget {
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: AppColors.textMuted, fontSize: fontSize),
+            style: TextStyle(
+              color: AppColors.textMuted,
+              fontSize: fontSize,
+              fontWeight: weight,
+            ),
           );
     final open = onOpen;
     // Opening the file, the line's click; the chevron alone toggles.

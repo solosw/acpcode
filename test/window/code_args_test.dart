@@ -52,6 +52,38 @@ void main() {
       expect(args.newWindow, isFalse);
     });
 
+    test('VS Code\'s options that take a value: the value is no path', () {
+      final args = CodeArgs.parse([
+        '--profile',
+        'Work',
+        '--locale=zh-cn',
+        'a',
+      ], cwd: '/w');
+      expect(args.paths, const [CodeTarget('/w/a')]);
+      expect(args.opensNothing, isFalse);
+    });
+
+    test('asked about VS Code itself or its extensions, it opens nothing', () {
+      for (final asked in [
+        ['--version'],
+        ['-v'],
+        ['--list-extensions', '--show-versions'],
+        ['--install-extension', 'anthropic.claude-code'],
+        ['--locate-shell-integration-path=zsh'],
+        ['.', '--status'],
+      ]) {
+        final args = CodeArgs.parse(asked, cwd: '/w');
+        expect(args.opensNothing, isTrue, reason: '$asked');
+        expect(args.paths, isEmpty, reason: '$asked');
+      }
+      // After `--`, a file of that name.
+      final file = CodeArgs.parse(['--', '--version'], cwd: '/w');
+      expect(file.opensNothing, isFalse);
+      expect(file.paths, const [CodeTarget('/w/--version')]);
+      // `code` alone still opens a window.
+      expect(CodeArgs.parse(const [], cwd: '/w').opensNothing, isFalse);
+    });
+
     test('Windows paths: a drive\'s colon is no line', () {
       final args = CodeArgs.parse([
         '-g',
@@ -100,5 +132,13 @@ void main() {
       LaunchRequest.ide,
     );
     expect(LaunchRequest.of(const [r'C:\w']), LaunchRequest.ide);
+    // A site's import asks in the main window, as at any launch.
+    expect(
+      LaunchRequest.of(const [
+        CodeArgs.windowsLinkFlag,
+        'baocode://provider/import?url=https%3A%2F%2Fapi.example.com',
+      ]),
+      LaunchRequest.none,
+    );
   });
 }

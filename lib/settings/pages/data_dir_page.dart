@@ -44,6 +44,24 @@ class DataDirectoryPage extends StatefulWidget {
   /// (see `AppLifecycleListener` in main.dart).
   final Future<void> Function()? quit;
 
+  /// Reveal in Finder, or in File Explorer.
+  static String revealLabel(AppLocalizations l10n) => AppPlatform.isWindows
+      ? l10n.dataDirRevealInFileExplorer
+      : l10n.explorerRevealInFinder;
+
+  static bool get canReveal =>
+      WindowControls.canRevealInFileManager || AppPlatform.isWindows;
+
+  /// Shows the folder at [path] in Finder or File Explorer.
+  static Future<void> revealFolder(String path) async {
+    // Windows opens the folder itself, rather than selecting it in its
+    // parent's.
+    if (AppPlatform.isMacOS) {
+      return WindowControls.revealInFileManager(path);
+    }
+    await WindowControls.openExternal(path);
+  }
+
   @override
   State<DataDirectoryPage> createState() => _DataDirectoryPageState();
 }
@@ -63,21 +81,14 @@ class _DataDirectoryPageState extends State<DataDirectoryPage> {
   /// The folder picked, checked, and not yet saved.
   DataDirectoryTarget? _draft;
 
-  static String _revealLabel(AppLocalizations l10n) => AppPlatform.isWindows
-      ? l10n.dataDirRevealInFileExplorer
-      : l10n.explorerRevealInFinder;
+  static String _revealLabel(AppLocalizations l10n) =>
+      DataDirectoryPage.revealLabel(l10n);
 
-  static bool get _canReveal =>
-      WindowControls.canRevealInFileManager || AppPlatform.isWindows;
+  static bool get _canReveal => DataDirectoryPage.canReveal;
 
   Future<void> _reveal(String path) async {
     if (widget.reveal case final reveal?) return reveal(path);
-    // Windows opens the folder itself, rather than selecting it in its
-    // parent's.
-    if (AppPlatform.isMacOS) {
-      return WindowControls.revealInFileManager(path);
-    }
-    await WindowControls.openExternal(path);
+    await DataDirectoryPage.revealFolder(path);
   }
 
   Future<void> _quit() async {

@@ -59,6 +59,7 @@ class ClaudeLaunch {
     this.settingsPath,
     this.directories = const [],
     this.instructions,
+    this.models = const [],
   });
 
   final String cwd;
@@ -74,6 +75,11 @@ class ClaudeLaunch {
   /// The session id to continue.
   final String? resume;
   final String? model;
+
+  /// The models it may be switched to (`set_model`) without Claude Code
+  /// first sending each a request of its own, to see that it is one: a
+  /// provider's, as `modelPicker` rows, which it takes as known.
+  final List<String> models;
   final String? permissionMode;
   final String? effort;
 
@@ -142,6 +148,7 @@ class ClaudeLaunch {
     settingsPath: settingsPath ?? this.settingsPath,
     directories: directories,
     instructions: instructions,
+    models: models,
   );
 
   Map<String, String>? get _attribution => switch (attribution) {
@@ -158,6 +165,12 @@ class ClaudeLaunch {
     'attribution': ?_attribution,
     'useAutoModeDuringPlan': ?autoModeDuringPlan,
     'alwaysThinkingEnabled': ?thinking,
+    if (models.isNotEmpty)
+      'modelPicker': {
+        'options': [
+          for (final model in models) {'model': model},
+        ],
+      },
     if ({
           ...?env,
           if (directories.isNotEmpty) ...additionalDirectoriesEnvironment,

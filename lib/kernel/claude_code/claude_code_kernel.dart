@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../chat/chat_models.dart';
 import '../../models/launch_environment.dart';
+import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
@@ -40,6 +41,13 @@ typedef ClaudeSessionForker = Future<String> Function(
 /// The setting Claude Code runs with that keeps it from asking for the
 /// plan usage, if one does.
 typedef ClaudeUsageSwitch = Future<String?> Function();
+
+/// [executable], run in [cwd], refused an option BaoCode starts Claude
+/// Code with: whether another, newer, may be started instead.
+typedef ClaudeTooOldHandler = Future<bool> Function(
+  String cwd,
+  String executable,
+);
 
 /// The environment of a session on [provider] that asks for [model] (see
 /// [providerLaunchEnvironment]).
@@ -87,6 +95,7 @@ class ClaudeCodeKernel
     this._readGoal,
     this._forkSession,
     ClaudeUsageSwitch? usageOffBy,
+    this._rejectTooOld,
     ModelProviders? providers,
     ProviderEnvironment? providerEnvironment,
     Future<bool> Function(String url)? openLink,
@@ -117,6 +126,17 @@ class ClaudeCodeKernel
       final tokens? when tokens > 0 => tokens,
       _ => null,
     };
+    final efforts = '${KernelChoiceKind.effort.name}@';
+    final contexts = '${KernelChoiceKind.context.name}@';
+    for (final MapEntry(:key, :value) in settings.entries) {
+      if (key.startsWith(efforts)) {
+        _pickedEfforts[key.substring(efforts.length)] = value;
+      } else if (key.startsWith(contexts)) {
+        if (parseTokens(value) case final tokens? when tokens > 0) {
+          _pickedWindows[key.substring(contexts.length)] = tokens;
+        }
+      }
+    }
     if ((_context.resume, readHistory) case (final session?, final read?)) {
       _history = _replay(read, session);
     }
@@ -132,6 +152,11 @@ class ClaudeCodeKernel
   final ClaudeGoalReader? _readGoal;
   final ClaudeSessionForker? _forkSession;
   final ClaudeUsageSwitch _usageOffBy;
+
+  /// A build that refused an option BaoCode starts it with, run in a
+  /// folder: whether another, newer, may be started instead (see
+  /// [_launch]). None: the user is told to update it.
+  final ClaudeTooOldHandler? _rejectTooOld;
   late final ClaudeTranslator _translator;
 
   /// The providers of the user's (Settings → Models), whose models are
@@ -145,6 +170,10 @@ class ClaudeCodeKernel
   ControlChannel? _control;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Future<void>? _starting;
+
+  /// The build that exited too old as it started, and what it printed:
+  /// another may be started in its place (see [_launch]).
+  (String, String)? _tooOldExit;
   Future<void> _history = Future.value();
 
   /// Writes wait on this: for the process to be ready, and for a rewind to
@@ -216,6 +245,12 @@ class ClaudeCodeKernel
   /// picked (the CLI's `autoCompactWindow`); null to leave the CLI's own.
   int? _window;
 
+  /// The effort and context each model (by option id) was last on: one
+  /// switched back to takes up its own, not the one before's. Kept with
+  /// the settings (see [modelSettingKey]).
+  final Map<String, String> _pickedEfforts = {};
+  final Map<String, int> _pickedWindows = {};
+
   /// The [_window] the process was started with: the CLI takes it only
   /// at start, so another is taken up by a restart (see [_applyWindow]).
   int? _launchedWindow;
@@ -229,6 +264,19 @@ class ClaudeCodeKernel
   /// reported while they were in use.
   static final Map<String, int> _modelWindows = {};
   double? _cost;
+
+  /// The conversation's requests to the model, by their message's id, and
+  /// how the cache took their input: from the session's file when resumed
+  /// (turns in the terminal's CLI too), then as they come.
+  final Map<String, CacheTokens> _requests = {};
+  String? _lastRequest;
+
+  /// The models whose replies said what the cache took: Claude's always,
+  /// a provider's through the proxy only when it does (and then only when
+  /// its cache was used). The cache is not shown for the others, as all
+  /// uncached would be a guess.
+  final Set<String?> _cachingModels = {};
+  String? _lastModel;
 
   // The account's limits are the same in every session: the last any of
   // them was told, shown in all of them.
@@ -331,6 +379,10 @@ class ClaudeCodeKernel
           env: env,
           directories: workspace?.folders ?? const [],
           instructions: workspace?.instructions,
+          models: switch (custom) {
+            (final provider, _) => _requestedModels(provider),
+            null => const [],
+          },
         ),
       );
       if (_disposed) {
@@ -375,6 +427,14 @@ class ClaudeCodeKernel
       _fail(error.message, error.detail);
       rethrow;
     } on ControlError catch (error) {
+      // Too old: a newer one, if there is one, started in its place.
+      if (_tooOldExit case (final executable, final stderr)?) {
+        _tooOldExit = null;
+        if (!_disposed && await _rejectTooOld!(_cwd, executable)) {
+          return _launch();
+        }
+        _failExit(stderr, executable);
+      }
       // Exited while starting: what it said is kept (see _exited).
       if (_health.status != KernelHealthStatus.failed) {
         _fail('Claude Code did not start', '$error');
@@ -566,6 +626,7 @@ class ClaudeCodeKernel
               },
             ],
             if (turn.text.isNotEmpty) {'type': 'text', 'text': turn.text},
+            for (final note in turn.notes) {'type': 'text', 'text': note},
             if (ask)
               {'type': 'text', 'text': _askNote}
             else if (askEnded)
@@ -613,18 +674,52 @@ class ClaudeCodeKernel
   }
 
   @override
-  void cancelQueued(String turnId) {
+  Future<bool> cancelQueued(String turnId) async {
+    if (!_queued.contains(turnId) || !_running) return false;
+    try {
+      final response = await _control!.request('cancel_async_message', {
+        'message_uuid': turnId,
+      });
+      if (response['cancelled'] != true || !_queued.remove(turnId)) {
+        return false;
+      }
+    } on Object {
+      return false;
+    }
+    emit(ItemRemoved(nextSeq, turnId));
+    return true;
+  }
+
+  @override
+  void sendQueuedNow(String turnId) {
     if (!_queued.contains(turnId) || !_running) return;
-    unawaited(
-      _control!
-          .request('cancel_async_message', {'message_uuid': turnId})
-          .then((response) {
-            if (response['cancelled'] == true && _queued.remove(turnId)) {
-              emit(ItemRemoved(nextSeq, turnId));
-            }
-          })
-          .catchError((_) {}),
-    );
+    final ahead = _queued.takeWhile((id) => id != turnId).toList();
+    // Next anyway: only the turn running is in the way.
+    if (ahead.isEmpty) {
+      cancel();
+      return;
+    }
+    // The CLI runs what it queued in the order sent: those ahead are taken
+    // back, and sent again after it.
+    unawaited(() async {
+      final taken = [
+        for (final id in [turnId, ...ahead])
+          if (await cancelQueued(id)) id,
+      ];
+      for (final id in taken) {
+        final turn = _sent[id]!;
+        send(
+          KernelTurn(
+            id: _newSessionId(),
+            text: turn.text,
+            mentions: turn.mentions,
+            images: turn.images,
+            notes: turn.notes,
+            now: id == turnId,
+          ),
+        );
+      }
+    }());
   }
 
   /// Dropped here only once the CLI has: turned down, it goes on with all
@@ -713,9 +808,9 @@ class ClaudeCodeKernel
 
   /// A random UUID (v4), as Claude Code names its sessions.
   static String _newSessionId() {
-    String hex(int length) => [
-      for (var i = 0; i < length; i++) _random.nextInt(16).toRadixString(16),
-    ].join();
+    String hex(int length) =>
+        [for (var i = 0; i < length; i++) _random.nextInt(16).toRadixString(16)]
+            .join();
     final variant = (8 + _random.nextInt(4)).toRadixString(16);
     return '${hex(8)}-${hex(4)}-4${hex(3)}-$variant${hex(3)}-${hex(12)}';
   }
@@ -1243,6 +1338,9 @@ class ClaudeCodeKernel
           commands: _commandsFrom(message['commands']),
         );
         emitInfoChanged();
+      case 'assistant':
+        if (_countRequest(message)) _reportStats();
+        _translator.translate(message);
       case 'result':
         _result(message);
       case 'rate_limit_event':
@@ -1648,9 +1746,57 @@ class ClaudeCodeKernel
         limits: _limits,
         limitsState: _limitsState,
         limitsOffBy: _limitsOffBy,
+        cache: switch (_requests[_lastRequest]) {
+          final last? when _cachingModels.contains(_lastModel) => PromptCache(
+            last: last,
+            conversation: _requests.values.reduce((a, b) => a + b),
+          ),
+          _ => null,
+        },
       ),
     ),
   );
+
+  /// Counts the request to the model [message] answers, if it is the
+  /// conversation's: once, as a message comes a content block at a time,
+  /// each with its request's usage. A subagent's is left out, as its
+  /// transcript is apart. Whether it was not counted yet.
+  bool _countRequest(Map<String, Object?> message) {
+    if (message['parent_tool_use_id'] != null ||
+        message['isSidechain'] == true) {
+      return false;
+    }
+    final body = message['message'];
+    final (id, usage) = switch (body) {
+      {'id': final String id, 'usage': final Map<Object?, Object?> usage} => (
+        id,
+        usage,
+      ),
+      _ => (null, null),
+    };
+    if (id == null || usage == null) return false;
+    final model = (body as Map)['model'] as String?;
+    int count(String key) => switch (usage[key]) {
+      final num n => n.toInt(),
+      _ => 0,
+    };
+    final tokens = CacheTokens(
+      read: count('cache_read_input_tokens'),
+      written: count('cache_creation_input_tokens'),
+      uncached: count('input_tokens'),
+    );
+    // None at all: one of the CLI's own (an API error), not the model's.
+    if (tokens.total == 0) return false;
+    _lastRequest = id;
+    _lastModel = model;
+    if (usage.containsKey('cache_read_input_tokens') ||
+        usage.containsKey('cache_creation_input_tokens')) {
+      _cachingModels.add(model);
+    }
+    if (_requests.containsKey(id)) return false;
+    _requests[id] = tokens;
+    return true;
+  }
 
   /// The conversation was compacted, maybe mid-turn: the context shown
   /// drops to what is left at once, then to what the CLI counts.
@@ -1719,6 +1865,16 @@ class ClaudeCodeKernel
   void _exited(int code, String stderr, {String? executable}) {
     final wasReady = _health.status == KernelHealthStatus.ready;
     _teardown();
+    if (!wasReady &&
+        _starting != null &&
+        _rejectTooOld != null &&
+        executable != null &&
+        _tooOld(stderr)) {
+      // The launch under way starts a newer one, if there is one, the
+      // turn going on there; else it says this and ends the turn.
+      _tooOldExit = (executable, stderr);
+      return;
+    }
     if (_turn != null) {
       emit(
         ItemUpserted(
@@ -1741,22 +1897,26 @@ class ClaudeCodeKernel
     if (code == 0 && wasReady) {
       _setHealth(KernelHealth.idle);
     } else {
-      final lines = stderr.trim().split('\n');
-      final printed = lines
-          .skip(lines.length > 12 ? lines.length - 12 : 0)
-          .join('\n');
-      _setHealth(
-        KernelHealth(
-          KernelHealthStatus.failed,
-          message: _failureMessage(stderr),
-          // Which one, when it is too old: another, newer, may be the
-          // terminal's.
-          detail: _tooOld(stderr) && executable != null
-              ? '$printed\n\nThe one run: $executable'
-              : printed,
-        ),
-      );
+      _failExit(stderr, executable);
     }
+  }
+
+  void _failExit(String stderr, String? executable) {
+    final lines = stderr.trim().split('\n');
+    final printed = lines
+        .skip(lines.length > 12 ? lines.length - 12 : 0)
+        .join('\n');
+    _setHealth(
+      KernelHealth(
+        KernelHealthStatus.failed,
+        message: _failureMessage(stderr),
+        // Which one, when it is too old: another, newer, may be the
+        // terminal's.
+        detail: _tooOld(stderr) && executable != null
+            ? '$printed\n\nThe one run: $executable'
+            : printed,
+      ),
+    );
   }
 
   /// Whether the CLI refused an option BaoCode starts it with: one from
@@ -1787,10 +1947,13 @@ class ClaudeCodeKernel
     try {
       final lines = await read(session);
       _translator.replaying = true;
+      var counted = false;
       for (final line in lines) {
+        if (line['type'] == 'assistant') counted |= _countRequest(line);
         _translator.translate(line);
       }
       _translator.endReplay();
+      if (counted) _reportStats();
     } on Object catch (error) {
       emit(
         ItemUpserted(
@@ -1959,24 +2122,63 @@ class ClaudeCodeKernel
   }
 
   /// The heading Claude Code's own models are listed under.
-  static const _builtinGroup = KernelOptionGroup(
+  static final _builtinGroup = KernelOptionGroup(
     builtinProviderId,
     'Claude Code',
+    iconBuilder: _providerIcon(builtinProviderId),
   );
+
+  /// Provider [id]'s icon, as its models' heading shows it.
+  static Widget Function(double, Color) _providerIcon(String id) =>
+      (size, color) => ProviderIcon(id, size: size, color: color);
+
+  /// [model]'s of [provider], as its option shows it.
+  static Widget Function(double, Color) _modelIcon(
+    String provider,
+    String model,
+  ) =>
+      (size, color) =>
+          ModelIcon(provider: provider, model: model, size: size, color: color);
 
   @override
   bool switchRestarts(String model) =>
       _conversationStarted && _providerKeyOf(model) != _providerKey;
 
-  /// Switches to [id], an option of [model]: on the provider in use, as
+  /// Switches to [id], an option of [model], on the effort and context it
+  /// was last on (those of the model in use noted first, unless [keep] is
+  /// false: a setting picked with it already was): on the provider in use, as
   /// the CLI is told; on another, by starting again on it (at once, if
   /// the conversation has not begun; else as the next message is sent,
   /// which resumes it there).
-  void _selectModel(String id) {
+  void _selectModel(String id, {bool keep = true}) {
+    if (keep) _keepModelSettings();
     final target = _providers.resolve(id);
     final sameProvider = _providerKeyOf(id) == _providerKey;
+    // Its own effort and context, if it had them: not the one before's.
+    if (_pickedWindows[id] case final window?) _window = window;
+    final recalled = _pickedEfforts[id];
+    if (recalled != null) _effort = recalled;
     if (sameProvider && target == null) {
-      _change([?_modelChange(_variantOf(id)?.value)]);
+      final variant = _pickedWindows[id] == null
+          ? _variantOf(id)
+          : _variantFor(id, long: _window! > _windows['200k']!);
+      final effort =
+          recalled != null &&
+              recalled != _appliedEffort &&
+              _effortLevelsOf(id).contains(recalled)
+          ? recalled
+          : null;
+      if (effort != null) _appliedEffort = effort;
+      _change([
+        ?_modelChange(variant?.value),
+        if (effort != null)
+          (
+            'apply_flag_settings',
+            {
+              'settings': {'effortLevel': effort},
+            },
+          ),
+      ]);
       return;
     }
     if (sameProvider) {
@@ -2000,6 +2202,37 @@ class ClaudeCodeKernel
     // Taken up with the next message (see _applyWindow).
     emitInfoChanged();
   }
+
+  /// Notes the effort and context of the model in use, to go back to.
+  void _keepModelSettings() {
+    final current = model.selected;
+    if (current == null) return;
+    if (effort.selected case final level?) _pickedEfforts[current] = level;
+    final window = switch (_custom) {
+      (_, final info) => _windowFor(info),
+      null => _windows[contextSize.selected],
+    };
+    if (window != null) _pickedWindows[current] = window;
+  }
+
+  /// [model]'s variant with the long context or without, as there is one.
+  _ModelInfo? _variantFor(String model, {required bool long}) {
+    final variants = _models[model];
+    if (variants == null) return null;
+    return variants.where((v) => v.long == long).firstOrNull ?? variants.first;
+  }
+
+  /// Each name [provider]'s models are asked for by, with each effort
+  /// through the proxy.
+  static List<String> _requestedModels(ModelProvider provider) => {
+    for (final info in provider.models)
+      if (info.enabled) ...[
+        requestedModel(provider, info),
+        if (provider.protocol.proxied)
+          for (final effort in info.effortLevels)
+            requestedModel(provider, info, effort: effort),
+      ],
+  }.toList();
 
   /// The efforts Claude Code itself takes (`--effort`, `effortLevel`).
   static const _cliEfforts = {'low', 'medium', 'high', 'xhigh', 'max'};
@@ -2051,15 +2284,19 @@ class ClaudeCodeKernel
       return [
         // Hidden only with a provider's models to pick instead.
         if (!_providers.builtinHidden || providers.isEmpty || current == null)
-          if (_models.isEmpty)
-            const KernelOption(
-              'default',
-              'Default',
-              Icons.bolt_rounded,
-              '',
-              group: _builtinGroup,
-            )
-          else
+          if (_models.isEmpty) ...[
+            // Its models not known (it is not logged in, or has not
+            // started): left out for a provider's, unless in use.
+            if (providers.isEmpty || current == null)
+              KernelOption(
+                'default',
+                'Default',
+                Icons.bolt_rounded,
+                '',
+                group: _builtinGroup,
+                iconBuilder: _modelIcon(builtinProviderId, 'default'),
+              ),
+          ] else
             for (final MapEntry(key: id, value: variants) in _models.entries)
               KernelOption(
                 id,
@@ -2072,6 +2309,7 @@ class ClaudeCodeKernel
                 Icons.bolt_rounded,
                 variants.first.description,
                 group: _builtinGroup,
+                iconBuilder: _modelIcon(builtinProviderId, id),
               ),
         for (final provider in providers)
           for (final info in provider.enabledModels)
@@ -2087,7 +2325,9 @@ class ClaudeCodeKernel
                 provider.id,
                 provider.name,
                 warning: _providers.error(provider.id),
+                iconBuilder: _providerIcon(provider.id),
               ),
+              iconBuilder: _modelIcon(provider.id, info.id),
             ),
       ];
     },
@@ -2157,14 +2397,27 @@ class ClaudeCodeKernel
           .firstOrNull
           ?.key;
     },
+    selectedFor: (model) {
+      if (model == this.model.selected) return contextSize.selected;
+      final window = _pickedWindows[model] ?? _window;
+      if (_providers.resolve(model) case (_, final info)) {
+        return '${info.contextOptions.contains(window) ? window : info.initialContext}';
+      }
+      return _windows.entries
+          .where((entry) => entry.value == window)
+          .firstOrNull
+          ?.key;
+    },
     select: (model, id) {
+      final switching = model != this.model.selected;
+      if (switching) _keepModelSettings();
       if (_providers.resolve(model) != null) {
         final tokens = parseTokens(id);
         if (tokens == null || tokens <= 0) return;
-        _window = tokens;
+        _window = _pickedWindows[model] = tokens;
         // Taken up with the next message (see _applyWindow).
         if (model != _model) {
-          _selectModel(model);
+          _selectModel(model, keep: false);
         } else {
           emitInfoChanged();
         }
@@ -2177,7 +2430,7 @@ class ClaudeCodeKernel
       final variant = variants.length > 1
           ? variants.where((v) => v.long == long).firstOrNull
           : _variantOf(model);
-      _window = window;
+      _window = _pickedWindows[model] = window;
       // Taken up with the next message (see _applyWindow); the model,
       // now.
       _change([?_modelChange(variant?.value)]);
@@ -2386,11 +2639,21 @@ class ClaudeCodeKernel
       final effort = _running ? _appliedEffort : _effort;
       return levels.contains(effort) ? effort : null;
     },
+    selectedFor: (model) {
+      if (model == this.model.selected) return effort.selected;
+      final level = _pickedEfforts[model] ?? _effort;
+      if (_providers.resolve(model) case (_, final info)) {
+        return info.effortLevels.contains(level) ? level : info.initialEffort;
+      }
+      return _effortLevelsOf(model).contains(level) ? level : null;
+    },
     select: (model, id) {
+      if (model != this.model.selected) _keepModelSettings();
+      _pickedEfforts[model] = id;
       if (_providers.resolve(model) case (final provider, final info)) {
         _effort = _appliedEffort = id;
         if (model != _model || _providerKeyOf(model) != _launchedProvider) {
-          _selectModel(model);
+          _selectModel(model, keep: false);
           return;
         }
         // Through the proxy, the effort goes with the model's name;
@@ -2540,11 +2803,13 @@ class _ModelSetting implements ModelSetting {
   _ModelSetting({
     required this._optionsFor,
     required this._selected,
+    required this._selectedFor,
     required this._select,
   });
 
   final List<KernelOption> Function(String model) _optionsFor;
   final String? Function() _selected;
+  final String? Function(String model) _selectedFor;
   final void Function(String model, String id) _select;
 
   @override
@@ -2552,6 +2817,9 @@ class _ModelSetting implements ModelSetting {
 
   @override
   String? get selected => _selected();
+
+  @override
+  String? selectedFor(String model) => _selectedFor(model);
 
   @override
   void select(String model, String id) => _select(model, id);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/panels/context_usage_panel.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 
 void main() {
@@ -52,6 +53,50 @@ void main() {
     expect(
       tester.getTopLeft(find.text('Plan usage')).dy,
       greaterThan(tester.getTopLeft(find.text('Context window')).dy),
+    );
+  });
+
+  testWidgets('the prompt cache shows its last request and the conversation', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ContextUsagePanel(
+            usage: const ContextUsage(window: 200000, used: 64000),
+            stats: const UsageStats(
+              costUsd: 0.27,
+              cache: PromptCache(
+                last: CacheTokens(read: 61330, written: 2408, uncached: 2),
+                conversation: CacheTokens(
+                  read: 1200000,
+                  written: 85300,
+                  uncached: 40,
+                ),
+              ),
+            ),
+            onClose: () {},
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Prompt cache'), findsOneWidget);
+    expect(find.text('96%'), findsOneWidget);
+    expect(find.text('main chat 93%'), findsOneWidget);
+    // The counts on hover.
+    expect(
+      tester.widget<IdeHover>(find.byType(IdeHover).last).message,
+      'Last request: 61.3k read · 2.4k written · 2 uncached\n'
+      'Main conversation: 1.2M read · 85.3k written · 93% hit\n'
+      "Not counting subagents, compaction or the CLI's side requests",
+    );
+    // Between the context and the plan.
+    expect(
+      tester.getTopLeft(find.text('Prompt cache')).dy,
+      allOf(
+        greaterThan(tester.getTopLeft(find.text('Context window')).dy),
+        lessThan(tester.getTopLeft(find.text('Plan usage')).dy),
+      ),
     );
   });
 

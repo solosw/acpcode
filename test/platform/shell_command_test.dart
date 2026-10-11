@@ -54,6 +54,20 @@ void main() {
       },
     );
 
+    test('refreshed, an older script of its own is written anew, keeping '
+        'its mode; another app\'s is left', () async {
+      write(target, '#!/usr/bin/env bash\n# BaoCode shell command\nold\n');
+      Process.runSync('chmod', ['755', target]);
+      await command().refresh();
+      expect(File(target).readAsStringSync(), command().script);
+      expect(File(target).statSync().modeString(), 'rwxr-xr-x');
+      expect(ran, isEmpty);
+
+      write(target, '#!/bin/sh\n# VS Code\n');
+      await command().refresh();
+      expect(File(target).readAsStringSync(), '#!/bin/sh\n# VS Code\n');
+    });
+
     test('installs a script of its own, there to be run', () async {
       final shell = command();
       expect(shell.location, target);
@@ -268,6 +282,27 @@ void main() {
         expect(contents, '${root.resolveSymbolicLinksSync()}\n');
         expect(CodeArgs.fromRequestFile(contents).paths, isEmpty);
       });
+
+      test('asked about VS Code itself (as tools ask in the background), it '
+          'fails without starting the app', () async {
+        await command().install();
+        for (final arguments in [
+          ['--version'],
+          ['--list-extensions', '--show-versions'],
+          ['--install-extension', 'anthropic.claude-code'],
+          ['--locate-shell-integration-path=zsh'],
+          ['.', '-v'],
+        ]) {
+          final result = await run(arguments, root.path);
+          expect(result.exitCode, 1, reason: '$arguments');
+          expect(result.stderr, contains('not supported'));
+          expect(openedWith(), isEmpty, reason: '$arguments');
+        }
+        // After `--`, a file of that name.
+        final result = await run(['--', '--version'], root.path);
+        expect(result.exitCode, 0);
+        File(openedWith().last).deleteSync();
+      });
     });
   });
 
@@ -305,8 +340,15 @@ void main() {
         command().script,
         '@echo off\r\n'
         'REM BaoCode shell command\r\n'
+        'for %%a in (${CodeArgs.queryOptions.join(' ')}) do '
+        'if /i "%~1"=="%%a" goto query\r\n'
         'start "" "C:\\Program Files\\BaoCode %%1\\baocode.exe" '
-        '--baocode-cli "%CD%\\." %*\r\n',
+        '--baocode-cli "%CD%\\." %*\r\n'
+        'exit /b 0\r\n'
+        ':query\r\n'
+        'echo code: %~1 is not supported: BaoCode\'s code command only opens '
+        'files and folders. 1>&2\r\n'
+        'exit /b 1\r\n',
       );
     });
 
