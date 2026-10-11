@@ -13,6 +13,7 @@ import '../chat/mock_conversation.dart';
 import '../icons/emoji_sheet.dart';
 import '../icons/icon_library.dart';
 import '../icons/project_icon.dart';
+import '../kernel/acp/acp_catalog.dart';
 import '../kernel/agent_kernel.dart';
 import '../kernel/kernel_registry.dart';
 import '../kernel/kernel_types.dart';
@@ -1997,9 +1998,31 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       remember(KernelChoiceKind.context, before.context, snapshot.context);
       if (before.status != snapshot.status) thread.updatedAt = DateTime.now();
     }
+    _rememberAcpSession(thread);
     if (changed) _save();
     _snapshots[thread] = snapshot;
     notifyListeners();
+  }
+
+  /// ACP has no external session store: keep title and activity in its
+  /// local catalog so a restart can still list and [session/load] it.
+  void _rememberAcpSession(AgentThread thread) {
+    final catalog = thread.kernel.catalog;
+    if (catalog is! AcpCatalog) return;
+    final id = thread.id;
+    if (id == null || id.isEmpty) return;
+    final cwd = thread.record?.cwd ?? thread.project.path;
+    if (cwd.isEmpty) return;
+    unawaited(
+      catalog.upsert(
+        SessionRecord(
+          id: id,
+          title: thread._title,
+          updatedAt: thread.updatedAt.toUtc(),
+          cwd: cwd,
+        ),
+      ),
+    );
   }
 
   /// Whether the window is in front: what ends in view while it is not
@@ -2356,6 +2379,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void _retitle(AgentThread thread, String title) {
     thread._title = title;
     if (thread.isOpen) thread.session.rename(title);
+    _rememberAcpSession(thread);
     _snapshots[thread] = thread._snapshot;
     notifyListeners();
   }

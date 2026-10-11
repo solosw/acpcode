@@ -8,18 +8,26 @@ import '../../remote/remote_location.dart';
 import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
+import 'acp_catalog.dart';
 import 'acp_transport.dart';
 
 /// Adapts an ACP JSON-RPC agent over a message transport to [AgentKernel].
 class AcpKernel
     with KernelEventSource
     implements AgentKernel, SelectsMode, ProvidesCommands, ReportsContext {
-  AcpKernel(this.descriptor, this._context, this._transportFactory);
+  AcpKernel(
+    this.descriptor,
+    this._context,
+    this._transportFactory, {
+    AcpCatalog? catalog,
+  }) : _catalog = catalog;
 
   @override
   final KernelDescriptor descriptor;
   final KernelContext _context;
   final AcpTransportFactory _transportFactory;
+  /// Local session index for this agent; null in tests that omit it.
+  final AcpCatalog? _catalog;
   AcpTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
 
@@ -140,6 +148,26 @@ class AcpKernel
     if (_sessionId == null) {
       throw StateError('ACP session returned no sessionId');
     }
+    _rememberSession(title: resume?.title);
+  }
+
+  /// Keeps [sessionId] in the local catalog so the sidebar can open it
+  /// again after a restart and call [session/load].
+  void _rememberSession({String? title, DateTime? updatedAt}) {
+    final catalog = _catalog;
+    final id = _sessionId;
+    final cwd = _context.cwd ?? _context.resume?.cwd;
+    if (catalog == null || id == null || cwd == null || cwd.isEmpty) return;
+    unawaited(
+      catalog.upsert(
+        SessionRecord(
+          id: id,
+          title: title ?? _context.resume?.title ?? '',
+          updatedAt: updatedAt ?? DateTime.now().toUtc(),
+          cwd: cwd,
+        ),
+      ),
+    );
   }
 
   /// The directory the agent is told: a remote project's path on its host,
