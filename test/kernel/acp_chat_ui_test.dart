@@ -100,6 +100,7 @@ Future<ChatSession> _pump(
   WidgetTester tester,
   _Transport transport, {
   bool resume = false,
+  bool listenAboveChat = false,
 }) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1;
@@ -132,7 +133,12 @@ Future<ChatSession> _pump(
     MaterialApp(
       theme: buildAppTheme(),
       localizationsDelegates: const [FlutterQuillLocalizations.delegate],
-      home: ChatScreen(session: session),
+      home: listenAboveChat
+          ? ListenableBuilder(
+              listenable: session,
+              builder: (context, child) => ChatScreen(session: session),
+            )
+          : ChatScreen(session: session),
     ),
   );
   await tester.pump(const Duration(milliseconds: 50));
@@ -140,6 +146,14 @@ Future<ChatSession> _pump(
 }
 
 void main() {
+  testWidgets('ACP can mount below an existing session listener', (
+    tester,
+  ) async {
+    await _pump(tester, _Transport(), listenAboveChat: true);
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ChatScreen), findsOneWidget);
+  });
+
   testWidgets('actual solcode replay preserves every reply in arrival order', (
     tester,
   ) async {

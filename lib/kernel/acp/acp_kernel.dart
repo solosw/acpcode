@@ -84,13 +84,25 @@ class AcpKernel
     if (_disposed || _initialized || _starting) return;
     _starting = true;
     _health = const KernelHealth(KernelHealthStatus.starting);
-    emitInfoChanged();
+    // ChatSession.attach calls prepare while ChatScreen is mounting. Existing
+    // session listeners must not be invalidated in the middle of that build.
+    scheduleMicrotask(() {
+      if (!_disposed) emitInfoChanged();
+    });
     unawaited(_start());
   }
 
   Future<void> _start() async {
     try {
-      _transport = QueuedAcpTransport(await _transportFactory(_context));
+      // Also keep a synchronous factory failure out of the mounting frame.
+      final transport = await Future<AcpTransport>.sync(
+        () => _transportFactory(_context),
+      );
+      if (_disposed) {
+        transport.close();
+        return;
+      }
+      _transport = QueuedAcpTransport(transport);
       _subscription = _transport!.messages.listen(
         _receive,
         onError: (Object error, StackTrace _) => _fail(error),

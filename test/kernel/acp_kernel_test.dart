@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
@@ -7,6 +9,16 @@ import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 
+class _TrackingTransport extends MockAcpTransport {
+  bool closed = false;
+
+  @override
+  void close() {
+    closed = true;
+    super.close();
+  }
+}
+
 void main() {
   KernelDescriptor descriptor() => KernelDescriptor(
     id: 'mock-acp',
@@ -15,6 +27,71 @@ void main() {
     description: 'Test ACP agent',
     create: (_) => throw UnimplementedError(),
   );
+
+  test('ACP prepare defers notifications and starts only once', () async {
+    final transport = MockAcpTransport();
+    var starts = 0;
+    final kernel = AcpKernel(descriptor(), const KernelContext(), (_) async {
+      starts++;
+      return transport;
+    });
+    addTearDown(kernel.dispose);
+    final events = <KernelEvent>[];
+    final subscription = kernel.events.listen(events.add);
+    addTearDown(subscription.cancel);
+
+    kernel.prepare();
+    kernel.prepare();
+    expect(kernel.health.status, KernelHealthStatus.starting);
+    expect(events, isEmpty);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, 1);
+    expect(events.first, isA<KernelInfoChanged>());
+    expect(kernel.health.status, KernelHealthStatus.ready);
+  });
+
+  test(
+    'a synchronous ACP factory failure is reported asynchronously',
+    () async {
+      final kernel = AcpKernel(
+        descriptor(),
+        const KernelContext(),
+        (_) => throw StateError('Agent could not start'),
+      );
+      addTearDown(kernel.dispose);
+      final events = <KernelEvent>[];
+      final subscription = kernel.events.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      kernel.prepare();
+      expect(events, isEmpty);
+      await Future<void>.delayed(Duration.zero);
+      expect(kernel.health.status, KernelHealthStatus.failed);
+      expect(kernel.health.message, contains('Agent could not start'));
+      expect(events, isNotEmpty);
+    },
+  );
+
+  test('disposing during ACP startup closes the late transport', () async {
+    final transport = _TrackingTransport();
+    final pending = Completer<_TrackingTransport>();
+    final kernel = AcpKernel(
+      descriptor(),
+      const KernelContext(),
+      (_) => pending.future,
+    );
+    final events = <KernelEvent>[];
+    final subscription = kernel.events.listen(events.add);
+    addTearDown(subscription.cancel);
+
+    kernel.prepare();
+    kernel.dispose();
+    pending.complete(transport);
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.closed, isTrue);
+    expect(transport.written, isEmpty);
+    expect(events, isEmpty);
+  });
 
   test('ACP initializes a session and streams an assistant message', () async {
     final transport = MockAcpTransport();
