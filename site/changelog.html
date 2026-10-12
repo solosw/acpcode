@@ -29,6 +29,42 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.1.0">
+    <h2 class="plain"><a href="#v1.1.0">1.1.0</a></h2>
+    <p>New</p>
+    <ul>
+    <li>Import upstream providers from a site's link; featured upstreams come as cards you can open.</li>
+    <li>The model picker shows model and upstream logos; each model keeps its own effort and context, so switching sends no test request.</li>
+    <li>Files mentioned in a chat open in your editor.</li>
+    <li>Queued messages dock over the composer, to edit, send now or remove.</li>
+    <li>Open Project under New Chat; the explorer keeps navigation history and the sidebar manages remote hosts.</li>
+    <li>Settings' page list resizes and hides like the sidebar.</li>
+    <li>MCP servers show whether they answer, and why one doesn't.</li>
+    <li>Drag files out of the window on macOS.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Command and pickers: a hover redraws two rows, a search line to click into, edges faded instead of ruled.</li>
+    <li>Auto save follows files.autoSave, as VS Code does.</li>
+    <li>Sharper Windows text (pixel-snapped sizes and an engine patch); OpenSSH 8.4 and newer asks for passwords.</li>
+    <li>The chat's scrollbar scales and the reader stays where they are; hovers stay inside the window, clear of its edges.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Calls and commands a stopped turn leaves unanswered now fail instead of hanging.</li>
+    <li>A remote project's changed files expand and open without a blank page or file-not-found (Windows).</li>
+    <li>Multi-folder workspaces keep sending messages even when change review hangs.</li>
+    <li>ACP chat startup no longer breaks the session being mounted, so switching conversations doesn't hang.</li>
+    </ul>
+  </section>
+
+  <section class="release" id="v1.0.14">
+    <h2 class="plain"><a href="#v1.0.14">1.0.14</a></h2>
+    <ul>
+    <li></li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.0.13">
     <h2 class="plain"><a href="#v1.0.13">1.0.13</a></h2>
     <p>Fixed</p>
