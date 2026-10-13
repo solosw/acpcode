@@ -71,6 +71,9 @@ bool FlutterWindow::OnCreate() {
                                            app_windows_.get());
   app_windows_->SetAttention(attention_.get());
 
+  // The stash's shortcut (see lib/stash/), a hot key of this window's.
+  stash_ = std::make_unique<StashChannel>(messenger, GetHandle());
+
   // Shown with its first frame — unless the app starts in the IDE's windows
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
@@ -96,6 +99,7 @@ void FlutterWindow::OnDestroy() {
   if (attention_ != nullptr) {
     attention_->DetachWindows();
   }
+  stash_ = nullptr;
   app_windows_ = nullptr;
   ReleaseView();
 
@@ -137,6 +141,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // The watchdog's ping (see hang_watchdog.h): this thread takes messages.
   if (message == hang_watchdog::kPingMessage) {
     hang_watchdog::Answer();
+    return 0;
+  }
+
+  // Work the stash did in the background, to finish here.
+  if (message == StashChannel::kRunMessage) {
+    StashChannel::Run(lparam, stash_ != nullptr);
+    return 0;
+  }
+
+  if (message == WM_HOTKEY && stash_ != nullptr &&
+      stash_->HandleHotkey(wparam)) {
     return 0;
   }
 

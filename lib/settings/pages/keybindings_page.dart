@@ -78,7 +78,12 @@ class KeybindingsSettingsPage extends StatefulWidget {
     this.keymaps = const [],
     this.onSelectKeymap,
     this.onImport,
+    this.global,
   });
+
+  /// Shortcuts of the app's own, not commands' (the stash's, from any
+  /// app), above the list: where shortcuts are looked for.
+  final Widget? global;
 
   /// The keybindings shown: the page follows its changes.
   final KeybindingService keybindings;
@@ -812,6 +817,11 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
             padding: const EdgeInsets.symmetric(horizontal: _inset),
             child: _toolbar(),
           ),
+          if (widget.global case final global?)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(_inset, 12, _inset, 2),
+              child: global,
+            ),
           const SizedBox(height: 10),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: _inset),

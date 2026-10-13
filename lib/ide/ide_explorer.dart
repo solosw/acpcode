@@ -1042,9 +1042,9 @@ class IdeExplorerState extends State<IdeExplorer> {
             final uploading = context.l10n.explorerUploading;
             await _withProgress(
               uploading,
-              (onProgress) => uploadTo(files, [
+              (transfer) => uploadTo(files, [
                 for (final (:source, :copy) in copies) (from: source, to: copy),
-              ], onProgress: onProgress),
+              ], onProgress: transfer.onProgress),
             );
             reveal = copies.lastOrNull?.copy;
           } else {
@@ -1263,24 +1263,41 @@ class IdeExplorerState extends State<IdeExplorer> {
   // --- Between this machine and a remote host --------------------------------
 
   /// Runs [transfer] (an upload, a download), how far it is shown in a
-  /// notification once it takes a moment: [message] of the files done.
+  /// notification once it takes a moment: [message] of the files done, and
+  /// how far the file on is. [cancellable], the notification can give it
+  /// up (the [_Transfer.cancel] it is given completes).
   Future<T> _withProgress<T>(
     String Function(int done, int total) message,
-    Future<T> Function(TransferProgress onProgress) transfer,
-  ) async {
+    Future<T> Function(_Transfer transfer) transfer, {
+    bool cancellable = false,
+  }) async {
     final notifications = IdeNotificationsScope.maybeOf(context);
-    final preparing = context.l10n.explorerPreparingTransfer;
+    final l10n = context.l10n;
+    final preparing = l10n.explorerPreparingTransfer;
+    final cancel = Completer<void>();
+    void giveUp() {
+      if (!cancel.isCompleted) cancel.complete();
+    }
+
     var done = 0;
     int? total;
+    // Of the file on: what part of it is there.
+    var part = 0.0;
     String text() => total == null ? preparing : message(done, total!);
     IdeNotificationProgress progress() => switch (total) {
       final total? when total > 0 => IdeNotificationProgress(
-        done.toDouble(),
+        done + part,
         total: total.toDouble(),
       ),
       _ => const IdeNotificationProgress.infinite(),
     };
     IdeNotification? shown;
+    void update() {
+      if (shown case final shown?) {
+        notifications!.update(shown, message: text(), progress: progress());
+      }
+    }
+
     // Not for what is done at once.
     final timer = notifications == null
         ? null
@@ -1290,16 +1307,33 @@ class IdeExplorerState extends State<IdeExplorer> {
               text(),
               progress: progress(),
               sticky: true,
+              primary: [
+                if (cancellable)
+                  IdeNotificationAction(l10n.commonCancel, giveUp),
+              ],
+              onClose: cancellable ? giveUp : null,
             );
           });
+    var lastPart = 0.0;
     try {
-      return await transfer((worked, of) {
-        done = worked;
-        total = of;
-        if (shown case final shown?) {
-          notifications!.update(shown, message: text(), progress: progress());
-        }
-      });
+      return await transfer(
+        _Transfer(
+          onProgress: (worked, of) {
+            done = worked;
+            total = of;
+            part = lastPart = 0;
+            update();
+          },
+          onFile: (read, size) {
+            part = size == 0 ? 1 : read / size;
+            // A notification a percent, not one a stretch.
+            if (part - lastPart < 0.01 && part < 1) return;
+            lastPart = part;
+            update();
+          },
+          cancel: cancel.future,
+        ),
+      );
     } finally {
       timer?.cancel();
       if (shown case final shown?) notifications!.close(shown);
@@ -1326,17 +1360,33 @@ class IdeExplorerState extends State<IdeExplorer> {
       items.add((from: row.path, to: to, directory: row.directory));
     }
     if (!mounted) return const [];
-    await _withProgress(
-      downloading,
-      (onProgress) => downloadFrom(files, items, onProgress: onProgress),
-    );
+    try {
+      await _withProgress(
+        downloading,
+        (transfer) => downloadFrom(
+          files,
+          items,
+          onProgress: transfer.onProgress,
+          onFile: transfer.onFile,
+          cancel: transfer.cancel,
+        ),
+        cancellable: true,
+      );
+    } on TransferCancelledException {
+      return null;
+    }
     return [for (final item in items) item.to];
   }
+
+  /// The most of a remote project's files a copy downloads onto the
+  /// system's clipboard: more stay the app's, pasted here (on the host,
+  /// with nothing downloaded), not to fill the connection to the host.
+  static const clipboardDownloadLimit = 20 << 20;
 
   /// Copied, this machine's files are on the system's clipboard too, as
   /// Finder copies them: to paste into the chat, or into another app.
   /// A remote project's are downloaded first, to be on it as this
-  /// machine's.
+  /// machine's, unless they are big (see [clipboardDownloadLimit]).
   void _copy(List<IdeExplorerRow> rows, {required bool cut}) {
     final paths = _paths(rows);
     final written = cut
@@ -1344,19 +1394,7 @@ class IdeExplorerState extends State<IdeExplorer> {
         : widget.local
         ? WindowControls.writePasteboardFiles(paths)
               .then((_) {}, onError: (Object _) {})
-        : _download([
-            for (final row in rows)
-              ComposerFile(row.path, directory: row.isDirectory),
-          ]).then(
-            (paths) async {
-              if (paths != null) {
-                await WindowControls.writePasteboardFiles(paths);
-              }
-            },
-            onError: (Object error) {
-              if (mounted) _report(error);
-            },
-          );
+        : _copyDownloaded(rows);
     _controller.clipboard = IdeExplorerClipboard(
       [
         for (final row in rows)
@@ -1367,6 +1405,27 @@ class IdeExplorerState extends State<IdeExplorer> {
         (_) async => _pathsOf(await _systemClipboardFiles()),
       ),
     );
+  }
+
+  /// A remote project's [rows], downloaded onto the system's clipboard
+  /// unless they take more than [clipboardDownloadLimit].
+  Future<void> _copyDownloaded(List<IdeExplorerRow> rows) async {
+    try {
+      final files = _controller.files;
+      if (files is IdeRangeFiles) {
+        final size = await (files as IdeRangeFiles).sizeOf([
+          for (final row in rows) row.path,
+        ], limit: clipboardDownloadLimit);
+        if (size > clipboardDownloadLimit) return;
+      }
+      final paths = await _download([
+        for (final row in rows)
+          ComposerFile(row.path, directory: row.isDirectory),
+      ]);
+      if (paths != null) await WindowControls.writePasteboardFiles(paths);
+    } on Object catch (error) {
+      if (mounted) _report(error);
+    }
   }
 
   /// What a paste puts in: what was cut or copied here, unless other files
@@ -1677,7 +1736,8 @@ class IdeExplorerState extends State<IdeExplorer> {
       if (uploads.isNotEmpty) {
         await _withProgress(
           uploading,
-          (onProgress) => uploadTo(files, uploads, onProgress: onProgress),
+          (transfer) =>
+              uploadTo(files, uploads, onProgress: transfer.onProgress),
         );
         for (final (:from, :to) in uploads) {
           copied.add((source: from, copy: to));
@@ -2478,4 +2538,18 @@ class _IndentGuidesPainter extends CustomPainter {
   @override
   bool shouldRepaint(_IndentGuidesPainter oldDelegate) =>
       oldDelegate.depth != depth || oldDelegate.color != color;
+}
+
+/// What a transfer run by [IdeExplorerState._withProgress] tells how far it
+/// is, and when it is to stop.
+class _Transfer {
+  const _Transfer({
+    required this.onProgress,
+    required this.onFile,
+    required this.cancel,
+  });
+
+  final TransferProgress onProgress;
+  final FileProgress onFile;
+  final Future<void> cancel;
 }

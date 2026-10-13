@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../../chat/chat_models.dart' show ImageAttachment;
 import '../../models/launch_environment.dart';
 import '../../network/network_proxy_io.dart';
 import 'claude_environment.dart';
@@ -14,14 +15,34 @@ import 'local_claude_io.dart';
 /// run outside the project so that its CLAUDE.md is not read.
 ///
 /// On a provider: [model] of it, [env] its environment, given as flag
-/// settings in a file (it holds the key), as a session's are.
+/// settings in a file (it holds the key), as a session's are. [images] go
+/// with the prompt, as a stream-json message, whose answer streams.
 Future<String> askClaudeHaiku(
   String system,
   String prompt, {
   Future<void>? cancel,
   String? model,
   Map<String, String>? env,
+  List<({String name, ImageAttachment image})> images = const [],
+  ClaudeHaikuTools? tools,
 }) async {
+  if (images.isNotEmpty) {
+    final timer = ClaudeAnswerTimer();
+    final clock = Stopwatch()..start();
+    final (stderr, code) = await _run(
+      system,
+      // One line.
+      '${claudeHaikuMessage(prompt, images)}\n',
+      cancel: cancel,
+      model: model,
+      env: env,
+      stream: true,
+      message: true,
+      tools: tools,
+      onLine: (line) => timer.add(line, clock.elapsed),
+    );
+    return timer.answer(stderr, code).text;
+  }
   final stdout = StringBuffer();
   final (stderr, code) = await _run(
     system,
@@ -29,6 +50,7 @@ Future<String> askClaudeHaiku(
     cancel: cancel,
     model: model,
     env: env,
+    tools: tools,
     stream: false,
     onLine: stdout.writeln,
   );
@@ -68,12 +90,17 @@ Future<(String, int)> _run(
   required Map<String, String>? env,
   required bool stream,
   required void Function(String line) onLine,
+  bool message = false,
+  ClaudeHaikuTools? tools,
   void Function()? onStart,
 }) async {
   final cli = await LocalClaude.locate(install: false);
-  final settingsFile = env == null
+  // In a file: it may hold a provider's key, and a shell (Windows') would
+  // mangle it on the command line.
+  final settings = {'env': ?env, ...?tools?.settings};
+  final settingsFile = settings.isEmpty
       ? null
-      : await ClaudeSettingsFile.write({'env': env});
+      : await ClaudeSettingsFile.write(settings);
   final proxy = await NetworkProxy.instance.environment();
   final Process process;
   try {
@@ -84,8 +111,15 @@ Future<(String, int)> _run(
         model: model,
         settingsFile: settingsFile,
         stream: stream,
+        message: message,
+        tools: tools,
       ),
-      workingDirectory: Directory.systemTemp.path,
+      // Elsewhere than a project, unless it is to look at one: its
+      // CLAUDE.md is not read.
+      workingDirectory: switch (tools?.directory) {
+        final directory? when Directory(directory).existsSync() => directory,
+        _ => Directory.systemTemp.path,
+      },
       environment: {
         ...cli.environment,
         ...proxy,
@@ -123,7 +157,8 @@ Future<(String, int)> _run(
   process.stdin.add(utf8.encode(prompt));
   unawaited(process.stdin.close().catchError((Object _) {}));
   final code = await process.exitCode.timeout(
-    const Duration(minutes: 2),
+    // Looking at files takes turns.
+    Duration(minutes: tools == null ? 2 : 5),
     onTimeout: () {
       process.kill(ProcessSignal.sigkill);
       throw const ClaudeHaikuException('Claude Code took too long to answer.');

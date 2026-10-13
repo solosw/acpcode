@@ -45,6 +45,7 @@ import '../../theme/codicons.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart';
+import '../../workspace/editor_launcher.dart' show openExternal;
 import '../../workspace/window_controls.dart';
 import '../file_service.dart' show IdeHostFiles;
 import '../ide_animated_list.dart';
@@ -218,6 +219,7 @@ class IdeScmView extends StatefulWidget {
     required this.onOpen,
     required this.onOpenChange,
     required this.onRevealInExplorer,
+    this.onAddToChat,
     this.trash,
     this.commitMessage,
   });
@@ -239,6 +241,9 @@ class IdeScmView extends StatefulWidget {
   })
   onOpenChange;
   final ValueChanged<String> onRevealInExplorer;
+
+  /// Puts files and folders in the chat's composer; not offered when null.
+  final ValueChanged<List<ComposerFile>>? onAddToChat;
 
   /// Moves a file to the Trash (true once it did); null where there is no
   /// Trash, and untracked files are deleted.
@@ -1091,10 +1096,24 @@ class IdeScmViewState extends State<IdeScmView>
           showIdeMenu(
             context,
             position: position,
-            entries: [
-              for (final action in actions)
-                IdeMenuAction(action.label, onSelected: action.run),
-            ],
+            entries: ideMenuGroups([
+              [
+                for (final action in actions)
+                  IdeMenuAction(action.label, onSelected: action.run),
+                if (group == IdeGitGroup.workingTree)
+                  IdeMenuAction(
+                    context.l10n.scmAddToGitignore,
+                    onSelected: () => unawaited(_ignore(state, [folder.path])),
+                  ),
+              ],
+              ..._pathMenu(state, folder.path, folder: true),
+              [
+                IdeMenuAction(
+                  context.l10n.commonCollapseAll,
+                  onSelected: () => _collapse(group, under: folder.path),
+                ),
+              ],
+            ]),
           ),
         );
       },
@@ -1509,20 +1528,20 @@ class IdeScmViewState extends State<IdeScmView>
                 IdeMenuAction(action.label, onSelected: action.run),
             ],
             [
+              if (widget.onAddToChat case final add?)
+                if (_present(resources) case final present
+                    when present.isNotEmpty)
+                  IdeMenuAction(
+                    context.l10n.sidePanelAddToChat,
+                    onSelected: () =>
+                        add([for (final path in present) ComposerFile(path)]),
+                  ),
+            ],
+            [
               if (_session.treeView)
                 IdeMenuAction(
                   context.l10n.commonCollapseAll,
-                  onSelected: () => setState(() {
-                    void collapse(List<IdeScmTreeNode> nodes) {
-                      for (final node in nodes) {
-                        if (node is! IdeScmTreeFolder) continue;
-                        _session.collapsedFolders.add(_folderKey(group, node));
-                        collapse(node.children);
-                      }
-                    }
-
-                    collapse(ideScmGroupTree(git.state!, group));
-                  }),
+                  onSelected: () => _collapse(group),
                 ),
             ],
           ]),
@@ -1567,6 +1586,102 @@ class IdeScmViewState extends State<IdeScmView>
         ),
       ),
     );
+  }
+
+  /// Folds the folders of [group]'s tree: those in the folder at [under]
+  /// (it too), or all of them.
+  void _collapse(IdeGitGroup group, {String? under}) {
+    final state = _git?.state;
+    if (state == null) return;
+    setState(() {
+      void collapse(List<IdeScmTreeNode> nodes, bool inside) {
+        for (final node in nodes) {
+          if (node is! IdeScmTreeFolder) continue;
+          final mine = inside || under == null || node.path == under;
+          if (mine) _session.collapsedFolders.add(_folderKey(group, node));
+          collapse(node.children, mine);
+        }
+      }
+
+      collapse(ideScmGroupTree(state, group), false);
+    });
+  }
+
+  /// Whether the project's files are this machine's: a remote project's
+  /// are not shown in the file manager, opened in its apps, nor copied to
+  /// the system's clipboard.
+  bool get _local => widget.workspace.files is! IdeHostFiles;
+
+  /// The paths of [resources] still on disk.
+  static List<String> _present(List<IdeGitResource> resources) => [
+    for (final resource in resources)
+      if (!_deleted(resource)) resource.path,
+  ];
+
+  /// What a menu offers of the file or [folder] at [path], as the
+  /// explorer's does: putting it in the chat, copying it, revealing it,
+  /// and copying its path.
+  List<List<IdeMenuEntry>> _pathMenu(
+    IdeGitState state,
+    String path, {
+    bool folder = false,
+  }) {
+    final l10n = context.l10n;
+    return [
+      [
+        if (widget.onAddToChat case final add?)
+          IdeMenuAction(
+            l10n.sidePanelAddToChat,
+            onSelected: () => add([ComposerFile(path, directory: folder)]),
+          ),
+        if (_local)
+          IdeMenuAction(
+            l10n.commonCopy,
+            onSelected: () =>
+                unawaited(WindowControls.writePasteboardFiles([path])),
+          ),
+      ],
+      [
+        IdeMenuAction(
+          l10n.tabRevealInExplorerView,
+          onSelected: () => widget.onRevealInExplorer(path),
+        ),
+        if (_local && WindowControls.canRevealInFileManager)
+          IdeMenuAction(
+            l10n.revealInFileManager,
+            onSelected: () =>
+                unawaited(WindowControls.revealInFileManager(path)),
+          ),
+        // To this machine, from a remote project's host too.
+        if (!folder && canSaveFileCopy)
+          IdeMenuAction(
+            l10n.cmdSaveAs,
+            onSelected: () => unawaited(
+              saveFileCopyAs(
+                widget.workspace.files,
+                path,
+              ).then<void>((_) {}, onError: _report),
+            ),
+          ),
+      ],
+      [
+        IdeMenuAction(
+          l10n.tabCopyPath,
+          onSelected: () =>
+              unawaited(Clipboard.setData(ClipboardData(text: path))),
+        ),
+        IdeMenuAction(
+          l10n.tabCopyRelativePath,
+          onSelected: () => unawaited(
+            Clipboard.setData(
+              ClipboardData(
+                text: state.pathContext.relative(path, from: state.root),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ];
   }
 
   List<_Action> _groupActions(
@@ -1760,6 +1875,9 @@ class IdeScmViewState extends State<IdeScmView>
     // The merge group's has Open File alone.
     final merge = resource.group == IdeGitGroup.merge;
     final l10n = context.l10n;
+    final one = targets.length == 1 && !_deleted(resource);
+    final extension = p.extension(resource.path).toLowerCase();
+    final present = _present(targets);
     return showIdeMenu(
       context,
       position: position,
@@ -1780,6 +1898,18 @@ class IdeScmViewState extends State<IdeScmView>
               l10n.scmOpenFileHead,
               onSelected: () => unawaited(_openChanges(targets, head: true)),
             ),
+          if (one && _local) ...[
+            if (extension == '.html' || extension == '.htm')
+              IdeMenuAction(
+                l10n.fileLinkOpenInBrowser,
+                onSelected: () => unawaited(openExternal(resource.path)),
+              ),
+            if (WindowControls.canOpenInDefaultApp)
+              IdeMenuAction(
+                l10n.openInDefaultApp,
+                onSelected: () => unawaited(openExternal(resource.path)),
+              ),
+          ],
         ],
         [
           if (resource.group == IdeGitGroup.staged)
@@ -1805,33 +1935,21 @@ class IdeScmViewState extends State<IdeScmView>
             ),
           ],
         ],
-        if (targets.length == 1)
+        if (one)
+          ..._pathMenu(state, resource.path)
+        else if (present.isNotEmpty)
           [
-            // To this machine, from a remote project's host too.
-            if (canSaveFileCopy && !_deleted(resource))
+            if (widget.onAddToChat case final add?)
               IdeMenuAction(
-                l10n.cmdSaveAs,
-                onSelected: () => unawaited(
-                  saveFileCopyAs(
-                    widget.workspace.files,
-                    resource.path,
-                  ).then<void>((_) {}, onError: _report),
-                ),
+                l10n.sidePanelAddToChat,
+                onSelected: () =>
+                    add([for (final path in present) ComposerFile(path)]),
               ),
-            // A remote project's files are not here.
-            if (WindowControls.canRevealInFileManager &&
-                widget.workspace.files is! IdeHostFiles &&
-                !_deleted(resource))
+            if (_local)
               IdeMenuAction(
-                l10n.revealInFileManager,
-                onSelected: () => unawaited(
-                  WindowControls.revealInFileManager(resource.path),
-                ),
-              ),
-            if (!_deleted(resource))
-              IdeMenuAction(
-                l10n.tabRevealInExplorerView,
-                onSelected: () => widget.onRevealInExplorer(resource.path),
+                l10n.commonCopy,
+                onSelected: () =>
+                    unawaited(WindowControls.writePasteboardFiles(present)),
               ),
           ],
       ]),

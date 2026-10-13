@@ -65,6 +65,7 @@ class WindowHeader extends StatefulWidget {
     this.onCloseWindow,
     this.compact = false,
     this.title,
+    this.settingsShown = false,
   });
 
   final Workspace workspace;
@@ -111,6 +112,17 @@ class WindowHeader extends StatefulWidget {
   /// title bar has it. The strip is then the conversation's, its background
   /// and no line under it.
   final String? title;
+
+  /// The settings dialog is over the window: the sidebar's toggle, the
+  /// menus and the title, the chat's, give way to the dialog's own list
+  /// toggle, which it draws where the sidebar's was (see
+  /// [settingsToggleLeft]).
+  final bool settingsShown;
+
+  /// Where the settings dialog draws its list's toggle over the strip:
+  /// from its left, the sidebar toggle's place.
+  static const settingsToggleLeft = 6.0;
+  static const settingsToggleSize = 24.0;
 
   /// The window is kept above other apps' windows.
   final bool pinned;
@@ -201,7 +213,8 @@ class _WindowHeaderState extends State<WindowHeader> {
   Widget build(BuildContext context) {
     final layout = _ide ? widget.ideLayout : null;
     final ide = layout != null;
-    final title = ide ? null : widget.title;
+    final settings = widget.settingsShown;
+    final title = ide || settings ? null : widget.title;
     // A Material of its own, as the sidebar has: the strip is outside the
     // chat's Scaffold, and this is what gives its text the app's own style.
     // Over the chat, the line under it is what tells it apart from what it
@@ -258,10 +271,19 @@ class _WindowHeaderState extends State<WindowHeader> {
           height: AppMetrics.headerHeight,
           child: Row(
             children: [
-              const SizedBox(width: 6),
+              const SizedBox(width: WindowHeader.settingsToggleLeft),
+              // Room for the settings' toggle, the window's to leave to
+              // Flutter as the sidebar toggle's.
+              if (settings)
+                KeyedSubtree(
+                  key: _toggle,
+                  child: const SizedBox.square(
+                    dimension: WindowHeader.settingsToggleSize,
+                  ),
+                )
               // Folded, the menus' button comes after the toggle, which is
               // first as by macOS's traffic lights; else the menu bar is.
-              if (widget.compact) ...[
+              else if (widget.compact) ...[
                 toggle,
                 const SizedBox(width: 2),
                 menus,

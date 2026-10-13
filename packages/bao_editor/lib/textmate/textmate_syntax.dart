@@ -20,6 +20,7 @@ import 'package:flutter/services.dart';
 
 import '../monaco/flutter/document_snapshot.dart';
 import '../monaco/flutter/language_assets.dart';
+import '../monaco/flutter/language_overrides.dart';
 import '../monaco/vs/base/common/color.dart' as vs;
 import '../monaco/vs/editor/common/core/misc/eol_counter.dart';
 import '../monaco/vs/editor/common/encoded_token_attributes.dart'
@@ -491,9 +492,11 @@ class TextMateSyntax {
         monarch.assetId.startsWith(MonacoLanguageAssets.packAssetPrefix)) {
       return null;
     }
-    final languageId = runtime.resources.registry
-        .guessLanguageIdByFilepathOrFirstLine(Uri.file(path), firstLine)
-        .firstOrNull;
+    final languageId =
+        EditorLanguageOverrides.instance.of(path) ??
+        runtime.resources.registry
+            .guessLanguageIdByFilepathOrFirstLine(Uri.file(path), firstLine)
+            .firstOrNull;
     return languageId != null &&
             runtime.resources.grammarLanguages.contains(languageId)
         ? languageId

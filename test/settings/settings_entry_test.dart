@@ -18,8 +18,15 @@ import 'package:baocode/workspace/workspace.dart';
 
 final _mac = TargetPlatformVariant.only(TargetPlatform.macOS);
 
-Future<Workspace> _pumpApp(WidgetTester tester) async {
-  tester.view.physicalSize = const Size(1400, 900);
+/// Motion turned down: the loaders Appearance shows would never settle.
+void _stillMotion(WidgetTester tester) {
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+}
+
+Future<Workspace> _pumpApp(WidgetTester tester, {double height = 900}) async {
+  tester.view.physicalSize = Size(1400, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   // The app's keybindings, fresh for each test.
@@ -329,7 +336,10 @@ void main() {
 
   testWidgets('over the settings, ⌘K ⌘T shows the color theme\'s page and '
       '⌘K ⌘S the keyboard shortcuts\'', (tester) async {
-    await _pumpApp(tester);
+    _stillMotion(tester);
+    // Appearance whole in the window: one cut off at the bottom sends a
+    // semantics update the desktop engines reject.
+    await _pumpApp(tester, height: 1600);
     await _press(tester, LogicalKeyboardKey.comma, meta: true);
     expect(_section(tester), SettingsSection.general);
     await _press(tester, LogicalKeyboardKey.keyK, meta: true);
@@ -347,7 +357,10 @@ void main() {
   }, variant: _mac);
 
   testWidgets('so in the IDE\'s settings', (tester) async {
-    final workspace = await _pumpApp(tester);
+    _stillMotion(tester);
+    // Appearance whole in the window: one cut off at the bottom sends a
+    // semantics update the desktop engines reject.
+    final workspace = await _pumpApp(tester, height: 1600);
     workspace.layout = WorkspaceLayout.ide;
     await tester.pump();
     await tester.pump();
@@ -393,9 +406,10 @@ void main() {
       'ticked; one picked is applied and kept', (tester) async {
     // The whole page in the window: one cut off at the bottom, the menu
     // closing sends a semantics update the desktop engines reject.
-    tester.view.physicalSize = const Size(800, 900);
+    tester.view.physicalSize = const Size(800, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    _stillMotion(tester);
     final themes = _FakeThemes();
     await tester.pumpWidget(
       MaterialApp(

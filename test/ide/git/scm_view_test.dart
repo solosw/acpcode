@@ -316,6 +316,31 @@ void main() {
     ]);
   });
 
+  testWidgets('a folder\'s menu has, besides Git\'s, the reveals, its path '
+      'and folding; a file\'s its paths', (tester) async {
+    await pumpScm(tester);
+    await rightClick(tester, rowOf('lib').last);
+    for (final item in [
+      'Discard Changes',
+      'Stage Changes',
+      'Add to .gitignore',
+      'Reveal in Explorer View',
+      'Copy Path',
+      'Copy Relative Path',
+      'Collapse All',
+    ]) {
+      expect(find.text(item), findsOneWidget, reason: item);
+    }
+    await tester.tap(find.text('Collapse All'));
+    await tester.pumpAndSettle();
+    expect(text('a.dart'), findsNothing);
+
+    await rightClick(tester, rowOf('notes.md'));
+    for (final item in ['Open File', 'Copy Path', 'Copy Relative Path']) {
+      expect(find.text(item), findsOneWidget, reason: item);
+    }
+  });
+
   testWidgets('Discard All Changes offers tracked files alone, or all', (
     tester,
   ) async {

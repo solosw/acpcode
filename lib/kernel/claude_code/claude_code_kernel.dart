@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../chat/chat_models.dart';
+import '../../chat/composer/paste_store.dart';
 import '../../models/launch_environment.dart';
 import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
+import '../../remote/remote_location.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
 import '../commit_attribution.dart';
@@ -20,6 +22,7 @@ import 'claude_code_transport.dart';
 import 'claude_code_translator.dart';
 import 'claude_elicitation.dart';
 import 'claude_goal.dart';
+import 'claude_sdk_tools.dart';
 import 'control_channel.dart';
 
 /// Reads a kept session: its conversation lines, oldest first, along the
@@ -362,9 +365,11 @@ class ClaudeCodeKernel
       final workspace = _workspace;
       _launchedProvider = _providerKey;
       _launchedWindow = _autocompact;
+      final sdkServers = ClaudeSdkTools.servers;
       final transport = await _start(
         ClaudeLaunch(
           cwd: _cwd,
+          sdkServers: sdkServers,
           resume: _sessionId,
           model: model,
           // Plan is entered once started.
@@ -378,6 +383,8 @@ class ClaudeCodeKernel
           attribution: CommitAttribution.current(),
           env: env,
           directories: workspace?.folders ?? const [],
+          // Long pastes are kept on this machine: only its agent reads them.
+          readable: [if (!RemoteLocation.isRemote(_cwd)) ?PasteStore.directory],
           instructions: workspace?.instructions,
           models: switch (custom) {
             (final provider, _) => _requestedModels(provider),
@@ -393,7 +400,10 @@ class ClaudeCodeKernel
       final control = _control = ControlChannel(transport.write);
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
-        await control.request('initialize', {'promptSuggestions': true}),
+        await control.request('initialize', {
+          'promptSuggestions': true,
+          if (sdkServers.isNotEmpty) 'sdkMcpServers': sdkServers,
+        }),
       );
       if (_mode != _cliMode) {
         _cliMode = _mode;
@@ -648,7 +658,11 @@ class ClaudeCodeKernel
     _translator.begin();
   }
 
-  void _endTurn({required bool interrupted, Duration? worked}) {
+  void _endTurn({
+    required bool interrupted,
+    Duration? worked,
+    TurnUsage? usage,
+  }) {
     final turn = _turn;
     if (turn == null) return;
     _turn = null;
@@ -657,11 +671,28 @@ class ClaudeCodeKernel
       null => null,
     };
     _translator.settle();
+    // As streamed, where it was: the agent's own requests, timed.
+    if (_translator.turnUsage case final streamed?) {
+      usage = TurnUsage(
+        inputTokens: streamed.inputTokens,
+        outputTokens: streamed.outputTokens,
+        tokensPerSecond: streamed.tokensPerSecond,
+        costUsd: usage?.costUsd,
+      );
+    }
     for (final id in _permissions.keys) {
       emit(InteractionResolved(nextSeq, id));
     }
     _permissions.clear();
-    emit(TurnEnded(nextSeq, turn, interrupted: interrupted, worked: worked));
+    emit(
+      TurnEnded(
+        nextSeq,
+        turn,
+        interrupted: interrupted,
+        worked: worked,
+        usage: usage,
+      ),
+    );
   }
 
   @override
@@ -1370,9 +1401,26 @@ class ClaudeCodeKernel
         unawaited(_permission(id, request));
       case 'elicitation':
         _elicitation(id, request);
+      case 'mcp_message':
+        unawaited(_mcpMessage(id, request));
       default:
         control.refuse(id, 'Not supported by this client');
     }
+  }
+
+  /// What the agent says to one of the app's own MCP servers (see
+  /// claude_sdk_tools.dart), answered.
+  Future<void> _mcpMessage(String id, Map<String, Object?> request) async {
+    final message = (request['message'] as Map?)?.cast<String, Object?>();
+    if (request['server_name'] != ClaudeSdkTools.server || message == null) {
+      _control?.refuse(id, 'No such server');
+      return;
+    }
+    final response = await ClaudeSdkTools.handle(
+      message,
+      ClaudeSdkCall(cwd: _cwd, sessionId: _sessionId),
+    );
+    _control?.respond(id, {'mcp_response': response});
   }
 
   /// An MCP server asks the user for input: its form as questions, or a
@@ -1441,8 +1489,13 @@ class ClaudeCodeKernel
   }
 
   void _result(Map<String, Object?> message) {
+    // The session's cost so far: the turn's is what it grew by (all of it
+    // when it fell, the CLI having started over).
+    double? turnCost;
     if (message['total_cost_usd'] case final num cost) {
+      final before = _cost ?? 0;
       _cost = cost.toDouble();
+      turnCost = _cost! >= before ? _cost! - before : _cost;
       _reportStats();
     }
     // The models' own windows: the conversation's may be less (see
@@ -1460,11 +1513,18 @@ class ClaudeCodeKernel
     if (message['is_error'] == true && message['result'] is String) {
       final error = message['result'] as String;
       if (error.isNotEmpty) {
+        final host = _remoteHost;
         emit(
           ItemUpserted(
             nextSeq,
             'error:${message['uuid'] ?? _turn}',
-            NoticeItem(NoticeKind.error, error),
+            NoticeItem(
+              NoticeKind.error,
+              // On a host over SSH: what may be why, and what to do.
+              host != null && _notLoggedIn(error)
+                  ? '$error\n\n${remoteLoginHint(host)}'
+                  : error,
+            ),
           ),
         );
       }
@@ -1474,6 +1534,24 @@ class ClaudeCodeKernel
       worked: switch (message['duration_ms']) {
         final num ms => Duration(milliseconds: ms.round()),
         _ => null,
+      },
+      // Its tokens as the result counts them, for when none streamed (its
+      // API time is the session's, too coarse for a speed).
+      usage: switch (message['usage']) {
+        final Map<Object?, Object?> usage => TurnUsage(
+          inputTokens:
+              [
+                'input_tokens',
+                'cache_creation_input_tokens',
+                'cache_read_input_tokens',
+              ].fold<int>(
+                0,
+                (sum, key) => sum + ((usage[key] as num?) ?? 0).toInt(),
+              ),
+          outputTokens: (usage['output_tokens'] as num?)?.toInt(),
+          costUsd: turnCost,
+        ),
+        _ => TurnUsage(costUsd: turnCost),
       },
     );
     unawaited(_refreshContext());
@@ -1909,7 +1987,7 @@ class ClaudeCodeKernel
     _setHealth(
       KernelHealth(
         KernelHealthStatus.failed,
-        message: _failureMessage(stderr),
+        message: _failureMessage(stderr, remote: _remoteHost),
         // Which one, when it is too old: another, newer, may be the
         // terminal's.
         detail: _tooOld(stderr) && executable != null
@@ -1923,15 +2001,36 @@ class ClaudeCodeKernel
   /// before the option was.
   static bool _tooOld(String stderr) => stderr.contains("unknown option '--");
 
-  static String _failureMessage(String stderr) {
+  /// The SSH host the agent runs on; null for this machine.
+  String? get _remoteHost => RemoteLocation.hostOf(_cwd);
+
+  /// Whether [text] says Claude Code is not logged in.
+  static bool _notLoggedIn(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('login') ||
+        lower.contains('api key') ||
+        lower.contains('authenticat');
+  }
+
+  /// Why Claude Code on [host] may say it is not logged in when it is: on a
+  /// Mac, its credentials are in the login keychain, which stays locked for
+  /// a session over SSH; and what to do.
+  static String remoteLoginHint(String host) =>
+      'Claude Code on $host is not logged in for this SSH session. If '
+      'it is logged in there, and $host is a Mac, its login keychain is '
+      'locked over SSH: unlock it in a terminal of the project '
+      '(`security unlock-keychain ~/Library/Keychains/login.keychain-db`), '
+      'or run `claude setup-token` there and set the token it gives as '
+      '`CLAUDE_CODE_OAUTH_TOKEN`. Otherwise, run `claude` there and log in.';
+
+  static String _failureMessage(String stderr, {String? remote}) {
     if (_tooOld(stderr)) {
       return 'Claude Code is older than BaoCode needs. Update it '
           '(`claude update`) and try again.';
     }
     final lower = stderr.toLowerCase();
-    if (lower.contains('login') ||
-        lower.contains('api key') ||
-        lower.contains('authenticat')) {
+    if (_notLoggedIn(stderr)) {
+      if (remote != null) return remoteLoginHint(remote);
       return 'Claude Code is not logged in. Run `claude` in a terminal and '
           'log in.';
     }

@@ -528,10 +528,14 @@ class IdeEditorTab extends StatefulWidget {
     this.closeTooltip,
     this.onClose,
     this.onMenu,
+    this.onDoubleTap,
     this.tooltip,
     this.minWidth = 80,
     this.borderTop = true,
   });
+
+  /// A double click (pins a preview tab); none: a click selects at once.
+  final VoidCallback? onDoubleTap;
 
   /// In 16px, in the tab's color unless it has its own.
   final Widget icon;
@@ -614,6 +618,7 @@ class _IdeEditorTabState extends State<IdeEditorTab> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onSelect,
+          onDoubleTap: widget.onDoubleTap,
           onSecondaryTapUp: switch (widget.onMenu) {
             final onMenu? => (details) => onMenu(details.globalPosition),
             null => null,

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' show min;
 import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
@@ -368,6 +369,61 @@ Future<Uint8List> readFileBytes(String path) async {
   final file = File(path);
   if (!await file.exists()) throw IdeFileNotFoundException(path);
   return file.readAsBytes();
+}
+
+/// At most [length] (up to [maxRangeLength]) of [path]'s bytes from
+/// [offset], and the file's size. Throws [IdeFileNotFoundException] when
+/// there is no such file.
+Future<({Uint8List bytes, int size})> readFileRange(
+  String path,
+  int offset,
+  int length,
+) async {
+  final file = File(path);
+  if (!await file.exists()) throw IdeFileNotFoundException(path);
+  final open = await file.open();
+  try {
+    final size = await open.length();
+    if (offset >= size) return (bytes: Uint8List(0), size: size);
+    await open.setPosition(offset);
+    final bytes = await open.read(min(length, maxRangeLength));
+    return (bytes: bytes, size: size);
+  } finally {
+    await open.close();
+  }
+}
+
+/// The most [readFileRange] reads at once.
+const maxRangeLength = 4 << 20;
+
+/// How many bytes the files at [paths] take, those in folders too (links
+/// not followed); once over [limit], counting stops with what it is.
+Future<int> sizeOfFiles(List<String> paths, {int? limit}) async {
+  var total = 0;
+  bool over() => limit != null && total > limit;
+  Future<void> count(String path) async {
+    if (over()) return;
+    final stat = await FileStat.stat(path);
+    switch (stat.type) {
+      case FileSystemEntityType.file:
+        total += stat.size;
+      case FileSystemEntityType.directory:
+        try {
+          await for (final entry in Directory(path).list(followLinks: false)) {
+            await count(entry.path);
+            if (over()) return;
+          }
+        } on FileSystemException {
+          // Unreadable: nothing counted.
+        }
+      default:
+    }
+  }
+
+  for (final path in paths) {
+    await count(path);
+  }
+  return total;
 }
 
 /// Changes to the entries of [directory]; empty where it cannot be

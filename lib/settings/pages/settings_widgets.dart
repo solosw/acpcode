@@ -96,6 +96,11 @@ class SettingsPage extends StatelessWidget {
 
   static const inset = 32.0;
 
+  /// The inset of a page narrower than [narrowWidth] (the narrow window's,
+  /// or one beside the list in a small one): the cards keep the room.
+  static const narrowInset = 20.0;
+  static const narrowWidth = 720.0;
+
   final String title;
   final String? description;
 
@@ -142,10 +147,13 @@ class SettingsColumn extends StatelessWidget {
     valueListenable: ChatWidth.current,
     builder: (context, maxWidth, _) => LayoutBuilder(
       builder: (context, constraints) {
+        final inset = constraints.maxWidth < SettingsPage.narrowWidth
+            ? SettingsPage.narrowInset
+            : SettingsPage.inset;
         final side = maxWidth.isInfinite
-            ? SettingsPage.inset
+            ? inset
             : ((constraints.maxWidth - maxWidth) / 2).clamp(
-                SettingsPage.inset,
+                inset,
                 double.infinity,
               );
         // Fading out towards an edge it is scrolled past, over about two
@@ -156,7 +164,10 @@ class SettingsColumn extends StatelessWidget {
             // Under the window's draggable strip already: the title near the
             // nav's back button.
             padding: EdgeInsets.fromLTRB(side, 16, side, 48),
-            children: children,
+            // A section expanded or collapsed fades as it now ends.
+            children: [
+              for (final child in children) ScrollEdgeFadeContent(child: child),
+            ],
           ),
         );
       },

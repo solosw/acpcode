@@ -55,6 +55,7 @@ import 'extensions/ide_extensions.dart';
 import 'extensions/ide_extensions_view.dart';
 import 'explorer_history.dart'
     show explorerRedoCommandId, explorerUndoCommandId;
+import 'file_views.dart';
 import 'file_service.dart'
     show IdeFileListing, IdeHostFiles, localizedFileError, readFileBytes;
 import 'git/commit_message.dart';
@@ -98,6 +99,7 @@ import 'lsp_ui/language_status.dart';
 import 'lsp_ui/lsp_convert.dart';
 import 'lsp_ui/problems_panel.dart';
 import 'lsp_ui/workspace_edit.dart';
+import 'language_mode.dart';
 import 'project_tools.dart';
 import 'save_copy.dart';
 import 'search/ide_search_view.dart';
@@ -106,6 +108,7 @@ import 'tab_strip_scroll.dart';
 import 'terminal/links/terminal_links.dart';
 import 'terminal/terminal_instance.dart';
 import 'terminal/terminal_panel.dart';
+import 'terminal/terminal_tasks.dart';
 import 'terminal/terminal_profile_service.dart';
 import 'terminal/terminal_profiles.dart';
 import 'terminal/terminal_service.dart';
@@ -121,6 +124,7 @@ class IdeWorkbench extends StatefulWidget {
     required this.project,
     required this.visible,
     required this.chat,
+    this.onAddToChat,
     required this.onBack,
     this.backLabel,
     this.editorBuilder,
@@ -139,6 +143,7 @@ class IdeWorkbench extends StatefulWidget {
     this.pinned = false,
     this.onPinnedChanged,
     this.terminalBackend = const TerminalBackend(),
+    this.terminalTasks,
     this.colorThemes,
     this.recentFolders = const [],
     this.onOpenRecent,
@@ -182,6 +187,10 @@ class IdeWorkbench extends StatefulWidget {
   final Project project;
   final bool visible;
   final Widget chat;
+
+  /// Puts files and folders in [chat]'s composer (Source Control's Add to
+  /// Chat); none offered when null.
+  final ValueChanged<List<ComposerFile>>? onAddToChat;
   final VoidCallback onBack;
 
   /// The title bar's way back's label: Back to Chat, by default; in a
@@ -230,6 +239,10 @@ class IdeWorkbench extends StatefulWidget {
   /// terminal; fakes in widget tests. Without one (the web), there is no
   /// TERMINAL tab.
   final TerminalBackend terminalBackend;
+
+  /// The background commands of the agent in its chat, listed with the
+  /// terminals (see [IdeWorkbenchState.showTerminalTask]).
+  final TerminalTasks? terminalTasks;
 
   /// The color themes Preferences: Color Theme (⌘K ⌘T) picks from; the
   /// command is disabled without them.
@@ -2104,7 +2117,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// terminal focused, as VS Code's `showPanel(true)`.
   void _showTerminal() {
     if (_terminals == null) return;
-    setState(() => _panel = IdePanelTab.terminal);
+    setState(() {
+      _panel = IdePanelTab.terminal;
+      _terminalTask = null;
+    });
     _focusTerminalSoon();
   }
 
@@ -2311,6 +2327,17 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// Shows the chat, if hidden (e.g. for an agent a notification opens).
   void showChat() => _layout.showChat();
 
+  /// The id of the background command (see [IdeWorkbench.terminalTasks])
+  /// whose output shows in the terminal's place; null for the terminal.
+  String? _terminalTask;
+
+  /// Shows the output of the background command [id] (one of its chat's)
+  /// on the panel's TERMINAL tab.
+  void showTerminalTask(String id) => setState(() {
+    _terminalTask = id;
+    _panel = IdePanelTab.terminal;
+  });
+
   /// Has the editor's last keys in its document, for what is unsaved to be
   /// all of it (before its window closes, or the app quits).
   Future<void> flush() async => _flushEditor();
@@ -2350,6 +2377,19 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// VS Code's Change End of Line Sequence (`ChangeEOLAction`): LF or CRLF
   /// for every line of the active document, the current one active.
+  /// Change Language Mode for the active editor's file (see
+  /// [languageModePick]).
+  Future<void> _changeLanguageMode() async {
+    final active = widget.workspace.active;
+    if (active == null || active.isMedia || active.openError != null) return;
+    final l10n = context.l10n;
+    await IdeLanguageNames.load();
+    if (!mounted || !identical(widget.workspace.active, active)) return;
+    _showQuickModel(
+      languageModePick(l10n, active.path, onPicked: _focusEditor),
+    );
+  }
+
   void _changeEndOfLine() {
     final active = widget.workspace.active;
     if (active == null || active.isMedia || active.openError != null) return;
@@ -2854,6 +2894,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         id: 'workbench.action.gotoLine',
         label: 'Go to Line/Column…',
         run: () => _showQuickInput(':'),
+      ),
+      IdeCommand(
+        id: 'workbench.action.editor.changeLanguageMode',
+        label: 'Change Language Mode',
+        enabled: active != null && !active.isMedia && active.openError == null,
+        run: () => unawaited(_changeLanguageMode()),
       ),
       IdeCommand(
         id: 'workbench.action.editor.changeEOL',
@@ -3480,6 +3526,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           _open(path, focusEditor: focusEditor),
       onOpenChange: _openChange,
       onRevealInExplorer: _revealInExplorer,
+      onAddToChat: widget.onAddToChat,
       trash: WindowControls.canMoveToTrash ? WindowControls.moveToTrash : null,
       commitMessage: widget.commitMessage,
     ),
@@ -3793,6 +3840,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                   (command) => command.id == id,
                                 ),
                             ],
+                          )
+                        : active.view != null &&
+                              FileViews.byId(active.view!) != null
+                        ? KeyedSubtree(
+                            key: ValueKey(active),
+                            child: FileViews.byId(
+                              active.view!,
+                            )!.build(context, active.path),
                           )
                         : active.isMedia
                         ? IdeImagePreview(
@@ -4254,6 +4309,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                     terminal: switch (_terminals) {
                       final terminals? => TerminalPanel(
                         terminals: terminals,
+                        tasks: widget.terminalTasks,
+                        files: widget.workspace.files,
+                        shownTask: _terminalTask,
+                        onShowTask: (id) => setState(() => _terminalTask = id),
                         onNew: _newTerminal,
                         onOpenLink: _openTerminalLink,
                         shouldSkipShell: _terminalSkipsShell,
@@ -4507,7 +4566,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         ),
         IdeStatusBarItem(
           IdeLanguageNames.forPath(active.path),
-          tooltip: l10n.wbLanguageMode,
+          tooltip: keys.titleWithKeybinding(
+            l10n.languageModePlaceholder,
+            'workbench.action.editor.changeLanguageMode',
+          ),
+          onTap: () => unawaited(_changeLanguageMode()),
         ),
         bell,
       ],

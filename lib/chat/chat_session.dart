@@ -14,6 +14,7 @@ import '../remote/remote_location.dart';
 import 'chat_feed.dart';
 import 'chat_models.dart';
 import 'composer/composer_draft.dart';
+import 'composer/paste_store.dart';
 import 'mock_conversation.dart';
 import 'open_editor.dart';
 import 'review/change_review.dart';
@@ -889,7 +890,12 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     }
     final turn = KernelTurn(
       id: newTurnId(),
-      text: message.text.trim(),
+      // Pastes too long to send, kept in files the agent reads; a remote
+      // project's agent cannot, and is sent them.
+      text: switch (kernelContext.cwd) {
+        final cwd? when RemoteLocation.isRemote(cwd) => message.text.trim(),
+        _ => PasteStore.offload(message.text.trim()),
+      },
       mentions: message.mentions,
       images: acceptsImages ? message.images : const [],
       now: now,

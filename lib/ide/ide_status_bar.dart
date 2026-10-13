@@ -11,6 +11,7 @@ import 'package:bao_editor/monaco/flutter/document_snapshot.dart';
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart'
     show EditorOffsetEdit;
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
+import 'package:bao_editor/monaco/flutter/language_overrides.dart';
 import 'package:bao_editor/textmate/textmate_manifest.dart';
 
 import 'ide_editor.dart';
@@ -313,7 +314,61 @@ class IdeLanguageNames {
     unawaited(_loading!.then((_) => onLoaded()));
   }
 
+  /// Once the registrations are loaded (see [ensureLoaded]).
+  static Future<void> load() {
+    ensureLoaded(() {});
+    return _loading!;
+  }
+
+  /// Every language there is to pick (Change Language Mode): TextMate's
+  /// and Monaco's, each once by its id, named by its first alias, with
+  /// its extensions; by name.
+  static List<({String id, String name, List<String> extensions})>
+  get all {
+    final names = <String, String>{};
+    final extensions = <String, Set<String>>{};
+    void add(String id, List<String> aliases, List<String> more) {
+      if (id.isEmpty || id == EditorLanguageOverrides.plainText) return;
+      if (aliases.firstOrNull case final alias? when alias.isNotEmpty) {
+        names.putIfAbsent(id, () => alias);
+      }
+      (extensions[id] ??= {}).addAll(more);
+    }
+
+    for (final language in _textMateLanguages) {
+      add(language.id, language.aliases, language.extensions);
+    }
+    for (final registration in _registrations ?? const []) {
+      add(registration.id, registration.aliases, registration.extensions);
+    }
+    final all = [
+      for (final MapEntry(key: id, value: more) in extensions.entries)
+        (id: id, name: names[id] ?? id, extensions: more.toList()),
+    ];
+    all.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return all;
+  }
+
+  /// The name of the language [id], as [forPath] names one.
+  static String nameOf(String id) {
+    if (id == EditorLanguageOverrides.plainText) return 'Plain Text';
+    for (final language in _textMateLanguages) {
+      if (language.id == id && language.aliases.isNotEmpty) {
+        return language.aliases.first;
+      }
+    }
+    for (final registration in _registrations ?? const []) {
+      if (registration.id == id && registration.aliases.isNotEmpty) {
+        return registration.aliases.first;
+      }
+    }
+    return id;
+  }
+
   static String forPath(String path) {
+    if (EditorLanguageOverrides.instance.of(path) case final picked?) {
+      return nameOf(picked);
+    }
     final registrations = _registrations;
     if (registrations == null) return languageNameForFile(path);
     final lower = p.basename(path).toLowerCase();

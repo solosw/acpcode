@@ -174,6 +174,7 @@ void main() {
     final review = await open();
     await review.begin();
     write('out/gen.txt', 'g\n');
+    File(p.join(temp.path, 'elsewhere.txt')).writeAsStringSync('e\ne\n');
     review.report(FileChange(path: path('out/gen.txt'), added: 1, removed: 0));
     review.report(
       FileChange(
@@ -192,6 +193,20 @@ void main() {
     await review.undoAll();
     expect(File(path('out/gen.txt')).existsSync(), isTrue);
     await review.keepAll();
+    expect(review.changes, isEmpty);
+  }, skip: !hasGit);
+
+  test('drops the edits it cannot see once their files are gone', () async {
+    final review = await open();
+    await review.begin();
+    final elsewhere = File(p.join(temp.path, 'cleanup.ps1'))
+      ..writeAsStringSync('x\n');
+    review.report(FileChange(path: elsewhere.path, added: 1, removed: 0));
+    await review.observe();
+    expect(review.changes.where((c) => !c.tracked), hasLength(1));
+
+    elsewhere.deleteSync();
+    await review.observe();
     expect(review.changes, isEmpty);
   }, skip: !hasGit);
 

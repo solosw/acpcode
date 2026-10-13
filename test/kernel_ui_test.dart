@@ -19,7 +19,8 @@ import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/widgets/activity_row.dart';
 import 'package:baocode/chat/widgets/thinking_spark.dart';
 import 'package:baocode/chat/widgets/command_step.dart';
-import 'package:baocode/chat/widgets/orbit_indicator.dart';
+import 'package:baocode/chat/widgets/pixel_loader.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/composer/composer_images.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
@@ -1121,8 +1122,8 @@ void main() {
     // In the conversation: a card, a line, with what it did last.
     expect(find.text('Compare the games'), findsOneWidget);
     expect(find.text('· Read game.js'), findsOneWidget);
-    // In the foreground: no orbit.
-    expect(find.byType(OrbitIndicator), findsNothing);
+    // In the foreground: not said to be in the background.
+    expect(_inBackground, findsNothing);
 
     await tester.tap(find.text('Compare the games'));
     // A frame to start the transition, then its length.
@@ -1207,6 +1208,88 @@ void main() {
     expect(find.text('· Explore · 1m 14s · 1 tool · 9.1k tokens'), findsOne);
   });
 
+  testWidgets('its turn over, an agent with a subagent still running in the '
+      'background shows running in the sidebar, until it is done', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final cli = FakeCli();
+    late final KernelDescriptor claude;
+    claude = KernelDescriptor(
+      id: 'claude-code',
+      label: 'Claude Code',
+      icon: Icons.auto_awesome_rounded,
+      description: '',
+      create: (context) =>
+          ClaudeCodeKernel(claude, context, start: (_) async => cli),
+    );
+    final workspace = Workspace(
+      kernels: [claude],
+      projects: const [Project('app', '/tmp/app')],
+    );
+    await tester.pumpWidget(BaoCodeApp(workspace: workspace));
+    await tester.pump();
+    final thread = workspace.create();
+    await tester.pump();
+    thread.session.send(const ComposerMessage(text: 'analyze the app'));
+    await tester.pump(const Duration(milliseconds: 100));
+    cli
+      ..push(
+        assistant(null, 'toolu_b', {
+          'name': 'Agent',
+          'input': {
+            'description': 'Analyze the app',
+            'subagent_type': 'Plan',
+            'prompt': 'Analyze /app.',
+            'run_in_background': true,
+          },
+        }),
+      )
+      ..push({
+        'type': 'system',
+        'subtype': 'task_started',
+        'task_id': 'a1',
+        'tool_use_id': 'toolu_b',
+        'description': 'Analyze the app',
+        'task_type': 'local_agent',
+        'is_backgrounded': true,
+      })
+      ..push(
+        result(null, 'toolu_b', 'Async agent launched successfully.', {
+          'isAsync': true,
+          'status': 'async_launched',
+          'agentId': 'a1',
+          'prompt': 'Analyze /app.',
+        }),
+      )
+      ..push({'type': 'result', 'subtype': 'success', 'is_error': false});
+    await tester.pump(const Duration(milliseconds: 100));
+    final loader = find.descendant(
+      of: find.byType(Sidebar),
+      matching: find.byType(PixelLoader),
+    );
+    // The turn is over, as a notification goes by; the list shows it on.
+    expect(thread.status, isNot(ThreadStatus.running));
+    expect(thread.shownStatus, ThreadStatus.running);
+    expect(loader, findsOneWidget);
+
+    // Done, after the turn: the kernel's word of it.
+    cli.push({
+      'type': 'system',
+      'subtype': 'task_notification',
+      'task_id': 'a1',
+      'tool_use_id': 'toolu_b',
+      'status': 'completed',
+      'summary': 'An Elysia server on Bun.',
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(thread.runsInBackground, isFalse);
+    expect(thread.shownStatus, isNot(ThreadStatus.running));
+    expect(loader, findsNothing);
+  });
+
   testWidgets('a subagent in the background reports when notified, and '
       'opens from its row above the composer', (tester) async {
     final (:session, :cli) = await pumpScripted(tester);
@@ -1247,8 +1330,16 @@ void main() {
       matching: find.text('Analyze the app'),
     );
     expect(row, findsOneWidget);
-    // Out there on its own: an orbit, on its card and on its row.
-    expect(find.byType(OrbitIndicator), findsNWidgets(2));
+    // Out there on its own: its card says so on hover; the card and its
+    // row show it running as one in the foreground does.
+    expect(_inBackground, findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(ActivityStrip),
+        matching: find.byType(PixelLoader),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(row);
     await tester.pump();
@@ -1275,7 +1366,7 @@ void main() {
       findsOne,
     );
     expect(subagentStatusRow(), findsNothing);
-    expect(find.byType(OrbitIndicator), findsNothing);
+    expect(_inBackground, findsNothing);
     expect(session.itemCount, greaterThan(0));
   });
 }
@@ -1287,4 +1378,10 @@ const _frame = Duration(milliseconds: 16);
 Finder subagentStatusRow() => find.descendant(
   of: find.byType(ConversationLayer).last,
   matching: find.byType(ActivityRow),
+);
+
+/// A subagent's mark saying it runs in the background, on hover.
+final _inBackground = find.byWidgetPredicate(
+  (widget) =>
+      widget is IdeHover && widget.message == 'Running in the background',
 );

@@ -88,6 +88,9 @@ abstract final class ChatCommandIds {
   static const renameAgent = 'baocode.chat.renameAgent';
   static const closeSubagent = 'baocode.chat.closeSubagent';
 
+  /// Find in the conversation shown (see ChatFind).
+  static const find = 'baocode.chat.find';
+
   // Its input's (see ChatComposer).
   static const submit = 'workbench.action.chat.submit';
   static const cancelEdit = 'workbench.edit.chat.cancel';
@@ -200,6 +203,7 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.toggleContextPanel, 'Toggle Context Panel'),
     (ChatCommandIds.renameAgent, 'Rename Agent'),
     (ChatCommandIds.closeSubagent, 'Back from Subagent'),
+    (ChatCommandIds.find, 'Find in Chat'),
     (ChatCommandIds.submit, 'Send'),
     (ChatCommandIds.cancelEdit, 'Cancel Edit'),
     (ChatCommandIds.showPreviousPrompt, 'Show Previous Prompt'),
@@ -447,6 +451,13 @@ final List<KeybindingEntry> chatExtraKeybindings = [
     mac: 'alt+cmd+enter',
     command: ChatCommandIds.skipTool,
     when: _tool,
+  ),
+  // As the editor's Find, over the conversation shown.
+  const KeybindingEntry(
+    key: 'ctrl+f',
+    mac: 'cmd+f',
+    command: ChatCommandIds.find,
+    when: ChatContextKeys.inChat,
   ),
   const KeybindingEntry(
     key: 'escape',

@@ -888,6 +888,22 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('side-panel-list-toggle')));
     await tester.pumpAndSettle();
     expect(tester.getSize(list).width, width + 40);
+
+    // A file the conversation opens shows alone, the list out of the way
+    // (not kept so); asked for, the list is back.
+    panel.open(session, const FileOpenRequest('/p/a.dart'), listAway: true);
+    await tester.pumpAndSettle();
+    expect(list, findsNothing);
+    expect(panel.toJson()['listShown'], isTrue);
+    await tester.tap(find.byKey(const ValueKey('side-panel-list-toggle')));
+    await tester.pumpAndSettle();
+    expect(list, findsOneWidget);
+    panel.open(session, const FileOpenRequest('/p/b.dart'), listAway: true);
+    await tester.pumpAndSettle();
+    expect(list, findsNothing);
+    panel.showSection(session, SidePanelSection.files);
+    await tester.pumpAndSettle();
+    expect(list, findsOneWidget);
   });
 
   testWidgets('the changes page lists Git\'s changes as the Source Control '
@@ -1069,6 +1085,92 @@ void main() {
     await tester.tap(find.text('Stage Changes'));
     await tester.pumpAndSettle();
     expect(fake.callsTo('add').single, contains('lib/main.dart'));
+  });
+
+  testWidgets('a changed folder\'s menu puts it in the chat, reveals it, '
+      'copies its path and folds the tree; a file\'s opens it too', (
+    tester,
+  ) async {
+    final fake = FakeGit('/p')
+      ..status =
+          '## main\x00'
+          ' M lib/a/main.dart\x00'
+          ' M lib/a/util.dart\x00';
+    final git = fake.repository();
+    addTearDown(git.dispose);
+    final (:panel, :session, files: _) = await _pumpChat(
+      tester,
+      git: git,
+      texts: {'/p/lib/a/main.dart': 'main\n', '/p/lib/a/util.dart': 'util\n'},
+    );
+    panel.showSection(session, SidePanelSection.changes);
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey('side-panel-list'));
+    Finder row(String name) => find.descendant(
+      of: list,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is IdeResourceLabel && widget.name == name,
+      ),
+    );
+
+    await tester.tap(row('lib/a'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    for (final item in [
+      'Discard Changes',
+      'Stage Changes',
+      'Add to Chat',
+      'Reveal in Files',
+      'Copy Path',
+      'Copy Relative Path',
+      'Collapse All',
+      'Expand All',
+    ]) {
+      expect(find.text(item), findsOneWidget, reason: item);
+    }
+    await tester.tap(find.text('Collapse All'));
+    await tester.pumpAndSettle();
+    expect(row('main.dart'), findsNothing);
+
+    await tester.tap(row('lib/a'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Expand All'));
+    await tester.pumpAndSettle();
+    expect(row('main.dart'), findsOneWidget);
+
+    // The folder itself, not its files.
+    await tester.tap(row('lib/a'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add to Chat'));
+    await tester.pumpAndSettle();
+    final composed = jsonEncode(
+      tester
+          .widget<QuillEditor>(
+            find.descendant(
+              of: find.byType(ChatComposer),
+              matching: find.byType(QuillEditor),
+            ),
+          )
+          .controller
+          .document
+          .toDelta()
+          .toJson(),
+    );
+    expect(composed, contains('lib/a'));
+    expect(composed, isNot(contains('main.dart')));
+
+    await tester.tap(row('main.dart'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    for (final item in [
+      'Open Changes',
+      'Open File',
+      'Add to Chat',
+      'Reveal in Files',
+      'Copy Path',
+      'Copy Relative Path',
+    ]) {
+      expect(find.text(item), findsOneWidget, reason: item);
+    }
+    expect(find.text('Collapse All'), findsNothing);
   });
 
   testWidgets('under the changes, the Source Control view\'s graph: a '
@@ -1326,6 +1428,7 @@ void main() {
     // Too narrow for the panel beside the conversations: over them.
     tester.view.physicalSize = const Size(600, 800);
     await tester.pumpAndSettle();
+    await tester.pump(AgentSidePanelArea.overlayDelay);
     expect(_scrim, findsOneWidget);
     final sash = find.byKey(const ValueKey('side-panel-sash'));
     final drag = await tester.startGesture(tester.getCenter(sash));
@@ -1344,6 +1447,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(_dragCover, findsNothing);
     expect(find.byType(FilePreview), findsOneWidget);
+  });
+
+  testWidgets('a room short a while only (the sidebar giving way) does not '
+      'put the panel over the conversations', (tester) async {
+    final (:panel, :session, files: _) = await _pumpChat(tester);
+    tester.view.physicalSize = const Size(1600, 800);
+    panel.show();
+    await tester.pumpAndSettle();
+    tester.view.physicalSize = const Size(600, 800);
+    await tester.pump();
+    expect(_scrim, findsNothing);
+    tester.view.physicalSize = const Size(1600, 800);
+    await tester.pump();
+    expect(_scrim, findsNothing);
+    await tester.pumpAndSettle();
+    expect(_scrim, findsNothing);
+
+    // Narrowing frame by frame, as the sidebar's animation gives way, then
+    // wide enough: never over them.
+    for (final width in [500.0, 560.0, 600.0, 620.0]) {
+      tester.view.physicalSize = Size(width, 800);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(_scrim, findsNothing);
+    }
+    tester.view.physicalSize = const Size(1600, 800);
+    await tester.pump(AgentSidePanelArea.overlayDelay * 2);
+    expect(_scrim, findsNothing);
+
+    // Short for longer: over them.
+    tester.view.physicalSize = const Size(600, 800);
+    await tester.pump();
+    expect(_scrim, findsNothing);
+    await tester.pump(AgentSidePanelArea.overlayDelay);
+    expect(_scrim, findsOneWidget);
   });
 
   testWidgets('where the panel is too wide beside the conversations, it is '

@@ -10,22 +10,27 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
+import '../ide/ide_find_widget.dart';
 import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_column.dart';
 import 'chat_feed.dart';
+import 'chat_find.dart';
 import 'chat_keys.dart';
 import 'chat_models.dart';
 import 'chat_session.dart';
 import 'composer/composer.dart';
 import 'composer/composer_draft.dart';
+import 'side_panel/file_link_menu.dart';
 import 'step_folds.dart';
 import 'user_message_style.dart';
 import 'widgets/chat_item_view.dart';
+import 'widgets/chat_minimap.dart';
 import 'widgets/edge_fade_mask.dart';
 import 'widgets/fold_line.dart';
+import 'widgets/turn_footer.dart';
 import 'widgets/user_message_bubble.dart';
 
 /// Virtualized, selectable conversation history followed by the live turn.
@@ -35,19 +40,28 @@ class ChatHistoryView extends StatefulWidget {
     super.key,
     required this.feed,
     this.maxContentWidth = 760,
+    this.minimap = false,
     this.onOpenAgent,
     this.onSetGoal,
+    this.onFindClosed,
   });
 
   /// The conversation shown: a session's, or a subagent's.
   final ChatFeed feed;
   final double maxContentWidth;
 
+  /// Whether a minimap of it shows in the margin left of its column, when
+  /// there is room for one (see [ChatMinimap]).
+  final bool minimap;
+
   /// Opens a subagent's own conversation, from its card.
   final ValueChanged<AgentItem>? onOpenAgent;
 
   /// Sets a goal the agent proposed as the session's, from its card.
   final ValueChanged<String>? onSetGoal;
+
+  /// Where the focus goes once its find bar closes (see [find]).
+  final VoidCallback? onFindClosed;
 
   @override
   State<ChatHistoryView> createState() => _ChatHistoryViewState();
@@ -57,6 +71,11 @@ class ChatHistoryView extends StatefulWidget {
   static void focus(GlobalKey key) =>
       (key.currentState as _ChatHistoryViewState?)?._selectionFocusNode
           .requestFocus();
+
+  /// Shows the find bar of the history [key] is on, looking for [query]
+  /// when given (a search's), its first match brought into view.
+  static void find(GlobalKey key, {String? query}) =>
+      (key.currentState as _ChatHistoryViewState?)?._find.show(query: query);
 }
 
 class _ChatHistoryViewState extends State<ChatHistoryView>
@@ -120,6 +139,30 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   Iterable<ChatItem> _itemsIn(StepFold fold) => [
     for (var index = fold.start; index < fold.end; index++) _feed.itemAt(index),
   ];
+
+  /// The footer under item [index], when it ends a finished turn: its
+  /// answer to copy, how fast, how long, and what it cost.
+  Widget? _turnFooter(int index) {
+    final prompt = _folds.turnEndingAt(index);
+    if (prompt == null) return null;
+    final message = _feed.itemAt(prompt);
+    if (message is! UserMessageItem) return null;
+    // The answer: the words after the turn's last step.
+    final words = <String>[];
+    for (var i = index; i > prompt; i--) {
+      final item = _feed.itemAt(i);
+      if (item is AssistantTextItem) {
+        words.insert(0, item.text);
+      } else if (item is! ThinkingItem) {
+        break;
+      }
+    }
+    return TurnFooter(
+      answer: words.isEmpty ? null : words.join('\n\n'),
+      worked: message.worked,
+      usage: message.usage,
+    );
+  }
 
   /// The work fold of the last turn, if it folds.
   StepFold? _lastTurnWork() {
@@ -322,6 +365,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// The press went to a sticky copy of a message, over the list.
   bool _pressOnSticky = false;
 
+  /// The press went to the minimap, beside the list.
+  bool _pressOnMinimap = false;
+
   /// Where a drag on the list's text began, to check what it selected.
   Offset? _dragFrom;
   bool _isPointerInside = false;
@@ -348,14 +394,55 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   EdgeDraggingAutoScroller? _autoScroller;
 
   final GlobalKey _listKey = GlobalKey();
+  final ListController _listController = ListController();
   DateTime _lastWheel = DateTime(0);
 
   ChatFeed get _feed => widget.feed;
   bool get _atBottom => _scrollController.anchored;
 
+  // --- Find ------------------------------------------------------------------
+
+  final ChatFind _find = ChatFind();
+  bool _findShown = false;
+
+  /// The last of [ChatFind.reveals] seen.
+  int _findReveals = 0;
+
+  void _findChanged() {
+    if (_find.visible != _findShown) {
+      _findShown = _find.visible;
+      if (!_findShown) widget.onFindClosed?.call();
+    }
+    if (_find.reveals == _findReveals) return;
+    _findReveals = _find.reveals;
+    final match = _find.currentMatch;
+    if (match == null) return;
+    final index = match.item;
+    _setAnchored(false);
+    if (_isHidden(index)) {
+      final folds = [?_folds.workAt(index), ?_folds.stepsAt(index)];
+      setState(() {
+        for (final fold in folds) {
+          _foldOpen[fold.key] = true;
+        }
+      });
+    } else if (_listController.isAttached) {
+      // In view, its marks bring the match into view themselves.
+      final (first, last) = _listController.visibleRange ?? (-1, -1);
+      if (index >= first && index <= last) return;
+    }
+    // Brought near, its marks bring the match into view once built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _seek(index, match.fraction);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    _find
+      ..feed = _feed
+      ..addListener(_findChanged);
     _scrollController.addListener(_handleScroll);
     _feed.addListener(_handleSessionChanged);
     UserMessageStyle.current.addListener(_handleStyleChanged);
@@ -387,6 +474,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (oldWidget.feed != widget.feed) {
       oldWidget.feed.removeListener(_handleSessionChanged);
       widget.feed.addListener(_handleSessionChanged);
+      _find.feed = widget.feed;
       _stickyKeys.clear();
       _stickyIndices = const {};
       _editingIndex = null;
@@ -457,6 +545,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   @override
   void dispose() {
     _feed.removeListener(_handleSessionChanged);
+    _find
+      ..removeListener(_findChanged)
+      ..dispose();
     UserMessageStyle.current.removeListener(_handleStyleChanged);
     _reselectTimer?.cancel();
     _autoScroller?.stopAutoScroll();
@@ -466,6 +557,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     _viewerScroll.dispose();
     _handoff.dispose();
     _selectionDelegate.dispose();
+    _listController.dispose();
     _scrollController.dispose();
     _selectionFocusNode.dispose();
     super.dispose();
@@ -531,6 +623,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   void _handlePointerDown(PointerDownEvent event) {
     _pointersDown++;
+    // What a right click is on, found as it presses: the selection's menu
+    // builds as it comes up, when nothing may be hit tested.
+    _linkMenu = event.buttons & kSecondaryMouseButton != 0
+        ? fileLinkMenuAt(context, event.position)
+        : null;
     // A press stops the list where it is (a trackpad swipe's fling carries
     // on for a while), as it does in the platform's lists: a mouse is not
     // one of the list's drag devices, so nothing else would, and a
@@ -545,16 +642,18 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (list != null && list.hasSize) {
       final right = list.localToGlobal(Offset(list.size.width, 0)).dx;
       _selectionDelegate.suspended =
-          event.position.dx >= right - _scrollbarGutter;
+          !_minimapShown && event.position.dx >= right - _scrollbarGutter;
     }
     _dragFrom =
         _pressInEditor ||
             _pressOnSticky ||
+            _pressOnMinimap ||
             event.kind != PointerDeviceKind.mouse ||
             event.buttons != kPrimaryMouseButton
         ? null
         : event.position;
     _pressOnSticky = false;
+    _pressOnMinimap = false;
     if (_pressInEditor) {
       _pressInEditor = false;
     } else {
@@ -1034,9 +1133,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                 onPointerDown: (_) => _pressOnSticky = true,
                 // Not in the list: pass scrolling on.
                 onPointerSignal: _forwardWheel,
-                onPointerPanZoomStart: _startEditorPan,
+                onPointerPanZoomStart: _startForwardedPan,
                 onPointerPanZoomUpdate: _updateEditorPan,
-                onPointerPanZoomEnd: _endEditorPan,
+                onPointerPanZoomEnd: _endForwardedPan,
                 child: Column(
                   key: _stickyKeys.putIfAbsent(index, GlobalKey.new),
                   mainAxisSize: MainAxisSize.min,
@@ -1055,6 +1154,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                       child: ChatColumn(
                         maxWidth: widget.maxContentWidth,
                         right: _columnRight,
+                        room: _room,
+                        roomFrom: ChatMinimap.roomFrom,
                         child: UserMessageBubble(
                           key: ValueKey(('sticky', index)),
                           text: item.text,
@@ -1101,6 +1202,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                   child: ChatColumn(
                     maxWidth: widget.maxContentWidth,
                     right: _columnRight,
+                    room: _room,
+                    roomFrom: ChatMinimap.roomFrom,
                     // Opening, the message's frame grows into the editor's;
                     // without one, as much of it as its placeholder has room
                     // for. It does not cover what is below it yet.
@@ -1144,9 +1247,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                               onPointerDown: (_) => _pressInEditor = true,
                               // The editor is not in the list: pass the wheel on.
                               onPointerSignal: _forwardWheel,
-                              onPointerPanZoomStart: _startEditorPan,
+                              onPointerPanZoomStart: _startForwardedPan,
                               onPointerPanZoomUpdate: _updateEditorPan,
-                              onPointerPanZoomEnd: _endEditorPan,
+                              onPointerPanZoomEnd: _endForwardedPan,
                               child: TapRegion(
                                 groupId: _editorTapRegion,
                                 onTapOutside: _handleTapOutsideEditor,
@@ -1194,6 +1297,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   // over into the list (its momentum would move the page on its own). Only a
   // text area with nothing to scroll passes scrolling on to the list, or the
   // editor stuck to the top would be a dead spot for scrolling the page.
+  // Nor does it over the minimap, beside it: that passes all of it on.
 
   /// Whether the editor's text area has anything to scroll.
   bool get _editorScrolls {
@@ -1206,8 +1310,12 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   }
 
   void _forwardWheel(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_scrollController.hasClients) return;
     if (_editorScrolls) return; // The text area's, even at its ends.
+    _wheelList(event);
+  }
+
+  void _wheelList(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_scrollController.hasClients) return;
     GestureBinding.instance.pointerSignalResolver.register(event, (event) {
       _scrollController.position.pointerScroll(
         (event as PointerScrollEvent).scrollDelta.dy,
@@ -1215,16 +1323,20 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     });
   }
 
-  VelocityTracker? _editorPanVelocity;
-  double _editorPanForwarded = 0;
+  VelocityTracker? _panVelocity;
+  double _panForwarded = 0;
 
-  void _startEditorPan(PointerPanZoomStartEvent event) {
-    _editorPanVelocity = VelocityTracker.withKind(event.kind);
-    _editorPanForwarded = 0;
+  void _startForwardedPan(PointerPanZoomStartEvent event) {
+    _panVelocity = VelocityTracker.withKind(event.kind);
+    _panForwarded = 0;
   }
 
   void _updateEditorPan(PointerPanZoomUpdateEvent event) {
-    if (!_scrollController.hasClients || _editorScrolls) return;
+    if (!_editorScrolls) _panList(event);
+  }
+
+  void _panList(PointerPanZoomUpdateEvent event) {
+    if (!_scrollController.hasClients) return;
     // Fingers moving down reveal what is above: the offset goes down.
     final delta = -event.panDelta.dy;
     if (delta == 0) return;
@@ -1236,17 +1348,14 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         position.maxScrollExtent,
       ),
     );
-    _editorPanForwarded += delta;
-    _editorPanVelocity?.addPosition(
-      event.timeStamp,
-      Offset(0, _editorPanForwarded),
-    );
+    _panForwarded += delta;
+    _panVelocity?.addPosition(event.timeStamp, Offset(0, _panForwarded));
   }
 
-  void _endEditorPan(PointerPanZoomEndEvent event) {
-    final tracker = _editorPanVelocity;
-    _editorPanVelocity = null;
-    if (tracker == null || _editorPanForwarded == 0) return;
+  void _endForwardedPan(PointerPanZoomEndEvent event) {
+    final tracker = _panVelocity;
+    _panVelocity = null;
+    if (tracker == null || _panForwarded == 0) return;
     if (!_scrollController.hasClients) return;
     final velocity = tracker.getVelocity().pixelsPerSecond.dy;
     final position = _scrollController.position;
@@ -1269,6 +1378,59 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _unfoldedTurns.clear();
     });
     _feed.editMessage(index, message);
+  }
+
+  /// Row [index] of the list: [child] in the column, [gap] below the row
+  /// before it.
+  Widget _row(int index, {required double gap, required Widget child}) =>
+      ChatColumn(
+        maxWidth: widget.maxContentWidth,
+        right: _columnRight,
+        room: _room,
+        roomFrom: ChatMinimap.roomFrom,
+        child: Padding(
+          // All but the user's messages a little narrower than those.
+          padding: EdgeInsets.only(
+            top: gap,
+            left: _insetOf(index),
+            right: _insetOf(index),
+          ),
+          child: ChatFindRow(
+            index: index,
+            child: _HeightMotion(motion: _motions[index] ?? 0, child: child),
+          ),
+        ),
+      );
+
+  /// The rows folded away, as last built, by what they were built from.
+  final Map<int, (Object, Widget)> _hiddenRows = {};
+
+  /// Row [index], folded away: the very widget it was last built as while
+  /// nothing it is made of changed, which Flutter then does not rebuild. A
+  /// long conversation has hundreds of these rows within the list's reach,
+  /// of no height; each rebuild of the history (a word streamed, the pointer
+  /// coming in) would otherwise build and lay them all out again. The same
+  /// rows as shown ones, all the same: a fold opening or closing animates
+  /// them in place.
+  Widget _hiddenRow(int index) {
+    final made = (
+      widget.maxContentWidth,
+      _columnRight,
+      _room,
+      ChatMinimap.roomFrom,
+      _insetOf(index),
+      _motions[index] ?? 0,
+    );
+    if (_hiddenRows[index] case (final from, final row) when from == made) {
+      return row;
+    }
+    final row = _row(
+      index,
+      gap: 0,
+      child: const SizedBox(width: double.infinity),
+    );
+    _hiddenRows[index] = (made, row);
+    return row;
   }
 
   double _insetOf(int index) =>
@@ -1321,10 +1483,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         ),
       };
     }
+    final footer = _turnFooter(index);
     return _ItemSelectionScope(
       index: index,
       delegate: _selectionDelegate,
-      child: folds.isEmpty
+      child: folds.isEmpty && footer == null
           ? shown!
           // Steps line up on the left, folds' lines too.
           : SizedBox(
@@ -1350,6 +1513,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                       onToggle: () => _toggleFold(fold),
                     ),
                   ?shown,
+                  ?footer,
                 ],
               ),
             ),
@@ -1393,6 +1557,120 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (_isPointerInside != value) setState(() => _isPointerInside = value);
   }
 
+  // --- Minimap ---------------------------------------------------------------
+
+  /// Row [index] as the minimap samples it.
+  ChatMinimapRow _minimapRow(int index) {
+    final item = _feed.itemAt(index);
+    final row = _folds.rowAt(index, item, _isFoldOpen);
+    final hidden = row.work == null && row.steps == null && !row.item;
+    return (
+      item: item,
+      shown: row.item,
+      foldLines:
+          (row.work?.worked != null ? 1 : 0) + (row.steps != null ? 1 : 0),
+      gap: hidden ? 0 : _gapBefore(index),
+    );
+  }
+
+  /// The list's sliver, as last found; found again once it is gone.
+  RenderSliverMultiBoxAdaptor? _sliver;
+
+  /// The rows in view, as laid out: the first and the last, and how far
+  /// down each the view's edge is. Read every frame of a scroll (by the
+  /// minimap, as it paints): from where the list laid them out, along it.
+  ChatMinimapSpan? _spanInView() {
+    var sliver = _sliver;
+    if (sliver == null || !sliver.attached) sliver = _sliver = _findSliver();
+    if (sliver == null || sliver.geometry == null) return null;
+    final view = sliver.constraints.viewportMainAxisExtent;
+    // Where the sliver paints from in the view: its padding's and its own
+    // offsets.
+    var lead = 0.0;
+    for (
+      RenderObject? node = sliver;
+      node is RenderSliver;
+      node = node.parent
+    ) {
+      if (node.parentData case final SliverPhysicalParentData data) {
+        lead += data.paintOffset.dy;
+      }
+    }
+    final count = _feed.itemCount;
+    int? first;
+    int? last;
+    var firstAt = 0.0;
+    var lastAt = 1.0;
+    for (var item = sliver.firstChild; item != null;) {
+      final index = _indexOf(item);
+      final height = item.hasSize ? item.size.height : 0.0;
+      if (index < count && height > 0) {
+        final top = lead + sliver.childMainAxisPosition(item);
+        if (top >= view) break;
+        if (top + height > 0) {
+          if (first == null) {
+            first = index;
+            firstAt = (-top / height).clamp(0.0, 1.0);
+          }
+          last = index;
+          lastAt = ((view - top) / height).clamp(0.0, 1.0);
+        }
+      }
+      item = sliver.childAfter(item);
+    }
+    if (first == null || last == null) return null;
+    return (first: first, firstAt: firstAt, last: last, lastAt: lastAt);
+  }
+
+  /// The file link the last right click pressed on (see [_contextMenu]).
+  ChatItemMenu? _linkMenu;
+
+  /// The selection's right click: on a file the conversation names, that
+  /// file's menu (see [FileLinkMenu]) in place of the selection's.
+  Widget _contextMenu(BuildContext context, SelectableRegionState selection) {
+    final at = selection.contextMenuAnchors.primaryAnchor;
+    if (_linkMenu case final menu?) {
+      _linkMenu = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        selection.hideToolbar();
+        if (mounted) unawaited(menu.show(this.context, at));
+      });
+      return const SizedBox.shrink();
+    }
+    return AdaptiveTextSelectionToolbar.selectableRegion(
+      selectableRegionState: selection,
+    );
+  }
+
+  /// Scrolls row [index] to the top of the view, [fraction] of the way
+  /// down it, laid out yet or not.
+  void _seek(int index, double fraction) {
+    if (!_scrollController.hasClients || !_listController.isAttached) return;
+    if (index >= _feed.itemCount) return;
+    _setAnchored(false);
+    final (extent, _) = _listController.extentForIndex(index);
+    _listController.jumpToItem(
+      index: index,
+      scrollController: _scrollController,
+      alignment: 0,
+      rect: Rect.fromLTWH(0, fraction * extent, 0, 0),
+    );
+  }
+
+  /// The column's left and width in the history, [width] wide: as
+  /// [_buildHistory] lays it out.
+  ({double left, double width}) _columnIn(double width) {
+    final gutter = chatGutter(width);
+    final column = RenderChatColumn.place(
+      width - 2 * gutter,
+      maxWidth: widget.maxContentWidth,
+      right: math.max(0.0, _inset - gutter),
+      room: _roomAt(gutter),
+      roomFrom: ChatMinimap.roomFrom,
+    );
+    return (left: gutter + column.left, width: column.width);
+  }
+
   /// Vertical gap above [index]: roomy between turns, none between steps.
   double _gapBefore(int index) => _gapBetween(
     index == 0 ? null : _feed.itemAt(index - 1),
@@ -1415,6 +1693,25 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// what floats at the right of the chat (see [ChatColumnInset]).
   double _columnRight = 0;
 
+  /// What floats at the right of the chat takes, as last built (see
+  /// [ChatColumnInset]).
+  double _inset = 0;
+
+  /// The room the column keeps either side of it for the minimap, within
+  /// the margin of [gutter] (see [ChatColumn.room]).
+  double _roomAt(double gutter) =>
+      widget.minimap ? math.max(0.0, ChatMinimap.room - gutter) : 0;
+
+  double get _room => _roomAt(_gutter);
+
+  /// Whether the minimap has room beside the column, as last built.
+  bool _minimapFits = false;
+
+  /// Whether the minimap shows: the scrollbar then does not, it stands in
+  /// for it.
+  bool get _minimapShown =>
+      _minimapFits && (_contentAbove || _contentBelow) && _feed.itemCount > 0;
+
   /// The history as built for [_gutter] and [_columnRight], until this
   /// builds again: a new width with the same margin (a pane being resized)
   /// only lays it out anew, rather than build (and parse) every message
@@ -1424,14 +1721,21 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   @override
   Widget build(BuildContext context) {
     _built = null;
-    final inset = ChatColumnInset.of(context);
+    final inset = _inset = ChatColumnInset.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final gutter = chatGutter(constraints.maxWidth);
         final right = math.max(0.0, inset - gutter);
-        if (_built == null || gutter != _gutter || right != _columnRight) {
+        final minimapFits =
+            widget.minimap &&
+            ChatMinimap.besides(_columnIn(constraints.maxWidth)) != null;
+        if (_built == null ||
+            gutter != _gutter ||
+            right != _columnRight ||
+            minimapFits != _minimapFits) {
           _gutter = gutter;
           _columnRight = right;
+          _minimapFits = minimapFits;
           _built = _buildHistory(context);
         }
         return _built!;
@@ -1460,7 +1764,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
           child: ScrollbarTheme(
             data: ScrollbarTheme.of(context).copyWith(
               thumbColor: WidgetStateProperty.resolveWith((states) {
-                if (!_isPointerInside) return Colors.transparent;
+                if (!_isPointerInside || _minimapShown) {
+                  return Colors.transparent;
+                }
                 final colors = themeColors;
                 if (states.contains(WidgetState.dragged)) {
                   return colors['scrollbarSlider.activeBackground'];
@@ -1471,126 +1777,165 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                 return colors['scrollbarSlider.background'];
               }),
             ),
-            // Above the selection: the bar takes a press on it alone (what
-            // it covers is not hit-tested), so dragging it never selects.
-            child: Scrollbar(
-              controller: _scrollController,
-              thumbVisibility: true,
-              interactive: true,
-              child: SelectionArea(
-                focusNode: _selectionFocusNode,
-                // Focus on click rather than hover so the composer keeps
-                // focus while the pointer passes over the history.
-                child: SelectionContainer(
-                  delegate: _selectionDelegate,
-                  // Items register their text with the selection delegate
-                  // themselves (see [_ItemSelectionScope]); nothing else in
-                  // here is selectable, and the list's own selection handling
-                  // (which can only see built items) stays out of the way.
-                  child: SelectionContainer.disabled(
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        NotificationListener<ScrollMetricsNotification>(
-                          onNotification: _handleMetricsChanged,
-                          // Soft fades where content continues past an edge
-                          // (none when nothing is there, e.g. pinned to the
-                          // bottom).
-                          child: EdgeFadeMask(
-                            top: _contentAbove,
-                            bottom: _contentBelow,
-                            // Hidden under the stuck message, fading in
-                            // below it.
-                            topCover: _stickyCover,
-                            coverFade: _stickyFade,
-                            topFadeAmount: _listTopFade,
-                            repaint: Listenable.merge([
-                              _scrollController,
-                              _editorMoved,
-                            ]),
-                            // Its bar is the one around the selection, above; not a second
-                            // one of the platform's own.
-                            child: ScrollConfiguration(
-                              behavior: ScrollConfiguration.of(context)
-                                  .copyWith(scrollbars: false),
-                              child: SuperListView.builder(
-                                key: _listKey,
-                                controller: _scrollController,
-                                itemCount: _feed.itemCount,
-                                extentEstimation: _estimateExtent,
-                                cacheExtent: 900,
-                                padding: EdgeInsets.fromLTRB(
-                                  _gutter,
-                                  20,
-                                  _gutter,
-                                  24,
-                                ),
-                                itemBuilder: (context, index) {
-                                  return ChatColumn(
-                                    maxWidth: widget.maxContentWidth,
-                                    right: _columnRight,
-                                    child: Padding(
-                                      // All but the user's messages a
-                                      // little narrower than those.
-                                      padding: EdgeInsets.only(
-                                        top: _isHidden(index)
-                                            ? 0
-                                            : _gapBefore(index),
-                                        left: _insetOf(index),
-                                        right: _insetOf(index),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Above the selection: the bar takes a press on it alone (what
+                // it covers is not hit-tested), so dragging it never selects.
+                Scrollbar(
+                  controller: _scrollController,
+                  thumbVisibility: true,
+                  interactive: !_minimapShown,
+                  child: SelectionArea(
+                    focusNode: _selectionFocusNode,
+                    contextMenuBuilder: _contextMenu,
+                    // Focus on click rather than hover so the composer keeps
+                    // focus while the pointer passes over the history.
+                    child: SelectionContainer(
+                      delegate: _selectionDelegate,
+                      // Items register their text with the selection delegate
+                      // themselves (see [_ItemSelectionScope]); nothing else in
+                      // here is selectable, and the list's own selection handling
+                      // (which can only see built items) stays out of the way.
+                      child: SelectionContainer.disabled(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            NotificationListener<ScrollMetricsNotification>(
+                              onNotification: _handleMetricsChanged,
+                              // Soft fades where content continues past an edge
+                              // (none when nothing is there, e.g. pinned to the
+                              // bottom).
+                              child: EdgeFadeMask(
+                                top: _contentAbove,
+                                bottom: _contentBelow,
+                                // Hidden under the stuck message, fading in
+                                // below it.
+                                topCover: _stickyCover,
+                                coverFade: _stickyFade,
+                                topFadeAmount: _listTopFade,
+                                repaint: Listenable.merge([
+                                  _scrollController,
+                                  _editorMoved,
+                                ]),
+                                // Its bar is the one around the selection, above; not a second
+                                // one of the platform's own.
+                                child: ScrollConfiguration(
+                                  behavior: ScrollConfiguration.of(context)
+                                      .copyWith(scrollbars: false),
+                                  child: ChatFindScope(
+                                    find: _find,
+                                    child: SuperListView.builder(
+                                      key: _listKey,
+                                      controller: _scrollController,
+                                      listController: _listController,
+                                      itemCount: _feed.itemCount,
+                                      extentEstimation: _estimateExtent,
+                                      cacheExtent: 900,
+                                      padding: EdgeInsets.fromLTRB(
+                                        _gutter,
+                                        20,
+                                        _gutter,
+                                        24,
                                       ),
-                                      child: _HeightMotion(
-                                        motion: _motions[index] ?? 0,
-                                        child: _buildItem(index),
-                                      ),
+                                      itemBuilder: (context, index) =>
+                                          _isHidden(index) &&
+                                              index != _editingIndex
+                                          ? _hiddenRow(index)
+                                          : _row(
+                                              index,
+                                              gap: _gapBefore(index),
+                                              child: _buildItem(index),
+                                            ),
                                     ),
-                                  );
-                                },
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                        // Built in layout, after the list: the copy of
-                        // the message at the top is there in the very frame
-                        // the list is laid out (a conversation just opened
-                        // has it from its first frame).
-                        Positioned.fill(
-                          child: LayoutBuilder(
-                            builder: (context, _) => Stack(
-                              children: [
-                                for (final index in {
-                                  ..._stickyIndices,
-                                  ?_topTurnMessage(),
-                                })
-                                  if (index != _editingIndex &&
-                                      index < _feed.itemCount &&
-                                      _feed.itemAt(index) is UserMessageItem)
-                                    Positioned.fill(
-                                      key: ValueKey(('sticky', index)),
-                                      child: _buildSticky(index),
-                                    ),
-                              ],
+                            // Built in layout, after the list: the copy of
+                            // the message at the top is there in the very frame
+                            // the list is laid out (a conversation just opened
+                            // has it from its first frame).
+                            Positioned.fill(
+                              child: LayoutBuilder(
+                                builder: (context, _) => Stack(
+                                  children: [
+                                    for (final index in {
+                                      ..._stickyIndices,
+                                      ?_topTurnMessage(),
+                                    })
+                                      if (index != _editingIndex &&
+                                          index < _feed.itemCount &&
+                                          _feed.itemAt(index)
+                                              is UserMessageItem)
+                                        Positioned.fill(
+                                          key: ValueKey(('sticky', index)),
+                                          child: _buildSticky(index),
+                                        ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        if (_editingIndex ?? _closingIndex case final index?)
-                          _buildEditorLayer(index),
-                        Positioned(
-                          right: 0,
-                          left: 0,
-                          bottom: 12,
-                          child: Center(
-                            child: _JumpToBottomButton(
-                              visible: !_shownAtBottom,
-                              onTap: _jumpToBottom,
+                            if (_editingIndex ?? _closingIndex
+                                case final index?)
+                              _buildEditorLayer(index),
+                            Positioned(
+                              right: 0,
+                              left: 0,
+                              bottom: 12,
+                              child: Center(
+                                child: _JumpToBottomButton(
+                                  visible: !_shownAtBottom,
+                                  onTap: _jumpToBottom,
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
-              ),
+                // Beside the list, not over it: a press on it selects nothing.
+                if (widget.minimap)
+                  Positioned.fill(
+                    child: ChatMinimap(
+                      rowCount: _feed.itemCount,
+                      rowAt: _minimapRow,
+                      span: _spanInView,
+                      moved: Listenable.merge([
+                        _scrollController,
+                        _editorMoved,
+                      ]),
+                      columnIn: _columnIn,
+                      scrolls: _contentAbove || _contentBelow,
+                      scrolling: () =>
+                          _scrollController.hasClients && _userScrolling,
+                      onSeek: _seek,
+                      onSeekEnd: _jumpToBottom,
+                      onPointerDown: (_) => _pressOnMinimap = true,
+                      onPointerSignal: _wheelList,
+                      onPointerPanZoomStart: _startForwardedPan,
+                      onPointerPanZoomUpdate: _panList,
+                      onPointerPanZoomEnd: _endForwardedPan,
+                    ),
+                  ),
+                // Over the history's top right, as the editor's.
+                Positioned(
+                  top: 0,
+                  left: _gutter,
+                  right: _gutter,
+                  child: Align(
+                    alignment: Alignment.topRight,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: IdeFindWidget.width,
+                      ),
+                      child: ChatFindBar(find: _find),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

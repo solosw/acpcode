@@ -154,6 +154,31 @@ void main() {
       );
     });
 
+    test('a file read a stretch at a time, and what files take', () async {
+      File(at('big.bin')).writeAsBytesSync(List.generate(10, (i) => i));
+      Directory(at('sub')).createSync();
+      File(at('sub/a.txt')).writeAsStringSync('abc');
+
+      final first = await client().readRange(at('big.bin'), 0, 4);
+      expect(first.bytes, [0, 1, 2, 3]);
+      expect(first.size, 10);
+      final last = await client().readRange(at('big.bin'), 8, 4);
+      expect(last.bytes, [8, 9]);
+      final past = await client().readRange(at('big.bin'), 12, 4);
+      expect(past.bytes, isEmpty);
+      await expectLater(
+        client().readRange(at('none'), 0, 4),
+        throwsA(isA<IdeFileNotFoundException>()),
+      );
+
+      expect(await client().sizeOf([at('big.bin'), at('sub')]), 13);
+      // Counting stops once over the limit.
+      expect(
+        await client().sizeOf([at('big.bin'), at('sub')], limit: 5),
+        10,
+      );
+    });
+
     test('bytes, walks, stats, entries and real paths', () async {
       File(at('img.png')).writeAsBytesSync([137, 80, 78, 71]);
       Directory(at('node_modules/x')).createSync(recursive: true);

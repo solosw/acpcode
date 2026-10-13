@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
@@ -9,7 +10,7 @@ import '../chat_models.dart';
 import 'chat_item_view.dart' show chatItemPlainText;
 import 'flip_switcher.dart';
 import 'hover_builder.dart';
-import 'orbit_indicator.dart';
+import 'pixel_loader.dart';
 import 'shimmer_text.dart';
 import '../../ide/ide_hover.dart';
 
@@ -316,8 +317,8 @@ class _AgentStepState extends State<AgentStep> {
   }
 }
 
-/// Running, done or failed, as a 14 px mark; running in the background as
-/// an orbit.
+/// Running, done or failed, as a 14 px mark: running as pixels filling up,
+/// in the foreground or the background alike (the latter says so on hover).
 class AgentStatusIcon extends StatelessWidget {
   const AgentStatusIcon(this.status, {super.key, this.background = false});
 
@@ -331,15 +332,9 @@ class AgentStatusIcon extends StatelessWidget {
       child: switch (status) {
         CommandStatus.running when background => IdeHover(
           message: context.l10n.statusRunningInBackground,
-          child: const OrbitIndicator(),
+          child: const PixelLoader.subagent(),
         ),
-        CommandStatus.running => Padding(
-          padding: EdgeInsets.all(1.5),
-          child: CircularProgressIndicator(
-            strokeWidth: 1.6,
-            color: AppColors.textMuted,
-          ),
-        ),
+        CommandStatus.running => const PixelLoader.subagent(),
         // As upstream's session status.
         CommandStatus.succeeded => Icon(
           Icons.check_circle_outline_rounded,
@@ -412,6 +407,9 @@ class StopButton extends StatelessWidget {
   }
 }
 
+/// Background's icon (Boxicons' turn-down).
+const turnDownIcon = 'assets/icons/turn-down.svg';
+
 /// Moves a running command or subagent to the background, as Ctrl+B does
 /// in a terminal.
 class BackgroundButton extends StatelessWidget {
@@ -430,10 +428,14 @@ class BackgroundButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.move_down_rounded,
-                size: 13,
-                color: hovered ? AppColors.text : AppColors.textMuted,
+              SvgPicture.asset(
+                turnDownIcon,
+                width: 14,
+                height: 14,
+                colorFilter: ColorFilter.mode(
+                  hovered ? AppColors.text : AppColors.textMuted,
+                  BlendMode.srcIn,
+                ),
               ),
               const SizedBox(width: 4),
               Text(

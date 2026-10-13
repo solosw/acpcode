@@ -774,9 +774,14 @@ class ComposerPickerState extends State<ComposerPicker> {
           widget.selected.iconBuilder?.call(13, color) ??
               Icon(widget.selected.icon, size: 13, color: color),
           const SizedBox(width: 4),
-          Text(
-            widget.label ?? widget.selected.label,
-            style: TextStyle(color: color, fontSize: 12),
+          // Cut short where the input is narrow, not over its edge.
+          Flexible(
+            child: Text(
+              widget.label ?? widget.selected.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 12),
+            ),
           ),
           Icon(
             Icons.keyboard_arrow_down_rounded,

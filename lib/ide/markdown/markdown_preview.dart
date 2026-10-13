@@ -402,7 +402,17 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
   }
 
   Widget _item(BuildContext context, int index) {
-    final heading = _source.blocks[index].kind == MarkdownBlockKind.heading;
+    final block = _source.blocks[index];
+    // A comment is the writer's note: nothing shows, not even its room.
+    if (block.kind == MarkdownBlockKind.html &&
+        isHtmlComment(_source.source(block))) {
+      return _Shown(
+        index: index,
+        shown: _shown,
+        child: const SizedBox.shrink(),
+      );
+    }
+    final heading = block.kind == MarkdownBlockKind.heading;
     return _Shown(
       index: index,
       shown: _shown,

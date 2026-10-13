@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:bao_editor/monaco/flutter/editor_decorations.dart';
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
+import 'package:bao_editor/monaco/flutter/language_overrides.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
@@ -13,6 +14,8 @@ import '../../ide/file_service.dart';
 import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_image_preview.dart';
+import '../../ide/ide_status_bar.dart' show IdeLanguageNames;
+import '../../ide/language_mode.dart';
 import '../../ide/markdown/markdown_preview.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
@@ -25,6 +28,7 @@ import '../../workspace/editor_launcher.dart' show openExternal;
 import '../chat_models.dart' show DiffLineType;
 import '../composer/composer_files.dart' show CopiedCode;
 import '../widgets/code_citation.dart' show CodeColorizer;
+import '../widgets/hover_builder.dart';
 import '../widgets/hover_scrollbar.dart';
 import 'file_edit.dart';
 import 'file_link.dart';
@@ -51,6 +55,7 @@ class FilePreview extends StatefulWidget {
     this.edit,
     this.onEdit,
     this.highlights,
+    this.formatter,
   });
 
   final FileOpenRequest request;
@@ -66,6 +71,9 @@ class FilePreview extends StatefulWidget {
   /// Where the editor's highlighting is kept past the preview, for its tab
   /// shown again to be colored at once; the editor's own when null.
   final IdeCodeHighlights? highlights;
+
+  /// Formats the file with the project's language servers.
+  final IdeTextFormatter? formatter;
 
   /// Reads it, on the project's host.
   final IdeFileService files;
@@ -144,18 +152,33 @@ class _FilePreviewState extends State<FilePreview> {
   final _editor = GlobalKey<IdeCodeEditorState>();
 
   FileOpenRequest get _request => widget.request;
+
   /// An image shows as it is, its changes too: there is no text to compare.
   bool get _image => ideIsImagePath(_request.path);
   bool get _isMarkdown => !_request.diff && isMarkdownPath(_request.path);
 
-  /// The file's own text shows, to edit: not its changes, nor the index's.
-  bool get _editable => !_request.diff && _request.modified == null;
+  /// The file's own text shows, to edit: not its changes, nor the index's,
+  /// nor what is only shown ([FileOpenRequest.readOnly]).
+  bool get _editable =>
+      !_request.diff && _request.modified == null && !_request.readOnly;
 
   @override
   void initState() {
     super.initState();
     if (widget.edit case final edit? when _editable) _attach(edit);
+    EditorLanguageOverrides.instance.addListener(_languageModesChanged);
+    IdeLanguageNames.ensureLoaded(() {
+      if (mounted) setState(() {});
+    });
     _start();
+  }
+
+  /// A language picked for a file (Change Language Mode): its lines
+  /// colored again; the editor colors its own.
+  void _languageModesChanged() {
+    if (!mounted) return;
+    setState(() {});
+    if (_edit == null && !_image) unawaited(_read(++_load));
   }
 
   void _attach(SidePanelFileEdit edit) {
@@ -197,6 +220,7 @@ class _FilePreviewState extends State<FilePreview> {
 
   @override
   void dispose() {
+    EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     _dropMarkdown();
     _detach();
     super.dispose();
@@ -407,6 +431,11 @@ class _FilePreviewState extends State<FilePreview> {
               ),
             ),
           ),
+          if (!_image)
+            _LanguageButton(
+              name: IdeLanguageNames.forPath(path),
+              onPressed: () => unawaited(changeLanguageMode(context, path)),
+            ),
           if (_isMarkdown && _markdown != null)
             IdeActionButton(
               icon: _source ? Codicons.openPreview : Codicons.code,
@@ -541,6 +570,7 @@ class _FilePreviewState extends State<FilePreview> {
         path: _request.path,
         highlights: widget.highlights,
         interfaceSized: false,
+        formatter: widget.formatter,
         decorations: [
           if (marked)
             EditorDecoration(
@@ -1009,4 +1039,38 @@ class _Message extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The file's language, as the IDE's status bar names it: a click changes
+/// it (Change Language Mode).
+class _LanguageButton extends StatelessWidget {
+  const _LanguageButton({required this.name, required this.onPressed});
+
+  final String name;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IdeHover(
+    message: context.l10n.languageModeChange,
+    child: HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onPressed,
+        child: Container(
+          height: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: hovered ? themeColors['toolbar.hoverBackground'] : null,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            name,
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+        ),
+      ),
+    ),
+  );
 }

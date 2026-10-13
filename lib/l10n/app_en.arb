@@ -143,6 +143,7 @@
   "cmdChatOpenIde": "Open in Fast Ide",
   "cmdChatFocusInput": "Focus Chat Input",
   "cmdChatFocusList": "Focus Chat List",
+  "cmdChatFind": "Find in Chat",
   "cmdChatCancel": "Cancel",
   "cmdChatAcceptTool": "Accept",
   "cmdChatSkipTool": "Skip",
@@ -1247,6 +1248,15 @@
       }
     }
   },
+  "pastedTextGone": "This paste is no longer at {path}.",
+  "@pastedTextGone": {
+    "description": "Shown in place of a long paste kept in a file that has since gone.",
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
   "pastedTextLines": "{count, plural, =1{+1 line} other{+{count} lines}}",
   "@pastedTextLines": {
     "description": "After a long paste's tag: how many lines it has past its first.",
@@ -1322,6 +1332,43 @@
       }
     }
   },
+  "turnCopy": "Copy reply",
+  "@turnCopy": {
+    "description": "Hint of the button at the end of a finished turn that copies its answer."
+  },
+  "turnCopied": "Copied",
+  "turnSpeed": "{speed} tok/s",
+  "@turnSpeed": {
+    "description": "How fast the model wrote in a turn, in tokens a second, e.g. \"100 tok/s\".",
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "turnTokens": "{tokens} tokens",
+  "@turnTokens": {
+    "description": "The tokens a turn read and wrote, all its requests together, e.g. \"12.3k tokens\".",
+    "placeholders": {
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "turnTokensHint": "This turn: read {input} (cache included), wrote {output}",
+  "@turnTokensHint": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "turnSpeedHint": "Output speed",
+  "turnDurationHint": "Time this turn took",
+  "turnCostHint": "Cost of this turn",
   "turnWorked": "Worked for {duration}",
   "@turnWorked": {
     "description": "A finished turn's work, folded before its answer, e.g. \"Worked for 4m 32s\".",
@@ -1442,6 +1489,22 @@
   },
   "stripFilesChanged": "{count, plural, =1{1 file changed} other{{count} files changed}}",
   "@stripFilesChanged": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stripAgentsRunning": "{count, plural, =1{1 subagent running} other{{count} subagents running}}",
+  "@stripAgentsRunning": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stripTasksRunning": "{count, plural, =1{1 background task running} other{{count} background tasks running}}",
+  "@stripTasksRunning": {
     "placeholders": {
       "count": {
         "type": "int"
@@ -1728,6 +1791,16 @@
   "tabCloseToTheRight": "Close to the Right",
   "tabCloseSaved": "Close Saved",
   "tabCloseAll": "Close All",
+  "fileLinkOpen": "Open",
+  "fileLinkOpenInPanel": "Open in Side Panel",
+  "fileLinkPreview": "Preview",
+  "@fileLinkPreview": {
+    "description": "Context menu item of an image the chat names: shows it enlarged over the window."
+  },
+  "fileLinkOpenInBrowser": "Open in Browser",
+  "@fileLinkOpenInBrowser": {
+    "description": "Context menu item of an HTML file the chat names: opens it in the default web browser."
+  },
   "tabCopyPath": "Copy Path",
   "tabCopyRelativePath": "Copy Relative Path",
   "tabRevealInExplorerView": "Reveal in Explorer View",
@@ -3102,6 +3175,17 @@
   "langRenameNotApplied": "Rename couldn't be applied.",
   "langNoSelectionFormatter": "No formatter for selections in this file.",
   "langNoFormatter": "No formatter for this file.",
+  "langNoFormatterInstall": "No formatter for this file. Install the '{id}' language server to format {language} files.",
+  "@langNoFormatterInstall": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      },
+      "language": {
+        "type": "String"
+      }
+    }
+  },
   "langNoRefactorings": "No refactorings available",
   "langNoSourceActions": "No source actions available",
   "langNoCodeActions": "No code actions available",
@@ -3348,6 +3432,11 @@
   "wbSelectEol": "Select End of Line Sequence",
   "wbEditorReadOnly": "The active code editor is read-only.",
   "wbLanguageMode": "Language Mode",
+  "shownImage": "Image",
+  "shownReadOnly": "Read-only",
+  "languageModeAuto": "Auto Detect",
+  "languageModePlaceholder": "Select Language Mode",
+  "languageModeChange": "Change Language Mode",
   "editorCommandPalette": "Command Palette...",
   "editorStartTyping": "Start typing…",
   "editorEditLanguage": "Edit {language}…",
@@ -4822,6 +4911,52 @@
       }
     }
   },
+  "appearanceSettingsAgentLoader": "Agent Working",
+  "appearanceSettingsAgentLoaderDescription": "Beside an agent in the sidebar, tabs and search while it works, or while something it started still runs in the background.",
+  "appearanceSettingsSubagentLoader": "Subagent Running",
+  "appearanceSettingsSubagentLoaderDescription": "On a subagent's card in the conversation, and its row above the input, while it runs.",
+  "appearanceSettingsLoaderLabel": "{what}: {style}",
+  "@appearanceSettingsLoaderLabel": {
+    "placeholders": {
+      "what": {
+        "type": "String"
+      },
+      "style": {
+        "type": "String"
+      }
+    }
+  },
+  "appearanceSettingsLoaderSpeed": "Speed",
+  "appearanceSettingsLoaderSpeedLabel": "{what} speed: {speed}",
+  "@appearanceSettingsLoaderSpeedLabel": {
+    "placeholders": {
+      "what": {
+        "type": "String"
+      },
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "loaderStyleSnake": "Snake",
+  "loaderStyleStack": "Stack and clear",
+  "loaderStyleTwinkle": "Twinkle",
+  "loaderStyleFill": "Fill and empty",
+  "loaderStylePulse": "Square pulse",
+  "loaderStyleRipple": "Cross ripple",
+  "loaderStyleSweep": "Diagonal sweep",
+  "loaderStyleRain": "Pixel rain",
+  "loaderStyleChecker": "Checkerboard",
+  "loaderStyleSpinner": "Spinner",
+  "loaderStyleTwinSpinner": "Twin spinner",
+  "loaderStyleCorners": "Corners",
+  "loaderStyleDots": "Bouncing dots",
+  "loaderStyleEqualizer": "Equalizer",
+  "loaderStyleBar": "Progress bar",
+  "loaderStyleScan": "Scan line",
+  "loaderStyleHourglass": "Hourglass",
+  "loaderStyleBreathe": "Breathe",
+  "loaderStyleCircle": "Ring (classic)",
   "appearanceSettingsUserMessageStyle": "Your Messages",
   "appearanceSettingsUserMessageStyleDescription": "How the messages you send show in the conversation: as wide as it, the one you are reading under staying at the top as you scroll; or as chat bubbles at the right that scroll away.",
   "appearanceSettingsUserMessageStyleSticky": "Full width, sticks to the top",
@@ -4834,6 +4969,32 @@
       }
     }
   },
+  "appearanceSettingsMinimap": "Conversation Minimap",
+  "appearanceSettingsMinimapDescription": "A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.",
+  "appearanceSettingsMinimapGlass": "Glass Opacity",
+  "appearanceSettingsMinimapGlassDescription": "How much the liquid glass over where you are in the minimap shows: its tint, shadow and light. At 0% only the part in view stands out.",
+  "appearanceSettingsMinimapGlassLabel": "Minimap glass opacity: {opacity}",
+  "@appearanceSettingsMinimapGlassLabel": {
+    "placeholders": {
+      "opacity": {
+        "type": "String"
+      }
+    }
+  },
+  "appearanceSettingsMinimapElasticity": "Glass Elasticity",
+  "appearanceSettingsMinimapElasticityDescription": "How much the liquid glass stretches as it follows you scrolling, its edge ahead leading, and gathers itself where it stops.",
+  "appearanceSettingsMinimapElasticityLabel": "Minimap glass elasticity: {level}",
+  "@appearanceSettingsMinimapElasticityLabel": {
+    "placeholders": {
+      "level": {
+        "type": "String"
+      }
+    }
+  },
+  "minimapElasticityOff": "Off",
+  "minimapElasticitySubtle": "Subtle",
+  "minimapElasticityMedium": "Medium",
+  "minimapElasticityBouncy": "Bouncy",
   "appearanceSettingsCodeFont": "Code Font",
   "appearanceSettingsCodeFontDescription": "The font code is drawn in: in the editor, the terminal, the chat and the previews. Family names in order, separated by commas, or a preset.",
   "appearanceSettingsCodeFontDefault": "Default",
@@ -5574,6 +5735,7 @@
   "extsPopularThemes": "Popular Themes",
   "extsTabThemes": "Themes",
   "extsTabLanguageServers": "Language Servers",
+  "sidebarAllHosts": "All",
   "sidebarThisMachine": "This Computer",
   "sidebarSwitchHost": "Switch between this computer and SSH hosts",
   "sidebarAddSshHost": "Add SSH Host...",
@@ -5635,5 +5797,452 @@
         "type": "String"
       }
     }
+  },
+  "settingsSectionMobile": "Mobile",
+  "settingsMobileKeywords": "phone iphone android ios pair qr code remote lan",
+  "mobileSettingsDescription": "Follow and drive this computer's agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.",
+  "mobileAllow": "Allow Phones to Connect",
+  "mobileAllowDescription": "Phones paired with this computer connect to it directly.",
+  "mobileStatus": "Status",
+  "mobileStatusOff": "Off",
+  "mobileStatusStarting": "Starting…",
+  "mobileStatusListening": "Listening on port {port}",
+  "@mobileStatusListening": {
+    "placeholders": {
+      "port": {
+        "type": "int"
+      }
+    }
+  },
+  "mobileStatusFailed": "Could not listen: {error}",
+  "@mobileStatusFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "mobileAddresses": "Addresses",
+  "mobileAddressesDescription": "Where phones reach this computer, in the order they try them: the local network first, then the internet.",
+  "mobileAddressesNone": "No network found.",
+  "mobileAddressesRefresh": "Refresh",
+  "mobilePort": "Port",
+  "mobilePortDescription": "The port phones connect to. Forward it on the router to reach this computer from the internet.",
+  "mobilePortInvalid": "Not a port: {text}. Enter a number from 1 to 65535.",
+  "@mobilePortInvalid": {
+    "placeholders": {
+      "text": {
+        "type": "String"
+      }
+    }
+  },
+  "mobilePublicAddress": "Public Address",
+  "mobilePublicAddressDescription": "A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Public IPv6 addresses are found by themselves.",
+  "mobileRelay": "Relay",
+  "mobileRelayDescription": "Reach this computer through BaoCode's relay when none of its addresses can be reached. Coming later.",
+  "mobileRelayUnavailable": "Not Available Yet",
+  "mobilePair": "Pair a Phone",
+  "mobilePairDescription": "Scan the code with BaoCode on the phone (Me → Paired computers → Pair a computer), or pick this computer under Nearby Computers there.",
+  "mobilePairShow": "Show QR Code",
+  "mobilePairCancel": "Cancel",
+  "mobilePairNewCode": "New Code",
+  "mobilePairCopyLink": "Copy Link",
+  "mobilePairCopied": "Copied",
+  "mobilePairExpires": "Good for {minutes} min, once. A phone that cannot scan it can paste the link instead.",
+  "@mobilePairExpires": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "mobilePairExpired": "This code has expired.",
+  "mobilePairVerifyTitle": "Compare with {name}",
+  "@mobilePairVerifyTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mobilePairVerifyBody": "Check that the phone shows the same code, then confirm on the phone.",
+  "mobilePairMismatch": "Codes Don't Match",
+  "mobilePaired": "Paired with {name}.",
+  "@mobilePaired": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mobilePhones": "Paired Phones",
+  "mobilePhonesNone": "No phone is paired yet.",
+  "mobilePhoneConnected": "Connected",
+  "mobilePhoneLastSeen": "Last connected {time}",
+  "@mobilePhoneLastSeen": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "mobilePhoneRemove": "Remove",
+  "mobileThisComputerKey": "This Computer's Key",
+  "mobileThisComputerKeyDescription": "The phone shows it too: the same key on both means no one is in between.",
+  "mobileDiscoverable": "Find on the Local Network",
+  "mobileDiscoverableDescription": "Phones paired with this computer find it on the local network, even after its address changes; while you pair one, new phones list it under Nearby Computers.",
+  "mobilePairNearbyHint": "Phones on this network can also pick this computer under Nearby Computers.",
+  "mobilePairRequestTitle": "{name} Wants to Pair",
+  "@mobilePairRequestTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "mobilePairRequestBody": "It found this computer nearby. Allow it only if the phone shows the same code.",
+  "mobilePairAllow": "Allow",
+  "settingsSectionStash": "Stash",
+  "stashTitle": "Stash",
+  "stashHeading": "Stash",
+  "stashNew": "New stash",
+  "stashLinkOpen": "Open link",
+  "stashLinkEdit": "Edit link",
+  "stashDraft": "Draft",
+  "stashCodeChip": "Code",
+  "stashTableChip": "Table",
+  "stashLines": "{count} lines",
+  "@stashLines": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashNewButton": "New",
+  "stashNewTooltip": "New stash",
+  "stashPlaceholder": "Jot it down…",
+  "stashHintNew": "New",
+  "stashProjectTooltip": "Project it is about",
+  "stashNoProject": "No project",
+  "stashFormatBold": "Bold",
+  "stashFormatItalic": "Italic",
+  "stashFormatStrike": "Strikethrough",
+  "stashFormatUnderline": "Underline",
+  "stashFormatCode": "Code",
+  "stashFormatLink": "Link",
+  "stashFormatColor": "Text and background color",
+  "stashFormatHeading1": "Heading 1",
+  "stashFormatHeading2": "Heading 2",
+  "stashFormatHeading3": "Heading 3",
+  "stashFormatBullets": "Bulleted list",
+  "stashFormatNumbers": "Numbered list",
+  "stashFormatTasks": "Task list",
+  "stashFormatQuote": "Quote",
+  "stashFormatCodeBlock": "Code block",
+  "@stashFormatCodeBlock": {
+    "description": "Selection bar menu: makes the lines a code block, typed in in place."
+  },
+  "stashFormatClear": "Clear formatting",
+  "stashPolish": "Polish",
+  "stashPolishing": "Polishing…",
+  "stashPolishHint": "Has AI make the selection clearer, in your words, without adding structure",
+  "stashPolishFailed": "Could not polish: {error}",
+  "@stashPolishFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "stashLinkTitle": "Link",
+  "stashRemove": "Remove",
+  "stashEdit": "Edit",
+  "stashFormulaTitle": "Formula (TeX)",
+  "stashTableTitle": "Table (Markdown)",
+  "stashCodeTitle": "Code block",
+  "stashBigFileTitle": "“{name}” is over 200 MB",
+  "@stashBigFileTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "stashBigFileDetail": "Link to it where it is, or copy it into the stash anyway?",
+  "stashBigFileLink": "Link",
+  "stashBigFileCopy": "Copy",
+  "stashSearchPlaceholder": "Search stashes, and the text in their pictures",
+  "stashAiSearch": "AI search",
+  "stashAiSearchHint": "Finds stashes by what they mean, not only their words. Asks the model: it costs.",
+  "stashAiResults": "{count, plural, =0{AI found nothing} =1{AI found 1} other{AI found {count}}}",
+  "@stashAiResults": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashAiClear": "Clear",
+  "stashAiSearchFailed": "AI search failed: {error}",
+  "@stashAiSearchFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "stashAiNoAnswer": "The model gave no usable answer.",
+  "aiModelAuxiliary": "Same as Auxiliary Model",
+  "aiModelFirst": "Pick a model first: AI actions use it from then on",
+  "aiModelNone": "none picked yet",
+  "aiModelTooltip": "Model for AI actions: {model}",
+  "@aiModelTooltip": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "stashFilterAnyTime": "Any time",
+  "stashFilterAnyProject": "Any project",
+  "stashFilterAnyStatus": "Any status",
+  "stashFilterOpen": "Not done",
+  "stashGroupPinned": "Pinned",
+  "stashGroupToday": "Today",
+  "stashGroupYesterday": "Yesterday",
+  "stashGroupWeek": "Past 7 days",
+  "stashGroupMonth": "Past 30 days",
+  "stashGroupEarlier": "Earlier",
+  "stashGroupDone": "Done",
+  "stashStatus": "Status",
+  "stashStatusCollected": "Collected",
+  "stashStatusRequirement": "Requirement",
+  "stashStatusImplementing": "Implementing",
+  "stashStatusDone": "Done",
+  "stashEmpty": "Nothing stashed yet.\nPress {hotkey} in any app to jot something down.",
+  "@stashEmpty": {
+    "placeholders": {
+      "hotkey": {
+        "type": "String"
+      }
+    }
+  },
+  "stashNoMatch": "No stash matches.",
+  "stashPin": "Pin",
+  "stashUnpin": "Unpin",
+  "stashOpenInPanel": "Open in Floating Panel",
+  "stashLinkProject": "Link to Project",
+  "stashMerge": "Merge",
+  "stashMergeTitle": "Merge {stashes}?",
+  "@stashMergeTitle": {
+    "placeholders": {
+      "stashes": {
+        "type": "String"
+      }
+    }
+  },
+  "stashMergeDetail": "Their text goes into {target}, one after another; the others go, their numbers leading to it.",
+  "@stashMergeDetail": {
+    "placeholders": {
+      "target": {
+        "type": "String"
+      }
+    }
+  },
+  "stashMergeSuggestion": "{stashes} look like the same thing.",
+  "@stashMergeSuggestion": {
+    "placeholders": {
+      "stashes": {
+        "type": "String"
+      }
+    }
+  },
+  "stashDismiss": "Dismiss",
+  "stashReveal": "Show in Finder",
+  "stashDelete": "Delete",
+  "stashDeleteOne": "Delete {stash}?",
+  "@stashDeleteOne": {
+    "placeholders": {
+      "stash": {
+        "type": "String"
+      }
+    }
+  },
+  "stashDeleteMany": "Delete {count} stashes?",
+  "@stashDeleteMany": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashDeleteDetail": "Their pictures and files go with them. This cannot be undone.",
+  "stashPicked": "{count} selected",
+  "@stashPicked": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashMarkDone": "Mark Done",
+  "stashReopen": "Reopen",
+  "stashClearPicked": "Clear selection",
+  "stashClose": "Close Stash",
+  "stashCloseDetail": "Close",
+  "stashMore": "More",
+  "stashExpand": "Clarify",
+  "stashExpandHint": "AI says your note clearly, filling in what its pictures and files show, adding no structure; it replaces the text, and Undo takes it back",
+  "stashClarifying": "Clarifying…",
+  "stashClarifyFailedShort": "Not clarified",
+  "stashClarifyChanged": "The note changed while it was being clarified, so nothing was replaced. Try again.",
+  "stashRetry": "Retry",
+  "stashExpandFailed": "The note could not be clarified: {error}",
+  "@stashExpandFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "stashImplement": "Implement in BaoCode",
+  "stashImplementHow": "How should the agent work on it?",
+  "stashImplementHowDetail": "In a new git worktree (a branch of its own, your working copy untouched), or directly in the project as it is.",
+  "stashImplementWorktree": "New Worktree",
+  "stashImplementDirect": "Directly",
+  "stashImplementStarter": "Please implement what {stash} asks for.",
+  "@stashImplementStarter": {
+    "placeholders": {
+      "stash": {
+        "type": "String"
+      }
+    }
+  },
+  "stashImplementInWorktree": "First create a new git worktree on a new branch for this work and do it there; tell me the branch when done.",
+  "stashImplementInPlace": "Work directly in this project, on the current branch.",
+  "stashImplementComplete": "When it is finished, mark it done with the stash_complete tool (id {id}).",
+  "@stashImplementComplete": {
+    "placeholders": {
+      "id": {
+        "type": "int"
+      }
+    }
+  },
+  "stashThreadStarting": "A conversation is ready for it; send its message to start.",
+  "stashThreadLinked": "Implemented in conversation “{title}”",
+  "@stashThreadLinked": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "stashOpenThread": "Open",
+  "stashProjectSuggestion": "AI thinks this is about {project}.",
+  "@stashProjectSuggestion": {
+    "placeholders": {
+      "project": {
+        "type": "String"
+      }
+    }
+  },
+  "stashLinkIt": "Link",
+  "stashSourceBanner": "Source: Stash {stash} · {title}",
+  "@stashSourceBanner": {
+    "placeholders": {
+      "stash": {
+        "type": "String"
+      },
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "stashSettingsDescription": "A note jotted down from any app, in a floating panel, to turn into work later.",
+  "stashSettingsHotkey": "Shortcut",
+  "stashSettingsHotkeyCurrent": "{hotkey} shows the panel from any app.",
+  "@stashSettingsHotkeyCurrent": {
+    "placeholders": {
+      "hotkey": {
+        "type": "String"
+      }
+    }
+  },
+  "stashSettingsHotkeyNone": "No shortcut: the panel only shows from the Stash page.",
+  "stashSettingsHotkeyTaken": "Another app holds this shortcut; pick another.",
+  "stashSettingsHotkeyHelp": "Click, then press the new keys; Escape keeps it, Delete clears it.",
+  "stashHotkeyPress": "Press the keys…",
+  "stashHotkeyRefused": "Needs a modifier with a letter, digit or common key",
+  "stashHotkeyNone": "None",
+  "stashHotkeyClear": "Clear",
+  "stashHotkeyDefault": "Default",
+  "stashHotkeyGlobal": "Show the Stash panel",
+  "stashHotkeyGlobalHint": "A global shortcut: works from any app.",
+  "stashHotkeyTooltip": "The panel's shortcut; click to change",
+  "stashSettingsDirectory": "Location",
+  "stashSettingsDirectoryChange": "Change…",
+  "stashSettingsDirectoryReset": "Default",
+  "stashSettingsDirectoryRestart": "Takes effect after BaoCode restarts.",
+  "stashAll": "All",
+  "@stashAll": {
+    "description": "Opens the list of every stash beside the one written in, in the stash panel."
+  },
+  "stashAllTooltip": "Show every stash",
+  "@stashAllTooltip": {
+    "description": "Tooltip of the stash panel's All button."
+  },
+  "stashHintSave": "Save",
+  "@stashHintSave": {
+    "description": "Key hint in the stash panel footer: the shortcut saves."
+  },
+  "stashHintClose": "Close",
+  "@stashHintClose": {
+    "description": "Key hint in the stash panel footer: the shortcut closes the panel."
+  },
+  "stashSaved": "Saved",
+  "@stashSaved": {
+    "description": "Shown briefly in the stash panel after saving."
+  },
+  "stashFilter": "Filter",
+  "@stashFilter": {
+    "description": "Tooltip of the filter button in the stash panel's list."
+  },
+  "stashSort": "Sort",
+  "@stashSort": {
+    "description": "Menu title in the stash panel's list for how the stashes are ordered."
+  },
+  "stashSortManual": "Custom (drag to order)",
+  "@stashSortManual": {
+    "description": "Sort option: the order the user dragged the stashes in."
+  },
+  "stashSortUpdated": "Last edited",
+  "@stashSortUpdated": {
+    "description": "Sort option: the last edited stash first."
+  },
+  "stashSortCreated": "Last created",
+  "@stashSortCreated": {
+    "description": "Sort option: the last created stash first."
+  },
+  "stashSortNumber": "Number",
+  "@stashSortNumber": {
+    "description": "Sort option: by stash number, highest first."
+  },
+  "stashOpen": "Open",
+  "@stashOpen": {
+    "description": "Context menu item of a stash in the panel's list: opens it in the panel."
+  },
+  "stashCount": "{count} stashes",
+  "@stashCount": {
+    "description": "What is dragged in the stash panel's list, when it is several stashes.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stashFormatMore": "More",
+  "@stashFormatMore": {
+    "description": "Tooltip of the stash editor selection toolbar button that opens the less used formats."
   }
 }

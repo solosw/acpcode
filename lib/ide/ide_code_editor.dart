@@ -1,19 +1,33 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:bao_editor/monaco/flutter/editor_code_lens.dart';
 import 'package:bao_editor/monaco/flutter/editor_inline_suggest.dart';
+import 'package:bao_editor/monaco/flutter/editor_keybindings.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:bao_editor/monaco/flutter/language_configuration_assets.dart';
+import 'package:bao_editor/monaco/flutter/language_overrides.dart';
 import 'package:bao_editor/monaco/vs/editor/common/languages/language_configuration_registry.dart'
     show plainTextLanguageConfiguration;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
 
+import '../keybindings/keybinding_service.dart';
+import '../l10n/command_titles.dart';
+import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
 import '../theme/code_font.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
+import 'builtin_formatting.dart';
+import 'ide_menu.dart';
+import 'ide_notifications.dart';
+import 'ide_status_bar.dart' show IdeLanguageNames;
+import 'ide_workspace.dart' show IdeFormatOutcome, IdeWorkspace;
+import 'lsp/lsp_protocol.dart';
+import 'lsp_ui/lsp_convert.dart';
+import 'lsp_ui/minimal_edits.dart';
 
 /// The highlighting of the texts [IdeCodeEditor]s show one after another
 /// (the side panel's tabs): one TextMate worker for them all, and each
@@ -64,11 +78,22 @@ class IdeCodeHighlights {
   }
 }
 
+/// Formats [path]'s [text] (or [range] of it) with language servers.
+typedef IdeTextFormatter = Future<IdeFormatOutcome> Function(
+  String path,
+  String text, {
+  LspRange? range,
+  required int tabSize,
+  required bool insertSpaces,
+});
+
 /// The IDE's editor on its own, for a file edited outside the IDE (a skill,
 /// a rule, settings.json): [controller]'s text in the workbench's theme,
 /// highlighted (TextMate, where the platform has it) and bracketed as the
 /// IDE does the language of [path]. No workspace, language server, find or
-/// tabs: the text and its editing alone.
+/// tabs: the text and its editing alone, with the clipboard and the IDE's
+/// formatting in its context menu: by [formatter]'s language servers, else
+/// the IDE's own ([BuiltinFormatting]).
 class IdeCodeEditor extends StatefulWidget {
   const IdeCodeEditor({
     super.key,
@@ -84,6 +109,7 @@ class IdeCodeEditor extends StatefulWidget {
     this.gutterIconBuilder,
     this.highlights,
     this.interfaceSized = false,
+    this.formatter,
   });
 
   final EditorSurfaceController controller;
@@ -122,6 +148,11 @@ class IdeCodeEditor extends StatefulWidget {
   /// code size: for a file shown beside the chat.
   final bool interfaceSized;
 
+  /// Formats its text with the project's language servers, shared with
+  /// the IDE ([IdeWorkspace.formatOutside]); the IDE's own formatting
+  /// alone when null.
+  final IdeTextFormatter? formatter;
+
   @override
   State<IdeCodeEditor> createState() => IdeCodeEditorState();
 }
@@ -144,7 +175,18 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     super.initState();
     _themes.addListener(_themeChanged);
     widget.controller.addListener(_textChanged);
+    EditorLanguageOverrides.instance.addListener(_languageModesChanged);
     _pickLanguage();
+  }
+
+  /// A language picked for a file (Change Language Mode): this one's
+  /// picked again, as it is now.
+  void _languageModesChanged() {
+    if (!mounted) return;
+    final highlights = widget.highlights;
+    _letGo(widget);
+    highlights?.release(widget.controller);
+    unawaited(_pickNewLanguage(++_language));
   }
 
   @override
@@ -168,6 +210,7 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     _language++;
     _themes.removeListener(_themeChanged);
     widget.controller.removeListener(_textChanged);
+    EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     _letGo(widget);
     _ownTextMate?.dispose();
     super.dispose();
@@ -266,6 +309,208 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     if (mounted) setState(() {});
   }
 
+  /// Its language, as highlighted; by the extension until then.
+  String? get _languageId =>
+      _highlight?.languageId ??
+      switch (p.extension(widget.path).toLowerCase()) {
+        '.json' => 'json',
+        '.jsonc' => 'jsonc',
+        _ => null,
+      };
+
+  /// Whether Format Document is offered: where it can be edited, and
+  /// language servers or the IDE itself may format it.
+  bool get _formats =>
+      !widget.readOnly &&
+      (widget.formatter != null || BuiltinFormatting.supports(_languageId));
+
+  bool get _hasSelection =>
+      widget.controller.selections.any((selection) => !selection.isCollapsed);
+
+  static const _formatCommands = {
+    'editor.action.formatDocument',
+    'editor.action.formatSelection',
+    'editor.action.format',
+  };
+
+  /// Format Document and Format Selection by their keybindings.
+  KeyEventResult _onKey(KeyEvent event) {
+    if (!_formats) return KeyEventResult.ignored;
+    final found = KeybindingService.instance.resolveEvent(
+      event,
+      context: (key) => switch (key) {
+        'editorTextFocus' || 'editorFocus' => true,
+        'editorReadonly' => widget.readOnly,
+        'editorHasSelection' => _hasSelection,
+        'editorHasFormattingProvider' ||
+        'editorHasDocumentFormattingProvider' ||
+        'editorHasDocumentSelectionFormattingProvider' => true,
+        _ => null,
+      },
+      canRun: (item) => _formatCommands.contains(item.command),
+    );
+    if (found is! KeybindingFound) return KeyEventResult.ignored;
+    unawaited(
+      _format(
+        selection:
+            found.command == 'editor.action.formatSelection' ||
+            found.command == 'editor.action.format' && _hasSelection,
+      ),
+    );
+    return KeyEventResult.handled;
+  }
+
+  /// Bumped by each format: an older one's answer is dropped.
+  int _formatting = 0;
+
+  /// Format Document (Format Selection with [selection]: the lines
+  /// selected, the caret's when none is), as one undo step keeping the
+  /// cursors: by [IdeCodeEditor.formatter]'s language servers, else the
+  /// IDE itself; else says there is no formatter, and which server would
+  /// be one.
+  Future<void> _format({bool selection = false}) async {
+    final controller = widget.controller;
+    final request = ++_formatting;
+    final version = controller.document.version;
+    final snapshot = controller.document.snapshot;
+    IdeFormatOutcome? outcome;
+    if (widget.formatter case final formatter?) {
+      LspRange? range;
+      if (selection) {
+        final selected = controller.value.selection;
+        if (selected.isCollapsed) {
+          final line =
+              snapshot.positionAtOffset(selected.extentOffset).lineNumber - 1;
+          range = lspRangeOf(
+            snapshot,
+            snapshot.lineStarts[line],
+            snapshot.contentEnds[line],
+          );
+        } else {
+          range = lspRangeOf(snapshot, selected.start, selected.end);
+        }
+      }
+      try {
+        outcome = await formatter(
+          widget.path,
+          snapshot.text,
+          range: range,
+          tabSize: controller.tabSize,
+          insertSpaces: controller.insertSpaces,
+        );
+      } on Object catch (error) {
+        if (mounted) {
+          IdeNotificationsScope.maybeOf(context)
+              ?.notify(IdeSeverity.error, '$error');
+        }
+        return;
+      }
+      if (!mounted ||
+          request != _formatting ||
+          controller.document.version != version) {
+        return;
+      }
+      if (outcome.edits case final edits?) {
+        final offsets = lspOffsetEdits(snapshot, edits);
+        if (offsets != null && offsets.isNotEmpty) {
+          controller.applyEdits(minimalOffsetEdits(snapshot.text, offsets));
+        }
+        return;
+      }
+    }
+    if (BuiltinFormatting.supports(_languageId)) {
+      BuiltinFormatting.format(controller, _languageId, selection: selection);
+      return;
+    }
+    _noFormatter(selection: selection, outcome: outcome);
+  }
+
+  void _noFormatter({required bool selection, IdeFormatOutcome? outcome}) {
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    if (notifications == null) return;
+    final l10n = context.l10n;
+    if (outcome case IdeFormatOutcome(:final missing?, :final install?)) {
+      notifications.notify(
+        IdeSeverity.info,
+        l10n.langNoFormatterInstall(
+          missing,
+          IdeLanguageNames.forPath(widget.path),
+        ),
+        primary: [
+          IdeNotificationAction(l10n.extInstall, () async {
+            try {
+              await install();
+            } on Object catch (error) {
+              notifications.notify(IdeSeverity.error, '$error');
+            }
+          }),
+        ],
+      );
+      return;
+    }
+    notifications.notify(
+      IdeSeverity.info,
+      selection ? l10n.langNoSelectionFormatter : l10n.langNoFormatter,
+    );
+  }
+
+  void _runEditorCommand(String id) {
+    final host = _surfaceKey.currentState;
+    if (!mounted || host is! EditorViewHost) return;
+    runEditorCommand(id, widget.controller, host as EditorViewHost);
+  }
+
+  /// Formatting (where the IDE formats the language), then the clipboard.
+  void _showContextMenu(Offset position) {
+    final l10n = context.l10n;
+    final keys = KeybindingService.instance;
+    IdeMenuAction item(
+      String id,
+      String english,
+      VoidCallback run, {
+      bool enabled = true,
+    }) => IdeMenuAction(
+      localizedCommandLabel(l10n, id, english),
+      keybinding: keys.labelFor(id),
+      enabled: enabled,
+      onSelected: run,
+    );
+    IdeMenuAction editorItem(String id, {bool enabled = true}) => item(
+      id,
+      editorCommandLabels[id]!,
+      () => _runEditorCommand(id),
+      enabled: enabled,
+    );
+    final editable = !widget.readOnly;
+    unawaited(
+      showIdeMenu(
+        context,
+        position: position,
+        entries: ideMenuGroups([
+          if (_formats)
+            [
+              item(
+                'editor.action.formatDocument',
+                editorLanguageCommandLabels['editor.action.formatDocument']!,
+                () => unawaited(_format()),
+              ),
+              if (_hasSelection)
+                item(
+                  'editor.action.formatSelection',
+                  editorLanguageCommandLabels['editor.action.formatSelection']!,
+                  () => unawaited(_format(selection: true)),
+                ),
+            ],
+          [
+            editorItem('editor.action.clipboardCutAction', enabled: editable),
+            editorItem('editor.action.clipboardCopyAction'),
+            editorItem('editor.action.clipboardPasteAction', enabled: editable),
+          ],
+        ]),
+      ),
+    );
+  }
+
   /// The lines on screen go to the TextMate worker first.
   void _viewChanged() {
     final highlight = _highlight;
@@ -302,6 +547,8 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
       codeLensColors: EditorCodeLensColors.from(colors.get),
       gutterIconBuilder: widget.gutterIconBuilder,
       onViewChanged: _viewChanged,
+      onKeyEvent: widget.bare ? null : _onKey,
+      onContextMenu: widget.bare ? null : _showContextMenu,
       style:
           (widget.interfaceSized
                   ? AppFonts.uiCodeStyle(13)

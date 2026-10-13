@@ -165,6 +165,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdChatFocusList => '聚焦聊天列表';
 
   @override
+  String get cmdChatFind => '在对话中查找';
+
+  @override
   String get cmdChatCancel => '取消';
 
   @override
@@ -2088,6 +2091,11 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String pastedTextGone(String path) {
+    return '这段粘贴的内容已不在 $path。';
+  }
+
+  @override
   String pastedTextLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -2167,6 +2175,36 @@ class AppLocalizationsZh extends AppLocalizations {
   String stepsThought(String duration) {
     return '思考 $duration';
   }
+
+  @override
+  String get turnCopy => '复制回复';
+
+  @override
+  String get turnCopied => '已复制';
+
+  @override
+  String turnSpeed(String speed) {
+    return '$speed tok/s';
+  }
+
+  @override
+  String turnTokens(String tokens) {
+    return '$tokens tokens';
+  }
+
+  @override
+  String turnTokensHint(String input, String output) {
+    return '本轮：输入 $input（含缓存），输出 $output';
+  }
+
+  @override
+  String get turnSpeedHint => '输出速度';
+
+  @override
+  String get turnDurationHint => '本轮耗时';
+
+  @override
+  String get turnCostHint => '本轮花费';
 
   @override
   String turnWorked(String duration) {
@@ -2317,6 +2355,26 @@ class AppLocalizationsZh extends AppLocalizations {
       count,
       locale: localeName,
       other: '已更改 $count 个文件',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String stripAgentsRunning(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count 个子代理运行中',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String stripTasksRunning(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count 个后台任务运行中',
     );
     return '$_temp0';
   }
@@ -2633,6 +2691,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get tabCloseAll => '全部关闭';
+
+  @override
+  String get fileLinkOpen => '打开';
+
+  @override
+  String get fileLinkOpenInPanel => '在侧边栏中打开';
+
+  @override
+  String get fileLinkPreview => '预览';
+
+  @override
+  String get fileLinkOpenInBrowser => '在浏览器中打开';
 
   @override
   String get tabCopyPath => '复制路径';
@@ -4118,6 +4188,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get langNoFormatter => '此文件没有格式化程序。';
 
   @override
+  String langNoFormatterInstall(String id, String language) {
+    return '此文件没有格式化程序。安装“$id”语言服务器后即可格式化 $language 文件。';
+  }
+
+  @override
   String get langNoRefactorings => '没有可用的重构操作';
 
   @override
@@ -4412,6 +4487,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get wbLanguageMode => '语言模式';
+
+  @override
+  String get shownImage => '图片';
+
+  @override
+  String get shownReadOnly => '只读';
+
+  @override
+  String get languageModeAuto => '自动检测';
+
+  @override
+  String get languageModePlaceholder => '选择语言模式';
+
+  @override
+  String get languageModeChange => '更改语言模式';
 
   @override
   String get editorCommandPalette => '命令面板...';
@@ -6373,6 +6463,90 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get appearanceSettingsAgentLoader => '智能体加载中';
+
+  @override
+  String get appearanceSettingsAgentLoaderDescription =>
+      '侧栏、标签页和搜索里，智能体工作时，或它启动的任务仍在后台运行时，显示在它旁边的动画。';
+
+  @override
+  String get appearanceSettingsSubagentLoader => '子代理运行中';
+
+  @override
+  String get appearanceSettingsSubagentLoaderDescription =>
+      '子代理运行时，显示在对话里它的卡片和输入框上方它那一行的动画。';
+
+  @override
+  String appearanceSettingsLoaderLabel(String what, String style) {
+    return '$what：$style';
+  }
+
+  @override
+  String get appearanceSettingsLoaderSpeed => '速度';
+
+  @override
+  String appearanceSettingsLoaderSpeedLabel(String what, String speed) {
+    return '$what速度：$speed';
+  }
+
+  @override
+  String get loaderStyleSnake => '贪吃蛇';
+
+  @override
+  String get loaderStyleStack => '堆积消行';
+
+  @override
+  String get loaderStyleTwinkle => '随机闪烁';
+
+  @override
+  String get loaderStyleFill => '堆满再清空';
+
+  @override
+  String get loaderStylePulse => '方形脉冲';
+
+  @override
+  String get loaderStyleRipple => '十字涟漪';
+
+  @override
+  String get loaderStyleSweep => '斜向扫描';
+
+  @override
+  String get loaderStyleRain => '像素雨';
+
+  @override
+  String get loaderStyleChecker => '棋盘交替';
+
+  @override
+  String get loaderStyleSpinner => '经典转圈';
+
+  @override
+  String get loaderStyleTwinSpinner => '双头转圈';
+
+  @override
+  String get loaderStyleCorners => '四角轮闪';
+
+  @override
+  String get loaderStyleDots => '三点跳动';
+
+  @override
+  String get loaderStyleEqualizer => '均衡器';
+
+  @override
+  String get loaderStyleBar => '不定进度条';
+
+  @override
+  String get loaderStyleScan => '扫描线';
+
+  @override
+  String get loaderStyleHourglass => '沙漏';
+
+  @override
+  String get loaderStyleBreathe => '整体呼吸';
+
+  @override
+  String get loaderStyleCircle => '圆环（原版）';
+
+  @override
   String get appearanceSettingsUserMessageStyle => '用户消息样式';
 
   @override
@@ -6389,6 +6563,49 @@ class AppLocalizationsZh extends AppLocalizations {
   String appearanceSettingsUserMessageStyleLabel(String style) {
     return '用户消息样式：$style';
   }
+
+  @override
+  String get appearanceSettingsMinimap => '对话缩略图';
+
+  @override
+  String get appearanceSettingsMinimapDescription =>
+      '在对话左侧显示整段对话的缩略图，滚动时显示当前所在位置，点击或拖动即可跳转。开启时代替右侧滚动条；窗口太窄时不显示。关闭后恢复右侧滚动条。';
+
+  @override
+  String get appearanceSettingsMinimapGlass => '液态玻璃不透明度';
+
+  @override
+  String get appearanceSettingsMinimapGlassDescription =>
+      '缩略图上标出当前位置的液态玻璃有多明显，包括它的底色、阴影和高光。调到 0% 时只保留当前位置的内容提亮。';
+
+  @override
+  String appearanceSettingsMinimapGlassLabel(String opacity) {
+    return '缩略图玻璃不透明度：$opacity';
+  }
+
+  @override
+  String get appearanceSettingsMinimapElasticity => '液态玻璃弹性';
+
+  @override
+  String get appearanceSettingsMinimapElasticityDescription =>
+      '滚动时液态玻璃跟随的弹性：越弹，玻璃移动时上下拉伸得越明显，停下时再收回。';
+
+  @override
+  String appearanceSettingsMinimapElasticityLabel(String level) {
+    return '缩略图玻璃弹性：$level';
+  }
+
+  @override
+  String get minimapElasticityOff => '关闭';
+
+  @override
+  String get minimapElasticitySubtle => '轻微';
+
+  @override
+  String get minimapElasticityMedium => '适中';
+
+  @override
+  String get minimapElasticityBouncy => 'Q 弹';
 
   @override
   String get appearanceSettingsCodeFont => '代码字体';
@@ -7222,6 +7439,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get extsTabLanguageServers => '语言服务器';
 
   @override
+  String get sidebarAllHosts => '全部';
+
+  @override
   String get sidebarThisMachine => '本机';
 
   @override
@@ -7297,4 +7517,669 @@ class AppLocalizationsZh extends AppLocalizations {
   String explorerUndoCreateChanged(String name) {
     return '$name 创建后已被修改，仍要撤销（删除它）吗？';
   }
+
+  @override
+  String get settingsSectionMobile => '手机';
+
+  @override
+  String get settingsMobileKeywords => '手机 移动端 配对 扫码 二维码 远程 局域网 iphone android';
+
+  @override
+  String get mobileSettingsDescription =>
+      '在手机上的 BaoCode 里查看并操作这台电脑的智能体，经由局域网或公网直连。两端之间的内容端到端加密。';
+
+  @override
+  String get mobileAllow => '允许手机连接';
+
+  @override
+  String get mobileAllowDescription => '与这台电脑配对过的手机可以直接连接它。';
+
+  @override
+  String get mobileStatus => '状态';
+
+  @override
+  String get mobileStatusOff => '已关闭';
+
+  @override
+  String get mobileStatusStarting => '正在启动…';
+
+  @override
+  String mobileStatusListening(int port) {
+    return '正在监听端口 $port';
+  }
+
+  @override
+  String mobileStatusFailed(String error) {
+    return '无法监听：$error';
+  }
+
+  @override
+  String get mobileAddresses => '地址';
+
+  @override
+  String get mobileAddressesDescription => '手机按此顺序尝试连接这台电脑：先局域网，再公网。';
+
+  @override
+  String get mobileAddressesNone => '未找到可用的网络。';
+
+  @override
+  String get mobileAddressesRefresh => '刷新';
+
+  @override
+  String get mobilePort => '端口';
+
+  @override
+  String get mobilePortDescription => '手机连接的端口。在路由器上转发此端口，即可从公网访问这台电脑。';
+
+  @override
+  String mobilePortInvalid(String text) {
+    return '不是有效端口：$text。请填写 1 到 65535 之间的数字。';
+  }
+
+  @override
+  String get mobilePublicAddress => '公网地址';
+
+  @override
+  String get mobilePublicAddressDescription =>
+      '可从公网访问这台电脑的域名或 IP（需转发端口），会写入二维码；多个用逗号分隔。公网 IPv6 地址会自动加入。';
+
+  @override
+  String get mobileRelay => '中转';
+
+  @override
+  String get mobileRelayDescription => '当这台电脑的地址都无法直连时，经由 BaoCode 中转服务连接。即将推出。';
+
+  @override
+  String get mobileRelayUnavailable => '暂不可用';
+
+  @override
+  String get mobilePair => '配对手机';
+
+  @override
+  String get mobilePairDescription =>
+      '在手机 BaoCode 上扫码（我的 → 已配对的电脑 → 配对新电脑），或在那里的「附近的电脑」中选择这台电脑。';
+
+  @override
+  String get mobilePairShow => '显示二维码';
+
+  @override
+  String get mobilePairCancel => '取消';
+
+  @override
+  String get mobilePairNewCode => '换一个';
+
+  @override
+  String get mobilePairCopyLink => '复制链接';
+
+  @override
+  String get mobilePairCopied => '已复制';
+
+  @override
+  String mobilePairExpires(int minutes) {
+    return '$minutes 分钟内有效，仅可使用一次。无法扫码的手机也可以粘贴链接。';
+  }
+
+  @override
+  String get mobilePairExpired => '二维码已过期。';
+
+  @override
+  String mobilePairVerifyTitle(String name) {
+    return '与 $name 核对';
+  }
+
+  @override
+  String get mobilePairVerifyBody => '确认手机上显示的安全码与此相同，然后在手机上确认。';
+
+  @override
+  String get mobilePairMismatch => '安全码不一致';
+
+  @override
+  String mobilePaired(String name) {
+    return '已与 $name 配对。';
+  }
+
+  @override
+  String get mobilePhones => '已配对的手机';
+
+  @override
+  String get mobilePhonesNone => '还没有配对的手机。';
+
+  @override
+  String get mobilePhoneConnected => '已连接';
+
+  @override
+  String mobilePhoneLastSeen(String time) {
+    return '上次连接于 $time';
+  }
+
+  @override
+  String get mobilePhoneRemove => '移除';
+
+  @override
+  String get mobileThisComputerKey => '这台电脑的密钥';
+
+  @override
+  String get mobileThisComputerKeyDescription => '手机上也会显示它：两边一致，就说明中间没有人截取。';
+
+  @override
+  String get mobileDiscoverable => '局域网发现';
+
+  @override
+  String get mobileDiscoverableDescription =>
+      '已配对的手机在局域网里自动找到这台电脑，地址变了也能连上；配对时，新手机还能在「附近的电脑」里看到它。';
+
+  @override
+  String get mobilePairNearbyHint => '同一网络里的手机也可以在「附近的电脑」中选择这台电脑。';
+
+  @override
+  String mobilePairRequestTitle(String name) {
+    return '$name 请求配对';
+  }
+
+  @override
+  String get mobilePairRequestBody => '它是在「附近的电脑」里找到这台电脑的。手机上显示的安全码一致才允许。';
+
+  @override
+  String get mobilePairAllow => '允许';
+
+  @override
+  String get settingsSectionStash => 'Stash';
+
+  @override
+  String get stashTitle => 'Stash';
+
+  @override
+  String get stashHeading => 'Stash';
+
+  @override
+  String get stashNew => '新便签';
+
+  @override
+  String get stashLinkOpen => '打开链接';
+
+  @override
+  String get stashLinkEdit => '编辑链接';
+
+  @override
+  String get stashDraft => '草稿';
+
+  @override
+  String get stashCodeChip => '代码';
+
+  @override
+  String get stashTableChip => '表格';
+
+  @override
+  String stashLines(int count) {
+    return '$count 行';
+  }
+
+  @override
+  String get stashNewButton => '新建';
+
+  @override
+  String get stashNewTooltip => '新建便签';
+
+  @override
+  String get stashPlaceholder => '随手记下…';
+
+  @override
+  String get stashHintNew => '新建';
+
+  @override
+  String get stashProjectTooltip => '关联的项目';
+
+  @override
+  String get stashNoProject => '无项目';
+
+  @override
+  String get stashFormatBold => '粗体';
+
+  @override
+  String get stashFormatItalic => '斜体';
+
+  @override
+  String get stashFormatStrike => '删除线';
+
+  @override
+  String get stashFormatUnderline => '下划线';
+
+  @override
+  String get stashFormatCode => '代码';
+
+  @override
+  String get stashFormatLink => '链接';
+
+  @override
+  String get stashFormatColor => '文字颜色与背景色';
+
+  @override
+  String get stashFormatHeading1 => '一级标题';
+
+  @override
+  String get stashFormatHeading2 => '二级标题';
+
+  @override
+  String get stashFormatHeading3 => '三级标题';
+
+  @override
+  String get stashFormatBullets => '无序列表';
+
+  @override
+  String get stashFormatNumbers => '有序列表';
+
+  @override
+  String get stashFormatTasks => '任务列表';
+
+  @override
+  String get stashFormatQuote => '引用';
+
+  @override
+  String get stashFormatCodeBlock => '代码块';
+
+  @override
+  String get stashFormatClear => '清除格式';
+
+  @override
+  String get stashPolish => '润色';
+
+  @override
+  String get stashPolishing => '润色中…';
+
+  @override
+  String get stashPolishHint => '让 AI 把选中的文字理顺，保持你的原意，不加结构';
+
+  @override
+  String stashPolishFailed(String error) {
+    return '没能润色：$error';
+  }
+
+  @override
+  String get stashLinkTitle => '链接';
+
+  @override
+  String get stashRemove => '移除';
+
+  @override
+  String get stashEdit => '编辑';
+
+  @override
+  String get stashFormulaTitle => '公式（TeX）';
+
+  @override
+  String get stashTableTitle => '表格（Markdown）';
+
+  @override
+  String get stashCodeTitle => '代码块';
+
+  @override
+  String stashBigFileTitle(String name) {
+    return '“$name”超过 200 MB';
+  }
+
+  @override
+  String get stashBigFileDetail => '只链接到它所在的位置，还是仍然复制进便签？';
+
+  @override
+  String get stashBigFileLink => '只链接';
+
+  @override
+  String get stashBigFileCopy => '复制';
+
+  @override
+  String get stashSearchPlaceholder => '搜索便签（包括图片里的文字）';
+
+  @override
+  String get stashAiSearch => 'AI 搜索';
+
+  @override
+  String get stashAiSearchHint => '按意思而不只是字面去找。会调用模型，这个要花钱。';
+
+  @override
+  String stashAiResults(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'AI 找到 $count 条',
+      zero: 'AI 没找到',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashAiClear => '清除';
+
+  @override
+  String stashAiSearchFailed(String error) {
+    return 'AI 搜索失败：$error';
+  }
+
+  @override
+  String get stashAiNoAnswer => '模型没有给出可用的回答。';
+
+  @override
+  String get aiModelAuxiliary => '跟随辅助模型';
+
+  @override
+  String get aiModelFirst => '先选一个模型，之后的 AI 操作都用它';
+
+  @override
+  String get aiModelNone => '尚未选择';
+
+  @override
+  String aiModelTooltip(String model) {
+    return 'AI 操作使用的模型：$model';
+  }
+
+  @override
+  String get stashFilterAnyTime => '任何时间';
+
+  @override
+  String get stashFilterAnyProject => '所有项目';
+
+  @override
+  String get stashFilterAnyStatus => '所有状态';
+
+  @override
+  String get stashFilterOpen => '未完成';
+
+  @override
+  String get stashGroupPinned => '置顶';
+
+  @override
+  String get stashGroupToday => '今天';
+
+  @override
+  String get stashGroupYesterday => '昨天';
+
+  @override
+  String get stashGroupWeek => '过去 7 天';
+
+  @override
+  String get stashGroupMonth => '过去 30 天';
+
+  @override
+  String get stashGroupEarlier => '更早';
+
+  @override
+  String get stashGroupDone => '已完成';
+
+  @override
+  String get stashStatus => '状态';
+
+  @override
+  String get stashStatusCollected => '收集';
+
+  @override
+  String get stashStatusRequirement => '已成需求';
+
+  @override
+  String get stashStatusImplementing => '实施中';
+
+  @override
+  String get stashStatusDone => '已完成';
+
+  @override
+  String stashEmpty(String hotkey) {
+    return '还没有便签。\n在任何应用里按 $hotkey 随手记一条。';
+  }
+
+  @override
+  String get stashNoMatch => '没有匹配的便签。';
+
+  @override
+  String get stashPin => '置顶';
+
+  @override
+  String get stashUnpin => '取消置顶';
+
+  @override
+  String get stashOpenInPanel => '在浮动面板中打开';
+
+  @override
+  String get stashLinkProject => '关联项目';
+
+  @override
+  String get stashMerge => '合并';
+
+  @override
+  String stashMergeTitle(String stashes) {
+    return '合并 $stashes？';
+  }
+
+  @override
+  String stashMergeDetail(String target) {
+    return '它们的内容会依次并入 $target，其余几条删除，编号会指向它。';
+  }
+
+  @override
+  String stashMergeSuggestion(String stashes) {
+    return '$stashes 看起来是同一件事。';
+  }
+
+  @override
+  String get stashDismiss => '忽略';
+
+  @override
+  String get stashReveal => '在访达中显示';
+
+  @override
+  String get stashDelete => '删除';
+
+  @override
+  String stashDeleteOne(String stash) {
+    return '删除 $stash？';
+  }
+
+  @override
+  String stashDeleteMany(int count) {
+    return '删除 $count 条便签？';
+  }
+
+  @override
+  String get stashDeleteDetail => '它们的图片和文件也会一并删除，无法撤销。';
+
+  @override
+  String stashPicked(int count) {
+    return '已选 $count 条';
+  }
+
+  @override
+  String get stashMarkDone => '标为已完成';
+
+  @override
+  String get stashReopen => '恢复未完成';
+
+  @override
+  String get stashClearPicked => '取消选择';
+
+  @override
+  String get stashClose => '关闭 Stash';
+
+  @override
+  String get stashCloseDetail => '关闭';
+
+  @override
+  String get stashMore => '更多';
+
+  @override
+  String get stashExpand => '说清楚';
+
+  @override
+  String get stashExpandHint => 'AI 把原话说清楚：结合图片和附件补全意思，不加结构；直接替换原文，可以撤销';
+
+  @override
+  String get stashClarifying => '正在说清楚…';
+
+  @override
+  String get stashClarifyFailedShort => '没说清楚';
+
+  @override
+  String get stashClarifyChanged => '说清楚期间便签被改动了，没有替换，可以再试一次。';
+
+  @override
+  String get stashRetry => '重试';
+
+  @override
+  String stashExpandFailed(String error) {
+    return '没能说清楚：$error';
+  }
+
+  @override
+  String get stashImplement => '在 BaoCode 中实施';
+
+  @override
+  String get stashImplementHow => '让 agent 怎样开发？';
+
+  @override
+  String get stashImplementHowDetail =>
+      '在新的 git worktree 里（独立分支，不动你当前的工作区），还是直接在项目当前分支上。';
+
+  @override
+  String get stashImplementWorktree => '新建 worktree';
+
+  @override
+  String get stashImplementDirect => '直接开发';
+
+  @override
+  String stashImplementStarter(String stash) {
+    return '请实现 $stash 中的需求。';
+  }
+
+  @override
+  String get stashImplementInWorktree =>
+      '先为这项工作新建一个 git worktree（新分支），在其中开发，完成后告诉我分支名。';
+
+  @override
+  String get stashImplementInPlace => '直接在当前项目、当前分支上开发。';
+
+  @override
+  String stashImplementComplete(int id) {
+    return '全部完成后，用 stash_complete 工具把它标记为已完成（id $id）。';
+  }
+
+  @override
+  String get stashThreadStarting => '已为它开好对话，发送消息后开始实施。';
+
+  @override
+  String stashThreadLinked(String title) {
+    return '已在对话“$title”中实施';
+  }
+
+  @override
+  String get stashOpenThread => '打开';
+
+  @override
+  String stashProjectSuggestion(String project) {
+    return 'AI 觉得这条和 $project 有关。';
+  }
+
+  @override
+  String get stashLinkIt => '关联';
+
+  @override
+  String stashSourceBanner(String stash, String title) {
+    return '来源：Stash $stash · $title';
+  }
+
+  @override
+  String get stashSettingsDescription =>
+      '在任何应用里随手记下的便签，浮动面板呼出，之后可以变成需求交给 agent。';
+
+  @override
+  String get stashSettingsHotkey => '快捷键';
+
+  @override
+  String stashSettingsHotkeyCurrent(String hotkey) {
+    return '在任何应用里按 $hotkey 呼出面板。';
+  }
+
+  @override
+  String get stashSettingsHotkeyNone => '没有快捷键：只能从 Stash 页打开面板。';
+
+  @override
+  String get stashSettingsHotkeyTaken => '这个快捷键被其他应用占用了，请换一个。';
+
+  @override
+  String get stashSettingsHotkeyHelp => '点击后按下新的组合键；Esc 取消，Delete 清除。';
+
+  @override
+  String get stashHotkeyPress => '按下组合键…';
+
+  @override
+  String get stashHotkeyRefused => '要带修饰键，配字母、数字或常用键';
+
+  @override
+  String get stashHotkeyNone => '未设置';
+
+  @override
+  String get stashHotkeyClear => '清除';
+
+  @override
+  String get stashHotkeyDefault => '恢复默认';
+
+  @override
+  String get stashHotkeyGlobal => '呼出 Stash 快捷窗口';
+
+  @override
+  String get stashHotkeyGlobalHint => '全局快捷键，在任何应用里都能用。';
+
+  @override
+  String get stashHotkeyTooltip => '呼出快捷窗口的快捷键，点击更改';
+
+  @override
+  String get stashSettingsDirectory => '存放位置';
+
+  @override
+  String get stashSettingsDirectoryChange => '更改…';
+
+  @override
+  String get stashSettingsDirectoryReset => '恢复默认';
+
+  @override
+  String get stashSettingsDirectoryRestart => '重启 BaoCode 后生效。';
+
+  @override
+  String get stashAll => '所有';
+
+  @override
+  String get stashAllTooltip => '显示所有便签';
+
+  @override
+  String get stashHintSave => '保存';
+
+  @override
+  String get stashHintClose => '关闭';
+
+  @override
+  String get stashSaved => '已保存';
+
+  @override
+  String get stashFilter => '过滤';
+
+  @override
+  String get stashSort => '排序';
+
+  @override
+  String get stashSortManual => '自定义（拖动排序）';
+
+  @override
+  String get stashSortUpdated => '最近编辑';
+
+  @override
+  String get stashSortCreated => '最近创建';
+
+  @override
+  String get stashSortNumber => '编号';
+
+  @override
+  String get stashOpen => '打开';
+
+  @override
+  String stashCount(int count) {
+    return '$count 条便签';
+  }
+
+  @override
+  String get stashFormatMore => '更多';
 }

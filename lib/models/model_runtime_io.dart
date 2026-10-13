@@ -49,20 +49,24 @@ Future<List<RemoteModel>> listUpstreamModels(
     ..connectionTimeout = const Duration(seconds: 15)
     ..findProxy = route.findProxy;
   try {
-    // The first that lists any; else the first error that is not a
-    // missing path (a wrong key shows past it), or the first.
+    // The first that lists any; else none, when one answered (the others,
+    // guesses at where the list is, may refuse a key that is right: their
+    // errors are not the user's to see); else the first error that is not
+    // a missing path (a wrong key shows past it), or the first.
     UpstreamException? error;
+    var answered = false;
     for (final url in urls) {
       try {
         final models = await _listModels(client, url, provider, key);
         if (models.isNotEmpty) return models;
+        answered = true;
       } on UpstreamException catch (failed) {
         if (error == null || error is _NotFound && failed is! _NotFound) {
           error = failed;
         }
       }
     }
-    if (error != null) throw error;
+    if (error != null && !answered) throw error;
     return const [];
   } on SocketException catch (error) {
     throw UpstreamException('Could not connect: ${error.message}');

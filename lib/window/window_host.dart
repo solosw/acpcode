@@ -126,6 +126,18 @@ abstract class WindowHost {
     List<WindowMenuEntry> windows, {
     required Map<String, String> labels,
   });
+
+  /// Makes the stash's panel, hidden (see lib/stash/): a window that floats
+  /// over every app without bringing this one in front. Its view's id; null
+  /// where there is none.
+  Future<int?> createStash() async => null;
+
+  /// Shows the stash's panel over the screen the mouse is on, the
+  /// keyboard's, the app in front staying so.
+  Future<void> showStash() async {}
+
+  /// Hides the stash's panel: the app in front has the keyboard again.
+  Future<void> hideStash() async {}
 }
 
 /// [WindowHost] over `baocode/windows` (MainFlutterWindow.swift,
@@ -143,6 +155,8 @@ abstract class WindowHost {
 ///   setWindowList {windows: [{viewId, title, edited}], labels}
 ///   setMainShownAtLaunch bool
 ///   quit                         (Windows) the app goes, agreed to
+///   createStash {engineId}       the stash's panel, hidden: its view's id
+///   showStash, hideStash
 ///
 /// and back:
 ///
@@ -284,6 +298,16 @@ class ChannelWindowHost extends WindowHost {
         ?ScreenArea.fromJson(screen),
     ];
   }
+
+  @override
+  Future<int?> createStash() =>
+      _invoke<int>('createStash', {'engineId': _dispatcher.engineId});
+
+  @override
+  Future<void> showStash() => _invoke('showStash');
+
+  @override
+  Future<void> hideStash() => _invoke('hideStash');
 
   @override
   Future<void> setWindowList(

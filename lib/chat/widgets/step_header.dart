@@ -3,7 +3,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 import '../../theme/app_theme.dart';
-import '../../theme/codicons.dart';
 import 'hover_builder.dart';
 import 'shimmer_text.dart';
 import 'wheel_latch.dart';
@@ -134,9 +133,13 @@ class StepHeader extends StatelessWidget {
               trailing,
             ],
             if (open != null && hovered) ...[
-              const SizedBox(width: 5),
+              const SizedBox(width: 2),
               SelectionContainer.disabled(
-                child: Icon(Codicons.goToFile, size: 13, color: AppColors.text),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  size: 16,
+                  color: AppColors.text,
+                ),
               ),
             ],
             if (toggle != null && open == null && (hovered || expanded)) ...[

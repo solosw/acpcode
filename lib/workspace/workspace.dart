@@ -164,6 +164,19 @@ class AgentThread {
     return ThreadStatus.idle;
   }
 
+  /// A subagent or a command still running in the background, the turn
+  /// that started it over or not.
+  bool get runsInBackground => _session?.tasks?.isNotEmpty ?? false;
+
+  /// [status] as the lists show it: running too while something it started
+  /// runs on in the background. What tells the user a turn ended (a
+  /// notification, the window's attention) goes by [status].
+  ThreadStatus get shownStatus => switch (status) {
+    ThreadStatus.unread ||
+    ThreadStatus.idle when runsInBackground => ThreadStatus.running,
+    final status => status,
+  };
+
   /// Lines added and removed by its pending file changes, if any.
   ({int added, int removed})? get diff {
     final changes = _session?.fileChanges ?? const [];
@@ -177,6 +190,7 @@ class AgentThread {
   /// What the sidebar shows of it, to tell when that changed.
   _Snapshot get _snapshot => (
     status: status,
+    background: runsInBackground,
     title: title,
     diff: diff,
     kernel: kernel.id,
@@ -190,6 +204,7 @@ class AgentThread {
 
 typedef _Snapshot = ({
   ThreadStatus status,
+  bool background,
   String title,
   ({int added, int removed})? diff,
   String kernel,
@@ -1301,18 +1316,40 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// The SSH host whose projects and agents the sidebar lists; null for
-  /// this machine's (and while there is no host to switch to).
+  /// this machine's (and while there is no host to switch to, or it lists
+  /// all of them, [sidebarAllHosts]).
   String? get sidebarHost =>
-      _sidebarHost != null && sshHosts.contains(_sidebarHost)
+      !sidebarAllHosts &&
+          _sidebarHost != null &&
+          sshHosts.contains(_sidebarHost)
       ? _sidebarHost
       : null;
   String? _sidebarHost;
   set sidebarHost(String? host) {
-    if (host == _sidebarHost) return;
+    if (host == _sidebarHost && !_sidebarAll) return;
     _sidebarHost = host;
+    _sidebarAll = false;
     _save();
     notifyListeners();
   }
+
+  /// Whether the sidebar lists the projects and agents of this machine and
+  /// of every SSH host together (while there are hosts).
+  bool get sidebarAllHosts => _sidebarAll && sshHosts.isNotEmpty;
+  bool _sidebarAll = false;
+  set sidebarAllHosts(bool all) {
+    if (all == _sidebarAll) return;
+    _sidebarAll = all;
+    _save();
+    notifyListeners();
+  }
+
+  /// Whether the sidebar lists what is on [host] (this machine for null).
+  bool listsHost(String? host) => sidebarAllHosts || host == sidebarHost;
+
+  /// The projects the sidebar lists where it is: on its host, or all.
+  List<Project> get sidebarProjectsHere =>
+      sidebarAllHosts ? sidebarProjects : sidebarProjectsOn(sidebarHost);
 
   /// Names the user gave SSH hosts, by host.
   final Map<String, String> _hostNames = {};
@@ -1349,7 +1386,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The sidebar lists where an agent picked is: its host's.
   void _followInSidebar(AgentThread thread) {
     final host = thread.project.host;
-    if (host == sidebarHost || isHidden(thread.project)) return;
+    if (listsHost(host) || isHidden(thread.project)) return;
     _sidebarHost = host;
     _save();
   }
@@ -1857,6 +1894,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _sshHosts.addAll(list('sshHosts'));
       _hostNames.addAll(strings(sidebar['hostNames']));
       if (sidebar['host'] case final String host) _sidebarHost = host;
+      _sidebarAll = sidebar['allHosts'] == true;
       for (final MapEntry(:key, :value) in strings(
         sidebar['hiddenProjects'],
       ).entries) {
@@ -1959,6 +1997,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         'sshHosts': [..._sshHosts],
         'hostNames': {..._hostNames},
         'host': ?_sidebarHost,
+        if (_sidebarAll) 'allHosts': true,
         'hiddenProjects': {
           for (final MapEntry(:key, :value) in _hiddenProjects.entries)
             key: value.toIso8601String(),
@@ -2360,11 +2399,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// if it is where the sidebar lists: else the first project there). An
   /// untouched new agent there is reused rather than piling up.
   AgentThread create({Project? project}) {
-    final host = sidebarHost;
     project ??= switch (_selected?.project) {
-      final current? when !isHidden(current) && current.host == host => current,
+      final current? when !isHidden(current) && listsHost(current.host) =>
+        current,
       final current =>
-        sidebarProjectsOn(host).firstOrNull ??
+        sidebarProjectsHere.firstOrNull ??
             (current != null && !isHidden(current) ? current : null) ??
             sidebarProjects.firstOrNull ??
             _projects.firstOrNull,
@@ -2380,6 +2419,22 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     final thread = _newThread(project);
     select(thread);
+    return thread;
+  }
+
+  /// A new agent in [project] for something other than the window to send
+  /// to (a paired phone): listed, not shown, the window left as it is. An
+  /// untouched new agent there that does not show is reused.
+  AgentThread startAgent(Project project) {
+    for (final thread in _threads) {
+      if (thread.project == project &&
+          _isUntouched(thread) &&
+          !_grid.contains(thread)) {
+        return thread;
+      }
+    }
+    final thread = _newThread(project);
+    notifyListeners();
     return thread;
   }
 

@@ -13,6 +13,7 @@ import 'package:baocode/ide/ide_workbench.dart';
 import 'package:baocode/ide/lsp_ui/problems_panel.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/settings/settings_dialog.dart';
 import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/theme/app_theme.dart';
@@ -234,6 +235,86 @@ void main() {
       find.descendant(of: find.byType(ChatScreen), matching: find.text(title)),
       findsOneWidget,
     );
+  }, variant: _windows);
+
+  testWidgets('under the settings, the header\'s left is theirs: the chat\'s '
+      'toggle, menus and title give way to the settings\' list toggle, '
+      'with no row of its own under the header', (tester) async {
+    final (workspace, calls) = await pumpWindowsApp(tester);
+    tester.view.physicalSize = const Size(520, 760);
+    await tester.pump();
+    await tester.pump();
+    final header = find.byType(WindowHeader);
+    final title = find.descendant(
+      of: header,
+      matching: find.text(workspace.current!.title),
+    );
+    final menu = find.descendant(
+      of: header,
+      matching: find.widgetWithIcon(SidebarIconButton, Codicons.menu),
+    );
+    expect(title, findsOneWidget);
+    expect(menu, findsOneWidget);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.comma);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    final dialog = find.byType(SettingsDialog);
+    expect(dialog, findsOneWidget);
+    expect(title, findsNothing);
+    expect(menu, findsNothing);
+    for (final icon in [
+      Codicons.layoutSidebarLeft,
+      Codicons.layoutSidebarLeftOff,
+    ]) {
+      expect(
+        find.descendant(
+          of: header,
+          matching: find.widgetWithIcon(SidebarIconButton, icon),
+        ),
+        findsNothing,
+      );
+    }
+
+    // The settings' toggle, where the chat's was, in the header's strip.
+    final toggle = find.descendant(
+      of: dialog,
+      matching: find.widgetWithIcon(
+        SidebarIconButton,
+        Codicons.layoutSidebarLeftOff,
+      ),
+    );
+    expect(toggle, findsOneWidget);
+    final rect = tester.getRect(toggle);
+    expect(rect.left, WindowHeader.settingsToggleLeft);
+    expect(rect.center.dy, tester.getRect(header).center.dy);
+    // The window leaves it to Flutter, rather than dragging by it.
+    final report = calls.lastWhere((call) => call.method == 'setHitTestAreas');
+    expect(
+      (report.arguments as Map)['controls'],
+      contains(
+        equals({
+          'left': rect.left,
+          'top': rect.top,
+          'width': rect.width,
+          'height': rect.height,
+        }),
+      ),
+    );
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(tester.state<SettingsDialogState>(dialog).navShown, isTrue);
+
+    // Closed: the chat's again.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(dialog, findsNothing);
+    expect(title, findsOneWidget);
+    expect(menu, findsOneWidget);
   }, variant: _windows);
 
   testWidgets('the sidebar toggle comes after the menus, in the IDE\'s '

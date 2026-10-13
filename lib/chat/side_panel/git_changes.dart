@@ -19,6 +19,7 @@ import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
+import '../../workspace/editor_launcher.dart';
 import '../../workspace/window_controls.dart';
 import '../composer/composer_files.dart';
 import '../composer/file_drag.dart';
@@ -348,21 +349,28 @@ class _GitChangeListState extends State<GitChangeList> {
       ),
   ];
 
+  /// The context menu of [resources] of [group]: of a [file], a [folder]
+  /// (its path), or the group. Opening (a file), Git's actions, the chat's,
+  /// the reveals, and copying paths, as the IDE's Source Control view has
+  /// them; the tree's folding.
   void _showMenu(
     Offset position,
     IdeGitGroup group,
     List<IdeGitResource> resources, {
     IdeGitResource? file,
+    String? folder,
   }) {
     final l10n = context.l10n;
     final root = widget.state.root;
-    final path = file?.path;
-    final there = file != null && !_deleted(file);
+    final path = file?.path ?? folder;
+    final there = folder != null || (file != null && !_deleted(file));
+    final local = widget.local;
     // What there is of them on disk, for the chat.
     final present = [
       for (final resource in resources)
         if (!_deleted(resource)) resource.path,
     ];
+    final extension = p.extension(file?.path ?? '').toLowerCase();
     unawaited(
       showIdeMenu(
         context,
@@ -374,13 +382,49 @@ class _GitChangeListState extends State<GitChangeList> {
                 l10n.scmOpenChanges,
                 onSelected: () => widget.onOpen(file),
               ),
-            if ((widget.onOpenFile, path) case (final open?, final path?)
+            if ((widget.onOpenFile, file?.path) case (final open?, final path?)
                 when there)
               IdeMenuAction(l10n.scmOpenFile, onSelected: () => open(path)),
+            if (file != null && there && local) ...[
+              if (extension == '.html' || extension == '.htm')
+                IdeMenuAction(
+                  l10n.fileLinkOpenInBrowser,
+                  onSelected: () => unawaited(openExternal(file.path)),
+                ),
+              if (WindowControls.canOpenInDefaultApp)
+                IdeMenuAction(
+                  l10n.openInDefaultApp,
+                  onSelected: () => unawaited(openExternal(file.path)),
+                ),
+            ],
           ],
           [
             for (final action in _actions(group, () => resources))
               IdeMenuAction(action.label, onSelected: action.run),
+          ],
+          [
+            if (widget.onAddToChat case final add?)
+              if (folder != null)
+                IdeMenuAction(
+                  l10n.sidePanelAddToChat,
+                  onSelected: () =>
+                      add([ComposerFile(folder, directory: true)]),
+                )
+              else if (present.isNotEmpty)
+                IdeMenuAction(
+                  l10n.sidePanelAddToChat,
+                  onSelected: () =>
+                      add([for (final path in present) ComposerFile(path)]),
+                ),
+            if (local && present.isNotEmpty)
+              IdeMenuAction(
+                l10n.commonCopy,
+                onSelected: () => unawaited(
+                  WindowControls.writePasteboardFiles(
+                    folder != null ? [folder] : present,
+                  ),
+                ),
+              ),
           ],
           [
             if ((widget.onRevealInFiles, path) case (final reveal?, final path?)
@@ -389,32 +433,18 @@ class _GitChangeListState extends State<GitChangeList> {
                 l10n.sidePanelRevealInFiles,
                 onSelected: () => reveal(path),
               ),
-            if ((widget.onSaveAs, path) case (final save?, final path?)
-                when there)
-              IdeMenuAction(l10n.cmdSaveAs, onSelected: () => save(path)),
             if (path != null &&
                 there &&
-                widget.local &&
+                local &&
                 WindowControls.canRevealInFileManager)
               IdeMenuAction(
                 l10n.revealInFileManager,
                 onSelected: () =>
                     unawaited(WindowControls.revealInFileManager(path)),
               ),
-          ],
-          [
-            if ((widget.onAddToChat, present) case (final add?, [_, ...]))
-              IdeMenuAction(
-                l10n.sidePanelAddToChat,
-                onSelected: () =>
-                    add([for (final path in present) ComposerFile(path)]),
-              ),
-            if (widget.local && present.isNotEmpty)
-              IdeMenuAction(
-                l10n.commonCopy,
-                onSelected: () =>
-                    unawaited(WindowControls.writePasteboardFiles(present)),
-              ),
+            if ((widget.onSaveAs, file?.path) case (final save?, final path?)
+                when there)
+              IdeMenuAction(l10n.cmdSaveAs, onSelected: () => save(path)),
           ],
           [
             if (path != null) ...[
@@ -433,9 +463,45 @@ class _GitChangeListState extends State<GitChangeList> {
               ),
             ],
           ],
+          [
+            if (widget.tree && file == null) ...[
+              IdeMenuAction(
+                l10n.commonCollapseAll,
+                onSelected: () => _fold(group, under: folder, folded: true),
+              ),
+              IdeMenuAction(
+                l10n.commonExpandAll,
+                onSelected: () => _fold(group, under: folder, folded: false),
+              ),
+            ],
+          ],
         ]),
       ),
     );
+  }
+
+  /// Folds ([folded]) or unfolds the folders of [group]'s tree: those in
+  /// the folder at [under] (it too), or all of them.
+  void _fold(IdeGitGroup group, {String? under, required bool folded}) {
+    final keys = <String>[];
+    void visit(List<IdeScmTreeNode> nodes, bool inside) {
+      for (final node in nodes) {
+        if (node is! IdeScmTreeFolder) continue;
+        final mine = inside || under == null || node.path == under;
+        if (mine) keys.add('${group.name}:${node.path}');
+        visit(node.children, mine);
+      }
+    }
+
+    visit(ideScmGroupTree(widget.state, group), false);
+    setState(() {
+      _collapsedGroups.remove(group);
+      if (folded) {
+        _collapsedFolders.addAll(keys);
+      } else {
+        _collapsedFolders.removeAll(keys);
+      }
+    });
   }
 
   Widget _chevron(bool collapsed) => SizedBox(
@@ -493,7 +559,7 @@ class _GitChangeListState extends State<GitChangeList> {
           }
         }),
         onContextMenu: (position) =>
-            _showMenu(position, row.group, resources()),
+            _showMenu(position, row.group, resources(), folder: folder.path),
         builder: (context, hovered) => Padding(
           padding: EdgeInsets.only(
             left: 4.0 + row.depth * IdeListColors.indent,

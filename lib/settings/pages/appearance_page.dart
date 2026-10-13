@@ -9,6 +9,8 @@ import 'package:flutter/material.dart' hide ColorScheme;
 import '../../chat/chat_keys.dart';
 import '../../chat/chat_width.dart';
 import '../../chat/user_message_style.dart';
+import '../../chat/widgets/chat_minimap.dart';
+import '../../chat/widgets/pixel_loader.dart';
 import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_color_theme_picker.dart';
 import '../../ide/ide_quick_input.dart' show ideLocaleCompare;
@@ -27,7 +29,8 @@ import 'settings_widgets.dart';
 /// Settings → Appearance: the color theme (`workbench.colorTheme`, as
 /// Preferences: Color Theme picks it), the chat's, the IDE's and the
 /// terminal's alike, and how wide the conversation grows
-/// (`chat.maxWidth`, see [ChatWidth]); then the code's font, size and
+/// (`chat.maxWidth`, see [ChatWidth]); what an agent and a subagent show
+/// running (see [PixelLoaderRole]); then the code's font, size and
 /// ligatures, the window's text size and the terminal's (see [CodeFont]). A
 /// choice is applied and kept at once.
 class AppearanceSettingsPage extends StatelessWidget {
@@ -159,6 +162,141 @@ class AppearanceSettingsPage extends StatelessWidget {
     _keep(UserMessageStyle.settingKey, style.setting);
   }
 
+  void _selectMinimap(bool on) {
+    ChatMinimap.enabled.value = on;
+    _keep(ChatMinimap.settingKey, ChatMinimap.setting(on));
+  }
+
+  void _selectMinimapGlass(double opacity) {
+    ChatMinimap.glass.value = opacity;
+    _keep(ChatMinimap.glassKey, ChatMinimap.glassSetting(opacity));
+  }
+
+  void _selectMinimapElasticity(ChatMinimapElasticity level) {
+    ChatMinimap.elasticity.value = level;
+    _keep(ChatMinimap.elasticityKey, ChatMinimap.elasticitySetting(level));
+  }
+
+  static String elasticityName(
+    BuildContext context,
+    ChatMinimapElasticity level,
+  ) => switch (level) {
+    ChatMinimapElasticity.off => context.l10n.minimapElasticityOff,
+    ChatMinimapElasticity.subtle => context.l10n.minimapElasticitySubtle,
+    ChatMinimapElasticity.medium => context.l10n.minimapElasticityMedium,
+    ChatMinimapElasticity.bouncy => context.l10n.minimapElasticityBouncy,
+  };
+
+  static String loaderStyleName(BuildContext context, PixelLoaderStyle style) {
+    final l10n = context.l10n;
+    return switch (style) {
+      PixelLoaderStyle.snake => l10n.loaderStyleSnake,
+      PixelLoaderStyle.stack => l10n.loaderStyleStack,
+      PixelLoaderStyle.twinkle => l10n.loaderStyleTwinkle,
+      PixelLoaderStyle.fill => l10n.loaderStyleFill,
+      PixelLoaderStyle.pulse => l10n.loaderStylePulse,
+      PixelLoaderStyle.ripple => l10n.loaderStyleRipple,
+      PixelLoaderStyle.sweep => l10n.loaderStyleSweep,
+      PixelLoaderStyle.rain => l10n.loaderStyleRain,
+      PixelLoaderStyle.checker => l10n.loaderStyleChecker,
+      PixelLoaderStyle.spinner => l10n.loaderStyleSpinner,
+      PixelLoaderStyle.twinSpinner => l10n.loaderStyleTwinSpinner,
+      PixelLoaderStyle.corners => l10n.loaderStyleCorners,
+      PixelLoaderStyle.dots => l10n.loaderStyleDots,
+      PixelLoaderStyle.equalizer => l10n.loaderStyleEqualizer,
+      PixelLoaderStyle.bar => l10n.loaderStyleBar,
+      PixelLoaderStyle.scan => l10n.loaderStyleScan,
+      PixelLoaderStyle.hourglass => l10n.loaderStyleHourglass,
+      PixelLoaderStyle.breathe => l10n.loaderStyleBreathe,
+      PixelLoaderStyle.circle => l10n.loaderStyleCircle,
+    };
+  }
+
+  void _selectLoader(PixelLoaderRole role, PixelLoaderStyle style) {
+    role.style.value = style;
+    _keep(role.styleKey, style.setting);
+  }
+
+  void _selectLoaderSpeed(PixelLoaderRole role, double speed) {
+    role.speed.value = speed;
+    _keep(role.speedKey, role.speedSetting(speed));
+  }
+
+  /// 1×, 1.5×: the pace as the slider says it.
+  static String speedName(double speed) =>
+      '${speed == speed.roundToDouble() ? speed.round() : speed}×';
+
+  /// [role]'s rows: its style playing, then the menu of them (those made
+  /// for work going on, the plainer ones, the ring there was before); under
+  /// it, its pace, but for the ring, which keeps its own.
+  List<Widget> _loaderRows(
+    BuildContext context,
+    PixelLoaderRole role, {
+    required String label,
+    required String description,
+  }) {
+    final current = role.style.value;
+    final shown = loaderStyleName(context, current);
+    final speed = role.speed.value;
+    final speedShown = speedName(speed);
+    return [
+      SettingsRow(
+        label: label,
+        description: description,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PixelLoader.preview(current, role: role, size: 16),
+            const SizedBox(width: 12),
+            SettingsDropdown(
+              current: shown,
+              width: 180,
+              semanticLabel: context.l10n.appearanceSettingsLoaderLabel(
+                label,
+                shown,
+              ),
+              entries: () => ideMenuGroups([
+                for (final group in [
+                  PixelLoaderStyle.forSubagents,
+                  [
+                    for (final style in PixelLoaderStyle.values)
+                      if (!PixelLoaderStyle.forSubagents.contains(style) &&
+                          style != PixelLoaderStyle.circle)
+                        style,
+                  ],
+                  [PixelLoaderStyle.circle],
+                ])
+                  [
+                    for (final style in group)
+                      IdeMenuAction(
+                        loaderStyleName(context, style),
+                        checked: style == current,
+                        onSelected: () => _selectLoader(role, style),
+                      ),
+                  ],
+              ]),
+            ),
+          ],
+        ),
+      ),
+      if (current != PixelLoaderStyle.circle)
+        SettingsRow(
+          label: context.l10n.appearanceSettingsLoaderSpeed,
+          trailing: SettingsSlider(
+            step: PixelLoaderRole.speeds.indexOf(speed),
+            count: PixelLoaderRole.speeds.length,
+            label: speedShown,
+            semanticLabel: context.l10n.appearanceSettingsLoaderSpeedLabel(
+              label,
+              speedShown,
+            ),
+            onChanged: (step) =>
+                _selectLoaderSpeed(role, PixelLoaderRole.speeds[step]),
+          ),
+        ),
+    ];
+  }
+
   void _selectFamilies(List<String> families) {
     CodeFont.families.value = families;
     _keep(CodeFont.familySettingKey, CodeFont.familiesSetting(families));
@@ -200,6 +338,10 @@ class AppearanceSettingsPage extends StatelessWidget {
         changes,
         ChatWidth.current,
         UserMessageStyle.current,
+        ChatMinimap.enabled,
+        ChatMinimap.glass,
+        ChatMinimap.elasticity,
+        for (final role in PixelLoaderRole.values) ...[role.style, role.speed],
         CodeFont.families,
         CodeFont.size,
         CodeFont.ligatures,
@@ -210,6 +352,12 @@ class AppearanceSettingsPage extends StatelessWidget {
         final widthStep = ChatWidth.stepOf(ChatWidth.current.value);
         final widthShown = widthName(context, ChatWidth.steps[widthStep]);
         final styleShown = _styleName(context, UserMessageStyle.current.value);
+        final glass = ChatMinimap.glass.value;
+        final glassShown = '${(glass * 100).round()}%';
+        final elasticityShown = elasticityName(
+          context,
+          ChatMinimap.elasticity.value,
+        );
         final families = CodeFont.families.value;
         final sizeStep = _nearest(CodeFont.sizeSteps, CodeFont.size.value);
         final sizeShown = '${CodeFont.size.value.round()}';
@@ -293,6 +441,61 @@ class AppearanceSettingsPage extends StatelessWidget {
                       ],
                     ]),
                   ),
+                ),
+                SettingsSwitchRow(
+                  label: l10n.appearanceSettingsMinimap,
+                  description: l10n.appearanceSettingsMinimapDescription,
+                  value: ChatMinimap.enabled.value,
+                  onChanged: _selectMinimap,
+                ),
+                if (ChatMinimap.enabled.value)
+                  SettingsRow(
+                    label: l10n.appearanceSettingsMinimapGlass,
+                    description: l10n.appearanceSettingsMinimapGlassDescription,
+                    trailing: SettingsSlider(
+                      step: ChatMinimap.glassSteps.indexOf(glass),
+                      count: ChatMinimap.glassSteps.length,
+                      label: glassShown,
+                      semanticLabel: l10n.appearanceSettingsMinimapGlassLabel(
+                        glassShown,
+                      ),
+                      onChanged: (step) =>
+                          _selectMinimapGlass(ChatMinimap.glassSteps[step]),
+                    ),
+                  ),
+                if (ChatMinimap.enabled.value)
+                  SettingsRow(
+                    label: l10n.appearanceSettingsMinimapElasticity,
+                    description:
+                        l10n.appearanceSettingsMinimapElasticityDescription,
+                    trailing: SettingsSlider(
+                      step: ChatMinimap.elasticity.value.index,
+                      count: ChatMinimapElasticity.values.length,
+                      label: elasticityShown,
+                      semanticLabel: l10n
+                          .appearanceSettingsMinimapElasticityLabel(
+                            elasticityShown,
+                          ),
+                      onChanged: (step) => _selectMinimapElasticity(
+                        ChatMinimapElasticity.values[step],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            SettingsCard(
+              children: [
+                ..._loaderRows(
+                  context,
+                  PixelLoaderRole.agent,
+                  label: l10n.appearanceSettingsAgentLoader,
+                  description: l10n.appearanceSettingsAgentLoaderDescription,
+                ),
+                ..._loaderRows(
+                  context,
+                  PixelLoaderRole.subagent,
+                  label: l10n.appearanceSettingsSubagentLoader,
+                  description: l10n.appearanceSettingsSubagentLoaderDescription,
                 ),
               ],
             ),

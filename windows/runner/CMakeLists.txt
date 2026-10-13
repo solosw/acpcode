@@ -19,6 +19,8 @@ add_executable(${BINARY_NAME} WIN32
   "log_folder.cpp"
   "main.cpp"
   "open_requests.cpp"
+  "stash_channel.cpp"
+  "stash_ocr.cpp"
   "utils.cpp"
   "view_window.cpp"
   "win32_window.cpp"
@@ -50,7 +52,8 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "ole32.lib"
-  "shell32.lib" "uuid.lib" "windowscodecs.lib" "winmm.lib" "dbghelp.lib")
+  "shell32.lib" "uuid.lib" "windowscodecs.lib" "winmm.lib" "dbghelp.lib"
+  "runtimeobject.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

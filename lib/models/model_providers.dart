@@ -63,6 +63,10 @@ class ModelProviders extends ChangeNotifier {
   static const builtinHiddenKey = 'models.builtin.hidden';
   static const defaultKey = 'models.default';
   static const auxiliaryKey = 'models.auxiliary';
+  static const actionsKey = 'models.actions';
+
+  /// [actionsModel]'s value for the auxiliary model, whatever it is.
+  static const followAuxiliary = 'auxiliary';
 
   final Object? Function(String key) _read;
   final Future<void> Function(String key, Object? value) _write;
@@ -145,6 +149,25 @@ class ModelProviders extends ChangeNotifier {
 
   Future<void> setAuxiliaryModel(String? model) => _write(auxiliaryKey, model);
 
+  /// The model the AI actions a user asks for ask (a stash said clearly,
+  /// polished, searched by meaning), picked beside them and shared: a
+  /// [modelRef], [builtinProviderId] for Claude Code's own Haiku, or
+  /// [followAuxiliary]; null while none is picked (they ask first).
+  String? get actionsModel => switch (_read(actionsKey)) {
+    final String model when model.isNotEmpty => model,
+    _ => null,
+  };
+
+  /// What an AI action is asked of ([actionsModel], as [auxiliary] gives
+  /// one); the auxiliary model while none is picked.
+  ({String? model, bool exact}) get actions => switch (actionsModel) {
+    builtinProviderId => (model: null, exact: true),
+    null || followAuxiliary => auxiliary(null),
+    final String picked => (model: picked, exact: true),
+  };
+
+  Future<void> setActionsModel(String? model) => _write(actionsKey, model);
+
   /// Adds [provider], or replaces the one of its id.
   Future<void> save(ModelProvider provider) async {
     final list = [...providers];
@@ -169,6 +192,9 @@ class ModelProviders extends ChangeNotifier {
     }
     if (parseModelRef(auxiliaryModel)?.provider == id) {
       await setAuxiliaryModel(null);
+    }
+    if (parseModelRef(actionsModel)?.provider == id) {
+      await setActionsModel(null);
     }
     _errors.remove(id);
     try {

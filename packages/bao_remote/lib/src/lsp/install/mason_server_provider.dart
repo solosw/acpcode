@@ -9,6 +9,7 @@ import '../../claude/claude_environment.dart';
 import '../lsp_server_definition.dart';
 import 'archive.dart';
 import 'install_io.dart';
+import 'jdtls_launcher.dart';
 import 'mason_install_plan.dart';
 import 'mason_platform.dart';
 import 'mason_registry.dart';
@@ -138,6 +139,7 @@ class MasonServerProvider implements LspServerProvider {
       final relative = manifest?.bin[command];
       if (relative == null) continue;
       final path = p.join(packageDirectory(package), relative);
+      if (package == 'jdtls') await _updateLauncher(path);
       if (await _isExecutable(path)) return LspServerFound(path);
     }
     final package =
@@ -467,9 +469,32 @@ class MasonServerProvider implements LspServerProvider {
     return bins;
   }
 
+  /// jdtls installed before it ran with java directly: its wrapper ran
+  /// mason's Python script. Written over with today's.
+  Future<void> _updateLauncher(String path) async {
+    final launcher = jdtlsLauncher(windows: platform.isWindows);
+    final file = File(path);
+    try {
+      if (!await file.exists() || await file.readAsString() == launcher) {
+        return;
+      }
+      await file.writeAsString(launcher);
+      await makeExecutable(
+        [path],
+        runner: _runner,
+        windows: platform.isWindows,
+      );
+    } on FileSystemException {
+      // Left as it was.
+    }
+  }
+
   /// A script that runs [bin] with its runtime, finding the package folder
   /// from its own location so the install can move.
   String _wrapper(MasonBin bin) {
+    if (bin.launcher == 'jdtls') {
+      return jdtlsLauncher(windows: platform.isWindows);
+    }
     final runtime = bin.runtime!;
     final args = bin.runtimeArgs ?? const [];
     if (platform.isWindows) {

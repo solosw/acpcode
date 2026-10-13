@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
+import 'ide_hover.dart';
 import 'ide_spinning.dart';
 
 /// The color theme's `button.*` colors.
@@ -52,7 +53,15 @@ class IdeButton extends StatefulWidget {
     this.secondary = false,
     this.expand = false,
     this.padding = const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    this.onDropdown,
+    this.dropdownTooltip,
   });
+
+  /// A split button's arrow after [label] (as `.monaco-button-dropdown`),
+  /// which opens a menu by the button's rect (global); it works while the
+  /// button is disabled too.
+  final ValueChanged<Rect>? onDropdown;
+  final String? dropdownTooltip;
 
   final String label;
   final VoidCallback? onPressed;
@@ -119,13 +128,24 @@ class _IdeButtonState extends State<IdeButton> {
         ],
       );
     }
+    final dropdown = widget.onDropdown;
     final background = secondary
-        ? (_hover && enabled
+        ? (_hover && (enabled || dropdown != null)
               ? IdeButtonColors.secondaryHoverBackground
               : IdeButtonColors.secondaryBackground)
-        : (_hover && enabled
+        : (_hover && (enabled || dropdown != null)
               ? IdeButtonColors.hoverBackground
               : IdeButtonColors.background);
+    final decoration = BoxDecoration(
+      color: background,
+      border: Border.all(
+        color: secondary
+            ? IdeButtonColors.secondaryBorder
+            : IdeButtonColors.border,
+      ),
+      borderRadius: BorderRadius.circular(4),
+    );
+    if (dropdown != null) return _split(label, foreground, decoration);
     return Semantics(
       button: true,
       enabled: enabled,
@@ -143,18 +163,81 @@ class _IdeButtonState extends State<IdeButton> {
             child: Container(
               padding: widget.padding,
               alignment: widget.expand ? Alignment.center : null,
-              decoration: BoxDecoration(
-                color: background,
-                border: Border.all(
-                  color: secondary
-                      ? IdeButtonColors.secondaryBorder
-                      : IdeButtonColors.border,
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
+              decoration: decoration,
               child: label,
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// [label] and the arrow beside it, a line between.
+  Widget _split(Widget label, Color foreground, BoxDecoration decoration) {
+    final enabled = widget.onPressed != null;
+    final padding = widget.padding;
+    final arrow = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        final button = context.findRenderObject() as RenderBox?;
+        if (button == null) return;
+        widget.onDropdown!(button.localToGlobal(Offset.zero) & button.size);
+      },
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(3, padding.top, 4, padding.bottom),
+        child: Icon(Codicons.chevronDown, size: 14, color: foreground),
+      ),
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Container(
+        decoration: decoration,
+        child: Row(
+          mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
+          children: [
+            Flexible(
+              fit: widget.expand ? FlexFit.tight : FlexFit.loose,
+              child: Semantics(
+                button: true,
+                enabled: enabled,
+                label: widget.label,
+                excludeSemantics: true,
+                child: MouseRegion(
+                  cursor: enabled
+                      ? SystemMouseCursors.click
+                      : MouseCursor.defer,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onPressed,
+                    child: Opacity(
+                      opacity: enabled ? 1 : 0.4,
+                      child: Container(
+                        padding: padding.copyWith(right: 6),
+                        alignment: widget.expand ? Alignment.center : null,
+                        child: label,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              width: 1,
+              height: 14,
+              color: foreground.withValues(alpha: 0.25),
+            ),
+            Semantics(
+              button: true,
+              label: widget.dropdownTooltip,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: widget.dropdownTooltip == null
+                    ? arrow
+                    : IdeHover(message: widget.dropdownTooltip!, child: arrow),
+              ),
+            ),
+          ],
         ),
       ),
     );

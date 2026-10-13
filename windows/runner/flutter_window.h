@@ -13,6 +13,7 @@
 #include "attention.h"
 #include "log_folder.h"
 #include "open_requests.h"
+#include "stash_channel.h"
 #include "view_window.h"
 
 // The main window: the chat's, the one the app starts with, which hosts the
@@ -59,6 +60,9 @@ class FlutterWindow : public ViewWindow {
   // Notifications, the taskbar button's count and the tray icon, which the
   // close button hides the window to (see attention.h).
   std::unique_ptr<Attention> attention_;
+
+  // The stash's shortcut, from any app (see stash_channel.h).
+  std::unique_ptr<StashChannel> stash_;
 
   // Where Flutter says the logs go (see log_folder.h).
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> logs_;

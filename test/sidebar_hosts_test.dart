@@ -88,6 +88,35 @@ void main() {
     expect(inSidebar(find.text('No projects on box yet.')), findsOneWidget);
   });
 
+  testWidgets('All lists every host\'s projects together, and is kept '
+      'between runs', (tester) async {
+    final store = MemoryPreferenceStore();
+    var workspace = await pumpLoaded(tester, preferences: store);
+    await workspace.openFolder('ssh://dev/srv/app');
+    await tester.pump();
+    expect(inSidebar(find.text('project')), findsNothing);
+
+    await tester.tap(inSidebar(find.text('dev')));
+    await tester.pump();
+    await tester.tap(find.text('All'));
+    await tester.pump();
+    expect(workspace.sidebarAllHosts, isTrue);
+    expect(workspace.sidebarHost, isNull);
+    expect(inSidebar(find.text('All')), findsWidgets);
+    expect(inSidebar(find.text('project')), findsOneWidget);
+    expect(inSidebar(find.text('app · dev')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpLoaded(tester, preferences: store);
+    expect(workspace.sidebarAllHosts, isTrue);
+
+    // A host picked: that one alone again.
+    workspace.sidebarHost = 'dev';
+    await tester.pump();
+    expect(workspace.sidebarAllHosts, isFalse);
+    expect(inSidebar(find.text('project')), findsNothing);
+  });
+
   testWidgets('hosts and the one switched to are kept between runs; a host '
       'removed takes its projects off the sidebar', (tester) async {
     final store = MemoryPreferenceStore();

@@ -16,6 +16,7 @@ import 'package:baocode/settings/pages/settings_widgets.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/chat/widgets/pixel_loader.dart';
 
 /// Accounts signed in to by hand: [finish] ends the sign-in under way.
 class _FakeCodex extends CodexService {
@@ -445,10 +446,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump();
     expect(asked, ['gw/up']);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(PixelLoader), findsOneWidget);
     replies['up']!.complete(answer);
     await tester.pump();
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(PixelLoader), findsNothing);
     expect(timed, findsOneWidget);
     expect(
       find.byWidgetPredicate(
@@ -461,7 +462,7 @@ void main() {
     await tester.tap(find.text('Test All'));
     await tester.pump();
     expect(asked, ['gw/up', 'gw/up', 'gw/down']);
-    expect(find.byType(CircularProgressIndicator), findsNWidgets(2));
+    expect(find.byType(PixelLoader), findsNWidgets(2));
     replies['up']!.complete(answer);
     replies['down']!.completeError(Exception('401 Unauthorized'));
     await tester.pump();

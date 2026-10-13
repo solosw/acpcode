@@ -2,6 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:markdown/markdown.dart' as md;
+import 'package:baocode/chat/side_panel/file_link_menu.dart';
 import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/widgets/markdown_view.dart';
 import 'package:baocode/theme/material_file_icons.dart';
@@ -133,6 +135,43 @@ void main() {
     });
   });
 
+  testWidgets('a file link has its menu on a right click', (tester) async {
+    final existence = FileExistence((_) async => true);
+    addTearDown(existence.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FileOpenScope(
+            root: '/p',
+            onOpen: (_) {},
+            existence: existence,
+            child: const MarkdownView('See [the report](out/report.html).'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final view = tester.element(find.byType(MarkdownView));
+    final icon = tester.getCenter(find.byType(FileIcon));
+    expect(
+      (fileLinkMenuAt(view, icon) as FileLinkMenu?)?.path,
+      '/p/out/report.html',
+    );
+    // The link's text, after the icon.
+    final text = icon + const Offset(40, 0);
+    expect(
+      (fileLinkMenuAt(view, text) as FileLinkMenu?)?.path,
+      '/p/out/report.html',
+    );
+    expect(
+      fileLinkMenuAt(
+        tester.element(find.byType(MarkdownView)),
+        tester.getTopLeft(find.byType(MarkdownView)),
+      ),
+      isNull,
+    );
+  });
+
   group('tables', () {
     testWidgets('a wide table scrolls sideways in a rounded card, with a bar', (
       tester,
@@ -233,6 +272,45 @@ void main() {
     testWidgets('a half-streamed formula shows its source', (tester) async {
       await pumpMarkdown(tester, r'$$\frac{1}{$$');
       expect(find.textContaining(r'\frac{1}{'), findsOneWidget);
+    });
+  });
+
+  group('CJK emphasis', () {
+    /// The text of each `strong` element of [data].
+    List<String> strong(String data) {
+      final found = <String>[];
+      void visit(md.Node node) {
+        if (node is! md.Element) return;
+        if (node.tag == 'strong') found.add(node.textContent);
+        node.children?.forEach(visit);
+      }
+
+      MarkdownView.document().parse(data).forEach(visit);
+      return found;
+    }
+
+    test('closes after CJK punctuation before CJK text', () {
+      expect(strong('你指出得对：**新版应遵循有效配置。**这条规则已加入。'), ['新版应遵循有效配置。']);
+    });
+
+    test('opens before punctuation after CJK text', () {
+      expect(strong('这是**“引号”**里的话'), ['“引号”']);
+    });
+
+    test('leaves English as CommonMark has it', () {
+      expect(strong('a **b** c and **d.**e and 2*3*4'), ['b']);
+    });
+  });
+
+  group('HTML comments', () {
+    testWidgets('do not show', (tester) async {
+      await pumpMarkdown(
+        tester,
+        '# Title\n\n<!-- export-cmd -->\n\ntext <!-- note --> after',
+      );
+      expect(find.textContaining('export-cmd'), findsNothing);
+      expect(find.textContaining('note'), findsNothing);
+      expect(find.textContaining('after'), findsOneWidget);
     });
   });
 }

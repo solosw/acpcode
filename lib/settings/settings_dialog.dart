@@ -11,6 +11,7 @@ import '../keybindings/keybinding_service.dart';
 import '../l10n/l10n.dart';
 import '../workspace/title_bar_double_click.dart';
 import '../workspace/window_controls.dart';
+import '../workspace/window_header/window_header.dart' show WindowHeader;
 import '../theme/codicons.dart';
 import '../theme/app_theme.dart';
 import '../ide/ide_back_button.dart';
@@ -27,7 +28,9 @@ enum SettingsSection {
   agents,
   ssh,
   network,
+  mobile,
   notifications,
+  stash,
   language,
   keyboard,
   updates,
@@ -43,7 +46,9 @@ enum SettingsCategory {
     SettingsSection.agents,
     SettingsSection.ssh,
     SettingsSection.network,
+    SettingsSection.mobile,
     SettingsSection.notifications,
+    SettingsSection.stash,
     SettingsSection.language,
     SettingsSection.keyboard,
     SettingsSection.updates,
@@ -216,7 +221,9 @@ class SettingsDialogState extends State<SettingsDialog> {
     SettingsSection.agents => Codicons.hubot,
     SettingsSection.ssh => Codicons.remote,
     SettingsSection.network => Codicons.radioTower,
+    SettingsSection.mobile => Codicons.deviceMobile,
     SettingsSection.notifications => Codicons.bell,
+    SettingsSection.stash => Codicons.note,
     SettingsSection.language => Codicons.globe,
     SettingsSection.keyboard => Codicons.keyboard,
     SettingsSection.updates => Codicons.cloudDownload,
@@ -240,7 +247,9 @@ class SettingsDialogState extends State<SettingsDialog> {
       SettingsSection.agents => 'Agents',
       SettingsSection.ssh => l10n.settingsSectionSsh,
       SettingsSection.network => l10n.settingsSectionNetwork,
+      SettingsSection.mobile => l10n.settingsSectionMobile,
       SettingsSection.notifications => l10n.settingsSectionNotifications,
+      SettingsSection.stash => l10n.settingsSectionStash,
       SettingsSection.language => l10n.settingsSectionLanguage,
       SettingsSection.keyboard => l10n.settingsSectionKeyboard,
       SettingsSection.updates => l10n.settingsSectionUpdates,
@@ -254,6 +263,7 @@ class SettingsDialogState extends State<SettingsDialog> {
         SettingsSection.appearance => context.l10n.settingsAppearanceKeywords,
         SettingsSection.ssh => context.l10n.sshSettingsKeywords,
         SettingsSection.network => context.l10n.settingsNetworkKeywords,
+        SettingsSection.mobile => context.l10n.settingsMobileKeywords,
         _ => '',
       };
 
@@ -332,56 +342,88 @@ class SettingsDialogState extends State<SettingsDialog> {
       child: FocusScope(
         autofocus: true,
         onKeyEvent: _onKey,
-        child: Padding(
-          padding: EdgeInsets.only(top: top),
-          child: Material(
-            color: AppColors.code,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                _windowWidth = constraints.maxWidth;
-                final narrow = _windowWidth < SettingsDialog.narrowWidth;
-                if (narrow != _narrow) {
-                  _narrow = narrow;
-                  // Crossing the breakpoint never leaves a drawer open.
-                  _drawerOpen = false;
-                  _drawerClosing = false;
-                }
-                return narrow ? _buildNarrow() : _buildWide();
-              },
-            ),
-          ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            _windowWidth = constraints.maxWidth;
+            final narrow = _windowWidth < SettingsDialog.narrowWidth;
+            if (narrow != _narrow) {
+              _narrow = narrow;
+              // Crossing the breakpoint never leaves a drawer open.
+              _drawerOpen = false;
+              _drawerClosing = false;
+            }
+            final dialog = Padding(
+              padding: EdgeInsets.only(top: top),
+              child: Material(
+                color: AppColors.code,
+                child: narrow ? _buildNarrow() : _buildWide(),
+              ),
+            );
+            // On Windows the list's toggle is in the header, where the
+            // sidebar's was: the header leaves it room (see
+            // WindowHeader.settingsShown), rather than the page a row.
+            if (!WindowControls.drawsHeader || !(narrow || !_docked)) {
+              return dialog;
+            }
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                dialog,
+                Positioned(
+                  left: WindowHeader.settingsToggleLeft,
+                  top: 0,
+                  height: top,
+                  child: Center(
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: _listToggle(),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
+  /// The list's toggle, as the window's sidebar's: the icon shows whether
+  /// it is open.
+  Widget _listToggle() => SidebarIconButton(
+    icon: navShown ? Codicons.layoutSidebarLeft : Codicons.layoutSidebarLeftOff,
+    tooltip: navShown
+        ? context.l10n.windowHideSidebar
+        : context.l10n.windowShowSidebar,
+    size: WindowHeader.settingsToggleSize,
+    command: _toggleCommand,
+    onTap: _toggle,
+  );
+
   /// The page, under a row of the title bar's height: room for the window
-  /// to be dragged by, and the list's toggle while it is hidden.
+  /// to be dragged by, and the list's toggle while it is hidden. Under
+  /// Windows' header, no row: the toggle is in the header.
   Widget _buildPage({required bool showToggle}) {
-    final toggle = showToggle
-        ? Padding(
-            padding: EdgeInsets.only(left: AppMetrics.trafficLightsWidth + 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SidebarIconButton(
-                icon: Codicons.layoutSidebarLeftOff,
-                tooltip: context.l10n.windowShowSidebar,
-                command: _toggleCommand,
-                onTap: _toggle,
-              ),
-            ),
-          )
-        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Under Windows' header, a row only for the toggle.
         if (!WindowControls.drawsHeader)
           TitleBarDoubleClick(
-            child: SizedBox(height: AppMetrics.titleBarHeight, child: toggle),
-          )
-        else if (toggle != null)
-          SizedBox(height: AppMetrics.titleBarHeight, child: toggle),
+            child: SizedBox(
+              height: AppMetrics.titleBarHeight,
+              child: showToggle
+                  ? Padding(
+                      padding: EdgeInsets.only(
+                        left: AppMetrics.trafficLightsWidth + 8,
+                      ),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _listToggle(),
+                      ),
+                    )
+                  : null,
+            ),
+          ),
         Expanded(
           child: KeyedSubtree(
             key: ValueKey(_section),

@@ -7,6 +7,7 @@ import '../../theme/workbench_theme.dart' show themeColors;
 import '../chat_models.dart';
 import '../floating/hover_tooltip.dart';
 import '../side_panel/file_link.dart';
+import '../side_panel/file_link_menu.dart';
 import '../side_panel/file_open.dart';
 import 'hover_builder.dart';
 import 'step_header.dart';
@@ -103,6 +104,16 @@ class ToolCallRow extends StatelessWidget {
     // A file read shows only its name: the whole path on hover.
     if (kind == ToolKind.read && path != null) {
       header = HoverTooltip(content: _pathTooltip, child: header);
+    }
+    if (file != null) {
+      header = FileLinkMenuRegion(
+        menu: files!.menuFor(
+          file.path,
+          () => files.onOpen(file),
+          context: context,
+        ),
+        child: header,
+      );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

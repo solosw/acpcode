@@ -426,6 +426,29 @@ class RemoteClient {
     await _call<String>(RemoteProtocol.fsReadBytes, {'path': path}),
   );
 
+  /// At most [length] of [path]'s bytes from [offset] (fewer at its end),
+  /// and its size; given up once [cancel] completes.
+  Future<({Uint8List bytes, int size})> readRange(
+    String path,
+    int offset,
+    int length, {
+    Future<void>? cancel,
+  }) async {
+    final result = _map(
+      await _call<Object?>(RemoteProtocol.fsReadRange, {
+        'path': path,
+        'offset': offset,
+        'length': length,
+      }, cancel),
+    );
+    return (bytes: decodeBytes(result['data']), size: result['size'] as int);
+  }
+
+  /// How many bytes the files at [paths] take, folders' too; counted only
+  /// until over [limit].
+  Future<int> sizeOf(List<String> paths, {int? limit}) =>
+      _call<int>(RemoteProtocol.fsSize, {'paths': paths, 'limit': limit});
+
   Future<IdeFileListing> walk(
     String root, {
     Set<String> excluded = ideIndexExcludedDirectories,

@@ -33,6 +33,7 @@ enum DataDirectorySource {
 /// <path>/checkpoints/             snapshots of the projects agents change
 /// <path>/workspaces/              the folders of multi-folder workspaces
 /// <path>/cache/                   what can be made again, to start faster
+/// <path>/pastes/                  pastes too long to send, which agents read
 /// <path>/logs/errors.log          the errors the app did not handle
 /// <path>/extensions/              theme extensions, as VS Code lays them out
 /// ```
@@ -94,6 +95,11 @@ class DataDirectory {
   /// summaries of Claude Code's sessions).
   String get cacheDir => p.join(path, 'cache');
 
+  /// The pastes too long to go in a message, which it names for the agent
+  /// to read instead (see paste_store.dart): kept, as the conversations
+  /// that name them are.
+  String get pastesDir => p.join(path, 'pastes');
+
   /// A folder per multi-folder workspace, where its agents start (see
   /// project_workspace.dart).
   String get workspacesDir => p.join(path, 'workspaces');
@@ -125,6 +131,7 @@ class DataDirectory {
     'language-packs',
     'checkpoints',
     'cache',
+    'pastes',
     'icons',
     'workspaces',
     'logs',

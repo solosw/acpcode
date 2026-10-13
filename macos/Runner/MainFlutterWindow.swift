@@ -398,7 +398,7 @@ class BaoWindow: NSWindow {
 
   /// An image file as the Flutter side takes it: its bytes, media type and
   /// name; nil if it is not a readable image.
-  private static func image(at url: URL) -> [String: Any]? {
+  static func image(at url: URL) -> [String: Any]? {
     let type = (try? url.resourceValues(forKeys: [.contentTypeKey]))?.contentType
     if let type, let mime = sentAsIs[type], let data = try? Data(contentsOf: url) {
       return ["bytes": FlutterStandardTypedData(bytes: data), "type": mime,
@@ -415,7 +415,7 @@ class BaoWindow: NSWindow {
 
   /// Puts an image's [data] on the clipboard, as PNG and TIFF: what apps
   /// paste a picture from. False when it is no image.
-  private static func writePasteboardImage(_ data: Data, png: Bool) -> Bool {
+  static func writePasteboardImage(_ data: Data, png: Bool) -> Bool {
     guard let tiff = NSImage(data: data)?.tiffRepresentation,
           let png = png ? data : pngData(tiff)
     else { return false }
@@ -431,7 +431,7 @@ class BaoWindow: NSWindow {
   /// text to paste, copied image data (a screenshot, an image from a
   /// browser). Text wins over image data: apps put a picture of copied
   /// text (e.g. cells) beside it.
-  private static func pasteboardImages() -> [[String: Any]] {
+  static func pasteboardImages() -> [[String: Any]] {
     let pasteboard = NSPasteboard.general
     let urls = pasteboard.readObjects(
       forClasses: [NSURL.self],
@@ -480,6 +480,9 @@ class MainFlutterWindow: BaoWindow {
     // and the app opens to that alone; shown by the nib, the window would
     // come and go at once.
     AppWindows.shared = AppWindows(engine: flutterViewController.engine, main: self)
+    // The stash's shortcut, what was in front, the text in pictures (see
+    // StashPanel.swift).
+    StashChannel.shared = StashChannel(messenger: messenger)
     shownAtLaunch = AppWindows.mainShownAtLaunch
     holdingBack = true
     NotificationCenter.default.addObserver(
@@ -504,11 +507,12 @@ class MainFlutterWindow: BaoWindow {
     switch call.method {
     case "setAppearance":
       // The color theme's type: the material under the sidebar, the
-      // traffic lights and system menus follow it, in every window. Kept
-      // for the next start.
+      // traffic lights and system menus follow it, in every window (the
+      // stash's panel too: its edge and shadow are the appearance's, darker
+      // under a dark one). Kept for the next start.
       let dark = call.arguments as? Bool ?? true
       UserDefaults.standard.set(dark, forKey: Self.darkAppearanceKey)
-      for window in NSApp.windows where window is BaoWindow {
+      for window in NSApp.windows where window is FlutterHostWindow {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
       }
       result(nil)
@@ -612,7 +616,7 @@ private class VibrantContent: NSViewController {
 /// Flutter, which shows where they would go and puts them there (see
 /// lib/chat/composer/file_drop.dart): over the Flutter view, it answers no
 /// hit test, so clicks and the rest go on to Flutter; only drags stop here.
-private class FileDropView: NSView {
+final class FileDropView: NSView {
   private let channel: FlutterMethodChannel
 
   /// What Flutter last said of the drag: whether what is under it takes it.
@@ -1005,6 +1009,12 @@ private class FileMenu: NSObject {
 
   @objc private func runCommand(_ sender: NSMenuItem) {
     guard let command = sender.representedObject as? String else { return }
+    // The stash's panel in front: its own (Close closes it, not a window
+    // behind).
+    if let panel = NSApp.keyWindow as? StashPanel {
+      panel.menuCommand(command)
+      return
+    }
     let window = NSApp.keyWindow as? BaoWindow
       ?? NSApp.mainWindow as? BaoWindow
       ?? AppWindows.shared?.main
@@ -1020,7 +1030,7 @@ private class FileMenu: NSObject {
 /// A menu of the items the Flutter side sends: `id`, `label`, `enabled`,
 /// `key` (shown with ⌘), or `separator`. Answers the chosen item's id, or
 /// nil, once.
-private class ContextMenu: NSMenu {
+final class ContextMenu: NSMenu {
   private var answer: FlutterResult?
 
   /// Itself, until it has answered: the chosen item's action can come

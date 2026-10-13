@@ -11,6 +11,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
+import '../chat_find.dart' show ChatFindMarks;
 import '../side_panel/file_link.dart' show FileLineRange, FileLink;
 import '../side_panel/file_open.dart' show FileOpenScope;
 import 'hover_builder.dart';
@@ -545,22 +546,24 @@ class _CodeCardState extends State<_CodeCard> {
       ),
       null => 12.0,
     };
-    final code = Text.rich(
-      TextSpan(
-        style: style,
-        children: [
-          for (final (i, line) in lines.indexed) ...[
-            if (i > 0) const TextSpan(text: '\n'),
-            if (i < _colors.length &&
-                i < _coloredLines.length &&
-                _coloredLines[i] == line)
-              ..._colors[i]
-            else
-              TextSpan(text: line),
+    final code = ChatFindMarks(
+      child: Text.rich(
+        TextSpan(
+          style: style,
+          children: [
+            for (final (i, line) in lines.indexed) ...[
+              if (i > 0) const TextSpan(text: '\n'),
+              if (i < _colors.length &&
+                  i < _coloredLines.length &&
+                  _coloredLines[i] == line)
+                ..._colors[i]
+              else
+                TextSpan(text: line),
+            ],
           ],
-        ],
+        ),
+        softWrap: false,
       ),
-      softWrap: false,
     );
     // As tall as its lines, so nothing scrolls down in it: the page does.
     return MediaQuery(

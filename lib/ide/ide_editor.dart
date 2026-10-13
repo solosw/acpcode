@@ -31,6 +31,7 @@ import 'package:bao_editor/monaco/vs/editor/common/model/search/piece_tree_searc
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'package:bao_editor/monaco/flutter/editor_keybindings.dart';
 import 'package:bao_editor/monaco/flutter/language_configuration_assets.dart';
+import 'package:bao_editor/monaco/flutter/language_overrides.dart';
 import 'package:bao_editor/monaco/vs/editor/common/languages/language_configuration_registry.dart'
     show plainTextLanguageConfiguration;
 import 'package:bao_editor/monaco/vs/workbench/services/themes/common/color_theme_data.dart';
@@ -45,7 +46,8 @@ import 'git/git_blame.dart';
 import 'ide_commands.dart';
 import 'ide_find_widget.dart';
 import 'ide_menu.dart';
-import 'ide_status_bar.dart' show ideEolEdits;
+import 'ide_notifications.dart';
+import 'ide_status_bar.dart' show IdeLanguageNames, ideEolEdits;
 import 'ide_workspace.dart';
 import 'lsp/language_features.dart';
 import 'lsp/lsp_protocol.dart';
@@ -263,6 +265,7 @@ class IdeEditorState extends State<IdeEditor> {
     _findController.addListener(_refreshFindResults);
     widget.workspace.addListener(_workspaceChanged);
     _themes.addListener(_colorThemeChanged);
+    EditorLanguageOverrides.instance.addListener(_languageModesChanged);
     if (widget.nativeEditorEnabled) _activateNativeController();
     _selectionChanged();
     _updateBlame(navigated: false);
@@ -425,11 +428,34 @@ class IdeEditorState extends State<IdeEditor> {
           widget.onShowReferences?.call(title, locations),
       onApplyWorkspaceEdit: applyWorkspaceEdit,
       onFocusEditor: focus,
+      onFormatterMissing: _formatterMissing,
       semanticTokenStyler: _semanticTokenStyler,
       languageId: _textMateDocuments[doc]?.$2.languageId ?? 'plaintext',
       semanticSource: _semanticSources[doc],
     )..addListener(_languageChanged);
     _language!.l10n = _l10n;
+  }
+
+  /// No formatter for [path], but [serverId] would be one: installed from
+  /// a notification.
+  void _formatterMissing(String path, String serverId) {
+    final languages = widget.workspace.languages;
+    if (!mounted || languages == null) return;
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    final l10n = context.l10n;
+    notifications?.notify(
+      IdeSeverity.info,
+      l10n.langNoFormatterInstall(serverId, IdeLanguageNames.forPath(path)),
+      primary: [
+        IdeNotificationAction(l10n.extInstall, () async {
+          try {
+            await languages.install(serverId, path: path);
+          } catch (error) {
+            if (mounted) widget.onError(error);
+          }
+        }),
+      ],
+    );
   }
 
   void _disposeLanguageSession() {
@@ -667,8 +693,7 @@ class IdeEditorState extends State<IdeEditor> {
     return switch (id) {
       'editor.action.marker.next' ||
       'editor.action.marker.prev' => widget.workspace.languages != null,
-      'editor.action.format' =>
-        _language?.supports(LanguageRequest.format) ?? false,
+      'editor.action.format' => _language != null,
       'editor.action.showContextMenu' => _nativeController != null,
       _ when _findCommands.contains(id) => true,
       _ => _language != null,
@@ -903,6 +928,28 @@ class IdeEditorState extends State<IdeEditor> {
     _tokenizedDocuments.clear();
     _syntaxDocument = null;
     _scheduleSyntax();
+  }
+
+  /// A language picked for a file (Change Language Mode): every document
+  /// highlighted again as its language is now, the active one at once,
+  /// the others as they are shown.
+  void _languageModesChanged() {
+    if (!mounted) return;
+    for (final (_, document) in _textMateDocuments.values) {
+      document.dispose();
+    }
+    _textMateDocuments.clear();
+    _tokenizedDocuments.clear();
+    _syntaxDocument = null;
+    final doc = widget.active;
+    if (_nativeControllers[doc] case final controller?) {
+      unawaited(_loadLanguageConfiguration(doc, controller));
+    }
+    if (EditorLanguageOverrides.instance.of(doc.path) case final picked?) {
+      _language?.languageId = picked;
+    }
+    _scheduleSyntax();
+    setState(() {});
   }
 
   void _scheduleSyntax() {
@@ -1206,6 +1253,7 @@ class IdeEditorState extends State<IdeEditor> {
   void dispose() {
     widget.workspace.removeListener(_workspaceChanged);
     _themes.removeListener(_colorThemeChanged);
+    EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     _debugListeners?.dispose();
     _blame.dispose();
     _disposeNativeControllers();
@@ -1312,6 +1360,12 @@ class IdeEditorState extends State<IdeEditor> {
   bool _languageCommandEnabled(String id) {
     final session = _language;
     if (session == null) return false;
+    // As upstream's `formatDocument.none`: offered with no formatter too,
+    // to say so and which server would be one.
+    if (id == 'editor.action.formatDocument' ||
+        id == 'editor.action.formatSelection') {
+      return true;
+    }
     final request = switch (id) {
       'editor.action.revealDefinition' => LanguageRequest.definition,
       'editor.action.goToTypeDefinition' => LanguageRequest.typeDefinition,
@@ -1320,8 +1374,6 @@ class IdeEditorState extends State<IdeEditor> {
       'editor.action.referenceSearch.trigger' => LanguageRequest.references,
       'editor.action.goToDeclaration' => LanguageRequest.definition,
       'editor.action.rename' => LanguageRequest.rename,
-      'editor.action.formatDocument' => LanguageRequest.format,
-      'editor.action.formatSelection' => LanguageRequest.rangeFormat,
       'editor.action.quickFix' ||
       'editor.action.refactor' ||
       'editor.action.sourceAction' => LanguageRequest.codeActions,
@@ -1536,9 +1588,7 @@ class IdeEditorState extends State<IdeEditor> {
       'editorHasMultipleSelections' => controller?.hasMultipleSelections,
       'editorReadonly' => widget.active.readOnly,
       'editorTabMovesFocus' => false,
-      'editorHasFormattingProvider' => session?.supports(
-        LanguageRequest.format,
-      ),
+      'editorHasFormattingProvider' => session?.canFormat(),
       'editorHasCompletionItemProvider' => session?.supports(
         LanguageRequest.completion,
       ),
@@ -1891,9 +1941,7 @@ class IdeEditorState extends State<IdeEditor> {
     try {
       await flush();
       final session = _language;
-      if (widget.formatOnSave &&
-          session != null &&
-          session.supports(LanguageRequest.format)) {
+      if (widget.formatOnSave && session != null && session.canFormat()) {
         await session.format();
       }
       final doc = widget.workspace.active;

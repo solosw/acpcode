@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/chat/widgets/pixel_loader.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/ide/ide_chat_title.dart';
 import 'package:baocode/ide/ide_quick_input.dart';
@@ -255,7 +256,7 @@ void main() {
     await tester.pump();
     final spinners = find.descendant(
       of: find.byType(IdeQuickInput),
-      matching: find.byType(CircularProgressIndicator),
+      matching: find.byType(PixelLoader),
     );
     expect(spinners, findsOneWidget);
 
@@ -308,7 +309,7 @@ void main() {
     final title = find.byType(IdeChatTitle);
     final spinner = find.descendant(
       of: title,
-      matching: find.byType(CircularProgressIndicator),
+      matching: find.byType(PixelLoader),
     );
     expect(spinner, findsOneWidget);
     final tab = find.descendant(of: title, matching: find.text(other.title));
@@ -321,10 +322,7 @@ void main() {
     other.session.stop();
     await tester.pump(const Duration(seconds: 1));
     expect(
-      find.descendant(
-        of: title,
-        matching: find.byType(CircularProgressIndicator),
-      ),
+      find.descendant(of: title, matching: find.byType(PixelLoader)),
       findsNothing,
     );
   });

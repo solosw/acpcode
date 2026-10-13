@@ -14,7 +14,9 @@ import '../../ide/git/ide_scm_view.dart' show IdeGitGraph;
 import '../../ide/ide_button.dart';
 import '../../ide/ide_dialog.dart';
 import '../../ide/ide_explorer.dart';
+import '../../ide/ide_code_editor.dart' show IdeTextFormatter;
 import '../../ide/ide_hover.dart';
+import '../../ide/file_views.dart';
 import '../../ide/ide_list.dart';
 import '../../ide/ide_menu.dart';
 import '../../ide/ide_modern_ui.dart';
@@ -56,6 +58,11 @@ import 'terminal_preview.dart';
 /// it wider or narrower (a double click gives back its width), narrower
 /// where the conversations would have less than [minChat]; over it, where
 /// they would beside it at its least.
+
+/// This machine's files, for what is shown as a file (one service: the
+/// preview reads its file anew when it changes).
+final IdeFileService _localFiles = IdeFileService(p.current);
+
 class AgentSidePanelArea extends StatefulWidget {
   const AgentSidePanelArea({
     super.key,
@@ -90,6 +97,10 @@ class AgentSidePanelArea extends StatefulWidget {
   /// The strip at its left edge that takes the drag.
   static const sashWidth = 5.0;
 
+  /// How long the room is short before it goes over the conversations:
+  /// longer than the window's sidebar takes to give way.
+  static const overlayDelay = Duration(milliseconds: 260);
+
   /// How far in from the right [rail] is: clear of the history's
   /// scrollbar.
   static const railRight = 16.0;
@@ -106,6 +117,35 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
   bool _dragging = false;
   ({double x, double width})? _dragStart;
 
+  /// Whether it is over the conversations: once the room was short for
+  /// longer than [overlayDelay]. Short a while only (the window's sidebar
+  /// giving way to it, which takes its animation; a window opening), it
+  /// stays beside them, narrower, not covering the window for a moment.
+  bool _overlay = false;
+
+  /// Runs while the room is short: over them once it ends.
+  Timer? _short;
+
+  void _roomShort(bool short) {
+    if (!short) {
+      _short?.cancel();
+      _short = null;
+      _overlay = false;
+      return;
+    }
+    if (_overlay || _short != null) return;
+    _short = Timer(AgentSidePanelArea.overlayDelay, () {
+      _short = null;
+      if (mounted) setState(() => _overlay = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _short?.cancel();
+    super.dispose();
+  }
+
   AgentSidePanel get _panel => widget.panel;
 
   @override
@@ -118,15 +158,20 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
         // Over the conversations only where it cannot be beside them at
         // its least; else beside them, narrower than it would be where
         // they need the room.
-        final overlay =
-            room - AgentSidePanel.minWidth < AgentSidePanelArea.minChat;
+        _roomShort(
+          shown && room - AgentSidePanel.minWidth < AgentSidePanelArea.minChat,
+        );
+        final overlay = _overlay;
         final width = overlay
             ? math.min(_panel.width, math.max(0.0, room - 48))
-            : math.min(
-                _panel.width,
-                room -
-                    AgentSidePanelArea.minChat -
-                    AgentSidePanelArea.sashWidth,
+            : math.max(
+                0.0,
+                math.min(
+                  _panel.width,
+                  room -
+                      AgentSidePanelArea.minChat -
+                      AgentSidePanelArea.sashWidth,
+                ),
               );
         // Each child keyed: the conversations and the panel are never
         // built anew as the rail, the scrim or the drag's cursor come and
@@ -188,22 +233,15 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
                     children: [
                       _sash(),
                       Expanded(
-                        // A click anywhere in it puts the focus there (on
-                        // what takes it, else on the panel), for its keys.
-                        child: Listener(
-                          onPointerDown: (_) {
-                            if (!_panel.focusNode.hasFocus) {
-                              _panel.focusNode.requestFocus();
-                            }
-                          },
-                          child: Focus(
-                            focusNode: _panel.focusNode,
-                            // The editor's background, all of it: the
-                            // conversation's side, not the window's.
-                            child: ColoredBox(
-                              color: AppColors.code,
-                              child: widget.builder(context),
-                            ),
+                        // Never laid out narrower than its least: squeezed
+                        // a while (the sidebar giving way), what has no
+                        // room is cut off, as the sidebar's own is.
+                        child: ClipRect(
+                          child: OverflowBox(
+                            alignment: Alignment.centerLeft,
+                            minWidth: math.max(width, AgentSidePanel.minWidth),
+                            maxWidth: math.max(width, AgentSidePanel.minWidth),
+                            child: _content(context),
                           ),
                         ),
                       ),
@@ -230,6 +268,27 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
       },
     ),
   );
+
+  /// What it shows, beside its sash.
+  Widget _content(BuildContext context) =>
+      // A click anywhere in it puts the focus there (on what takes it, else
+      // on the panel), for its keys.
+      Listener(
+        onPointerDown: (_) {
+          if (!_panel.focusNode.hasFocus) {
+            _panel.focusNode.requestFocus();
+          }
+        },
+        child: Focus(
+          focusNode: _panel.focusNode,
+          // The editor's background, all of it: the conversation's side,
+          // not the window's.
+          child: ColoredBox(
+            color: AppColors.code,
+            child: widget.builder(context),
+          ),
+        ),
+      );
 
   Widget _sash() => MouseRegion(
     cursor: SystemMouseCursors.resizeColumn,
@@ -296,6 +355,7 @@ class AgentSidePanelView extends StatelessWidget {
     this.paths,
     this.colorize,
     this.onOpenInIde,
+    this.formatter,
     this.watchDirectory,
     this.git,
     this.terminals,
@@ -366,6 +426,9 @@ class AgentSidePanelView extends StatelessWidget {
 
   /// Opens a file shown in the IDE instead.
   final ValueChanged<FileOpenRequest>? onOpenInIde;
+
+  /// Formats a file edited here with the project's language servers.
+  final IdeTextFormatter? formatter;
 
   /// Changes to a folder's entries, for the files page's tree to follow;
   /// the explorer's own watch when null.
@@ -1002,7 +1065,9 @@ class AgentSidePanelView extends StatelessWidget {
                 tooltip: tab.path,
                 status: tab.diff ? statuses[tab.path] : null,
                 dirty: tab.dirty,
+                preview: tab.preview,
                 onTap: () => panel.activate(session, tab),
+                onDoubleTap: tab.preview ? () => panel.pin(tab) : null,
                 onClose: () => unawaited(_close(context, [tab])),
                 menu: () => _fileTabMenu(context, list, tab),
               ),
@@ -1093,17 +1158,30 @@ class AgentSidePanelView extends StatelessWidget {
     ]);
   }
 
-  Widget _preview(BuildContext context, SidePanelTab tab) => FilePreview(
+  Widget _preview(BuildContext context, SidePanelTab tab) {
+    // A file of its own kind (a stash): as that, not its text.
+    if (tab.diff ? null : FileViews.of(tab.path) case final view?) {
+      return KeyedSubtree(
+        key: ValueKey((session, tab.path, view.id)),
+        child: view.build(context, tab.path),
+      );
+    }
+    return _filePreview(context, tab);
+  }
+
+  Widget _filePreview(BuildContext context, SidePanelTab tab) => FilePreview(
     key: ValueKey((session, tab.path, tab.diff)),
     request: tab.request,
     reveal: tab.reveal,
     edit: tab.edit,
     onEdit: (edit) => panel.keepEdit(tab, edit),
     highlights: panel.highlights,
-    files: files,
-    root: _rootOf(tab.path),
-    readBytes: readBytes,
-    paths: paths,
+    formatter: tab.request.local ? null : formatter,
+    // Shown as a file, on this machine (see FileOpenScope.showLocal).
+    files: tab.request.local ? _localFiles : files,
+    root: tab.request.local ? null : _rootOf(tab.path),
+    readBytes: tab.request.local ? readFileBytes : readBytes,
+    paths: tab.request.local ? null : paths,
     colorize: colorize,
     onOpenFile: (request) {
       final root = _rootOf(request.path);
@@ -1720,11 +1798,18 @@ class _Tab extends StatelessWidget {
     this.tooltip,
     this.status,
     this.dirty = false,
+    this.preview = false,
     this.onClose,
     this.menu,
+    this.onDoubleTap,
   });
 
   final bool active;
+
+  /// The tab of what was looked at last: its label in italics, as VS
+  /// Code's preview editor's; a double click ([onDoubleTap]) keeps it.
+  final bool preview;
+  final VoidCallback? onDoubleTap;
   final Widget icon;
   final String label;
   final String? description;
@@ -1747,11 +1832,12 @@ class _Tab extends StatelessWidget {
       icon: icon,
       label: label,
       description: description,
-      labelStyle: status == null
+      labelStyle: status == null && !preview
           ? null
           : TextStyle(
-              color: status.color,
-              decoration: status.strikeThrough
+              color: status?.color,
+              fontStyle: preview ? FontStyle.italic : null,
+              decoration: status?.strikeThrough ?? false
                   ? TextDecoration.lineThrough
                   : null,
             ),
@@ -1769,6 +1855,7 @@ class _Tab extends StatelessWidget {
       tooltip: tooltip,
       minWidth: 64,
       onSelect: onTap,
+      onDoubleTap: onDoubleTap,
       mark: dirty
           ? (color) => Icon(Codicons.circleFilled, size: 10, color: color)
           : null,

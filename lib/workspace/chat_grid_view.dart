@@ -669,7 +669,7 @@ class _DragChip extends StatelessWidget {
         children: [
           SizedBox(
             width: 14,
-            child: Center(child: StatusIndicator(thread.status)),
+            child: Center(child: StatusIndicator(thread.shownStatus)),
           ),
           const SizedBox(width: 6),
           Flexible(

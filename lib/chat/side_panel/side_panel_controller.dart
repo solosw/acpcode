@@ -15,9 +15,14 @@ import 'file_open.dart';
 /// A file the side panel shows: its text or its changes, as [request]
 /// asked last.
 class SidePanelTab {
-  SidePanelTab(this.request);
+  SidePanelTab(this.request) : _preview = request.preview;
 
   FileOpenRequest request;
+
+  /// The tab of what was looked at last ([FileOpenRequest.preview]): the
+  /// next look takes it over, unless it is pinned or edited meanwhile.
+  bool get preview => _preview && !dirty;
+  bool _preview;
 
   /// Goes up each time it is asked for again, for the preview to scroll to
   /// the lines asked for once more.
@@ -165,9 +170,12 @@ class AgentSidePanel extends ChangeNotifier {
   double get listWidth => _listWidth;
   double _listWidth = defaultListWidth;
 
-  /// Whether the list at the left of each page shows.
-  bool get listShown => _listShown;
+  /// Whether the list at the left of each page shows: as kept, unless a
+  /// file the conversation opened put it out of the way ([open]'s
+  /// `listAway`) until the panel is asked for itself or the list is.
+  bool get listShown => _listShown && !_listAway;
   bool _listShown = true;
+  bool _listAway = false;
 
   /// The changes as a tree of their folders (as the Source Control view's
   /// View as Tree), or as a list.
@@ -242,6 +250,7 @@ class AgentSidePanel extends ChangeNotifier {
 
   void show() {
     _asks += 1;
+    _listAway = false;
     if (!_setShown(true)) notifyListeners();
   }
 
@@ -311,7 +320,8 @@ class AgentSidePanel extends ChangeNotifier {
   }
 
   void toggleList() {
-    _listShown = !_listShown;
+    _listShown = _listAway || !_listShown;
+    _listAway = false;
     _changed = true;
     notifyListeners();
     onSave?.call();
@@ -329,15 +339,31 @@ class AgentSidePanel extends ChangeNotifier {
 
   /// Shows [request] for [conversation], in front: a file on the files
   /// page, a file's changes on the changes page, the plan on its own; in
-  /// the tab of the same file if there is one.
-  void open(Object conversation, FileOpenRequest request) {
+  /// the tab of the same file if there is one. [listAway]: a file opened
+  /// from elsewhere (the conversation) shows alone, the page's list out
+  /// of the way until it is asked for (see [listShown]).
+  void open(
+    Object conversation,
+    FileOpenRequest request, {
+    bool listAway = false,
+  }) {
     final tabs = tabsOf(conversation);
     if (request.plan) return _openPlan(tabs, request);
+    if (listAway && !request.diff) _listAway = true;
     final list = request.diff ? tabs.diffs : tabs.files;
     var tab = list.where((tab) => tab.path == request.path).firstOrNull;
     if (tab == null) {
       tab = SidePanelTab(request);
-      list.add(tab);
+      // In place of the one looked at last, if this is a look too.
+      final looked = request.preview
+          ? list.indexWhere((tab) => tab.preview)
+          : -1;
+      if (looked >= 0) {
+        list[looked]._dropEdit(highlights);
+        list[looked] = tab;
+      } else {
+        list.add(tab);
+      }
       // The oldest out of sight close; not one with unsaved changes.
       while (list.length > maxTabs) {
         final oldest = list.indexWhere((tab) => !tab.dirty);
@@ -345,6 +371,8 @@ class AgentSidePanel extends ChangeNotifier {
         list.removeAt(oldest)._dropEdit(highlights);
       }
     } else {
+      // Opened for itself: kept.
+      if (!request.preview) tab._preview = false;
       tab
         ..request = request
         ..reveal += 1;
@@ -393,6 +421,13 @@ class AgentSidePanel extends ChangeNotifier {
     for (final explorer in _explorers.values) {
       if (explorer.shows(path)) unawaited(explorer.reveal(path));
     }
+  }
+
+  /// Keeps [tab] (a double click on it): the next look opens beside it.
+  void pin(SidePanelTab tab) {
+    if (!tab._preview) return;
+    tab._preview = false;
+    notifyListeners();
   }
 
   /// Brings [tab] to the front for [conversation], on its page.

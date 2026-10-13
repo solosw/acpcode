@@ -166,6 +166,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdChatFocusList => 'Focus Chat List';
 
   @override
+  String get cmdChatFind => 'Find in Chat';
+
+  @override
   String get cmdChatCancel => 'Cancel';
 
   @override
@@ -2155,6 +2158,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String pastedTextGone(String path) {
+    return 'This paste is no longer at $path.';
+  }
+
+  @override
   String pastedTextLines(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -2241,6 +2249,36 @@ class AppLocalizationsEn extends AppLocalizations {
   String stepsThought(String duration) {
     return 'thought $duration';
   }
+
+  @override
+  String get turnCopy => 'Copy reply';
+
+  @override
+  String get turnCopied => 'Copied';
+
+  @override
+  String turnSpeed(String speed) {
+    return '$speed tok/s';
+  }
+
+  @override
+  String turnTokens(String tokens) {
+    return '$tokens tokens';
+  }
+
+  @override
+  String turnTokensHint(String input, String output) {
+    return 'This turn: read $input (cache included), wrote $output';
+  }
+
+  @override
+  String get turnSpeedHint => 'Output speed';
+
+  @override
+  String get turnDurationHint => 'Time this turn took';
+
+  @override
+  String get turnCostHint => 'Cost of this turn';
 
   @override
   String turnWorked(String duration) {
@@ -2398,6 +2436,28 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: '$count files changed',
       one: '1 file changed',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String stripAgentsRunning(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count subagents running',
+      one: '1 subagent running',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String stripTasksRunning(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count background tasks running',
+      one: '1 background task running',
     );
     return '$_temp0';
   }
@@ -2735,6 +2795,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get tabCloseAll => 'Close All';
+
+  @override
+  String get fileLinkOpen => 'Open';
+
+  @override
+  String get fileLinkOpenInPanel => 'Open in Side Panel';
+
+  @override
+  String get fileLinkPreview => 'Preview';
+
+  @override
+  String get fileLinkOpenInBrowser => 'Open in Browser';
 
   @override
   String get tabCopyPath => 'Copy Path';
@@ -4415,6 +4487,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get langNoFormatter => 'No formatter for this file.';
 
   @override
+  String langNoFormatterInstall(String id, String language) {
+    return 'No formatter for this file. Install the \'$id\' language server to format $language files.';
+  }
+
+  @override
   String get langNoRefactorings => 'No refactorings available';
 
   @override
@@ -4731,6 +4808,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get wbLanguageMode => 'Language Mode';
+
+  @override
+  String get shownImage => 'Image';
+
+  @override
+  String get shownReadOnly => 'Read-only';
+
+  @override
+  String get languageModeAuto => 'Auto Detect';
+
+  @override
+  String get languageModePlaceholder => 'Select Language Mode';
+
+  @override
+  String get languageModeChange => 'Change Language Mode';
 
   @override
   String get editorCommandPalette => 'Command Palette...';
@@ -6809,6 +6901,90 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get appearanceSettingsAgentLoader => 'Agent Working';
+
+  @override
+  String get appearanceSettingsAgentLoaderDescription =>
+      'Beside an agent in the sidebar, tabs and search while it works, or while something it started still runs in the background.';
+
+  @override
+  String get appearanceSettingsSubagentLoader => 'Subagent Running';
+
+  @override
+  String get appearanceSettingsSubagentLoaderDescription =>
+      'On a subagent\'s card in the conversation, and its row above the input, while it runs.';
+
+  @override
+  String appearanceSettingsLoaderLabel(String what, String style) {
+    return '$what: $style';
+  }
+
+  @override
+  String get appearanceSettingsLoaderSpeed => 'Speed';
+
+  @override
+  String appearanceSettingsLoaderSpeedLabel(String what, String speed) {
+    return '$what speed: $speed';
+  }
+
+  @override
+  String get loaderStyleSnake => 'Snake';
+
+  @override
+  String get loaderStyleStack => 'Stack and clear';
+
+  @override
+  String get loaderStyleTwinkle => 'Twinkle';
+
+  @override
+  String get loaderStyleFill => 'Fill and empty';
+
+  @override
+  String get loaderStylePulse => 'Square pulse';
+
+  @override
+  String get loaderStyleRipple => 'Cross ripple';
+
+  @override
+  String get loaderStyleSweep => 'Diagonal sweep';
+
+  @override
+  String get loaderStyleRain => 'Pixel rain';
+
+  @override
+  String get loaderStyleChecker => 'Checkerboard';
+
+  @override
+  String get loaderStyleSpinner => 'Spinner';
+
+  @override
+  String get loaderStyleTwinSpinner => 'Twin spinner';
+
+  @override
+  String get loaderStyleCorners => 'Corners';
+
+  @override
+  String get loaderStyleDots => 'Bouncing dots';
+
+  @override
+  String get loaderStyleEqualizer => 'Equalizer';
+
+  @override
+  String get loaderStyleBar => 'Progress bar';
+
+  @override
+  String get loaderStyleScan => 'Scan line';
+
+  @override
+  String get loaderStyleHourglass => 'Hourglass';
+
+  @override
+  String get loaderStyleBreathe => 'Breathe';
+
+  @override
+  String get loaderStyleCircle => 'Ring (classic)';
+
+  @override
   String get appearanceSettingsUserMessageStyle => 'Your Messages';
 
   @override
@@ -6826,6 +7002,49 @@ class AppLocalizationsEn extends AppLocalizations {
   String appearanceSettingsUserMessageStyleLabel(String style) {
     return 'Your messages: $style';
   }
+
+  @override
+  String get appearanceSettingsMinimap => 'Conversation Minimap';
+
+  @override
+  String get appearanceSettingsMinimapDescription =>
+      'A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.';
+
+  @override
+  String get appearanceSettingsMinimapGlass => 'Glass Opacity';
+
+  @override
+  String get appearanceSettingsMinimapGlassDescription =>
+      'How much the liquid glass over where you are in the minimap shows: its tint, shadow and light. At 0% only the part in view stands out.';
+
+  @override
+  String appearanceSettingsMinimapGlassLabel(String opacity) {
+    return 'Minimap glass opacity: $opacity';
+  }
+
+  @override
+  String get appearanceSettingsMinimapElasticity => 'Glass Elasticity';
+
+  @override
+  String get appearanceSettingsMinimapElasticityDescription =>
+      'How much the liquid glass stretches as it follows you scrolling, its edge ahead leading, and gathers itself where it stops.';
+
+  @override
+  String appearanceSettingsMinimapElasticityLabel(String level) {
+    return 'Minimap glass elasticity: $level';
+  }
+
+  @override
+  String get minimapElasticityOff => 'Off';
+
+  @override
+  String get minimapElasticitySubtle => 'Subtle';
+
+  @override
+  String get minimapElasticityMedium => 'Medium';
+
+  @override
+  String get minimapElasticityBouncy => 'Bouncy';
 
   @override
   String get appearanceSettingsCodeFont => 'Code Font';
@@ -7686,6 +7905,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get extsTabLanguageServers => 'Language Servers';
 
   @override
+  String get sidebarAllHosts => 'All';
+
+  @override
   String get sidebarThisMachine => 'This Computer';
 
   @override
@@ -7763,4 +7985,694 @@ class AppLocalizationsEn extends AppLocalizations {
   String explorerUndoCreateChanged(String name) {
     return '$name has changed since it was made. Undo deletes it anyway?';
   }
+
+  @override
+  String get settingsSectionMobile => 'Mobile';
+
+  @override
+  String get settingsMobileKeywords =>
+      'phone iphone android ios pair qr code remote lan';
+
+  @override
+  String get mobileSettingsDescription =>
+      'Follow and drive this computer\'s agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.';
+
+  @override
+  String get mobileAllow => 'Allow Phones to Connect';
+
+  @override
+  String get mobileAllowDescription =>
+      'Phones paired with this computer connect to it directly.';
+
+  @override
+  String get mobileStatus => 'Status';
+
+  @override
+  String get mobileStatusOff => 'Off';
+
+  @override
+  String get mobileStatusStarting => 'Starting…';
+
+  @override
+  String mobileStatusListening(int port) {
+    return 'Listening on port $port';
+  }
+
+  @override
+  String mobileStatusFailed(String error) {
+    return 'Could not listen: $error';
+  }
+
+  @override
+  String get mobileAddresses => 'Addresses';
+
+  @override
+  String get mobileAddressesDescription =>
+      'Where phones reach this computer, in the order they try them: the local network first, then the internet.';
+
+  @override
+  String get mobileAddressesNone => 'No network found.';
+
+  @override
+  String get mobileAddressesRefresh => 'Refresh';
+
+  @override
+  String get mobilePort => 'Port';
+
+  @override
+  String get mobilePortDescription =>
+      'The port phones connect to. Forward it on the router to reach this computer from the internet.';
+
+  @override
+  String mobilePortInvalid(String text) {
+    return 'Not a port: $text. Enter a number from 1 to 65535.';
+  }
+
+  @override
+  String get mobilePublicAddress => 'Public Address';
+
+  @override
+  String get mobilePublicAddressDescription =>
+      'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Public IPv6 addresses are found by themselves.';
+
+  @override
+  String get mobileRelay => 'Relay';
+
+  @override
+  String get mobileRelayDescription =>
+      'Reach this computer through BaoCode\'s relay when none of its addresses can be reached. Coming later.';
+
+  @override
+  String get mobileRelayUnavailable => 'Not Available Yet';
+
+  @override
+  String get mobilePair => 'Pair a Phone';
+
+  @override
+  String get mobilePairDescription =>
+      'Scan the code with BaoCode on the phone (Me → Paired computers → Pair a computer), or pick this computer under Nearby Computers there.';
+
+  @override
+  String get mobilePairShow => 'Show QR Code';
+
+  @override
+  String get mobilePairCancel => 'Cancel';
+
+  @override
+  String get mobilePairNewCode => 'New Code';
+
+  @override
+  String get mobilePairCopyLink => 'Copy Link';
+
+  @override
+  String get mobilePairCopied => 'Copied';
+
+  @override
+  String mobilePairExpires(int minutes) {
+    return 'Good for $minutes min, once. A phone that cannot scan it can paste the link instead.';
+  }
+
+  @override
+  String get mobilePairExpired => 'This code has expired.';
+
+  @override
+  String mobilePairVerifyTitle(String name) {
+    return 'Compare with $name';
+  }
+
+  @override
+  String get mobilePairVerifyBody =>
+      'Check that the phone shows the same code, then confirm on the phone.';
+
+  @override
+  String get mobilePairMismatch => 'Codes Don\'t Match';
+
+  @override
+  String mobilePaired(String name) {
+    return 'Paired with $name.';
+  }
+
+  @override
+  String get mobilePhones => 'Paired Phones';
+
+  @override
+  String get mobilePhonesNone => 'No phone is paired yet.';
+
+  @override
+  String get mobilePhoneConnected => 'Connected';
+
+  @override
+  String mobilePhoneLastSeen(String time) {
+    return 'Last connected $time';
+  }
+
+  @override
+  String get mobilePhoneRemove => 'Remove';
+
+  @override
+  String get mobileThisComputerKey => 'This Computer\'s Key';
+
+  @override
+  String get mobileThisComputerKeyDescription =>
+      'The phone shows it too: the same key on both means no one is in between.';
+
+  @override
+  String get mobileDiscoverable => 'Find on the Local Network';
+
+  @override
+  String get mobileDiscoverableDescription =>
+      'Phones paired with this computer find it on the local network, even after its address changes; while you pair one, new phones list it under Nearby Computers.';
+
+  @override
+  String get mobilePairNearbyHint =>
+      'Phones on this network can also pick this computer under Nearby Computers.';
+
+  @override
+  String mobilePairRequestTitle(String name) {
+    return '$name Wants to Pair';
+  }
+
+  @override
+  String get mobilePairRequestBody =>
+      'It found this computer nearby. Allow it only if the phone shows the same code.';
+
+  @override
+  String get mobilePairAllow => 'Allow';
+
+  @override
+  String get settingsSectionStash => 'Stash';
+
+  @override
+  String get stashTitle => 'Stash';
+
+  @override
+  String get stashHeading => 'Stash';
+
+  @override
+  String get stashNew => 'New stash';
+
+  @override
+  String get stashLinkOpen => 'Open link';
+
+  @override
+  String get stashLinkEdit => 'Edit link';
+
+  @override
+  String get stashDraft => 'Draft';
+
+  @override
+  String get stashCodeChip => 'Code';
+
+  @override
+  String get stashTableChip => 'Table';
+
+  @override
+  String stashLines(int count) {
+    return '$count lines';
+  }
+
+  @override
+  String get stashNewButton => 'New';
+
+  @override
+  String get stashNewTooltip => 'New stash';
+
+  @override
+  String get stashPlaceholder => 'Jot it down…';
+
+  @override
+  String get stashHintNew => 'New';
+
+  @override
+  String get stashProjectTooltip => 'Project it is about';
+
+  @override
+  String get stashNoProject => 'No project';
+
+  @override
+  String get stashFormatBold => 'Bold';
+
+  @override
+  String get stashFormatItalic => 'Italic';
+
+  @override
+  String get stashFormatStrike => 'Strikethrough';
+
+  @override
+  String get stashFormatUnderline => 'Underline';
+
+  @override
+  String get stashFormatCode => 'Code';
+
+  @override
+  String get stashFormatLink => 'Link';
+
+  @override
+  String get stashFormatColor => 'Text and background color';
+
+  @override
+  String get stashFormatHeading1 => 'Heading 1';
+
+  @override
+  String get stashFormatHeading2 => 'Heading 2';
+
+  @override
+  String get stashFormatHeading3 => 'Heading 3';
+
+  @override
+  String get stashFormatBullets => 'Bulleted list';
+
+  @override
+  String get stashFormatNumbers => 'Numbered list';
+
+  @override
+  String get stashFormatTasks => 'Task list';
+
+  @override
+  String get stashFormatQuote => 'Quote';
+
+  @override
+  String get stashFormatCodeBlock => 'Code block';
+
+  @override
+  String get stashFormatClear => 'Clear formatting';
+
+  @override
+  String get stashPolish => 'Polish';
+
+  @override
+  String get stashPolishing => 'Polishing…';
+
+  @override
+  String get stashPolishHint =>
+      'Has AI make the selection clearer, in your words, without adding structure';
+
+  @override
+  String stashPolishFailed(String error) {
+    return 'Could not polish: $error';
+  }
+
+  @override
+  String get stashLinkTitle => 'Link';
+
+  @override
+  String get stashRemove => 'Remove';
+
+  @override
+  String get stashEdit => 'Edit';
+
+  @override
+  String get stashFormulaTitle => 'Formula (TeX)';
+
+  @override
+  String get stashTableTitle => 'Table (Markdown)';
+
+  @override
+  String get stashCodeTitle => 'Code block';
+
+  @override
+  String stashBigFileTitle(String name) {
+    return '“$name” is over 200 MB';
+  }
+
+  @override
+  String get stashBigFileDetail =>
+      'Link to it where it is, or copy it into the stash anyway?';
+
+  @override
+  String get stashBigFileLink => 'Link';
+
+  @override
+  String get stashBigFileCopy => 'Copy';
+
+  @override
+  String get stashSearchPlaceholder =>
+      'Search stashes, and the text in their pictures';
+
+  @override
+  String get stashAiSearch => 'AI search';
+
+  @override
+  String get stashAiSearchHint =>
+      'Finds stashes by what they mean, not only their words. Asks the model: it costs.';
+
+  @override
+  String stashAiResults(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'AI found $count',
+      one: 'AI found 1',
+      zero: 'AI found nothing',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashAiClear => 'Clear';
+
+  @override
+  String stashAiSearchFailed(String error) {
+    return 'AI search failed: $error';
+  }
+
+  @override
+  String get stashAiNoAnswer => 'The model gave no usable answer.';
+
+  @override
+  String get aiModelAuxiliary => 'Same as Auxiliary Model';
+
+  @override
+  String get aiModelFirst =>
+      'Pick a model first: AI actions use it from then on';
+
+  @override
+  String get aiModelNone => 'none picked yet';
+
+  @override
+  String aiModelTooltip(String model) {
+    return 'Model for AI actions: $model';
+  }
+
+  @override
+  String get stashFilterAnyTime => 'Any time';
+
+  @override
+  String get stashFilterAnyProject => 'Any project';
+
+  @override
+  String get stashFilterAnyStatus => 'Any status';
+
+  @override
+  String get stashFilterOpen => 'Not done';
+
+  @override
+  String get stashGroupPinned => 'Pinned';
+
+  @override
+  String get stashGroupToday => 'Today';
+
+  @override
+  String get stashGroupYesterday => 'Yesterday';
+
+  @override
+  String get stashGroupWeek => 'Past 7 days';
+
+  @override
+  String get stashGroupMonth => 'Past 30 days';
+
+  @override
+  String get stashGroupEarlier => 'Earlier';
+
+  @override
+  String get stashGroupDone => 'Done';
+
+  @override
+  String get stashStatus => 'Status';
+
+  @override
+  String get stashStatusCollected => 'Collected';
+
+  @override
+  String get stashStatusRequirement => 'Requirement';
+
+  @override
+  String get stashStatusImplementing => 'Implementing';
+
+  @override
+  String get stashStatusDone => 'Done';
+
+  @override
+  String stashEmpty(String hotkey) {
+    return 'Nothing stashed yet.\nPress $hotkey in any app to jot something down.';
+  }
+
+  @override
+  String get stashNoMatch => 'No stash matches.';
+
+  @override
+  String get stashPin => 'Pin';
+
+  @override
+  String get stashUnpin => 'Unpin';
+
+  @override
+  String get stashOpenInPanel => 'Open in Floating Panel';
+
+  @override
+  String get stashLinkProject => 'Link to Project';
+
+  @override
+  String get stashMerge => 'Merge';
+
+  @override
+  String stashMergeTitle(String stashes) {
+    return 'Merge $stashes?';
+  }
+
+  @override
+  String stashMergeDetail(String target) {
+    return 'Their text goes into $target, one after another; the others go, their numbers leading to it.';
+  }
+
+  @override
+  String stashMergeSuggestion(String stashes) {
+    return '$stashes look like the same thing.';
+  }
+
+  @override
+  String get stashDismiss => 'Dismiss';
+
+  @override
+  String get stashReveal => 'Show in Finder';
+
+  @override
+  String get stashDelete => 'Delete';
+
+  @override
+  String stashDeleteOne(String stash) {
+    return 'Delete $stash?';
+  }
+
+  @override
+  String stashDeleteMany(int count) {
+    return 'Delete $count stashes?';
+  }
+
+  @override
+  String get stashDeleteDetail =>
+      'Their pictures and files go with them. This cannot be undone.';
+
+  @override
+  String stashPicked(int count) {
+    return '$count selected';
+  }
+
+  @override
+  String get stashMarkDone => 'Mark Done';
+
+  @override
+  String get stashReopen => 'Reopen';
+
+  @override
+  String get stashClearPicked => 'Clear selection';
+
+  @override
+  String get stashClose => 'Close Stash';
+
+  @override
+  String get stashCloseDetail => 'Close';
+
+  @override
+  String get stashMore => 'More';
+
+  @override
+  String get stashExpand => 'Clarify';
+
+  @override
+  String get stashExpandHint =>
+      'AI says your note clearly, filling in what its pictures and files show, adding no structure; it replaces the text, and Undo takes it back';
+
+  @override
+  String get stashClarifying => 'Clarifying…';
+
+  @override
+  String get stashClarifyFailedShort => 'Not clarified';
+
+  @override
+  String get stashClarifyChanged =>
+      'The note changed while it was being clarified, so nothing was replaced. Try again.';
+
+  @override
+  String get stashRetry => 'Retry';
+
+  @override
+  String stashExpandFailed(String error) {
+    return 'The note could not be clarified: $error';
+  }
+
+  @override
+  String get stashImplement => 'Implement in BaoCode';
+
+  @override
+  String get stashImplementHow => 'How should the agent work on it?';
+
+  @override
+  String get stashImplementHowDetail =>
+      'In a new git worktree (a branch of its own, your working copy untouched), or directly in the project as it is.';
+
+  @override
+  String get stashImplementWorktree => 'New Worktree';
+
+  @override
+  String get stashImplementDirect => 'Directly';
+
+  @override
+  String stashImplementStarter(String stash) {
+    return 'Please implement what $stash asks for.';
+  }
+
+  @override
+  String get stashImplementInWorktree =>
+      'First create a new git worktree on a new branch for this work and do it there; tell me the branch when done.';
+
+  @override
+  String get stashImplementInPlace =>
+      'Work directly in this project, on the current branch.';
+
+  @override
+  String stashImplementComplete(int id) {
+    return 'When it is finished, mark it done with the stash_complete tool (id $id).';
+  }
+
+  @override
+  String get stashThreadStarting =>
+      'A conversation is ready for it; send its message to start.';
+
+  @override
+  String stashThreadLinked(String title) {
+    return 'Implemented in conversation “$title”';
+  }
+
+  @override
+  String get stashOpenThread => 'Open';
+
+  @override
+  String stashProjectSuggestion(String project) {
+    return 'AI thinks this is about $project.';
+  }
+
+  @override
+  String get stashLinkIt => 'Link';
+
+  @override
+  String stashSourceBanner(String stash, String title) {
+    return 'Source: Stash $stash · $title';
+  }
+
+  @override
+  String get stashSettingsDescription =>
+      'A note jotted down from any app, in a floating panel, to turn into work later.';
+
+  @override
+  String get stashSettingsHotkey => 'Shortcut';
+
+  @override
+  String stashSettingsHotkeyCurrent(String hotkey) {
+    return '$hotkey shows the panel from any app.';
+  }
+
+  @override
+  String get stashSettingsHotkeyNone =>
+      'No shortcut: the panel only shows from the Stash page.';
+
+  @override
+  String get stashSettingsHotkeyTaken =>
+      'Another app holds this shortcut; pick another.';
+
+  @override
+  String get stashSettingsHotkeyHelp =>
+      'Click, then press the new keys; Escape keeps it, Delete clears it.';
+
+  @override
+  String get stashHotkeyPress => 'Press the keys…';
+
+  @override
+  String get stashHotkeyRefused =>
+      'Needs a modifier with a letter, digit or common key';
+
+  @override
+  String get stashHotkeyNone => 'None';
+
+  @override
+  String get stashHotkeyClear => 'Clear';
+
+  @override
+  String get stashHotkeyDefault => 'Default';
+
+  @override
+  String get stashHotkeyGlobal => 'Show the Stash panel';
+
+  @override
+  String get stashHotkeyGlobalHint => 'A global shortcut: works from any app.';
+
+  @override
+  String get stashHotkeyTooltip => 'The panel\'s shortcut; click to change';
+
+  @override
+  String get stashSettingsDirectory => 'Location';
+
+  @override
+  String get stashSettingsDirectoryChange => 'Change…';
+
+  @override
+  String get stashSettingsDirectoryReset => 'Default';
+
+  @override
+  String get stashSettingsDirectoryRestart =>
+      'Takes effect after BaoCode restarts.';
+
+  @override
+  String get stashAll => 'All';
+
+  @override
+  String get stashAllTooltip => 'Show every stash';
+
+  @override
+  String get stashHintSave => 'Save';
+
+  @override
+  String get stashHintClose => 'Close';
+
+  @override
+  String get stashSaved => 'Saved';
+
+  @override
+  String get stashFilter => 'Filter';
+
+  @override
+  String get stashSort => 'Sort';
+
+  @override
+  String get stashSortManual => 'Custom (drag to order)';
+
+  @override
+  String get stashSortUpdated => 'Last edited';
+
+  @override
+  String get stashSortCreated => 'Last created';
+
+  @override
+  String get stashSortNumber => 'Number';
+
+  @override
+  String get stashOpen => 'Open';
+
+  @override
+  String stashCount(int count) {
+    return '$count stashes';
+  }
+
+  @override
+  String get stashFormatMore => 'More';
 }

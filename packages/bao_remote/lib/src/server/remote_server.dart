@@ -142,6 +142,22 @@ class RemoteServer {
     };
     handlers[RemoteProtocol.fsReadBytes] = (params, _) async =>
         encodeBytes(await readFileBytes(paramsOf(params)['path'] as String));
+    handlers[RemoteProtocol.fsReadRange] = (params, _) async {
+      final args = paramsOf(params);
+      final range = await readFileRange(
+        args['path'] as String,
+        args['offset'] as int,
+        args['length'] as int,
+      );
+      return {'data': encodeBytes(range.bytes), 'size': range.size};
+    };
+    handlers[RemoteProtocol.fsSize] = (params, _) async {
+      final args = paramsOf(params);
+      return sizeOfFiles(
+        (args['paths'] as List).cast<String>(),
+        limit: args['limit'] as int?,
+      );
+    };
     handlers[RemoteProtocol.fsWalk] = (params, _) async {
       final args = paramsOf(params);
       final listing = await walkProjectFiles(args['root'] as String, {

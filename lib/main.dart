@@ -7,16 +7,21 @@ import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:path/path.dart' as p;
+import 'package:bao_editor/textmate/textmate_syntax.dart';
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
+import 'chat/composer/composer_files.dart' show ComposerFile, pastedAsPicture;
 import 'chat/chat_width.dart';
 import 'chat/user_message_style.dart';
+import 'chat/widgets/chat_minimap.dart';
+import 'chat/widgets/pixel_loader.dart';
 import 'customize/customization_store.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
+import 'ide/language_mode.dart';
 import 'ide/lsp/language_features.dart';
 import 'ide/lsp/lsp_process.dart';
 import 'ide/lsp/packs/language_packs.dart';
@@ -34,6 +39,7 @@ import 'kernel/claude_code/process_transport.dart';
 import 'kernel/commit_attribution.dart';
 import 'kernel/kernel_registry.dart';
 import 'keybindings/keybindings_sync.dart';
+import 'link/link_host.dart';
 import 'keybindings/keymap.dart';
 import 'keybindings/vscode_import.dart';
 import 'l10n/l10n.dart';
@@ -60,6 +66,12 @@ import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
 import 'settings/user_settings.dart';
 import 'telemetry/telemetry_platform.dart';
+import 'stash/stash_editor.dart' show StashEditor;
+import 'stash/stash_controller.dart';
+import 'stash/stash_disk.dart';
+import 'stash/stash_panel_view.dart';
+import 'stash/stash_settings.dart';
+import 'stash/stash_store.dart';
 import 'telemetry/telemetry_service.dart';
 import 'telemetry/telemetry_store.dart';
 import 'theme/app_theme.dart';
@@ -114,6 +126,7 @@ Future<void> main(List<String> arguments) async {
   // they change on disk.
   final files = kIsWeb ? null : SettingsFiles.instance;
   await files?.load();
+  if (files != null) keepLanguageModes(files.storage);
   files?.watch();
   if (files != null) {
     // Settings → Network: the proxy every request and Claude Code go
@@ -154,6 +167,11 @@ Future<void> main(List<String> arguments) async {
       files.settings,
       () => files.settings[UserMessageStyle.settingKey],
     );
+    // Settings → Appearance: whether the conversation has a minimap, how
+    // opaque its glass is and how much it stretches.
+    ChatMinimap.follow(files.settings, (key) => files.settings[key]);
+    // Settings → Appearance: what an agent and a subagent show running.
+    PixelLoaderRole.follow(files.settings, (key) => files.settings[key]);
     // Settings → Appearance: the code's font, size and ligatures, and the
     // window's text size.
     CodeFont.follow(files.settings, (key) => files.settings[key]);
@@ -194,6 +212,12 @@ Future<void> main(List<String> arguments) async {
     ]);
     workspace.refreshKernels(KernelRegistry.all);
   });
+  // The phones paired with this computer (Settings → Mobile): listening
+  // for them, if they are allowed to connect.
+  final link = kIsWeb
+      ? null
+      : LinkHost(workspace: workspace, customizations: CustomizationStore());
+  unawaited(link?.load());
   // The first frame is in the kept theme, restored from storage as VS Code
   // does before the workbench shows; its file is read after. The setting
   // is settings.json's `workbench.colorTheme`, the theme's colors the
@@ -224,6 +248,33 @@ Future<void> main(List<String> arguments) async {
         AttentionSettings.parse(files?.settings.values ?? const {}).tray,
   );
   await windows.start();
+  // The stash (docs/stash.md): its shortcut works from any app, its panel
+  // made hidden a moment after the windows, to show at once.
+  if (files != null) {
+    final store = StashStore.current = StashStore(
+      StashDisk.files(StashSettings.parse(files.settings.values).directory),
+    );
+    // Its pictures, copied out of it, go into a message as pictures.
+    pastedAsPicture = (path) =>
+        p.isWithin(store.root, path) && ComposerFile(path).maybeImage;
+    // Its code blocks in the editor's colors, by TextMate (started as the
+    // first is shown).
+    TextMateSyntax? stashSyntax;
+    StashEditor.colorize = (language, code) => (stashSyntax ??= TextMateSyntax(
+      themes: WorkbenchThemeService.instance,
+    )).colorize(language, code);
+    final stash = StashController.current = StashController(
+      store: store,
+      workspace: workspace,
+      windows: windows,
+      settings: () => files.settings.values,
+      updateSetting: files.settings.update,
+      settingsChanges: files.settings,
+      cacheDir: DataDirectory.current.cacheDir,
+      storage: files.storage,
+    );
+    unawaited(stash.start());
+  }
   // What shows at launch (settings.json's `workbench.mainWindow`): with
   // windows of the IDE's own, the chat's and those to open again; with
   // the IDE in the main window, its layout. Started for something (Open
@@ -277,6 +328,7 @@ Future<void> main(List<String> arguments) async {
       diagnostics: DiagnosticsUploader.platform(),
       workspace: workspace,
       claudeStatus: localClaudeStatus,
+      link: link,
     );
     _startTelemetry(files);
   }
@@ -573,6 +625,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
                         _windows.chat,
                         ..._windows.ideWindows,
                         ..._windows.agentWindows,
+                        ?_windows.stash,
                       ])
                         if (_windows.host.viewOf(window.viewId)
                             case final view?)
@@ -627,19 +680,27 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       GlobalWidgetsLocalizations.delegate,
       FlutterQuillLocalizations.delegate,
     ],
-    home: Workbench(
-      key: ValueKey((window.viewId, window.generation)),
-      workspace: _workspace,
-      windows: _windows,
-      window: window,
-      languagesFor: widget.languagesFor,
-      themeExtensions: widget.themeExtensions,
-      gitFor: widget.gitFor,
-      repositoriesIn: widget.repositoriesIn,
-      terminalBackend: widget.terminalBackend,
-      settings: _settings,
-      conversations: widget.conversations ?? const NoConversationSearch(),
-      customizations: widget.customizations,
-    ),
+    home: window.isStash
+        ? Material(
+            type: MaterialType.transparency,
+            child: StashPanelView(
+              controller: StashController.current!,
+              viewId: window.viewId,
+            ),
+          )
+        : Workbench(
+            key: ValueKey((window.viewId, window.generation)),
+            workspace: _workspace,
+            windows: _windows,
+            window: window,
+            languagesFor: widget.languagesFor,
+            themeExtensions: widget.themeExtensions,
+            gitFor: widget.gitFor,
+            repositoriesIn: widget.repositoriesIn,
+            terminalBackend: widget.terminalBackend,
+            settings: _settings,
+            conversations: widget.conversations ?? const NoConversationSearch(),
+            customizations: widget.customizations,
+          ),
   );
 }

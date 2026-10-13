@@ -261,6 +261,11 @@ class ChangeReview extends ChangeNotifier {
       }
       if (paths == null) _overlap = _workingHere.any((r) => r != this);
     }
+    // Those no snapshot sees that are gone since (a script the agent wrote
+    // and deleted): nothing is left of them to keep.
+    for (final path in [..._unseen.keys]) {
+      if (!await _store.exists(path)) _unseen.remove(path);
+    }
     _entries.removeWhere((_, entry) => !entry.pending);
     await _refresh();
     await _persist();

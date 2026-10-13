@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../chat/widgets/pixel_loader.dart';
 import '../keybindings/chat_keybindings.dart';
 import '../keybindings/keybinding_service.dart';
 import '../l10n/l10n.dart';
@@ -368,12 +369,8 @@ class _ThreadIcon extends StatelessWidget {
     (context, status) => status == ThreadStatus.running
         ? SizedBox.square(
             dimension: 16,
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: IconTheme.of(context).color,
-              ),
+            child: Center(
+              child: PixelLoader.agent(color: IconTheme.of(context).color),
             ),
           )
         : Icon(thread.pinned ? Codicons.pinned : Codicons.commentDiscussion),
@@ -391,10 +388,10 @@ class _StatusBuilder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!thread.isOpen) return builder(context, thread.status);
+    if (!thread.isOpen) return builder(context, thread.shownStatus);
     return ListenableBuilder(
       listenable: thread.session,
-      builder: (context, _) => builder(context, thread.status),
+      builder: (context, _) => builder(context, thread.shownStatus),
     );
   }
 }
@@ -409,13 +406,7 @@ class _StatusMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => switch (status) {
-    ThreadStatus.running => SizedBox.square(
-      dimension: 10,
-      child: CircularProgressIndicator(
-        strokeWidth: 1.5,
-        color: AppColors.textMuted,
-      ),
-    ),
+    ThreadStatus.running => const PixelLoader.agent(),
     ThreadStatus.needsInput => _dot(themeColors['list.warningForeground']),
     ThreadStatus.unread => _dot(AppColors.accent),
     ThreadStatus.idle => const SizedBox.shrink(),

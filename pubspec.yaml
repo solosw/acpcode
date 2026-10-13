@@ -25,6 +25,7 @@ environment:
 # pub.dev yet): see each one's HANDOFF.md.
 workspace:
   - packages/bao_editor
+  - packages/bao_link
   - packages/bao_pty
   - packages/bao_remote
   - packages/bao_xterm
@@ -38,6 +39,8 @@ workspace:
 dependencies:
   bao_editor:
     path: packages/bao_editor
+  bao_link:
+    path: packages/bao_link
   bao_pty:
     path: packages/bao_pty
   bao_remote:
@@ -45,6 +48,7 @@ dependencies:
   bao_xterm:
     path: packages/bao_xterm
   # The names project icons are kept under (lib/icons/icon_library.dart).
+  bonsoir: ^7.1.5
   crypto: ^3.0.6
   flutter:
     sdk: flutter
@@ -53,6 +57,8 @@ dependencies:
   flutter_math_fork: ^0.7.4
   flutter_quill: ^11.6.0
   flutter_svg: ^2.3.0
+  # Pasted web pages, made markdown (lib/stash/stash_html.dart).
+  html: ^0.15.0
   # Imported by the gen-l10n output (lib/l10n/app_localizations*.dart).
   intl: any
   markdown: ^7.3.1
@@ -60,6 +66,7 @@ dependencies:
   mermaid_flutter: 0.3.0
   path: ^1.9.1
   pinenacl: ^0.6.0
+  qr: ^4.0.0
   super_sliver_list: ^0.4.1
 
 dev_dependencies:

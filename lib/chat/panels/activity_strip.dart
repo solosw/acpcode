@@ -5,13 +5,14 @@ import 'package:path/path.dart' as p;
 
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import '../../ide/ide_hover.dart';
 import '../../kernel/kernel_types.dart';
 import '../chat_models.dart';
 import '../widgets/flip_switcher.dart';
 import '../widgets/hover_builder.dart';
-import '../widgets/orbit_indicator.dart';
+import '../widgets/pixel_loader.dart';
 import 'change_tree.dart';
 import 'interaction_panel.dart';
 
@@ -79,7 +80,12 @@ class _ActivityStripState extends State<ActivityStrip> {
   /// Past this many rows, tasks scroll within the strip.
   static const _maxTaskRows = 4;
 
+  /// Past this many tasks, they fold under a line counting them, as the
+  /// files changed do.
+  static const _maxUnfoldedTasks = 3;
+
   bool _filesExpanded = false;
+  bool _tasksExpanded = false;
   Timer? _ticker;
 
   @override
@@ -133,7 +139,14 @@ class _ActivityStripState extends State<ActivityStrip> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (widget.tasks.isNotEmpty)
+          if (widget.tasks.length > _maxUnfoldedTasks)
+            _TasksHeader(
+              tasks: widget.tasks,
+              expanded: _tasksExpanded,
+              onToggle: () => setState(() => _tasksExpanded = !_tasksExpanded),
+            ),
+          if (widget.tasks.isNotEmpty &&
+              (widget.tasks.length <= _maxUnfoldedTasks || _tasksExpanded))
             ConstrainedBox(
               constraints: const BoxConstraints(
                 maxHeight: _StripRow.height * _maxTaskRows,
@@ -256,22 +269,13 @@ class _TaskRow extends StatelessWidget {
       children: [
         SizedBox.square(
           dimension: 14,
-          // A subagent left to run on its own.
-          child: task.kind == KernelTaskKind.agent && task.background
-              ? const OrbitIndicator()
-              : Padding(
-                  padding: EdgeInsets.all(1.5),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.6,
-                    color: AppColors.textMuted,
-                  ),
-                ),
+          child: task.kind == KernelTaskKind.agent
+              ? const PixelLoader.subagent()
+              // A shell: its icon alone, as the side panel's terminal tab;
+              // the time beside it says it runs.
+              : Icon(Codicons.terminal, size: 14, color: AppColors.textFaint),
         ),
         const SizedBox(width: 8),
-        if (task.kind != KernelTaskKind.agent) ...[
-          Icon(Icons.terminal_rounded, size: 13, color: AppColors.textFaint),
-          const SizedBox(width: 5),
-        ],
         // All the room there is, so the time and the action sit at the end.
         Expanded(
           child: LayoutBuilder(
@@ -364,6 +368,59 @@ class _IconAction extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The line over the tasks once there are many: how many run, folding
+/// them away or showing them.
+class _TasksHeader extends StatelessWidget {
+  const _TasksHeader({
+    required this.tasks,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final List<KernelTask> tasks;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final agents = tasks.every((task) => task.kind == KernelTaskKind.agent);
+    return _StripRow(
+      onTap: onToggle,
+      children: [
+        AnimatedRotation(
+          turns: expanded ? 0.25 : 0,
+          duration: const Duration(milliseconds: 150),
+          child: Icon(
+            Icons.chevron_right_rounded,
+            size: 16,
+            color: AppColors.textMuted,
+          ),
+        ),
+        const SizedBox(width: 4),
+        if (agents) ...[
+          const SizedBox.square(
+            dimension: 14,
+            child: PixelLoader.subagent(),
+          ),
+          const SizedBox(width: 6),
+        ],
+        Expanded(
+          child: Text(
+            agents
+                ? l10n.stripAgentsRunning(tasks.length)
+                : l10n.stripTasksRunning(tasks.length),
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: AppColors.text, fontSize: 12),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -160,6 +160,16 @@ class ChatComposerState extends State<ChatComposer>
   /// The conversations the open @ offers, as they were when it was typed.
   List<Suggestion> _sessions = const [];
 
+  /// The stashes the open @ offers, after the files, as they were when it
+  /// was typed.
+  List<Suggestion> _stashes = const [];
+
+  /// What an @ offers besides files: stashes, then conversations.
+  List<SuggestionMatch> _rankOthers(String query) => [
+    ...rankGroupedSuggestions(_stashes, query),
+    ...rankGroupedSuggestions(_sessions, query),
+  ];
+
   /// Whether the menu lists a mention's files and conversations or the
   /// commands: kept as it closes, for it to fade out as it was.
   SuggestionKind _menuKind = SuggestionKind.command;
@@ -265,7 +275,11 @@ class ChatComposerState extends State<ChatComposer>
       }
     }
     if (text == null || !mounted) return false;
-    final plain = text.replaceAll('\r\n', '\n');
+    var plain = text.replaceAll('\r\n', '\n');
+    if (widget.session.acceptsImages) {
+      plain = await _picturesIn(plain);
+      if (!mounted) return false;
+    }
     if (PastedText.isLong(plain)) {
       _insertTags([
         ComposerPastedTextEmbed.of(
@@ -441,6 +455,40 @@ class ChatComposerState extends State<ChatComposer>
             directory: file.directory,
           ),
     ], at: at);
+  }
+
+  /// [text]'s `@paths` of pictures that go in as such ([pastedAsPicture]:
+  /// copied out of a stash) as the pictures: read, numbered, and referred
+  /// to as `[Image #N]`, which the paste makes their tags.
+  Future<String> _picturesIn(String text) async {
+    final found = <(int, int, String)>[];
+    for (var i = 0; i < text.length; i++) {
+      if (text[i] != '@' || (i > 0 && text[i - 1].trim().isNotEmpty)) continue;
+      if (parseFileReference(text, i)
+          case (:final path, directory: false, :final end)
+          when pastedAsPicture(path)) {
+        found.add((i, end, path));
+        i = end - 1;
+      }
+    }
+    if (found.isEmpty) return text;
+    final images = await _numbered(
+      await Future.wait([
+        for (final (_, _, path) in found) WindowControls.readImageFile(path),
+      ]),
+    );
+    final out = StringBuffer();
+    var at = 0;
+    for (final (i, (start, end, _)) in found.indexed) {
+      final image = images[i];
+      if (image == null) continue;
+      out
+        ..write(text.substring(at, start))
+        ..write(imageReference(image.number!));
+      at = end;
+    }
+    out.write(text.substring(at));
+    return out.toString();
   }
 
   /// Puts [tags] in at [at] (in place of the selection when null), apart
@@ -668,8 +716,12 @@ class ChatComposerState extends State<ChatComposer>
     if (visible && trigger.kind == SuggestionKind.file) {
       if (!trigger.sameAnchor(_trigger)) {
         _sessions = vocabulary.sessions?.call() ?? [];
+        _stashes = vocabulary.stashes?.call() ?? [];
       }
-      visible = vocabulary.suggestFiles != null || _sessions.isNotEmpty;
+      visible =
+          vocabulary.suggestFiles != null ||
+          _sessions.isNotEmpty ||
+          _stashes.isNotEmpty;
     }
 
     if (visible) {
@@ -677,7 +729,7 @@ class ChatComposerState extends State<ChatComposer>
           !trigger!.sameAnchor(_trigger) || trigger.query != _trigger!.query;
       if (queryChanged) {
         if (trigger.kind == SuggestionKind.file) {
-          _matches = rankGroupedSuggestions(_sessions, trigger.query);
+          _matches = _rankOthers(trigger.query);
           if (vocabulary.suggestFiles case final suggest?) {
             unawaited(_lookUpFiles(trigger, suggest));
           }
@@ -726,7 +778,7 @@ class ChatComposerState extends State<ChatComposer>
             suggestion,
             fuzzyMatch(suggestion.label, trigger.query)?.indexes ?? const [],
           ),
-        ...rankGroupedSuggestions(_sessions, trigger.query),
+        ..._rankOthers(trigger.query),
       ];
       _highlighted = _highlighted.clamp(0, math.max(0, _matches.length - 1));
     });
@@ -768,7 +820,9 @@ class ChatComposerState extends State<ChatComposer>
     // An @ starting the word the caret ends: a file or a conversation to
     // refer to.
     final vocabulary = ComposerVocabulary.read(context);
-    if (vocabulary.sessions == null && vocabulary.suggestFiles == null) {
+    if (vocabulary.sessions == null &&
+        vocabulary.suggestFiles == null &&
+        vocabulary.stashes == null) {
       return null;
     }
     for (var i = caret - 1; i >= 0; i--) {
@@ -838,6 +892,21 @@ class ChatComposerState extends State<ChatComposer>
       return;
     }
     final caret = _controller.selection.baseOffset;
+    final Embeddable token;
+    if (suggestion.kind == SuggestionKind.stash) {
+      final stash = ComposerVocabulary.read(context).stash
+          ?.call(int.parse(suggestion.id));
+      if (stash == null) return;
+      token = ComposerStashEmbed.of(stash);
+    } else if (suggestion.kind == SuggestionKind.file ||
+        suggestion.kind == SuggestionKind.folder) {
+      token = ComposerTokenEmbed.file(
+        suggestion.value,
+        directory: suggestion.kind == SuggestionKind.folder,
+      );
+    } else {
+      token = ComposerTokenEmbed.fromSuggestion(suggestion);
+    }
     // Space first, then the token before it, so the token is never the last
     // thing on its line (see [_padTrailingTokens]).
     _controller.replaceText(
@@ -846,13 +915,12 @@ class ChatComposerState extends State<ChatComposer>
       ' ',
       TextSelection.collapsed(offset: trigger.start + 1),
     );
-    _controller.replaceText(trigger.start, 0, switch (suggestion.kind) {
-      SuggestionKind.file || SuggestionKind.folder => ComposerTokenEmbed.file(
-        suggestion.value,
-        directory: suggestion.kind == SuggestionKind.folder,
-      ),
-      _ => ComposerTokenEmbed.fromSuggestion(suggestion),
-    }, TextSelection.collapsed(offset: trigger.start + 2));
+    _controller.replaceText(
+      trigger.start,
+      0,
+      token,
+      TextSelection.collapsed(offset: trigger.start + 2),
+    );
     _focusNode.requestFocus();
   }
 
@@ -1011,6 +1079,23 @@ class ChatComposerState extends State<ChatComposer>
       offset = math.max(ghost, offset - _ghostLength);
     }
     return offset.clamp(0, end);
+  }
+
+  /// Stashes dragged from their page, let go at [position]: their tags
+  /// where the text is there.
+  void _dropStashes(Offset position, List<StashReference> stashes) {
+    if (!mounted) return;
+    var at = _dropOffset(position);
+    for (final stash in stashes) {
+      _controller.replaceText(at, 0, ' ', null);
+      _controller.replaceText(at, 0, ComposerStashEmbed.of(stash), null);
+      at += 2;
+    }
+    _controller.updateSelection(
+      TextSelection.collapsed(offset: at),
+      ChangeSource.local,
+    );
+    _focusNode.requestFocus();
   }
 
   void _showGhost(Offset position, List<ComposerFile> files) {
@@ -1192,6 +1277,10 @@ class ChatComposerState extends State<ChatComposer>
         final pasted = ComposerPastedTextEmbed.decode(raw);
         text.write(pasted.reference);
         code.putIfAbsent(pasted.reference, () => pasted);
+      } else if (data case {ComposerStashEmbed.type: final raw}) {
+        final stash = ComposerStashEmbed.decode(raw);
+        text.write(stash.reference);
+        code.putIfAbsent(stash.reference, () => stash);
       } else if (data is Map && data.containsKey(ComposerTokenEmbed.type)) {
         final raw = data[ComposerTokenEmbed.type];
         text.write(ComposerTokenEmbed.plainText(raw));
@@ -1273,14 +1362,21 @@ class ChatComposerState extends State<ChatComposer>
       builder: _buildMenu,
       child: FileDropRegion(
         delegate: this,
-        child: DragTarget<FileDragData>(
-          onWillAcceptWithDetails: (details) => details.data.files.isNotEmpty,
-          onMove: (details) => _showGhost(details.offset, details.data.files),
-          onLeave: (_) => _hideGhost(),
+        child: DragTarget<StashDragData>(
+          onWillAcceptWithDetails: (details) =>
+              details.data.references.isNotEmpty,
           onAcceptWithDetails: (details) =>
-              fileDrop(details.offset, details.data.files),
-          builder: (context, candidates, rejected) =>
-              _buildBox(focused: focused || _ghostAt != null),
+              _dropStashes(details.offset, details.data.references),
+          builder: (context, stashes, _) => DragTarget<FileDragData>(
+            onWillAcceptWithDetails: (details) => details.data.files.isNotEmpty,
+            onMove: (details) => _showGhost(details.offset, details.data.files),
+            onLeave: (_) => _hideGhost(),
+            onAcceptWithDetails: (details) =>
+                fileDrop(details.offset, details.data.files),
+            builder: (context, candidates, rejected) => _buildBox(
+              focused: focused || _ghostAt != null || stashes.isNotEmpty,
+            ),
+          ),
         ),
       ),
     );
@@ -1451,6 +1547,13 @@ class ChatComposerState extends State<ChatComposer>
   bool _selectDragging = false;
 
   void _handleSelectPointerDown(PointerDownEvent event) {
+    // Quill takes the keyboard on a click, not on a drag: text selected by
+    // one is to be deleted, typed over.
+    if (event.kind == PointerDeviceKind.mouse &&
+        event.buttons & kPrimaryMouseButton != 0 &&
+        !_focusNode.hasFocus) {
+      _focusNode.requestFocus();
+    }
     final plainPress =
         event.kind == PointerDeviceKind.mouse &&
         event.buttons == kPrimaryMouseButton &&
@@ -1580,6 +1683,7 @@ class ChatComposerState extends State<ChatComposer>
           ComposerImageEmbedBuilder(),
           ComposerCodeEmbedBuilder(),
           ComposerPastedTextEmbedBuilder(),
+          ComposerStashEmbedBuilder(),
           ComposerGhostEmbedBuilder(),
         ],
         // ignore: experimental_member_use

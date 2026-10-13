@@ -43,9 +43,19 @@ constexpr unsigned int kMinClientHeight = 540;
 // logical pixels.
 constexpr int kCascade = 30;
 
+// The stash's panel's size, and the least it may be, in logical pixels (as
+// StashPanel.swift's).
+constexpr int kStashWidth = 560;
+constexpr int kStashHeight = 420;
+constexpr unsigned int kStashMinWidth = 380;
+constexpr unsigned int kStashMinHeight = 220;
+
 // Where the main window's word on showing at launch is kept.
 constexpr wchar_t kSettingsKey[] = L"Software\\BaoCode";
 constexpr wchar_t kMainShownValue[] = L"MainShownAtLaunch";
+// Where the stash's panel was left, and how big (a RECT, in physical
+// pixels of the virtual screen).
+constexpr wchar_t kStashFrameValue[] = L"StashFrame";
 
 // How long the main window, held back at launch, waits for Flutter's
 // windows before it shows after all.
@@ -249,6 +259,7 @@ AppWindows::~AppWindows() {
   ::KillTimer(main_, kHoldBackTimer);
   // The views go while the engine is still there (see FlutterWindow).
   windows_.clear();
+  stash_ = nullptr;
   if (g_app_windows == this) {
     g_app_windows = nullptr;
   }
@@ -265,6 +276,13 @@ std::wstring AppWindows::NewWindowLabel() const {
   const auto found = labels_.find("newWindow");
   return found == labels_.end() || found->second.empty() ? L"New Window"
                                                          : found->second;
+}
+
+HWND AppWindows::StashHandle() {
+  AppWindows* windows = g_app_windows;
+  return windows == nullptr || windows->stash_ == nullptr
+             ? nullptr
+             : windows->stash_->GetHandle();
 }
 
 HWND AppWindows::HandleOf(int64_t view_id) const {
@@ -408,6 +426,22 @@ void AppWindows::HandleMethodCall(
     const std::optional<int64_t> created = Create(arguments);
     result->Success(created ? flutter::EncodableValue(*created)
                             : flutter::EncodableValue());
+    return;
+  }
+  if (method == "createStash") {
+    const std::optional<int64_t> created = CreateStash(arguments);
+    result->Success(created ? flutter::EncodableValue(*created)
+                            : flutter::EncodableValue());
+    return;
+  }
+  if (method == "showStash") {
+    ShowStash();
+    result->Success();
+    return;
+  }
+  if (method == "hideStash") {
+    HideStash();
+    result->Success();
     return;
   }
   if (method == "quit") {
@@ -592,6 +626,122 @@ std::optional<int64_t> AppWindows::Create(
   window->SetObserver(this, view_id);
   windows_[view_id] = std::move(window);
   return view_id;
+}
+
+std::optional<int64_t> AppWindows::CreateStash(
+    const flutter::EncodableMap& arguments) {
+  if (stash_ != nullptr) {
+    return stash_->view_id();
+  }
+  const std::optional<int64_t> engine_id = IntOf(Find(arguments, "engineId"));
+  const FlutterDesktopEngineRef engine =
+      engine_id ? FlutterDesktopEngineForId(*engine_id) : nullptr;
+  if (engine == nullptr) {
+    return std::nullopt;
+  }
+  auto window = std::make_unique<IdeWindow>(engine, messenger_);
+  if (!window->Create(L"Stash", Win32Window::Point(10, 10),
+                      Win32Window::Size(kStashWidth, kStashHeight))) {
+    return std::nullopt;
+  }
+  const HWND handle = window->GetHandle();
+  window->SetMinimumSize(Win32Window::Size(kStashMinWidth, kStashMinHeight));
+  // Not one of the app's windows: no taskbar button, out of Alt+Tab, never
+  // minimized or maximized. Over every other window only while pinned (its
+  // top bar's pin: setAlwaysOnTop, see window_channel.cpp).
+  ::SetWindowLongPtrW(
+      handle, GWL_STYLE,
+      ::GetWindowLongPtrW(handle, GWL_STYLE) & ~(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+  ::SetWindowLongPtrW(handle, GWL_EXSTYLE,
+                      (::GetWindowLongPtrW(handle, GWL_EXSTYLE) |
+                       WS_EX_TOOLWINDOW) &
+                          ~WS_EX_APPWINDOW);
+  ::SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+  // Where the user left it, as big as they made it, if that is on a
+  // monitor still.
+  RECT kept = {};
+  DWORD size = sizeof(kept);
+  if (::RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, kStashFrameValue,
+                     RRF_RT_REG_BINARY, nullptr, &kept,
+                     &size) == ERROR_SUCCESS &&
+      size == sizeof(kept) && kept.right > kept.left &&
+      kept.bottom > kept.top &&
+      ::MonitorFromRect(&kept, MONITOR_DEFAULTTONULL) != nullptr) {
+    ::SetWindowPos(handle, nullptr, kept.left, kept.top,
+                   kept.right - kept.left, kept.bottom - kept.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
+    stash_placed_ = true;
+  }
+  const int64_t view_id = window->view_id();
+  window->SetObserver(this, view_id);
+  stash_ = std::move(window);
+  return view_id;
+}
+
+void AppWindows::ShowStash() {
+  const HWND panel = stash_ == nullptr ? nullptr : stash_->GetHandle();
+  if (panel == nullptr) {
+    return;
+  }
+  const HWND front = ::GetForegroundWindow();
+  if (front != panel) {
+    before_stash_ = front;
+  }
+  // In front as it shows; kept over the others only while pinned.
+  const HWND order =
+      (::GetWindowLongPtrW(panel, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0
+          ? HWND_TOPMOST
+          : HWND_TOP;
+  // Where it was left; in the middle of the monitor the pointer is on the
+  // first time, or when where it was is on no monitor now.
+  RECT bounds = {};
+  if (::GetWindowRect(panel, &bounds) &&
+      (!stash_placed_ ||
+       ::MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL) == nullptr)) {
+    POINT pointer = {};
+    ::GetCursorPos(&pointer);
+    const HMONITOR monitor =
+        ::MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {};
+    info.cbSize = sizeof(info);
+    if (::GetMonitorInfoW(monitor, &info)) {
+      const RECT& work = info.rcWork;
+      const LONG width = bounds.right - bounds.left;
+      const LONG height = bounds.bottom - bounds.top;
+      const LONG left = (work.left + work.right - width) / 2;
+      const LONG top = (work.top + work.bottom - height) / 2;
+      const RECT centered =
+          Within({left, top, left + width, top + height}, work);
+      ::SetWindowPos(panel, order, centered.left, centered.top, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE);
+      stash_placed_ = true;
+    }
+  }
+  ::ShowWindow(panel, SW_SHOW);
+  ::SetWindowPos(panel, order, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+  ::SetForegroundWindow(panel);
+}
+
+void AppWindows::HideStash() {
+  const HWND panel = stash_ == nullptr ? nullptr : stash_->GetHandle();
+  if (panel == nullptr) {
+    return;
+  }
+  const bool had_keyboard = ::GetForegroundWindow() == panel;
+  // Kept for the next launch: where it is, and how big.
+  RECT bounds = {};
+  if (::IsWindowVisible(panel) && ::GetWindowRect(panel, &bounds)) {
+    ::RegSetKeyValueW(HKEY_CURRENT_USER, kSettingsKey, kStashFrameValue,
+                      REG_BINARY, &bounds, sizeof(bounds));
+  }
+  ::ShowWindow(panel, SW_HIDE);
+  const HWND before = std::exchange(before_stash_, nullptr);
+  if (had_keyboard && before != nullptr && ::IsWindow(before) &&
+      ::IsWindowVisible(before)) {
+    ::SetForegroundWindow(before);
+  }
 }
 
 void AppWindows::Close(int64_t view_id) {

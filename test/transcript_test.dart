@@ -288,6 +288,47 @@ void main() {
     expect(workedOn(stopped), isNull);
   });
 
+  test('turn usage stays on its message after explicit item insertion', () {
+    const worked = Duration(seconds: 12);
+    const usage = TurnUsage(
+      inputTokens: 100,
+      outputTokens: 24,
+      tokensPerSecond: 2,
+      costUsd: 0.01,
+    );
+    final transcript = Transcript()
+      ..apply(const ItemUpserted(1, 'earlier', AssistantTextItem('earlier')))
+      ..apply(const TurnStarted(2, 'u'))
+      ..apply(const ItemUpserted(3, 'reply', AssistantTextItem('answer')))
+      ..apply(
+        const ItemUpserted(
+          4,
+          'u',
+          UserMessageItem(text: 'question'),
+          before: 'reply',
+        ),
+      )
+      ..apply(const TurnEnded(5, 'u', worked: worked, usage: usage));
+
+    expect(transcript.liveItems.map((entry) => entry.$1), [
+      'earlier',
+      'u',
+      'reply',
+    ]);
+    final message = transcript.itemAt(1) as UserMessageItem;
+    expect(message.text, 'question');
+    expect(message.worked, worked);
+    expect(message.usage, same(usage));
+    expect(message.usage!.totalTokens, 124);
+    expect(transcript.indexOf('reply'), 2);
+
+    transcript.apply(
+      const ItemUpserted(6, 'reply', AssistantTextItem('updated answer')),
+    );
+    expect((transcript.itemAt(2) as AssistantTextItem).text, 'updated answer');
+    expect((transcript.itemAt(1) as UserMessageItem).usage, same(usage));
+  });
+
   test('tasks and todos are replaced whole', () {
     final started = DateTime(2026);
     final transcript = Transcript()

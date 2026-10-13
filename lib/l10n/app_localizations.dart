@@ -380,6 +380,12 @@ abstract class AppLocalizations {
   /// **'Focus Chat List'**
   String get cmdChatFocusList;
 
+  /// No description provided for @cmdChatFind.
+  ///
+  /// In en, this message translates to:
+  /// **'Find in Chat'**
+  String get cmdChatFind;
+
   /// No description provided for @cmdChatCancel.
   ///
   /// In en, this message translates to:
@@ -4070,6 +4076,12 @@ abstract class AppLocalizations {
   /// **'Pasted text #{number}'**
   String pastedTextChip(int number);
 
+  /// Shown in place of a long paste kept in a file that has since gone.
+  ///
+  /// In en, this message translates to:
+  /// **'This paste is no longer at {path}.'**
+  String pastedTextGone(String path);
+
   /// After a long paste's tag: how many lines it has past its first.
   ///
   /// In en, this message translates to:
@@ -4129,6 +4141,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'thought {duration}'**
   String stepsThought(String duration);
+
+  /// Hint of the button at the end of a finished turn that copies its answer.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy reply'**
+  String get turnCopy;
+
+  /// No description provided for @turnCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get turnCopied;
+
+  /// How fast the model wrote in a turn, in tokens a second, e.g. "100 tok/s".
+  ///
+  /// In en, this message translates to:
+  /// **'{speed} tok/s'**
+  String turnSpeed(String speed);
+
+  /// The tokens a turn read and wrote, all its requests together, e.g. "12.3k tokens".
+  ///
+  /// In en, this message translates to:
+  /// **'{tokens} tokens'**
+  String turnTokens(String tokens);
+
+  /// No description provided for @turnTokensHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This turn: read {input} (cache included), wrote {output}'**
+  String turnTokensHint(String input, String output);
+
+  /// No description provided for @turnSpeedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Output speed'**
+  String get turnSpeedHint;
+
+  /// No description provided for @turnDurationHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Time this turn took'**
+  String get turnDurationHint;
+
+  /// No description provided for @turnCostHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Cost of this turn'**
+  String get turnCostHint;
 
   /// A finished turn's work, folded before its answer, e.g. "Worked for 4m 32s".
   ///
@@ -4381,6 +4441,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 file changed} other{{count} files changed}}'**
   String stripFilesChanged(int count);
+
+  /// No description provided for @stripAgentsRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 subagent running} other{{count} subagents running}}'**
+  String stripAgentsRunning(int count);
+
+  /// No description provided for @stripTasksRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 background task running} other{{count} background tasks running}}'**
+  String stripTasksRunning(int count);
 
   /// No description provided for @stripUndoAll.
   ///
@@ -4915,6 +4987,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close All'**
   String get tabCloseAll;
+
+  /// No description provided for @fileLinkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get fileLinkOpen;
+
+  /// No description provided for @fileLinkOpenInPanel.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Side Panel'**
+  String get fileLinkOpenInPanel;
+
+  /// Context menu item of an image the chat names: shows it enlarged over the window.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview'**
+  String get fileLinkPreview;
+
+  /// Context menu item of an HTML file the chat names: opens it in the default web browser.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Browser'**
+  String get fileLinkOpenInBrowser;
 
   /// No description provided for @tabCopyPath.
   ///
@@ -7347,6 +7443,12 @@ abstract class AppLocalizations {
   /// **'No formatter for this file.'**
   String get langNoFormatter;
 
+  /// No description provided for @langNoFormatterInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'No formatter for this file. Install the \'{id}\' language server to format {language} files.'**
+  String langNoFormatterInstall(String id, String language);
+
   /// No description provided for @langNoRefactorings.
   ///
   /// In en, this message translates to:
@@ -7862,6 +7964,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Language Mode'**
   String get wbLanguageMode;
+
+  /// No description provided for @shownImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Image'**
+  String get shownImage;
+
+  /// No description provided for @shownReadOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Read-only'**
+  String get shownReadOnly;
+
+  /// No description provided for @languageModeAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto Detect'**
+  String get languageModeAuto;
+
+  /// No description provided for @languageModePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Language Mode'**
+  String get languageModePlaceholder;
+
+  /// No description provided for @languageModeChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change Language Mode'**
+  String get languageModeChange;
 
   /// No description provided for @editorCommandPalette.
   ///
@@ -11223,6 +11355,162 @@ abstract class AppLocalizations {
   /// **'Conversation width: {width}'**
   String appearanceSettingsChatWidthLabel(String width);
 
+  /// No description provided for @appearanceSettingsAgentLoader.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent Working'**
+  String get appearanceSettingsAgentLoader;
+
+  /// No description provided for @appearanceSettingsAgentLoaderDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Beside an agent in the sidebar, tabs and search while it works, or while something it started still runs in the background.'**
+  String get appearanceSettingsAgentLoaderDescription;
+
+  /// No description provided for @appearanceSettingsSubagentLoader.
+  ///
+  /// In en, this message translates to:
+  /// **'Subagent Running'**
+  String get appearanceSettingsSubagentLoader;
+
+  /// No description provided for @appearanceSettingsSubagentLoaderDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'On a subagent\'s card in the conversation, and its row above the input, while it runs.'**
+  String get appearanceSettingsSubagentLoaderDescription;
+
+  /// No description provided for @appearanceSettingsLoaderLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{what}: {style}'**
+  String appearanceSettingsLoaderLabel(String what, String style);
+
+  /// No description provided for @appearanceSettingsLoaderSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed'**
+  String get appearanceSettingsLoaderSpeed;
+
+  /// No description provided for @appearanceSettingsLoaderSpeedLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'{what} speed: {speed}'**
+  String appearanceSettingsLoaderSpeedLabel(String what, String speed);
+
+  /// No description provided for @loaderStyleSnake.
+  ///
+  /// In en, this message translates to:
+  /// **'Snake'**
+  String get loaderStyleSnake;
+
+  /// No description provided for @loaderStyleStack.
+  ///
+  /// In en, this message translates to:
+  /// **'Stack and clear'**
+  String get loaderStyleStack;
+
+  /// No description provided for @loaderStyleTwinkle.
+  ///
+  /// In en, this message translates to:
+  /// **'Twinkle'**
+  String get loaderStyleTwinkle;
+
+  /// No description provided for @loaderStyleFill.
+  ///
+  /// In en, this message translates to:
+  /// **'Fill and empty'**
+  String get loaderStyleFill;
+
+  /// No description provided for @loaderStylePulse.
+  ///
+  /// In en, this message translates to:
+  /// **'Square pulse'**
+  String get loaderStylePulse;
+
+  /// No description provided for @loaderStyleRipple.
+  ///
+  /// In en, this message translates to:
+  /// **'Cross ripple'**
+  String get loaderStyleRipple;
+
+  /// No description provided for @loaderStyleSweep.
+  ///
+  /// In en, this message translates to:
+  /// **'Diagonal sweep'**
+  String get loaderStyleSweep;
+
+  /// No description provided for @loaderStyleRain.
+  ///
+  /// In en, this message translates to:
+  /// **'Pixel rain'**
+  String get loaderStyleRain;
+
+  /// No description provided for @loaderStyleChecker.
+  ///
+  /// In en, this message translates to:
+  /// **'Checkerboard'**
+  String get loaderStyleChecker;
+
+  /// No description provided for @loaderStyleSpinner.
+  ///
+  /// In en, this message translates to:
+  /// **'Spinner'**
+  String get loaderStyleSpinner;
+
+  /// No description provided for @loaderStyleTwinSpinner.
+  ///
+  /// In en, this message translates to:
+  /// **'Twin spinner'**
+  String get loaderStyleTwinSpinner;
+
+  /// No description provided for @loaderStyleCorners.
+  ///
+  /// In en, this message translates to:
+  /// **'Corners'**
+  String get loaderStyleCorners;
+
+  /// No description provided for @loaderStyleDots.
+  ///
+  /// In en, this message translates to:
+  /// **'Bouncing dots'**
+  String get loaderStyleDots;
+
+  /// No description provided for @loaderStyleEqualizer.
+  ///
+  /// In en, this message translates to:
+  /// **'Equalizer'**
+  String get loaderStyleEqualizer;
+
+  /// No description provided for @loaderStyleBar.
+  ///
+  /// In en, this message translates to:
+  /// **'Progress bar'**
+  String get loaderStyleBar;
+
+  /// No description provided for @loaderStyleScan.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan line'**
+  String get loaderStyleScan;
+
+  /// No description provided for @loaderStyleHourglass.
+  ///
+  /// In en, this message translates to:
+  /// **'Hourglass'**
+  String get loaderStyleHourglass;
+
+  /// No description provided for @loaderStyleBreathe.
+  ///
+  /// In en, this message translates to:
+  /// **'Breathe'**
+  String get loaderStyleBreathe;
+
+  /// No description provided for @loaderStyleCircle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ring (classic)'**
+  String get loaderStyleCircle;
+
   /// No description provided for @appearanceSettingsUserMessageStyle.
   ///
   /// In en, this message translates to:
@@ -11252,6 +11540,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your messages: {style}'**
   String appearanceSettingsUserMessageStyleLabel(String style);
+
+  /// No description provided for @appearanceSettingsMinimap.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation Minimap'**
+  String get appearanceSettingsMinimap;
+
+  /// No description provided for @appearanceSettingsMinimapDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.'**
+  String get appearanceSettingsMinimapDescription;
+
+  /// No description provided for @appearanceSettingsMinimapGlass.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass Opacity'**
+  String get appearanceSettingsMinimapGlass;
+
+  /// No description provided for @appearanceSettingsMinimapGlassDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'How much the liquid glass over where you are in the minimap shows: its tint, shadow and light. At 0% only the part in view stands out.'**
+  String get appearanceSettingsMinimapGlassDescription;
+
+  /// No description provided for @appearanceSettingsMinimapGlassLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimap glass opacity: {opacity}'**
+  String appearanceSettingsMinimapGlassLabel(String opacity);
+
+  /// No description provided for @appearanceSettingsMinimapElasticity.
+  ///
+  /// In en, this message translates to:
+  /// **'Glass Elasticity'**
+  String get appearanceSettingsMinimapElasticity;
+
+  /// No description provided for @appearanceSettingsMinimapElasticityDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'How much the liquid glass stretches as it follows you scrolling, its edge ahead leading, and gathers itself where it stops.'**
+  String get appearanceSettingsMinimapElasticityDescription;
+
+  /// No description provided for @appearanceSettingsMinimapElasticityLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimap glass elasticity: {level}'**
+  String appearanceSettingsMinimapElasticityLabel(String level);
+
+  /// No description provided for @minimapElasticityOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get minimapElasticityOff;
+
+  /// No description provided for @minimapElasticitySubtle.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtle'**
+  String get minimapElasticitySubtle;
+
+  /// No description provided for @minimapElasticityMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium'**
+  String get minimapElasticityMedium;
+
+  /// No description provided for @minimapElasticityBouncy.
+  ///
+  /// In en, this message translates to:
+  /// **'Bouncy'**
+  String get minimapElasticityBouncy;
 
   /// No description provided for @appearanceSettingsCodeFont.
   ///
@@ -12633,6 +12993,12 @@ abstract class AppLocalizations {
   /// **'Language Servers'**
   String get extsTabLanguageServers;
 
+  /// No description provided for @sidebarAllHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get sidebarAllHosts;
+
   /// No description provided for @sidebarThisMachine.
   ///
   /// In en, this message translates to:
@@ -12752,6 +13118,1194 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{name} has changed since it was made. Undo deletes it anyway?'**
   String explorerUndoCreateChanged(String name);
+
+  /// No description provided for @settingsSectionMobile.
+  ///
+  /// In en, this message translates to:
+  /// **'Mobile'**
+  String get settingsSectionMobile;
+
+  /// No description provided for @settingsMobileKeywords.
+  ///
+  /// In en, this message translates to:
+  /// **'phone iphone android ios pair qr code remote lan'**
+  String get settingsMobileKeywords;
+
+  /// No description provided for @mobileSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow and drive this computer\'s agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.'**
+  String get mobileSettingsDescription;
+
+  /// No description provided for @mobileAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Phones to Connect'**
+  String get mobileAllow;
+
+  /// No description provided for @mobileAllowDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Phones paired with this computer connect to it directly.'**
+  String get mobileAllowDescription;
+
+  /// No description provided for @mobileStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get mobileStatus;
+
+  /// No description provided for @mobileStatusOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get mobileStatusOff;
+
+  /// No description provided for @mobileStatusStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting…'**
+  String get mobileStatusStarting;
+
+  /// No description provided for @mobileStatusListening.
+  ///
+  /// In en, this message translates to:
+  /// **'Listening on port {port}'**
+  String mobileStatusListening(int port);
+
+  /// No description provided for @mobileStatusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not listen: {error}'**
+  String mobileStatusFailed(String error);
+
+  /// No description provided for @mobileAddresses.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses'**
+  String get mobileAddresses;
+
+  /// No description provided for @mobileAddressesDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Where phones reach this computer, in the order they try them: the local network first, then the internet.'**
+  String get mobileAddressesDescription;
+
+  /// No description provided for @mobileAddressesNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No network found.'**
+  String get mobileAddressesNone;
+
+  /// No description provided for @mobileAddressesRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get mobileAddressesRefresh;
+
+  /// No description provided for @mobilePort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get mobilePort;
+
+  /// No description provided for @mobilePortDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The port phones connect to. Forward it on the router to reach this computer from the internet.'**
+  String get mobilePortDescription;
+
+  /// No description provided for @mobilePortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a port: {text}. Enter a number from 1 to 65535.'**
+  String mobilePortInvalid(String text);
+
+  /// No description provided for @mobilePublicAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Public Address'**
+  String get mobilePublicAddress;
+
+  /// No description provided for @mobilePublicAddressDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Public IPv6 addresses are found by themselves.'**
+  String get mobilePublicAddressDescription;
+
+  /// No description provided for @mobileRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Relay'**
+  String get mobileRelay;
+
+  /// No description provided for @mobileRelayDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Reach this computer through BaoCode\'s relay when none of its addresses can be reached. Coming later.'**
+  String get mobileRelayDescription;
+
+  /// No description provided for @mobileRelayUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Not Available Yet'**
+  String get mobileRelayUnavailable;
+
+  /// No description provided for @mobilePair.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair a Phone'**
+  String get mobilePair;
+
+  /// No description provided for @mobilePairDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the code with BaoCode on the phone (Me → Paired computers → Pair a computer), or pick this computer under Nearby Computers there.'**
+  String get mobilePairDescription;
+
+  /// No description provided for @mobilePairShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show QR Code'**
+  String get mobilePairShow;
+
+  /// No description provided for @mobilePairCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get mobilePairCancel;
+
+  /// No description provided for @mobilePairNewCode.
+  ///
+  /// In en, this message translates to:
+  /// **'New Code'**
+  String get mobilePairNewCode;
+
+  /// No description provided for @mobilePairCopyLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Link'**
+  String get mobilePairCopyLink;
+
+  /// No description provided for @mobilePairCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get mobilePairCopied;
+
+  /// No description provided for @mobilePairExpires.
+  ///
+  /// In en, this message translates to:
+  /// **'Good for {minutes} min, once. A phone that cannot scan it can paste the link instead.'**
+  String mobilePairExpires(int minutes);
+
+  /// No description provided for @mobilePairExpired.
+  ///
+  /// In en, this message translates to:
+  /// **'This code has expired.'**
+  String get mobilePairExpired;
+
+  /// No description provided for @mobilePairVerifyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Compare with {name}'**
+  String mobilePairVerifyTitle(String name);
+
+  /// No description provided for @mobilePairVerifyBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Check that the phone shows the same code, then confirm on the phone.'**
+  String get mobilePairVerifyBody;
+
+  /// No description provided for @mobilePairMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Codes Don\'t Match'**
+  String get mobilePairMismatch;
+
+  /// No description provided for @mobilePaired.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired with {name}.'**
+  String mobilePaired(String name);
+
+  /// No description provided for @mobilePhones.
+  ///
+  /// In en, this message translates to:
+  /// **'Paired Phones'**
+  String get mobilePhones;
+
+  /// No description provided for @mobilePhonesNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No phone is paired yet.'**
+  String get mobilePhonesNone;
+
+  /// No description provided for @mobilePhoneConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get mobilePhoneConnected;
+
+  /// No description provided for @mobilePhoneLastSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Last connected {time}'**
+  String mobilePhoneLastSeen(String time);
+
+  /// No description provided for @mobilePhoneRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get mobilePhoneRemove;
+
+  /// No description provided for @mobileThisComputerKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This Computer\'s Key'**
+  String get mobileThisComputerKey;
+
+  /// No description provided for @mobileThisComputerKeyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The phone shows it too: the same key on both means no one is in between.'**
+  String get mobileThisComputerKeyDescription;
+
+  /// No description provided for @mobileDiscoverable.
+  ///
+  /// In en, this message translates to:
+  /// **'Find on the Local Network'**
+  String get mobileDiscoverable;
+
+  /// No description provided for @mobileDiscoverableDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Phones paired with this computer find it on the local network, even after its address changes; while you pair one, new phones list it under Nearby Computers.'**
+  String get mobileDiscoverableDescription;
+
+  /// No description provided for @mobilePairNearbyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Phones on this network can also pick this computer under Nearby Computers.'**
+  String get mobilePairNearbyHint;
+
+  /// No description provided for @mobilePairRequestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} Wants to Pair'**
+  String mobilePairRequestTitle(String name);
+
+  /// No description provided for @mobilePairRequestBody.
+  ///
+  /// In en, this message translates to:
+  /// **'It found this computer nearby. Allow it only if the phone shows the same code.'**
+  String get mobilePairRequestBody;
+
+  /// No description provided for @mobilePairAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow'**
+  String get mobilePairAllow;
+
+  /// No description provided for @settingsSectionStash.
+  ///
+  /// In en, this message translates to:
+  /// **'Stash'**
+  String get settingsSectionStash;
+
+  /// No description provided for @stashTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Stash'**
+  String get stashTitle;
+
+  /// No description provided for @stashHeading.
+  ///
+  /// In en, this message translates to:
+  /// **'Stash'**
+  String get stashHeading;
+
+  /// No description provided for @stashNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New stash'**
+  String get stashNew;
+
+  /// No description provided for @stashLinkOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open link'**
+  String get stashLinkOpen;
+
+  /// No description provided for @stashLinkEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit link'**
+  String get stashLinkEdit;
+
+  /// No description provided for @stashDraft.
+  ///
+  /// In en, this message translates to:
+  /// **'Draft'**
+  String get stashDraft;
+
+  /// No description provided for @stashCodeChip.
+  ///
+  /// In en, this message translates to:
+  /// **'Code'**
+  String get stashCodeChip;
+
+  /// No description provided for @stashTableChip.
+  ///
+  /// In en, this message translates to:
+  /// **'Table'**
+  String get stashTableChip;
+
+  /// No description provided for @stashLines.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} lines'**
+  String stashLines(int count);
+
+  /// No description provided for @stashNewButton.
+  ///
+  /// In en, this message translates to:
+  /// **'New'**
+  String get stashNewButton;
+
+  /// No description provided for @stashNewTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'New stash'**
+  String get stashNewTooltip;
+
+  /// No description provided for @stashPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Jot it down…'**
+  String get stashPlaceholder;
+
+  /// No description provided for @stashHintNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New'**
+  String get stashHintNew;
+
+  /// No description provided for @stashProjectTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Project it is about'**
+  String get stashProjectTooltip;
+
+  /// No description provided for @stashNoProject.
+  ///
+  /// In en, this message translates to:
+  /// **'No project'**
+  String get stashNoProject;
+
+  /// No description provided for @stashFormatBold.
+  ///
+  /// In en, this message translates to:
+  /// **'Bold'**
+  String get stashFormatBold;
+
+  /// No description provided for @stashFormatItalic.
+  ///
+  /// In en, this message translates to:
+  /// **'Italic'**
+  String get stashFormatItalic;
+
+  /// No description provided for @stashFormatStrike.
+  ///
+  /// In en, this message translates to:
+  /// **'Strikethrough'**
+  String get stashFormatStrike;
+
+  /// No description provided for @stashFormatUnderline.
+  ///
+  /// In en, this message translates to:
+  /// **'Underline'**
+  String get stashFormatUnderline;
+
+  /// No description provided for @stashFormatCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Code'**
+  String get stashFormatCode;
+
+  /// No description provided for @stashFormatLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get stashFormatLink;
+
+  /// No description provided for @stashFormatColor.
+  ///
+  /// In en, this message translates to:
+  /// **'Text and background color'**
+  String get stashFormatColor;
+
+  /// No description provided for @stashFormatHeading1.
+  ///
+  /// In en, this message translates to:
+  /// **'Heading 1'**
+  String get stashFormatHeading1;
+
+  /// No description provided for @stashFormatHeading2.
+  ///
+  /// In en, this message translates to:
+  /// **'Heading 2'**
+  String get stashFormatHeading2;
+
+  /// No description provided for @stashFormatHeading3.
+  ///
+  /// In en, this message translates to:
+  /// **'Heading 3'**
+  String get stashFormatHeading3;
+
+  /// No description provided for @stashFormatBullets.
+  ///
+  /// In en, this message translates to:
+  /// **'Bulleted list'**
+  String get stashFormatBullets;
+
+  /// No description provided for @stashFormatNumbers.
+  ///
+  /// In en, this message translates to:
+  /// **'Numbered list'**
+  String get stashFormatNumbers;
+
+  /// No description provided for @stashFormatTasks.
+  ///
+  /// In en, this message translates to:
+  /// **'Task list'**
+  String get stashFormatTasks;
+
+  /// No description provided for @stashFormatQuote.
+  ///
+  /// In en, this message translates to:
+  /// **'Quote'**
+  String get stashFormatQuote;
+
+  /// Selection bar menu: makes the lines a code block, typed in in place.
+  ///
+  /// In en, this message translates to:
+  /// **'Code block'**
+  String get stashFormatCodeBlock;
+
+  /// No description provided for @stashFormatClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear formatting'**
+  String get stashFormatClear;
+
+  /// No description provided for @stashPolish.
+  ///
+  /// In en, this message translates to:
+  /// **'Polish'**
+  String get stashPolish;
+
+  /// No description provided for @stashPolishing.
+  ///
+  /// In en, this message translates to:
+  /// **'Polishing…'**
+  String get stashPolishing;
+
+  /// No description provided for @stashPolishHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Has AI make the selection clearer, in your words, without adding structure'**
+  String get stashPolishHint;
+
+  /// No description provided for @stashPolishFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not polish: {error}'**
+  String stashPolishFailed(String error);
+
+  /// No description provided for @stashLinkTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get stashLinkTitle;
+
+  /// No description provided for @stashRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get stashRemove;
+
+  /// No description provided for @stashEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get stashEdit;
+
+  /// No description provided for @stashFormulaTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Formula (TeX)'**
+  String get stashFormulaTitle;
+
+  /// No description provided for @stashTableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Table (Markdown)'**
+  String get stashTableTitle;
+
+  /// No description provided for @stashCodeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Code block'**
+  String get stashCodeTitle;
+
+  /// No description provided for @stashBigFileTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” is over 200 MB'**
+  String stashBigFileTitle(String name);
+
+  /// No description provided for @stashBigFileDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Link to it where it is, or copy it into the stash anyway?'**
+  String get stashBigFileDetail;
+
+  /// No description provided for @stashBigFileLink.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get stashBigFileLink;
+
+  /// No description provided for @stashBigFileCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get stashBigFileCopy;
+
+  /// No description provided for @stashSearchPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Search stashes, and the text in their pictures'**
+  String get stashSearchPlaceholder;
+
+  /// No description provided for @stashAiSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'AI search'**
+  String get stashAiSearch;
+
+  /// No description provided for @stashAiSearchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Finds stashes by what they mean, not only their words. Asks the model: it costs.'**
+  String get stashAiSearchHint;
+
+  /// No description provided for @stashAiResults.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{AI found nothing} =1{AI found 1} other{AI found {count}}}'**
+  String stashAiResults(int count);
+
+  /// No description provided for @stashAiClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get stashAiClear;
+
+  /// No description provided for @stashAiSearchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'AI search failed: {error}'**
+  String stashAiSearchFailed(String error);
+
+  /// No description provided for @stashAiNoAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'The model gave no usable answer.'**
+  String get stashAiNoAnswer;
+
+  /// No description provided for @aiModelAuxiliary.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as Auxiliary Model'**
+  String get aiModelAuxiliary;
+
+  /// No description provided for @aiModelFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a model first: AI actions use it from then on'**
+  String get aiModelFirst;
+
+  /// No description provided for @aiModelNone.
+  ///
+  /// In en, this message translates to:
+  /// **'none picked yet'**
+  String get aiModelNone;
+
+  /// No description provided for @aiModelTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Model for AI actions: {model}'**
+  String aiModelTooltip(String model);
+
+  /// No description provided for @stashFilterAnyTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Any time'**
+  String get stashFilterAnyTime;
+
+  /// No description provided for @stashFilterAnyProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Any project'**
+  String get stashFilterAnyProject;
+
+  /// No description provided for @stashFilterAnyStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Any status'**
+  String get stashFilterAnyStatus;
+
+  /// No description provided for @stashFilterOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Not done'**
+  String get stashFilterOpen;
+
+  /// No description provided for @stashGroupPinned.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned'**
+  String get stashGroupPinned;
+
+  /// No description provided for @stashGroupToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get stashGroupToday;
+
+  /// No description provided for @stashGroupYesterday.
+  ///
+  /// In en, this message translates to:
+  /// **'Yesterday'**
+  String get stashGroupYesterday;
+
+  /// No description provided for @stashGroupWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'Past 7 days'**
+  String get stashGroupWeek;
+
+  /// No description provided for @stashGroupMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'Past 30 days'**
+  String get stashGroupMonth;
+
+  /// No description provided for @stashGroupEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier'**
+  String get stashGroupEarlier;
+
+  /// No description provided for @stashGroupDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get stashGroupDone;
+
+  /// No description provided for @stashStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get stashStatus;
+
+  /// No description provided for @stashStatusCollected.
+  ///
+  /// In en, this message translates to:
+  /// **'Collected'**
+  String get stashStatusCollected;
+
+  /// No description provided for @stashStatusRequirement.
+  ///
+  /// In en, this message translates to:
+  /// **'Requirement'**
+  String get stashStatusRequirement;
+
+  /// No description provided for @stashStatusImplementing.
+  ///
+  /// In en, this message translates to:
+  /// **'Implementing'**
+  String get stashStatusImplementing;
+
+  /// No description provided for @stashStatusDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get stashStatusDone;
+
+  /// No description provided for @stashEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing stashed yet.\nPress {hotkey} in any app to jot something down.'**
+  String stashEmpty(String hotkey);
+
+  /// No description provided for @stashNoMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No stash matches.'**
+  String get stashNoMatch;
+
+  /// No description provided for @stashPin.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin'**
+  String get stashPin;
+
+  /// No description provided for @stashUnpin.
+  ///
+  /// In en, this message translates to:
+  /// **'Unpin'**
+  String get stashUnpin;
+
+  /// No description provided for @stashOpenInPanel.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Floating Panel'**
+  String get stashOpenInPanel;
+
+  /// No description provided for @stashLinkProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Link to Project'**
+  String get stashLinkProject;
+
+  /// No description provided for @stashMerge.
+  ///
+  /// In en, this message translates to:
+  /// **'Merge'**
+  String get stashMerge;
+
+  /// No description provided for @stashMergeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Merge {stashes}?'**
+  String stashMergeTitle(String stashes);
+
+  /// No description provided for @stashMergeDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Their text goes into {target}, one after another; the others go, their numbers leading to it.'**
+  String stashMergeDetail(String target);
+
+  /// No description provided for @stashMergeSuggestion.
+  ///
+  /// In en, this message translates to:
+  /// **'{stashes} look like the same thing.'**
+  String stashMergeSuggestion(String stashes);
+
+  /// No description provided for @stashDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get stashDismiss;
+
+  /// No description provided for @stashReveal.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Finder'**
+  String get stashReveal;
+
+  /// No description provided for @stashDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get stashDelete;
+
+  /// No description provided for @stashDeleteOne.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {stash}?'**
+  String stashDeleteOne(String stash);
+
+  /// No description provided for @stashDeleteMany.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count} stashes?'**
+  String stashDeleteMany(int count);
+
+  /// No description provided for @stashDeleteDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Their pictures and files go with them. This cannot be undone.'**
+  String get stashDeleteDetail;
+
+  /// No description provided for @stashPicked.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected'**
+  String stashPicked(int count);
+
+  /// No description provided for @stashMarkDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark Done'**
+  String get stashMarkDone;
+
+  /// No description provided for @stashReopen.
+  ///
+  /// In en, this message translates to:
+  /// **'Reopen'**
+  String get stashReopen;
+
+  /// No description provided for @stashClearPicked.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear selection'**
+  String get stashClearPicked;
+
+  /// No description provided for @stashClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close Stash'**
+  String get stashClose;
+
+  /// No description provided for @stashCloseDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get stashCloseDetail;
+
+  /// No description provided for @stashMore.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get stashMore;
+
+  /// No description provided for @stashExpand.
+  ///
+  /// In en, this message translates to:
+  /// **'Clarify'**
+  String get stashExpand;
+
+  /// No description provided for @stashExpandHint.
+  ///
+  /// In en, this message translates to:
+  /// **'AI says your note clearly, filling in what its pictures and files show, adding no structure; it replaces the text, and Undo takes it back'**
+  String get stashExpandHint;
+
+  /// No description provided for @stashClarifying.
+  ///
+  /// In en, this message translates to:
+  /// **'Clarifying…'**
+  String get stashClarifying;
+
+  /// No description provided for @stashClarifyFailedShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Not clarified'**
+  String get stashClarifyFailedShort;
+
+  /// No description provided for @stashClarifyChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The note changed while it was being clarified, so nothing was replaced. Try again.'**
+  String get stashClarifyChanged;
+
+  /// No description provided for @stashRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get stashRetry;
+
+  /// No description provided for @stashExpandFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The note could not be clarified: {error}'**
+  String stashExpandFailed(String error);
+
+  /// No description provided for @stashImplement.
+  ///
+  /// In en, this message translates to:
+  /// **'Implement in BaoCode'**
+  String get stashImplement;
+
+  /// No description provided for @stashImplementHow.
+  ///
+  /// In en, this message translates to:
+  /// **'How should the agent work on it?'**
+  String get stashImplementHow;
+
+  /// No description provided for @stashImplementHowDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'In a new git worktree (a branch of its own, your working copy untouched), or directly in the project as it is.'**
+  String get stashImplementHowDetail;
+
+  /// No description provided for @stashImplementWorktree.
+  ///
+  /// In en, this message translates to:
+  /// **'New Worktree'**
+  String get stashImplementWorktree;
+
+  /// No description provided for @stashImplementDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Directly'**
+  String get stashImplementDirect;
+
+  /// No description provided for @stashImplementStarter.
+  ///
+  /// In en, this message translates to:
+  /// **'Please implement what {stash} asks for.'**
+  String stashImplementStarter(String stash);
+
+  /// No description provided for @stashImplementInWorktree.
+  ///
+  /// In en, this message translates to:
+  /// **'First create a new git worktree on a new branch for this work and do it there; tell me the branch when done.'**
+  String get stashImplementInWorktree;
+
+  /// No description provided for @stashImplementInPlace.
+  ///
+  /// In en, this message translates to:
+  /// **'Work directly in this project, on the current branch.'**
+  String get stashImplementInPlace;
+
+  /// No description provided for @stashImplementComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'When it is finished, mark it done with the stash_complete tool (id {id}).'**
+  String stashImplementComplete(int id);
+
+  /// No description provided for @stashThreadStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'A conversation is ready for it; send its message to start.'**
+  String get stashThreadStarting;
+
+  /// No description provided for @stashThreadLinked.
+  ///
+  /// In en, this message translates to:
+  /// **'Implemented in conversation “{title}”'**
+  String stashThreadLinked(String title);
+
+  /// No description provided for @stashOpenThread.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get stashOpenThread;
+
+  /// No description provided for @stashProjectSuggestion.
+  ///
+  /// In en, this message translates to:
+  /// **'AI thinks this is about {project}.'**
+  String stashProjectSuggestion(String project);
+
+  /// No description provided for @stashLinkIt.
+  ///
+  /// In en, this message translates to:
+  /// **'Link'**
+  String get stashLinkIt;
+
+  /// No description provided for @stashSourceBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Source: Stash {stash} · {title}'**
+  String stashSourceBanner(String stash, String title);
+
+  /// No description provided for @stashSettingsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A note jotted down from any app, in a floating panel, to turn into work later.'**
+  String get stashSettingsDescription;
+
+  /// No description provided for @stashSettingsHotkey.
+  ///
+  /// In en, this message translates to:
+  /// **'Shortcut'**
+  String get stashSettingsHotkey;
+
+  /// No description provided for @stashSettingsHotkeyCurrent.
+  ///
+  /// In en, this message translates to:
+  /// **'{hotkey} shows the panel from any app.'**
+  String stashSettingsHotkeyCurrent(String hotkey);
+
+  /// No description provided for @stashSettingsHotkeyNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No shortcut: the panel only shows from the Stash page.'**
+  String get stashSettingsHotkeyNone;
+
+  /// No description provided for @stashSettingsHotkeyTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'Another app holds this shortcut; pick another.'**
+  String get stashSettingsHotkeyTaken;
+
+  /// No description provided for @stashSettingsHotkeyHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Click, then press the new keys; Escape keeps it, Delete clears it.'**
+  String get stashSettingsHotkeyHelp;
+
+  /// No description provided for @stashHotkeyPress.
+  ///
+  /// In en, this message translates to:
+  /// **'Press the keys…'**
+  String get stashHotkeyPress;
+
+  /// No description provided for @stashHotkeyRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs a modifier with a letter, digit or common key'**
+  String get stashHotkeyRefused;
+
+  /// No description provided for @stashHotkeyNone.
+  ///
+  /// In en, this message translates to:
+  /// **'None'**
+  String get stashHotkeyNone;
+
+  /// No description provided for @stashHotkeyClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get stashHotkeyClear;
+
+  /// No description provided for @stashHotkeyDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default'**
+  String get stashHotkeyDefault;
+
+  /// No description provided for @stashHotkeyGlobal.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the Stash panel'**
+  String get stashHotkeyGlobal;
+
+  /// No description provided for @stashHotkeyGlobalHint.
+  ///
+  /// In en, this message translates to:
+  /// **'A global shortcut: works from any app.'**
+  String get stashHotkeyGlobalHint;
+
+  /// No description provided for @stashHotkeyTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'The panel\'s shortcut; click to change'**
+  String get stashHotkeyTooltip;
+
+  /// No description provided for @stashSettingsDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Location'**
+  String get stashSettingsDirectory;
+
+  /// No description provided for @stashSettingsDirectoryChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change…'**
+  String get stashSettingsDirectoryChange;
+
+  /// No description provided for @stashSettingsDirectoryReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Default'**
+  String get stashSettingsDirectoryReset;
+
+  /// No description provided for @stashSettingsDirectoryRestart.
+  ///
+  /// In en, this message translates to:
+  /// **'Takes effect after BaoCode restarts.'**
+  String get stashSettingsDirectoryRestart;
+
+  /// Opens the list of every stash beside the one written in, in the stash panel.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get stashAll;
+
+  /// Tooltip of the stash panel's All button.
+  ///
+  /// In en, this message translates to:
+  /// **'Show every stash'**
+  String get stashAllTooltip;
+
+  /// Key hint in the stash panel footer: the shortcut saves.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get stashHintSave;
+
+  /// Key hint in the stash panel footer: the shortcut closes the panel.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get stashHintClose;
+
+  /// Shown briefly in the stash panel after saving.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get stashSaved;
+
+  /// Tooltip of the filter button in the stash panel's list.
+  ///
+  /// In en, this message translates to:
+  /// **'Filter'**
+  String get stashFilter;
+
+  /// Menu title in the stash panel's list for how the stashes are ordered.
+  ///
+  /// In en, this message translates to:
+  /// **'Sort'**
+  String get stashSort;
+
+  /// Sort option: the order the user dragged the stashes in.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom (drag to order)'**
+  String get stashSortManual;
+
+  /// Sort option: the last edited stash first.
+  ///
+  /// In en, this message translates to:
+  /// **'Last edited'**
+  String get stashSortUpdated;
+
+  /// Sort option: the last created stash first.
+  ///
+  /// In en, this message translates to:
+  /// **'Last created'**
+  String get stashSortCreated;
+
+  /// Sort option: by stash number, highest first.
+  ///
+  /// In en, this message translates to:
+  /// **'Number'**
+  String get stashSortNumber;
+
+  /// Context menu item of a stash in the panel's list: opens it in the panel.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get stashOpen;
+
+  /// What is dragged in the stash panel's list, when it is several stashes.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} stashes'**
+  String stashCount(int count);
+
+  /// Tooltip of the stash editor selection toolbar button that opens the less used formats.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get stashFormatMore;
 }
 
 class _AppLocalizationsDelegate

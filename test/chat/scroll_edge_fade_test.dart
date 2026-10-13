@@ -1,3 +1,4 @@
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/widgets/edge_fade_mask.dart';
@@ -50,5 +51,46 @@ void main() {
   testWidgets('no fade when it all fits', (tester) async {
     await pump(tester, 2);
     expect(edges(tester), (false, false));
+  });
+
+  testWidgets('content grown past the bottom fades there the frame it '
+      'grows, not a frame later', (tester) async {
+    final tall = ValueNotifier(false);
+    addTearDown(tall.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Center(
+          child: SizedBox(
+            height: 100,
+            child: ScrollEdgeFade(
+              child: ListView(
+                children: [
+                  ScrollEdgeFadeContent(
+                    child: ValueListenableBuilder(
+                      valueListenable: tall,
+                      builder: (context, tall, _) =>
+                          SizedBox(height: tall ? 300 : 40),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    RenderEdgeFadeMask mask() =>
+        tester.renderObject<RenderEdgeFadeMask>(find.byType(EdgeFadeMask));
+    expect(mask().debugLayer, isNull);
+
+    tall.value = true;
+    await tester.pump();
+    expect(mask().debugLayer, isA<ShaderMaskLayer>());
+
+    tall.value = false;
+    await tester.pump();
+    expect(mask().debugLayer, isNull);
   });
 }

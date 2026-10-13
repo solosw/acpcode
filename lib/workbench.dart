@@ -30,7 +30,14 @@ import 'customize/customize_view.dart';
 import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
-import 'ide/file_service.dart' show IdeFileService, IdeHostFiles, readFileBytes;
+import 'ide/file_views.dart';
+import 'ide/file_service.dart'
+    show
+        IdeFileService,
+        IdeHostFiles,
+        ideIsImagePath,
+        readBytesThrough,
+        readFileBytes;
 import 'ide/ide_chat_title.dart';
 import 'ide/ide_color_theme_picker.dart';
 import 'ide/ide_commands.dart';
@@ -49,11 +56,13 @@ import 'ide/lsp/lsp_protocol.dart';
 import 'ide/terminal/links/terminal_links.dart';
 import 'ide/terminal/terminal_instance.dart';
 import 'ide/terminal/terminal_panel.dart' show terminalCommandsToSkipShell;
+import 'ide/terminal/terminal_tasks.dart';
 import 'keybindings/chat_keybindings.dart';
 import 'keybindings/default_keybindings.dart';
 import 'keybindings/key_chord.dart';
 import 'keybindings/keybinding_service.dart';
 import 'keybindings/window_keybindings.dart';
+import 'kernel/kernel_types.dart' show KernelTask;
 import 'l10n/command_titles.dart';
 import 'l10n/l10n.dart';
 import 'notifications/attention_host.dart';
@@ -92,6 +101,8 @@ import 'remote/remote_status.dart';
 import 'remote/ssh_host.dart';
 import 'remote/ssh_password_dialog.dart';
 import 'remote/ssh_passwords.dart';
+import 'stash/stash_controller.dart';
+import 'stash/stash_view.dart';
 import 'workspace/chat_drag.dart';
 import 'workspace/chat_grid_view.dart';
 import 'workspace/chat_terminal.dart';
@@ -118,6 +129,11 @@ import 'workspace/workspace_dialog.dart';
 /// The sidebar can be dragged wider or narrower and hidden (⌘B or its
 /// button). In a narrow window it is hidden by default and opens over the
 /// chat as a drawer instead of pushing it aside.
+
+/// This machine's files, for what is shown as a file in the IDE (see
+/// FileOpenScope.showLocal).
+final IdeFileService _localFiles = IdeFileService(p.current);
+
 class Workbench extends StatefulWidget {
   const Workbench({
     super.key,
@@ -469,6 +485,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     widget.window?.attach(this);
     _windows?.addListener(_windowsChanged);
     if (_main) {
+      // A conversation's "Source: Stash #12" shows it here.
+      StashController.current?.showPage = _showStash;
+      // A stash's file opens as the Stash page shows it.
+      if (StashController.current case final stash?) {
+        FileViews.register(stashFileView(stash, onOpenAgent: _openAgent));
+      }
       OpenRequests.listen((paths) => unawaited(_openPaths(paths)));
       _workspace.addListener(_syncRecentMenu);
       _syncRecentMenu();
@@ -610,6 +632,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   void dispose() {
     if (SshHosts.instance.passwords.ask == _askSshPassword) {
       SshHosts.instance.passwords.ask = null;
+    }
+    if (StashController.current case final stash?
+        when stash.showPage == _showStash) {
+      stash.showPage = null;
+      FileViews.unregister('stash');
     }
     _terminals
       ?..removeListener(_terminalsChanged)
@@ -781,6 +808,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ChatCommandIds.searchAgents: _searchAgents,
       ChatCommandIds.search: () => unawaited(_openPalette()),
       if (widget.customizations != null) _customizeCommand: _showCustomize,
+      if (StashController.current != null) _stashCommand: _showStash,
       if (current != null) ...{
         ChatCommandIds.openIde: () => _workspace.openInIde(current),
         ..._sidePanelCommands(),
@@ -976,12 +1004,41 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (kind != null) _customizeKey.currentState?.show(kind);
     setState(() {
       _customizing = true;
+      _stashing = false;
       if (kind != null) _customizeKind = kind;
     });
   }
 
+  /// The conversations show again, in place of Customize or the stashes.
   void _closeCustomize() {
-    if (_customizing) setState(() => _customizing = false);
+    if (_customizing || _stashing) {
+      setState(() => _customizing = _stashing = false);
+    }
+  }
+
+  // --- The stashes ------------------------------------------------------------
+
+  /// The stashes' page's command, for the palette and the keys.
+  static const _stashCommand = 'baocode.stash.show';
+
+  /// The stashes (docs/stash.md) show in place of the chat.
+  bool _stashing = false;
+  int? _stashShown;
+  final GlobalKey<StashViewState> _stashKey = GlobalKey();
+
+  /// Something shows in place of the conversations.
+  bool get _replacingChat => _customizing || _stashing;
+
+  /// Shows the stashes, [id]'s if given.
+  void _showStash([int? id]) {
+    if (StashController.current == null) return;
+    _closeDrawer();
+    if (id != null) _stashKey.currentState?.show(id);
+    setState(() {
+      _stashing = true;
+      _customizing = false;
+      _stashShown = id;
+    });
   }
 
   bool _paletteOpen = false;
@@ -1053,6 +1110,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         settings: _paletteSettings(),
         filter: filter,
         onOpenAgent: _agentWindow ? _showInWindow : _openAgent,
+        // A hit in what was said: found in the conversation, once shown.
+        onFindInAgent: (thread, query) {
+          _agentWindow ? _showInWindow(thread) : _openAgent(thread);
+          _findInChat(thread, query);
+        },
         onOpenFile: (path) {
           if (_windows case final windows? when _multi || _agentWindow) {
             unawaited(
@@ -1149,6 +1211,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             run: () => _showCustomize(kind),
           ),
     ];
+  }
+
+  /// Finds [query] in [thread]'s chat once it is built: a frame or a few
+  /// after it is opened, as its layout settles.
+  void _findInChat(AgentThread thread, String query, [int frames = 30]) {
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        if (!mounted || ChatScreen.find(_chatKey(thread), query)) return;
+        if (frames > 1) _findInChat(thread, query, frames - 1);
+      })
+      ..ensureVisualUpdate();
   }
 
   /// Focuses [thread]'s input once its chat is built.
@@ -2018,7 +2091,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     SettingsSection section = SettingsSection.general,
   ]) async {
     if (_settingsOpen || !mounted) return;
-    _settingsOpen = true;
+    // Built with: Windows' header gives the dialog its left.
+    setState(() => _settingsOpen = true);
     _closeDrawer();
     try {
       await showSettingsDialog(
@@ -2029,7 +2103,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             const SizedBox.shrink(),
       );
     } finally {
-      _settingsOpen = false;
+      if (mounted) {
+        setState(() => _settingsOpen = false);
+      } else {
+        _settingsOpen = false;
+      }
     }
   }
 
@@ -2201,6 +2279,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             terminalBackend: ProjectHost.of(path).terminals(
               widget.terminalBackend ?? const TerminalBackend(supported: false),
             ),
+            // Its chat's background commands, with its terminals.
+            terminalTasks: switch (_workspace.ideChat(path)) {
+              final thread? => _SessionTerminalTasks(thread.session),
+              null => null,
+            },
             remote: switch (ProjectHost.of(path)) {
               final SshHost host => SshStatusIndicator(host),
               _ => null,
@@ -2211,6 +2294,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             chat: shown
                 ? _ideConversation(_buildIdeChat(path))
                 : const SizedBox.shrink(),
+            onAddToChat: _workspace.ideChat(path) == null
+                ? null
+                : (files) => _workspace
+                      .ideChat(path)
+                      ?.session
+                      .draft
+                      .insertFiles(files),
           ),
         ),
       ),
@@ -2412,6 +2502,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ? null
           : () => _customizing ? _closeCustomize() : _showCustomize(),
       customizing: _customizing,
+      onStash: agent != null || StashController.current == null
+          ? null
+          : () => _stashing ? _closeCustomize() : _showStash(),
+      stashing: _stashing,
       drag: _drag,
     );
   }
@@ -2590,6 +2684,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       onFileCommand: _runMenuCommand,
       autoSave: _autoSaveOn,
       compact: _narrow,
+      settingsShown: _settingsOpen,
       title: _titleInHeader
           ? (agent ?? _workspace.current)?.localizedTitle(context.l10n)
           : null,
@@ -2603,7 +2698,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       WindowControls.drawsHeader &&
       _narrow &&
       !_showsIde &&
-      !_customizing &&
+      !_replacingChat &&
       // An agent's window has its one conversation.
       (_agentWindow ||
           (_workspace.grid.length <= 1 && _workspace.current != null));
@@ -2758,7 +2853,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Widget _withSidePanel(Widget child) => AgentSidePanelArea(
     panel: _sidePanel,
     // Customize, in place of the conversations, isn't one of theirs.
-    hidden: _sidePanelHidden || _customizing,
+    hidden: _sidePanelHidden || _replacingChat,
     // Just under the conversation's title bar, whose right has the
     // window's buttons on macOS; at the top under Windows' header, already
     // a bar of its own (the title row's right is empty, the rail beside
@@ -2767,7 +2862,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     // Not in a narrow window, where the conversation has no room to spare
     // (the title bar's toggle shows the panel).
     rail: switch (_agentThread ?? _workspace.current) {
-      final thread? when !_narrow && !_customizing && !thread.untouched =>
+      final thread? when !_narrow && !_replacingChat && !thread.untouched =>
         _sidePanelRail(thread),
       _ => null,
     },
@@ -2821,6 +2916,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       paths: paths,
       colorize: _colorizeCode,
       onOpenInIde: (request) => _openRequestInIde(thread, request),
+      // With its IDE's language servers.
+      formatter:
+          (path, text, {range, required tabSize, required insertSpaces}) =>
+              _ideSpace(multi?.path ?? location).formatOutside(
+                path,
+                text,
+                range: range,
+                tabSize: tabSize,
+                insertSpaces: insertSpaces,
+              ),
       git: _sidePanelGit(thread),
       terminals: _terminals?.sidePanelTerminals(thread.project.path),
       terminalSkipShell: chatTerminalSkipShell,
@@ -2948,11 +3053,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     return FileLinkTarget(
       open: embedded
           ? (request) => _openRequestInIde(thread, request)
-          : (request) => _sidePanel.open(thread.session, request),
+          // From the conversation: the file alone, its list out of the way.
+          : (request) =>
+                _sidePanel.open(thread.session, request, listAway: true),
+      inPanel: !embedded,
+      openInIde: embedded
+          ? null
+          : (request) => _openRequestInIde(thread, request),
       exists: _projectFileChecks[thread.project.path] ??= fileExistsIn(
         files,
         paths: paths,
       ),
+      readBytes: (path) => readBytesThrough(files, path),
       paths: paths,
       roots: () =>
           _workspace.workspaceAt(thread.project.path)?.folders ?? const [],
@@ -2962,6 +3074,24 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Opens [request] in the IDE of [thread]'s project: a file's changes,
   /// the lines asked for, or the file.
   void _openRequestInIde(AgentThread thread, FileOpenRequest request) {
+    // Shown as a file, on this machine: read-only, its text read here.
+    if (request.local) {
+      final remote = RemoteLocation.isRemote(thread.project.path);
+      if (ideIsImagePath(request.path)) {
+        // The IDE of a remote project reads its host's files only.
+        if (remote) return unawaited(openExternal(request.path));
+        return _inIdeOf(thread, (ide) => ide.open(request.path));
+      }
+      final label = context.l10n.shownReadOnly;
+      return _inIdeOf(
+        thread,
+        (ide) => ide.openRevision(
+          request.path,
+          label: label,
+          read: () => _localFiles.read(request.path),
+        ),
+      );
+    }
     if (request.change case final change? when request.diff) {
       return _openChange(thread, change, request.original);
     }
@@ -2982,6 +3112,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   };
 
   Widget _buildGrid({required bool showToggle}) {
+    if (_stashing) {
+      if (StashController.current case final stash?) {
+        return _buildStash(stash, showToggle: showToggle);
+      }
+    }
     if (_customizing) {
       if (widget.customizations case final store?) {
         return _buildCustomize(store, showToggle: showToggle);
@@ -3003,6 +3138,30 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           : AppColors.unfocusedConversationSurface,
       focused: _workspace.current,
       onLinesMoved: _workspace.keepGridLines,
+    );
+  }
+
+  /// The stashes, in place of the conversations, as Customize is.
+  Widget _buildStash(StashController stash, {required bool showToggle}) {
+    final header = WindowControls.drawsHeader;
+    return StashView(
+      key: _stashKey,
+      controller: stash,
+      initial: _stashShown,
+      onClose: _closeCustomize,
+      onOpenAgent: _openAgent,
+      onHotkeySettings: () => unawaited(openSettings(SettingsSection.stash)),
+      leading: !header && showToggle
+          ? SidebarIconButton(
+              icon: Codicons.layoutSidebarLeftOff,
+              tooltip: context.l10n.windowShowSidebar,
+              command: 'workbench.action.toggleSidebarVisibility',
+              onTap: _toggle,
+            )
+          : null,
+      titleBarInset: !header && showToggle
+          ? AppMetrics.trafficLightsWidth + 8
+          : 12.0,
     );
   }
 
@@ -3181,7 +3340,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         onOpenCode: (path, start, end) => _openCode(thread, path, start, end),
         fileLinks: _fileLinks(thread, embedded: embedded),
         onOpenTerminalTask: embedded
-            ? null
+            ? (task) => _ide?.showTerminalTask(task.id)
             : (task) => _sidePanel.openTerminal(thread.session, task.id),
         colorizeCode: _colorizeCode,
         colorizeCodeBlock: _colorizeCodeBlock,
@@ -3217,7 +3376,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// the files page, where it is edited (its cursor and selection with
   /// it); on the changes page, whose changes show.
   OpenEditor? _sidePanelEditor(AgentThread thread) {
-    if (!_sidePanel.shown || _sidePanelHidden || _customizing) return null;
+    if (!_sidePanel.shown || _sidePanelHidden || _replacingChat) return null;
     if (!identical(_agentThread ?? _workspace.current, thread)) return null;
     final tabs = _sidePanel.tabsOf(thread.session);
     return switch (tabs.shown) {
@@ -3682,4 +3841,37 @@ class _EmptyWorkspace extends StatelessWidget {
       ],
     );
   }
+}
+
+/// A chat's background commands, for its IDE's TERMINAL tab.
+class _SessionTerminalTasks implements TerminalTasks {
+  const _SessionTerminalTasks(this.session);
+
+  final ChatSession session;
+
+  @override
+  List<KernelTask> get tasks => session.terminalTasks;
+
+  @override
+  String? commandOf(KernelTask task) => session.commandOf(task.toolUseId);
+
+  @override
+  void stop(KernelTask task) => session.stopTask(task);
+
+  @override
+  String get root => session.root ?? '';
+
+  @override
+  void addListener(VoidCallback listener) => session.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) =>
+      session.removeListener(listener);
+
+  @override
+  bool operator ==(Object other) =>
+      other is _SessionTerminalTasks && identical(other.session, session);
+
+  @override
+  int get hashCode => identityHashCode(session);
 }

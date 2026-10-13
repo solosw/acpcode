@@ -758,6 +758,72 @@ void main() {
       kernel.dispose();
     });
 
+    test("a turn keeps its own tokens, speed and cost", () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      Future<void> stream(Map<String, Object?> event) async {
+        cli.push({'type': 'stream_event', 'event': event});
+        await pumpEventQueue();
+      }
+
+      Future<void> request(int output) async {
+        await stream({
+          'type': 'message_start',
+          'message': {
+            'id': 'm$output',
+            'usage': {
+              'input_tokens': 10,
+              'cache_read_input_tokens': 1000,
+              'output_tokens': 1,
+            },
+          },
+        });
+        await stream({
+          'type': 'content_block_start',
+          'index': 0,
+          'content_block': {'type': 'text', 'text': ''},
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await stream({
+          'type': 'content_block_delta',
+          'index': 0,
+          'delta': {'type': 'text_delta', 'text': 'Hi.'},
+        });
+        await stream({'type': 'content_block_stop', 'index': 0});
+        await stream({
+          'type': 'message_delta',
+          'usage': {'output_tokens': output},
+        });
+        await stream({'type': 'message_stop'});
+      }
+
+      // The session's cost so far, before and after.
+      cli.push({'type': 'result', 'subtype': 'success', 'total_cost_usd': 1.0});
+      await pumpEventQueue();
+      kernel.send(const KernelTurn(id: 'u2', text: 'again'));
+      await pumpEventQueue();
+      await request(40);
+      await request(60);
+      cli.push({
+        'type': 'result',
+        'subtype': 'success',
+        'total_cost_usd': 1.25,
+        'duration_api_ms': 999999,
+      });
+      await pumpEventQueue();
+      final usage = (transcript.itemAt(
+        transcript.indexOf('u2')!,
+      ) as UserMessageItem).usage!;
+      expect(usage.inputTokens, 2020);
+      expect(usage.outputTokens, 100);
+      expect(usage.costUsd, closeTo(0.25, 1e-9));
+      // 100 tokens over at most twice 20ms and a little.
+      expect(usage.tokensPerSecond, greaterThan(500));
+      kernel.dispose();
+    });
+
     test('starts on first send, then writes the message', () async {
       final cli = FakeCli();
       final (:kernel, :transcript, events: _) = claude(cli);
@@ -1439,10 +1505,7 @@ void main() {
       final items = {for (final (id, item) in transcript.liveItems) id: item};
       final look = items['a1']! as AgentItem;
       expect(look.status, CommandStatus.failed);
-      expect(
-        (look.children.single as ToolCallItem).status,
-        ToolStatus.failed,
-      );
+      expect((look.children.single as ToolCallItem).status, ToolStatus.failed);
       expect((items['b1']! as TerminalItem).status, CommandStatus.failed);
       final watch = items['a2']! as AgentItem;
       expect(watch.status, CommandStatus.running);
@@ -2313,6 +2376,26 @@ void main() {
         kernel.dispose();
       },
     );
+
+    test('not logged in on a host over SSH, it says the Mac\'s keychain '
+        'may be why, and what to do', () async {
+      late FakeCli cli;
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        const KernelContext(cwd: 'ssh://home-imac/Users/me/p'),
+        start: (_) async => cli = FakeCli(),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      cli.push(
+        ClaudeExit.message(1, 'Error: Invalid API key · Please run /login'),
+      );
+      await pumpEventQueue();
+      expect(kernel.health.message, contains('home-imac'));
+      expect(kernel.health.message, contains('security unlock-keychain'));
+      expect(kernel.health.message, contains('CLAUDE_CODE_OAUTH_TOKEN'));
+      kernel.dispose();
+    });
 
     test('a model\'s context and effort are picked beside it, and read '
         'back from the CLI', () async {

@@ -9,6 +9,7 @@ import 'package:baocode/chat/chat_history_view.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 import 'package:baocode/chat/mock_conversation.dart';
+import 'package:baocode/chat/widgets/chat_minimap.dart';
 import 'package:baocode/chat/widgets/fold_line.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/widgets/edge_fade_mask.dart';
@@ -76,6 +77,7 @@ void main() {
   }
 
   testWidgets('scrollbar thumb jumps across the virtual feed', (tester) async {
+    _scrollbarOnly();
     await tester.pumpWidget(BaoCodeApp(workspace: Workspace.mock()));
     await tester.pumpAndSettle();
     final controller = tester
@@ -374,6 +376,7 @@ void main() {
 
   testWidgets('a drag beside the scrollbar, just missing it, selects '
       'nothing', (tester) async {
+    _scrollbarOnly();
     await tester.pumpWidget(BaoCodeApp(workspace: Workspace.mock()));
     await tester.pump(const Duration(milliseconds: 500));
     final list = find.byType(SuperListView);
@@ -412,6 +415,7 @@ void main() {
   testWidgets('dragging the scrollbar scrolls, and selects nothing', (
     tester,
   ) async {
+    _scrollbarOnly();
     await tester.pumpWidget(BaoCodeApp(workspace: Workspace.mock()));
     await tester.pump();
     final list = find.byType(SuperListView);
@@ -778,3 +782,9 @@ void main() {
 
 /// A mock turn's thought, read and search, folded into one line.
 final _foldedSteps = RegExp(r'Read 1 file, searched 1 pattern');
+
+/// The scrollbar, not the minimap that stands in for it where there is room.
+void _scrollbarOnly() {
+  ChatMinimap.enabled.value = false;
+  addTearDown(() => ChatMinimap.enabled.value = true);
+}

@@ -90,6 +90,15 @@ final class AppWindows: NSObject {
       started = enableMultiView()
       if !started && !main.isVisible { show(main) }
       result(started)
+    case "createStash":
+      result(createStash())
+    case "showStash":
+      stash?.alphaValue = 1
+      stash?.present()
+      result(nil)
+    case "hideStash":
+      stash?.dismiss()
+      result(nil)
     case "create":
       let arguments = call.arguments as? [String: Any] ?? [:]
       result(create(
@@ -268,15 +277,41 @@ final class AppWindows: NSObject {
   // MARK: The windows' events
 
   @objc private func becameKey(_ notification: Notification) {
-    guard started, let window = notification.object as? BaoWindow else { return }
+    guard started, let window = notification.object as? FlutterHostWindow else { return }
     tellEngine("windowDidBecomeKey:", window.viewId)
+    // The stash's panel is none of the app's windows (see StashPanel).
+    guard window is BaoWindow else { return }
     channel.invokeMethod("focused", arguments: window.viewId)
     Attention.shared?.refreshTray()
   }
 
   @objc private func resignedKey(_ notification: Notification) {
-    guard started, let window = notification.object as? BaoWindow else { return }
+    guard started, let window = notification.object as? FlutterHostWindow else { return }
     tellEngine("windowDidResignKey:", window.viewId)
+  }
+
+  // MARK: The stash's panel
+
+  /// The stash's panel, once made (see StashPanel).
+  private var stash: StashPanel?
+
+  /// Makes the stash's panel, hidden: its view's id. Made once.
+  private func createStash() -> Int64? {
+    guard started else { return nil }
+    if let stash { return stash.viewId }
+    let flutter = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    let panel = StashPanel(flutter: flutter)
+    stash = panel
+    // On screen once, unseen, for Flutter to draw it: shown later, it is
+    // there at once rather than empty for a frame.
+    panel.alphaValue = 0
+    panel.orderFrontRegardless()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak panel] in
+      guard let panel else { return }
+      if panel.alphaValue == 0 { panel.orderOut(nil) }
+      panel.alphaValue = 1
+    }
+    return flutter.viewIdentifier
   }
 
   @objc private func frameChanged(_ notification: Notification) {
