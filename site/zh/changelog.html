@@ -29,6 +29,25 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.1.2">
+    <h2 class="plain"><a href="#v1.1.2">1.1.2</a></h2>
+    <p>新功能</p>
+    <ul>
+    <li>ACP 智能体创建和恢复会话时可接入已配置的 MCP 工具，沿用用户和项目配置、同名优先级及禁用状态。</li>
+    <li>支持 stdio MCP；HTTP 和 SSE 按智能体声明的能力接入。不支持的传输或无效配置会在对话中显示警告。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>SSH 工作区从远程主机读取 MCP 配置、环境和启动命令，避免混用 Windows 客户端的本地路径。</li>
+    <li>重启 ACP 智能体会重新读取 MCP 配置，并防止旧启动流程覆盖新会话。</li>
+    </ul>
+    <p>修复</p>
+    <ul>
+    <li>修复 SSH 重连后对话的文件变更追踪失效：重新打开远程检查点存储，保留原始快照和待处理变更，继续支持撤销。</li>
+    <li>修复文件变更检查点在回合开始后才完成初始化时未启动扫描，导致部分命令修改文件后不显示变更的问题。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.1.1">
     <h2 class="plain"><a href="#v1.1.1">1.1.1</a></h2>
     <p>新功能</p>

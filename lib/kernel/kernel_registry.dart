@@ -4,6 +4,7 @@ import 'agent_kernel.dart';
 import 'acp/acp_agent.dart';
 import 'acp/acp_catalog.dart';
 import 'acp/acp_kernel.dart';
+import 'acp/acp_mcp.dart';
 import 'claude_code/claude_code_kernel.dart';
 import '../remote/remote_claude.dart';
 
@@ -44,6 +45,11 @@ abstract final class KernelRegistry {
         context,
         config.transport,
         catalog: catalog,
+        loadMcpServers: (context, capabilities) => loadAcpMcpServers(
+          context,
+          capabilities,
+          environment: config.environment,
+        ),
       ),
     );
     return descriptor;

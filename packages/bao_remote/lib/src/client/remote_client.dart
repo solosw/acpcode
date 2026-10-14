@@ -727,7 +727,10 @@ class RemoteClient {
 
   /// The review store of the project at [root] there; null where there is
   /// none (no Git there, or no such folder).
-  Future<ReviewStore?> openReview(String root) async {
+  Future<RemoteReviewStore?> openReview(
+    String root, {
+    Future<RemoteClient> Function(RemoteClient previous)? reconnect,
+  }) async {
     final opened = await peer.request(RemoteProtocol.reviewOpen, {
       'root': root,
     });
@@ -736,6 +739,18 @@ class RemoteClient {
       peer,
       opened['id'] as int,
       opened['root'] as String,
+      reopen: reconnect == null
+          ? null
+          : () async {
+              final client = await reconnect(this);
+              final store = await client.openReview(root, reconnect: reconnect);
+              if (store == null) {
+                throw const ReviewUnavailable(
+                  'The remote review is unavailable.',
+                );
+              }
+              return store;
+            },
     );
   }
 

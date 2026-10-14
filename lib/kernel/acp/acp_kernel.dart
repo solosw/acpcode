@@ -9,6 +9,7 @@ import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import 'acp_catalog.dart';
+import 'acp_mcp.dart';
 import 'acp_transport.dart';
 
 /// Adapts an ACP JSON-RPC agent over a message transport to [AgentKernel].
@@ -19,8 +20,9 @@ class AcpKernel
     this.descriptor,
     this._context,
     this._transportFactory, {
-    AcpCatalog? catalog,
-  }) : _catalog = catalog;
+    this._catalog,
+    this._loadMcpServers,
+  });
 
   @override
   final KernelDescriptor descriptor;
@@ -29,6 +31,8 @@ class AcpKernel
 
   /// Local session index for this agent; null in tests that omit it.
   final AcpCatalog? _catalog;
+  final AcpMcpLoader? _loadMcpServers;
+  AcpMcpServers _mcp = const AcpMcpServers();
   AcpTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
 
@@ -37,6 +41,7 @@ class AcpKernel
   String? _turnId;
   DateTime? _turnStarted;
   int _nextId = 0;
+  int _startGeneration = 0;
   int _turnCount = 0;
 
   /// Open agent text/thought stream (ACP/Zed merge target).
@@ -93,36 +98,62 @@ class AcpKernel
   }
 
   Future<void> _start() async {
+    final generation = ++_startGeneration;
+    bool obsolete() => _disposed || generation != _startGeneration;
     try {
       // Also keep a synchronous factory failure out of the mounting frame.
       final transport = await Future<AcpTransport>.sync(
         () => _transportFactory(_context),
       );
-      if (_disposed) {
+      if (obsolete()) {
         transport.close();
         return;
       }
       _transport = QueuedAcpTransport(transport);
       _subscription = _transport!.messages.listen(
         _receive,
-        onError: (Object error, StackTrace _) => _fail(error),
+        onError: (Object error, StackTrace _) {
+          if (!obsolete()) _fail(error);
+        },
         onDone: () {
-          if (!_disposed) _fail(StateError('ACP agent process exited'));
+          if (!obsolete()) _fail(StateError('ACP agent process exited'));
         },
       );
-      await _request('initialize', {
+      final initialized = await _request('initialize', {
         'protocolVersion': 1,
         'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
         'clientCapabilities': <String, Object?>{},
       });
-      if (_disposed) return;
-      _initialized = true;
+      if (obsolete()) return;
+      final capabilities =
+          _jsonMap(
+            _jsonMap(initialized['agentCapabilities'])?['mcpCapabilities'],
+          )?.cast<String, Object?>() ??
+          const <String, Object?>{};
+      final mcp =
+          await _loadMcpServers?.call(_context, capabilities) ??
+          const AcpMcpServers();
+      if (obsolete()) return;
+      if (_health.status == KernelHealthStatus.failed) return;
+      _mcp = mcp;
       await _ensureSession();
-      if (_disposed) return;
+      if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+      _initialized = true;
+      for (final (index, warning) in _mcp.warnings.indexed) {
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'acp_mcp_warning_$index',
+            NoticeItem(NoticeKind.warning, warning),
+          ),
+        );
+      }
+      if (obsolete()) return;
       _starting = false;
       _health = KernelHealth.ready;
       emitInfoChanged();
     } on Object catch (error) {
+      if (obsolete()) return;
       _starting = false;
       _fail(error);
     }
@@ -138,12 +169,12 @@ class AcpKernel
       await _request('session/load', {
         'sessionId': resume.id,
         'cwd': _agentCwd(_context.cwd ?? resume.cwd),
-        'mcpServers': const <Object?>[],
+        'mcpServers': _mcp.servers,
       });
     } else {
       final session = await _request('session/new', {
         'cwd': _agentCwd(_context.cwd),
-        'mcpServers': const <Object?>[],
+        'mcpServers': _mcp.servers,
       });
       _sessionId = session['sessionId'] as String?;
     }
@@ -971,12 +1002,17 @@ class AcpKernel
   @override
   void restart() {
     if (_disposed) return;
+    _startGeneration++;
+    for (final (index, _) in _mcp.warnings.indexed) {
+      emit(ItemRemoved(nextSeq, 'acp_mcp_warning_$index'));
+    }
     _transport?.close();
     _transport = null;
     _subscription?.cancel();
     _subscription = null;
     _sessionId = null;
     _initialized = false;
+    _mcp = const AcpMcpServers();
     _starting = false;
     _turnCount = 0;
     _cancelling = false;

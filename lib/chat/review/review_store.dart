@@ -1,6 +1,7 @@
 import 'package:bao_remote/review.dart';
 
 import '../../remote/remote_location.dart';
+import '../../remote/remote_services.dart' show remoteReviewStore;
 import '../../remote/ssh_host.dart';
 import 'review_store_stub.dart'
     if (dart.library.io) 'review_store_io.dart'
@@ -14,8 +15,10 @@ export 'package:bao_remote/review.dart';
 Future<ReviewStore?> openReviewStore(String root) async {
   if (RemoteLocation.hostOf(root) case final host?) {
     if (!reviewSupported) return null;
-    final client = await SshHosts.instance[host].ready;
-    return client.openReview(RemoteLocation.pathOf(root));
+    return remoteReviewStore(
+      SshHosts.instance[host],
+      RemoteLocation.pathOf(root),
+    );
   }
   return platform.openReviewStore(root);
 }

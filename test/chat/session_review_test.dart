@@ -247,6 +247,45 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
   });
 
+  testWidgets('a remote review opened during a turn starts periodic scans', (
+    tester,
+  ) async {
+    final opening = Completer<ChangeReview?>();
+    review = _Review('/srv/project');
+    final session = ChatSession(
+      kernel: MockKernels.claudeCode,
+      kernelContext: const KernelContext(cwd: 'ssh://dev/srv/project'),
+      historyCount: 0,
+      openReview: (root, {session}) => opening.future,
+    );
+    addTearDown(session.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
+        home: ChatScreen(session: session),
+      ),
+    );
+    await tester.pump();
+    session.send(const ComposerMessage(text: '改一下'));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(session.isStreaming, isTrue);
+
+    opening.complete(review);
+    await tester.pump();
+    expect(review.calls, contains('begin'));
+    final before = review.calls.where((call) => call == 'observe').length;
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      review.calls.where((call) => call == 'observe').length,
+      greaterThan(before),
+    );
+    await finish(tester, session);
+    final after = review.calls.where((call) => call == 'observe').length;
+    await tester.pump(const Duration(seconds: 4));
+    expect(review.calls.where((call) => call == 'observe').length, after);
+  });
+
   testWidgets('while a turn runs, the project is scanned every few seconds', (
     tester,
   ) async {

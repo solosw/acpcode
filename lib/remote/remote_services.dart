@@ -90,6 +90,34 @@ void _awaitClient(
   check();
 }
 
+/// The review checkpoints on [host], reopened after SSH reconnects. The
+/// same store object stays with the conversation, retaining its pending
+/// changes and original blobs, with the host's POSIX paths on Windows too.
+Future<RemoteReviewStore?> remoteReviewStore(SshHost host, String root) async =>
+    (await host.ready).openReview(
+      root,
+      reconnect: (previous) {
+        final ready = Completer<RemoteClient>();
+        void check() {
+          final client = host.client;
+          if (client != null &&
+              !identical(client, previous) &&
+              !client.peer.isClosed) {
+            host.removeListener(check);
+            ready.complete(client);
+          } else if (host.state == SshHostState.failed ||
+              host.state == SshHostState.idle) {
+            host.removeListener(check);
+            ready.completeError(host.error ?? const RpcClosed());
+          }
+        }
+
+        host.addListener(check);
+        check();
+        return ready.future;
+      },
+    );
+
 /// The files of the project at [root] on [host].
 class RemoteIdeFileService implements IdeHostFiles, IdeRangeFiles {
   RemoteIdeFileService(this.host, this.root);

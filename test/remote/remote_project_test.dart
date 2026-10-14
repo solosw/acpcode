@@ -11,6 +11,7 @@ import 'package:bao_remote/files.dart' show IdeFileExistsException;
 import 'package:bao_remote/local.dart' show ClaudeEnvironment, CliLocator;
 import 'package:bao_remote/server.dart' show ServerClaude;
 import 'package:baocode/chat/panels/health_banner.dart';
+import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/ide/git/git_model.dart' show IdeGitGroup;
 import 'package:baocode/ide/ide_quick_input.dart';
 import 'package:baocode/ide/lsp/lsp_manager.dart';
@@ -415,6 +416,90 @@ void main() {
       final docs = (await state())['docs']! as Map;
       expect(docs[Uri.file(path).toString()], 'hello again');
     }, timeout: const Timeout(Duration(minutes: 2)));
+  });
+
+  group('review', () {
+    test(
+      'keeps tracking and undoing edits after the SSH connection is lost',
+      () async {
+        final path = p.join(root, 'a.txt');
+        File(path).writeAsStringSync('before\n');
+        final host = hosts['dev'];
+        // The review id must be refreshed too, not just the RPC peer.
+        await (await host.ready).openReview(root);
+        final store = (await remoteReviewStore(host, root))!;
+        final review = ChangeReview(store);
+        addTearDown(review.dispose);
+        review.session = 'reconnect-review';
+        await review.begin();
+
+        File(path).writeAsStringSync('first edit\n');
+        await review.observe();
+        expect(review.failure, isNull);
+        expect(review.changes.single.path, path);
+        expect(await review.original(path)!(), 'before\n');
+
+        final reconnected = host.reconnected.first;
+        await connector.links.last.drop();
+        await reconnected;
+        File(path).writeAsStringSync('second edit\n');
+        await review.observe();
+
+        expect(review.failure, isNull);
+        expect(review.changes.single.path, path);
+        expect(await review.original(path)!(), 'before\n');
+        // Its reopener must follow the replacement client, not remember
+        // the first client forever. Concurrent reads share one reopening.
+        final nextConnection = host.reconnected.first;
+        await connector.links.last.drop();
+        await nextConnection;
+        final reads = await Future.wait([
+          store.exists('a.txt'),
+          store.current('a.txt'),
+          review.original(path)!(),
+        ]);
+        expect(reads[0], isTrue);
+        expect(reads[1], isNotNull);
+        expect(reads[2], 'before\n');
+
+        await review.undoAll();
+        expect(File(path).readAsStringSync(), 'before\n');
+        expect(review.changes, isEmpty);
+      },
+    );
+
+    test('retries a snapshot interrupted by SSH reconnecting', () async {
+      final path = p.join(root, 'a.txt');
+      File(path).writeAsStringSync('before\n');
+      final host = hosts['dev'];
+      final store = (await remoteReviewStore(host, root))!;
+      final review = ChangeReview(store);
+      addTearDown(review.dispose);
+      await review.begin();
+      File(path).writeAsStringSync('after\n');
+
+      final entered = Completer<void>();
+      final peer = connector.links.last.server.peer;
+      final callReview = peer.handlers[RemoteProtocol.reviewCall]!;
+      peer.handlers[RemoteProtocol.reviewCall] = (params, call) async {
+        if ((params as Map)['method'] == 'snapshot') {
+          entered.complete();
+          await call.cancelled;
+          return null;
+        }
+        return callReview(params, call);
+      };
+      final observing = review.observe();
+      await entered.future;
+      await connector.links.last.drop();
+      await observing;
+
+      expect(review.failure, isNull);
+      expect(review.changes.single.path, path);
+      expect(await review.original(path)!(), 'before\n');
+      await review.undoAll();
+      expect(File(path).readAsStringSync(), 'before\n');
+    });
   });
 
   group('Claude Code', () {

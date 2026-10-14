@@ -208,6 +208,9 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
             ..working = isStreaming
             ..addListener(_reviewChanged);
           unawaited(review.begin());
+          // SSH may finish opening the review after TurnStarted. ACP
+          // agents editing through a shell still need periodic snapshots.
+          if (isStreaming) _startScanning(review);
           notifyListeners();
           return review;
         }, onError: (Object _) => null);
@@ -217,6 +220,17 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     if (!_disposed) notifyListeners();
   }
 
+  void _startScanning(ChangeReviews review) {
+    _scanTimer ??= Timer.periodic(_scanInterval, (_) {
+      if (_disposed || !isStreaming) {
+        _scanTimer?.cancel();
+        _scanTimer = null;
+        return;
+      }
+      unawaited(review.observe());
+    });
+  }
+
   void _reviewEvent(KernelEvent event) {
     final review = _review;
     if (review == null) return;
@@ -224,14 +238,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     switch (event) {
       case TurnStarted():
         review.working = true;
-        _scanTimer ??= Timer.periodic(_scanInterval, (_) {
-          if (_disposed || !isStreaming) {
-            _scanTimer?.cancel();
-            _scanTimer = null;
-            return;
-          }
-          unawaited(review.observe());
-        });
+        _startScanning(review);
       case TurnEnded():
         review.working = isStreaming;
         _lookTimer?.cancel();

@@ -7,10 +7,12 @@ import '../rpc/rpc_peer.dart';
 /// [ReviewStore] of a project on the remote host: its repository there
 /// (in the server's `checkpoints/`), every call a request.
 class RemoteReviewStore implements ReviewStore {
-  RemoteReviewStore(this._peer, this._id, this.root);
+  RemoteReviewStore(this._peer, this._id, this.root, {this._reopen});
 
-  final RpcPeer _peer;
-  final int _id;
+  RpcPeer _peer;
+  int _id;
+  Future<RemoteReviewStore> Function()? _reopen;
+  Future<void>? _reopening;
 
   @override
   final String root;
@@ -18,11 +20,41 @@ class RemoteReviewStore implements ReviewStore {
   Future<Object?> _call(
     String method, [
     Map<String, Object?> args = const {},
-  ]) => _peer.request(RemoteProtocol.reviewCall, {
-    'id': _id,
-    'method': method,
-    'args': args,
-  });
+  ]) async {
+    while (true) {
+      await _reopening;
+      final peer = _peer;
+      try {
+        return await peer.request(RemoteProtocol.reviewCall, {
+          'id': _id,
+          'method': method,
+          'args': args,
+        });
+      } on RpcClosed {
+        final reopen = _reopen;
+        if (reopen == null) rethrow;
+        // Another call may already have replaced the closed connection.
+        if (!identical(peer, _peer)) continue;
+        await (_reopening ??= _replace(reopen));
+      }
+    }
+  }
+
+  /// A store id belongs to one server connection. Reopen the repository,
+  /// not the review: its trees and pending changes must keep their bases.
+  Future<void> _replace(Future<RemoteReviewStore> Function() reopen) async {
+    try {
+      final store = await reopen();
+      if (store.root != root) {
+        throw const ReviewUnavailable('The remote review root changed.');
+      }
+      _peer = store._peer;
+      _id = store._id;
+      _reopen = store._reopen;
+    } finally {
+      _reopening = null;
+    }
+  }
 
   static ReviewBlob? _blob(Object? json) => ReviewBlob.fromJson(json);
 

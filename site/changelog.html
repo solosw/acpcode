@@ -29,6 +29,25 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.1.2">
+    <h2 class="plain"><a href="#v1.1.2">1.1.2</a></h2>
+    <p>New</p>
+    <ul>
+    <li>ACP agents receive configured MCP tools when creating or restoring sessions, respecting user and project scopes, configuration precedence, and disabled servers.</li>
+    <li>Support for stdio MCP, with HTTP and SSE enabled according to agent capabilities. Unsupported transports and invalid configurations show warnings in the conversation.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>SSH workspaces read MCP configuration, environment, and executable paths on the remote host, without mixing in Windows client paths.</li>
+    <li>Restarting an ACP agent reloads MCP configuration and prevents stale startup work from replacing the new session's configuration.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Conversation file-change tracking after SSH reconnects: reopen the remote checkpoint store while preserving original snapshots, pending changes, and undo support.</li>
+    <li>File-change scanning now starts when checkpoint initialization finishes during an active turn, so command-based edits can still appear in the conversation.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.1.1">
     <h2 class="plain"><a href="#v1.1.1">1.1.1</a></h2>
     <p>New</p>
