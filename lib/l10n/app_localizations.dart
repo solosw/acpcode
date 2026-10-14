@@ -3236,6 +3236,18 @@ abstract class AppLocalizations {
   /// **'“{title}” and its conversation will be removed.'**
   String sidebarDeleteAgentMessage(String title);
 
+  /// No description provided for @sidebarDeleteAgentsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete agents?'**
+  String get sidebarDeleteAgentsTitle;
+
+  /// No description provided for @sidebarDeleteAgentsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{The agent and its conversation will be deleted} other{The {count} agents and their conversations will be deleted}}, from their kernels too. This cannot be undone.'**
+  String sidebarDeleteAgentsMessage(int count);
+
   /// No description provided for @sidebarDeleteAgentMessageKernel.
   ///
   /// In en, this message translates to:
@@ -10641,6 +10653,18 @@ abstract class AppLocalizations {
   /// **'Sends each conversation\'s own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.'**
   String get modelsPromptCacheKeyDescription;
 
+  /// No description provided for @modelsFastMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Fast Mode'**
+  String get modelsFastMode;
+
+  /// No description provided for @modelsFastModeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests the Fast service tier by default (service_tier: priority). Only works with supported models and upstreams; pricing may differ. An explicit request tier or speed takes precedence.'**
+  String get modelsFastModeDescription;
+
   /// No description provided for @modelsCodexVersion.
   ///
   /// In en, this message translates to:
@@ -14108,12 +14132,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Link'**
   String get stashLinkIt;
-
-  /// No description provided for @stashSourceBanner.
-  ///
-  /// In en, this message translates to:
-  /// **'Source: Stash {stash} · {title}'**
-  String stashSourceBanner(String stash, String title);
 
   /// No description provided for @stashSettingsDescription.
   ///

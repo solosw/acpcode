@@ -74,6 +74,22 @@ void main() {
       );
     });
 
+    test('Fast mode defaults off and survives settings round trips', () {
+      const provider = ModelProvider(id: 'p', name: 'P');
+      expect(provider.fastMode, isFalse);
+      expect(provider.toJson(), isNot(contains('fastMode')));
+      expect(ModelProvider.fromJson({'id': 'p'})!.fastMode, isFalse);
+      expect(
+        ModelProvider.fromJson({'id': 'p', 'fastMode': 'true'})!.fastMode,
+        isFalse,
+      );
+
+      final fast = provider.copyWith(fastMode: true);
+      expect(fast.toJson()['fastMode'], isTrue);
+      expect(ModelProvider.fromJson(fast.toJson())!.fastMode, isTrue);
+      expect(fast.copyWith(fastMode: false).fastMode, isFalse);
+    });
+
     test('a Codex version that is not one is read as none', () {
       ModelProvider read(Object? version) =>
           ModelProvider.fromJson({'id': 'p', 'clientVersion': version})!;

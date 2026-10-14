@@ -1344,6 +1344,15 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           onChanged: (value) =>
               unawaited(_save(_providerNow.copyWith(promptCacheKey: value))),
         ),
+      if (provider.protocol == ProviderProtocol.openaiResponses ||
+          provider.protocol == ProviderProtocol.codex)
+        SettingsSwitchRow(
+          label: l10n.modelsFastMode,
+          description: l10n.modelsFastModeDescription,
+          value: provider.fastMode,
+          onChanged: (value) =>
+              unawaited(_save(_providerNow.copyWith(fastMode: value))),
+        ),
       if (provider.protocol == ProviderProtocol.codex)
         SettingsRow(
           label: l10n.modelsCodexVersion,

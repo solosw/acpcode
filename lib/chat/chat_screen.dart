@@ -10,7 +10,6 @@ import '../l10n/l10n.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
-import '../stash/stash_banner.dart';
 import '../stash/stash_store.dart';
 import '../theme/app_theme.dart';
 import '../workspace/title_bar_double_click.dart';
@@ -694,12 +693,7 @@ class _ChatScreenState extends State<ChatScreen>
                         onSetGoal: _setGoal,
                         onFindClosed: () => _composerKey.currentState?.focus(),
                       ),
-                      // The stash it carries out, if any (docs/stash.md).
-                      ListenableBuilder(
-                        listenable: _session,
-                        builder: (context, _) =>
-                            StashSourceBanner(session: _session.sessionId),
-                      ),
+                      // The start hint, before the first message.
                       ListenableBuilder(
                         listenable: _session,
                         builder: (context, _) => switch (widget.startHint) {

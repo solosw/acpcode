@@ -9,9 +9,12 @@ import 'package:baocode/stash/stash_host.dart';
 import 'package:baocode/stash/stash_note.dart';
 import 'package:baocode/stash/stash_note_editor.dart';
 import 'package:baocode/stash/stash_store.dart';
+import 'package:baocode/sidebar/sidebar.dart' show SidebarIconButton;
 import 'package:baocode/stash/stash_view.dart';
+import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/workspace/workspace.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart'
@@ -231,4 +234,42 @@ void main() {
     expect(StashNoteEditorState.showing(note.id)?.markdown, 'see the sidebar');
     await unmount(tester);
   });
+
+  testWidgets('with the sidebar hidden on macOS, the toggle is clear of the '
+      'traffic lights, before the title', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    tester.view.physicalSize = const Size(1000, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          FlutterQuillLocalizations.delegate,
+        ],
+        home: Material(
+          child: StashView(
+            controller: controller,
+            onClose: () {},
+            onOpenAgent: (_) {},
+            leading: const SidebarIconButton(
+              icon: Codicons.layoutSidebarLeftOff,
+              tooltip: 'Show sidebar',
+              onTap: _noop,
+            ),
+            titleBarInset: AppMetrics.trafficLightsWidth + 8,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final toggle = tester.getRect(find.byIcon(Codicons.layoutSidebarLeftOff));
+    final title = tester.getRect(find.text(englishLocalizations.stashTitle));
+    expect(toggle.left, greaterThanOrEqualTo(AppMetrics.trafficLightsWidth));
+    expect(toggle.right, lessThanOrEqualTo(title.left));
+    await unmount(tester);
+    debugDefaultTargetPlatformOverride = null;
+  });
 }
+
+void _noop() {}

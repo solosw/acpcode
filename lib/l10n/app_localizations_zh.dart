@@ -1623,6 +1623,14 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get sidebarDeleteAgentsTitle => '删除智能体？';
+
+  @override
+  String sidebarDeleteAgentsMessage(int count) {
+    return '$count 个智能体及其对话将被删除，内核中的记录也会一并删除。此操作无法撤销。';
+  }
+
+  @override
   String sidebarDeleteAgentMessageKernel(String title, String kernel) {
     return '“$title”及其对话将被删除，$kernel 中的记录也会一并删除。此操作无法撤销。';
   }
@@ -6046,6 +6054,13 @@ class AppLocalizationsZh extends AppLocalizations {
       '为每个对话发送独立的 prompt_cache_key，让上游（或背后有多个后端的中转站）把同一对话的请求路由到已缓存的位置。上游不接受该字段时请关闭。';
 
   @override
+  String get modelsFastMode => 'Fast 模式';
+
+  @override
+  String get modelsFastModeDescription =>
+      '默认请求 Fast 服务等级（service_tier: priority）。仅支持该等级的模型与上游生效，价格可能不同；单次请求指定的等级或速度优先。';
+
+  @override
   String get modelsCodexVersion => 'Codex 版本';
 
   @override
@@ -8076,11 +8091,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashLinkIt => '关联';
-
-  @override
-  String stashSourceBanner(String stash, String title) {
-    return '来源：Stash $stash · $title';
-  }
 
   @override
   String get stashSettingsDescription =>

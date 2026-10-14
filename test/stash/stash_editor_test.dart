@@ -82,6 +82,73 @@ void main() {
     },
   );
 
+  testWidgets(
+    'the bar\'s model menu, open, keeps the bar where it stands',
+    (tester) async {
+      // None picked: the polish opens the menu that picks one.
+      final previous = ModelProviders.current;
+      addTearDown(() => ModelProviders.current = previous);
+      ModelProviders.current = ModelProviders.memory();
+      final document = Document()..insert(0, '321321\n321\n3123');
+      final controller = StashEditor.controllerFor(document);
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            FlutterQuillLocalizations.delegate,
+          ],
+          home: Scaffold(
+            body: StashEditor(
+              controller: controller,
+              store: StashStore(MemoryStashDisk()),
+              ensureNote: () async => 1,
+              focusNode: focus,
+              autofocus: true,
+              onPolish: (text) async => 'POLISHED',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      focus.requestFocus();
+      controller.updateSelection(
+        TextSelection(baseOffset: 0, extentOffset: document.length - 1),
+        ChangeSource.local,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Polish'), findsOneWidget);
+
+      // Polish, clicked with the mouse: no model picked yet, so the menu
+      // that picks one opens. It takes the keyboard; the bar stays over
+      // the selection all the same.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      await mouse.moveTo(tester.getCenter(find.text('Polish')));
+      await tester.pump(const Duration(milliseconds: 700));
+      await mouse.down(tester.getCenter(find.text('Polish')));
+      await tester.pump();
+      await mouse.up();
+      await tester.pumpAndSettle();
+      expect(find.text(englishLocalizations.aiModelFirst), findsOneWidget);
+      expect(find.text('Polish'), findsOneWidget);
+
+      // Picked from it: the polish goes on with the text selected, the bar
+      // still there.
+      await tester.tap(find.text(englishLocalizations.aiModelAuxiliary));
+      await tester.pumpAndSettle();
+      expect(
+        ModelProviders.current.actionsModel,
+        ModelProviders.followAuxiliary,
+      );
+      expect(document.toPlainText(), 'POLISHED\n');
+      expect(find.text('Polish'), findsOneWidget);
+      await mouse.removePointer();
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+    },
+  );
+
   testWidgets('text selected by a drag, the editor not focused before, is '
       'deleted by Backspace', (tester) async {
     final document = Document()..insert(0, 'hello world');

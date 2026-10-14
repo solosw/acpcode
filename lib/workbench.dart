@@ -485,7 +485,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     widget.window?.attach(this);
     _windows?.addListener(_windowsChanged);
     if (_main) {
-      // A conversation's "Source: Stash #12" shows it here.
+      // A link to a stash (#12 references) shows it here.
       StashController.current?.showPage = _showStash;
       // A stash's file opens as the Stash page shows it.
       if (StashController.current case final stash?) {

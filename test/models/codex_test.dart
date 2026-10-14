@@ -794,7 +794,7 @@ void main() {
 
       tearDown(() => proxy.close());
 
-      Future<({int status, String text})> ask() async {
+      Future<({int status, String text})> ask({String? serviceTier}) async {
         final endpoint = await proxy.endpoint('cx');
         final client = HttpClient();
         try {
@@ -808,6 +808,7 @@ void main() {
             jsonEncode({
               'model': 'gpt-5(high)',
               'stream': true,
+              'service_tier': ?serviceTier,
               'max_tokens': 1000,
               'system': 'Be brief.',
               'messages': [
@@ -852,9 +853,32 @@ void main() {
         expect(body['store'], isFalse);
         expect(body['stream'], isTrue);
         expect(body['include'], ['reasoning.encrypted_content']);
+        expect(body.containsKey('service_tier'), isFalse);
         expect(body.containsKey('max_output_tokens'), isFalse);
         expect(accounts.usage('cx', 'a')!.primary!.usedPercent, 12);
         expect(errors.last, isNull);
+      });
+
+      test('provider Fast reaches Codex unless the request opts out', () async {
+        await providers.save(provider().copyWith(fastMode: true));
+        openai.reply = (path, _, _) => switch (path) {
+          '/oauth/token' => tokens('access-a'),
+          _ => (200, const {'content-type': 'text/event-stream'}, _stream),
+        };
+
+        expect((await ask()).status, 200);
+        expect(
+          (jsonDecode(openai.to('/backend-api/codex/responses').last.body)
+              as Map)['service_tier'],
+          'priority',
+        );
+
+        expect((await ask(serviceTier: 'auto')).status, 200);
+        expect(
+          jsonDecode(openai.to('/backend-api/codex/responses').last.body)
+              as Map,
+          isNot(contains('service_tier')),
+        );
       });
 
       test(

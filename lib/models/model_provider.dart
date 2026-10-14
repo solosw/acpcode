@@ -466,6 +466,7 @@ class ModelProvider {
     this.disableNonessentialTraffic = false,
     this.preserveThinking = false,
     this.promptCacheKey = true,
+    this.fastMode = false,
     this.env = const {},
     this.accounts = const [],
     this.balance = AccountBalance.roundRobin,
@@ -498,6 +499,9 @@ class ModelProvider {
   /// that an upstream (or a relay before several) sends its requests where
   /// the earlier ones are cached. Off for one that refuses the field.
   final bool promptCacheKey;
+
+  /// Responses and Codex: request the Fast service tier by default.
+  final bool fastMode;
 
   /// More environment for Claude Code, after what is set from the above.
   final Map<String, String> env;
@@ -561,6 +565,7 @@ class ModelProvider {
     bool? disableNonessentialTraffic,
     bool? preserveThinking,
     bool? promptCacheKey,
+    bool? fastMode,
     Map<String, String>? env,
     List<ProviderAccount>? accounts,
     AccountBalance? balance,
@@ -579,6 +584,7 @@ class ModelProvider {
         disableNonessentialTraffic ?? this.disableNonessentialTraffic,
     preserveThinking: preserveThinking ?? this.preserveThinking,
     promptCacheKey: promptCacheKey ?? this.promptCacheKey,
+    fastMode: fastMode ?? this.fastMode,
     env: env ?? this.env,
     accounts: accounts ?? this.accounts,
     balance: balance ?? this.balance,
@@ -618,6 +624,7 @@ class ModelProvider {
     if (disableNonessentialTraffic) 'disableNonessentialTraffic': true,
     if (preserveThinking) 'preserveThinking': true,
     if (!promptCacheKey) 'promptCacheKey': false,
+    if (fastMode) 'fastMode': true,
     if (env.isNotEmpty) 'env': env,
     if (accounts.isNotEmpty)
       'accounts': [for (final account in accounts) account.toJson()],
@@ -648,6 +655,7 @@ class ModelProvider {
       disableNonessentialTraffic: json['disableNonessentialTraffic'] == true,
       preserveThinking: json['preserveThinking'] == true,
       promptCacheKey: json['promptCacheKey'] != false,
+      fastMode: json['fastMode'] == true,
       env: {
         if (json['env'] case final Map env)
           for (final MapEntry(:key, :value) in env.entries)

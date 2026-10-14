@@ -875,6 +875,15 @@
       }
     }
   },
+  "sidebarDeleteAgentsTitle": "Delete agents?",
+  "sidebarDeleteAgentsMessage": "{count, plural, =1{The agent and its conversation will be deleted} other{The {count} agents and their conversations will be deleted}}, from their kernels too. This cannot be undone.",
+  "@sidebarDeleteAgentsMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "sidebarDeleteAgentMessageKernel": "“{title}” and its conversation will be deleted, from {kernel} too. This cannot be undone.",
   "@sidebarDeleteAgentMessageKernel": {
     "placeholders": {
@@ -4571,6 +4580,8 @@
   "modelsPreserveThinkingDescription": "Replays the model's reasoning (reasoning_content) in later requests, as DeepSeek and others want.",
   "modelsPromptCacheKey": "Prompt Cache Key",
   "modelsPromptCacheKeyDescription": "Sends each conversation's own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.",
+  "modelsFastMode": "Fast Mode",
+  "modelsFastModeDescription": "Requests the Fast service tier by default (service_tier: priority). Only works with supported models and upstreams; pricing may differ. An explicit request tier or speed takes precedence.",
   "modelsCodexVersion": "Codex Version",
   "modelsCodexVersionDescription": "The Codex CLI version requests are made as. The backend only lists models that version supports, so if new models are missing, enter a newer version and refresh the model list. Leave empty to use the app's default.",
   "modelsEnv": "Extra Environment",
@@ -6148,17 +6159,6 @@
     }
   },
   "stashLinkIt": "Link",
-  "stashSourceBanner": "Source: Stash {stash} · {title}",
-  "@stashSourceBanner": {
-    "placeholders": {
-      "stash": {
-        "type": "String"
-      },
-      "title": {
-        "type": "String"
-      }
-    }
-  },
   "stashSettingsDescription": "A note jotted down from any app, in a floating panel, to turn into work later.",
   "stashSettingsHotkey": "Shortcut",
   "stashSettingsHotkeyCurrent": "{hotkey} shows the panel from any app.",

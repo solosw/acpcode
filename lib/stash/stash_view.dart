@@ -67,8 +67,12 @@ class StashView extends StatefulWidget {
   /// Shows [thread] (a stash carried out in it, or about to be).
   final ValueChanged<AgentThread> onOpenAgent;
 
-  /// Before the title, by the traffic lights: the sidebar's toggle.
+  /// The title bar's first widget, right of [titleBarInset]: the
+  /// sidebar's toggle.
   final Widget? leading;
+
+  /// From the window's left edge to the title bar's first widget: clear of
+  /// the native traffic lights on macOS, which the leading sits after.
   final double titleBarInset;
 
   /// The stash shown first.
@@ -446,9 +450,8 @@ class StashViewState extends State<StashView> with _StashActions {
         height: AppMetrics.titleBarHeight,
         child: Row(
           children: [
-            SizedBox(width: widget.leading == null ? widget.titleBarInset : 0),
+            SizedBox(width: widget.titleBarInset),
             if (widget.leading case final leading?) ...[
-              SizedBox(width: widget.titleBarInset - 34),
               leading,
               const SizedBox(width: 10),
             ],

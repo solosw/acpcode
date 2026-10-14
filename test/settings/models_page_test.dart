@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:baocode/icons/brand_logos.dart';
 import 'package:baocode/icons/project_icon.dart';
 import 'package:baocode/ide/ide_hover.dart';
+import 'package:baocode/ide/ide_back_button.dart';
 import 'package:baocode/kernel/claude_code/claude_haiku.dart';
 import 'package:baocode/models/codex/codex_service.dart';
 import 'package:baocode/models/codex/codex_usage.dart';
@@ -482,6 +483,59 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
     expect(cancelled, isTrue);
+  });
+
+  testWidgets('Fast mode is configurable for Responses and Codex only', (
+    tester,
+  ) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'gw',
+        name: 'Gateway',
+        protocol: ProviderProtocol.openaiResponses,
+      ),
+    );
+    await providers.save(
+      const ModelProvider(
+        id: 'cx',
+        name: 'ChatGPT',
+        protocol: ProviderProtocol.codex,
+      ),
+    );
+    await providers.save(
+      const ModelProvider(
+        id: 'chat',
+        name: 'Chat Gateway',
+        protocol: ProviderProtocol.openaiChat,
+      ),
+    );
+    await pump(tester);
+
+    for (final (name, id) in [('Gateway', 'gw'), ('ChatGPT', 'cx')]) {
+      await tester.tap(find.text(name).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      final fast = find.bySemanticsLabel('Fast Mode');
+      expect(fast, findsOneWidget);
+      expect(providers.provider(id)!.fastMode, isFalse);
+      await tester.drag(find.byType(ListView).last, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(fast);
+      await tester.pumpAndSettle();
+      expect(providers.provider(id)!.fastMode, isTrue);
+      expect(providers.provider(id)!.toJson()['fastMode'], isTrue);
+      await tester.drag(find.byType(ListView).last, const Offset(0, 800));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(IdeBackButton).last);
+      await tester.pumpAndSettle();
+    }
+
+    await tester.tap(find.text('Chat Gateway').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Advanced'));
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel('Fast Mode'), findsNothing);
   });
 
   testWidgets('deleting an upstream asks first, and takes its key', (

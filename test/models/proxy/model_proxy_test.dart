@@ -446,6 +446,76 @@ void main() {
     expect(answer.data.last['type'], 'message_stop');
   });
 
+  group('Fast mode', () {
+    for (final fast in [false, true]) {
+      test('Responses uses the provider default ($fast)', () async {
+        provider = provider.copyWith(
+          protocol: ProviderProtocol.openaiResponses,
+          fastMode: fast,
+        );
+        upstream.reply = (_) => (200, const []);
+        await post(
+          await messages(),
+          {
+            'model': 'gpt-5',
+            'stream': true,
+            'messages': [
+              {'role': 'user', 'content': 'hi'},
+            ],
+          },
+          headers: {'authorization': 'Bearer tok'},
+        );
+        final sent = upstream.requests.single.body! as Map;
+        expect(sent['service_tier'], fast ? 'priority' : isNull);
+      });
+    }
+
+    for (final explicit in <Map<String, Object?>>[
+      {'speed': 'fast'},
+      {'service_tier': 'fast'},
+      {'service_tier': 'priority'},
+      {'speed': 'standard'},
+      {'service_tier': 'auto'},
+      {'service_tier': 'default'},
+    ]) {
+      for (final fast in [false, true]) {
+        test('Responses respects $explicit with provider Fast $fast', () async {
+          provider = provider.copyWith(
+            protocol: ProviderProtocol.openaiResponses,
+            fastMode: fast,
+          );
+          upstream.reply = (_) => (200, const []);
+          await post(
+            await messages(),
+            {'model': 'gpt-5', 'stream': true, 'messages': [], ...explicit},
+            headers: {'authorization': 'Bearer tok'},
+          );
+          final sent = upstream.requests.single.body! as Map;
+          expect(
+            sent['service_tier'],
+            explicit.values.any((v) => v == 'fast' || v == 'priority')
+                ? 'priority'
+                : isNull,
+          );
+        });
+      }
+    }
+
+    test('Chat Completions ignores the provider Fast setting', () async {
+      provider = provider.copyWith(fastMode: true);
+      upstream.reply = (_) => (200, const []);
+      await post(
+        await messages(),
+        {'model': 'gpt-5', 'stream': true, 'messages': []},
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(
+        upstream.requests.single.body! as Map,
+        isNot(contains('service_tier')),
+      );
+    });
+  });
+
   group('prompt_cache_key', () {
     const session = '3f1c2a9e-0d4b-4c6e-9a7f-1b2c3d4e5f60';
     Map<String, Object?> request(String userId) => {

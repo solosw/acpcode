@@ -6,7 +6,6 @@
 import 'dart:async';
 import 'dart:collection' show UnmodifiableSetView;
 import 'dart:io' show Platform;
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb, listEquals, setEquals;
 import 'package:flutter/material.dart';
@@ -187,22 +186,20 @@ class IdeExplorerController extends ChangeNotifier {
   final Set<String> _expanded = {};
   final Map<String, Future<void>> _loads = {};
   List<IdeExplorerRow>? _rows;
-  String? _selected;
-  final Set<String> _selection = {};
-  String? _anchor;
+  final IdeListSelection<String> _listSelection = IdeListSelection<String>();
   int _revealRequest = 0;
   bool _disposed = false;
 
   /// The focused row's path, if any (upstream's focus, as distinct from the
   /// selection): the one the keys move from, and which is acted on alone
   /// when it is not in the [selection].
-  String? get selected => _selected;
+  String? get selected => _listSelection.focused;
 
   /// The selected rows' paths: the focused one's alone, unless a modifier
   /// click or Shift with the arrows selected more.
-  Set<String> get selection => UnmodifiableSetView(_selection);
+  Set<String> get selection => UnmodifiableSetView(_listSelection.values);
 
-  bool isSelected(String path) => _selection.contains(path);
+  bool isSelected(String path) => _listSelection.values.contains(path);
 
   /// Increments whenever the selection should be scrolled into view.
   int get revealRequest => _revealRequest;
@@ -334,7 +331,9 @@ class IdeExplorerController extends ChangeNotifier {
 
   void collapse(String directory) {
     if (!_expanded.remove(directory)) return;
-    _selection.removeWhere((path) => paths.isWithin(directory, path));
+    _listSelection.values.removeWhere(
+      (path) => paths.isWithin(directory, path),
+    );
     _changed();
   }
 
@@ -348,21 +347,22 @@ class IdeExplorerController extends ChangeNotifier {
     _expanded.clear();
     _rows = null;
     final shown = {for (final row in rows) row.path};
-    if (_selected case final selected? when !shown.contains(selected)) {
-      _selected = null;
+    if (_listSelection.focused case final selected?
+        when !shown.contains(selected)) {
+      _listSelection.focused = null;
     }
-    _selection.retainWhere(shown.contains);
+    _listSelection.values.retainWhere(shown.contains);
     _changed();
   }
 
   /// Focuses and selects [path] alone (none for null), as a click does.
   void select(String? path, {bool reveal = false}) {
-    if (!reveal && _selected == path && setEquals(_selection, {?path})) return;
-    _selected = path;
-    _anchor = path;
-    _selection
-      ..clear()
-      ..addAll([?path]);
+    if (!reveal &&
+        _listSelection.focused == path &&
+        setEquals(_listSelection.values, {?path})) {
+      return;
+    }
+    _listSelection.select(path);
     if (reveal) _revealRequest++;
     _changed();
   }
@@ -370,9 +370,7 @@ class IdeExplorerController extends ChangeNotifier {
   /// Adds [path] to the selection, or takes it out, and focuses it, as a
   /// Cmd (Ctrl) click does.
   void toggleSelection(String path) {
-    _selected = path;
-    _anchor = path;
-    if (!_selection.remove(path)) _selection.add(path);
+    _listSelection.toggle(path);
     _changed();
   }
 
@@ -383,17 +381,8 @@ class IdeExplorerController extends ChangeNotifier {
       for (final row in rows)
         if (row.message == null) row.path,
     ];
-    final to = paths.indexOf(path);
-    if (to < 0) return;
-    var from = _anchor == null ? -1 : paths.indexOf(_anchor!);
-    if (from < 0) {
-      from = to;
-      _anchor = path;
-    }
-    _selected = path;
-    _selection
-      ..clear()
-      ..addAll(paths.sublist(math.min(from, to), math.max(from, to) + 1));
+    if (!paths.contains(path)) return;
+    _listSelection.range(path, paths);
     if (reveal) _revealRequest++;
     _changed();
   }
@@ -405,11 +394,7 @@ class IdeExplorerController extends ChangeNotifier {
         if (row.message == null) row.path,
     ];
     if (paths.isEmpty) return;
-    _selected ??= paths.first;
-    _anchor ??= _selected;
-    _selection
-      ..clear()
-      ..addAll(paths);
+    _listSelection.selectAll(paths);
     _changed();
   }
 
@@ -453,9 +438,13 @@ class IdeExplorerController extends ChangeNotifier {
     bool under(String other) => other == path || paths.isWithin(path, other);
     _expanded.removeWhere(under);
     _children.removeWhere((directory, _) => under(directory));
-    if (_selected case final selected? when under(selected)) _selected = null;
-    if (_anchor case final anchor? when under(anchor)) _anchor = null;
-    _selection.removeWhere(under);
+    if (_listSelection.focused case final selected? when under(selected)) {
+      _listSelection.focused = null;
+    }
+    if (_listSelection.anchor case final anchor? when under(anchor)) {
+      _listSelection.anchor = null;
+    }
+    _listSelection.values.removeWhere(under);
     _changed();
   }
 
@@ -609,7 +598,8 @@ class _ExplorerEdit {
   final String? renaming;
 }
 
-class IdeExplorerState extends State<IdeExplorer> {
+class IdeExplorerState extends State<IdeExplorer>
+    with IdeKeyboardList<IdeExplorer> {
   final ScrollController _scroll = ScrollController();
   FocusNode? _ownFocusNode;
   FocusNode get _focusNode =>
@@ -688,19 +678,8 @@ class IdeExplorerState extends State<IdeExplorer> {
         (row) => row.path == _controller.selected,
       );
       if (index < 0) return;
-      const height = IdeExplorer.rowHeight;
-      final position = _scroll.position;
-      final top = index * height;
-      if (top < position.pixels) {
-        _scroll.jumpTo(top);
-      } else if (top + height > position.pixels + position.viewportDimension) {
-        _scroll.jumpTo(
-          (top + height - position.viewportDimension).clamp(
-            position.minScrollExtent,
-            position.maxScrollExtent,
-          ),
-        );
-      }
+      final top = index * IdeExplorer.rowHeight;
+      ideRevealRange(_scroll, top, top + IdeExplorer.rowHeight);
     });
   }
 
@@ -792,7 +771,7 @@ class IdeExplorerState extends State<IdeExplorer> {
     } else if (_runKeybinding(event)) {
       return KeyEventResult.handled;
     }
-    return _listKeys.contains(event.logicalKey)
+    return ideListNavigationKeys.contains(event.logicalKey)
         ? KeyEventResult.handled
         : KeyEventResult.ignored;
   }
@@ -856,20 +835,6 @@ class IdeExplorerState extends State<IdeExplorer> {
     _ => contextKey(key),
   };
 
-  static final _listKeys = {
-    LogicalKeyboardKey.arrowDown,
-    LogicalKeyboardKey.arrowUp,
-    LogicalKeyboardKey.arrowLeft,
-    LogicalKeyboardKey.arrowRight,
-    LogicalKeyboardKey.home,
-    LogicalKeyboardKey.end,
-    LogicalKeyboardKey.pageDown,
-    LogicalKeyboardKey.pageUp,
-    LogicalKeyboardKey.enter,
-    LogicalKeyboardKey.numpadEnter,
-    LogicalKeyboardKey.space,
-  };
-
   /// The explorer's context keys for its selection (upstream's
   /// `explorerResource*` and the tree's `treeElement*`); null for others.
   Object? contextKey(String key) {
@@ -909,7 +874,21 @@ class IdeExplorerState extends State<IdeExplorer> {
     return next.depth > rows[index].depth ? next : null;
   }
 
-  void _selectAt(int index) {
+  @override
+  bool get listHasFocus => _focusNode.hasFocus;
+
+  @override
+  int get listLength => _navigable.length;
+
+  @override
+  int get listFocusedIndex => _selectedIndex;
+
+  @override
+  int get listPageSize =>
+      ideRowsPerPage(_scroll, rowHeight: IdeExplorer.rowHeight);
+
+  @override
+  void listFocusAt(int index) {
     final rows = _navigable;
     if (rows.isEmpty) return;
     _controller.select(
@@ -918,34 +897,54 @@ class IdeExplorerState extends State<IdeExplorer> {
     );
   }
 
-  /// `list.focusDown` (1) / `list.focusUp` (-1); the first row when none is
-  /// selected.
-  void focusNext(int delta) {
-    final index = _selectedIndex;
-    _selectAt(index < 0 ? 0 : index + delta);
-  }
+  @override
+  void listSelect() => openSelected();
 
-  /// `list.focusPageDown` (1) / `list.focusPageUp` (-1).
-  void focusPage(int direction) {
-    final page = _scroll.hasClients
-        ? (_scroll.position.viewportDimension ~/ IdeExplorer.rowHeight) - 1
-        : 10;
-    final index = _selectedIndex;
-    _selectAt((index < 0 ? 0 : index) + direction * page);
-  }
+  @override
+  void listToggleExpand() => toggleSelected();
 
-  /// `list.focusFirst`.
-  void focusFirst() => _selectAt(0);
+  @override
+  void listExpand() => expandSelected();
 
-  /// `list.focusLast`.
-  void focusLast() => _selectAt(_navigable.length - 1);
+  @override
+  void listCollapse() => collapseSelected();
+
+  @override
+  void listCollapseAll() => _controller.collapseAll();
+
+  @override
+  bool get listSupportsMultiselect => true;
+
+  @override
+  bool get listHasSelection =>
+      _controller.selected != null || _controller.selection.isNotEmpty;
+
+  @override
+  void listExpandSelection(int delta) => expandSelection(delta);
+
+  @override
+  void listSelectAll() => selectAll();
+
+  @override
+  void listClear() => clearSelection();
+
+  @override
+  bool listTreeKey(String key) => contextKey(key) == true;
+
+  void focusNext(int delta) => listFocusNext(delta);
+
+  void focusPage(int direction) => listFocusPage(direction);
+
+  void focusFirst() => listFocusFirst();
+
+  void focusLast() => listFocusLast();
 
   /// `list.expandSelectionDown` (1) / `list.expandSelectionUp` (-1): the
   /// selection from the last row clicked to the next one.
   void expandSelection(int delta) {
     final rows = _navigable;
     final index = _selectedIndex;
-    if (index < 0) return _selectAt(0);
+    if (index < 0) return listFocusAt(0);
     final next = rows[(index + delta).clamp(0, rows.length - 1)];
     _controller.selectRange(next.path, reveal: true);
   }
@@ -1201,7 +1200,7 @@ class IdeExplorerState extends State<IdeExplorer> {
   /// `list.expand`: opens the folder, or goes to its first child.
   void expandSelected() {
     final row = _selectedRow;
-    if (row == null) return _selectAt(0);
+    if (row == null) return listFocusAt(0);
     if (!row.isDirectory) return;
     if (!row.expanded) {
       unawaited(_controller.expand(row.path));
@@ -1213,7 +1212,7 @@ class IdeExplorerState extends State<IdeExplorer> {
   /// `list.collapse`: closes the folder, or goes to the parent.
   void collapseSelected() {
     final row = _selectedRow;
-    if (row == null) return _selectAt(0);
+    if (row == null) return listFocusAt(0);
     if (row.isDirectory && row.expanded) {
       _controller.collapse(row.path);
       return;

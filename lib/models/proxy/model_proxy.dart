@@ -204,6 +204,13 @@ class ModelProxy {
       if (thinking) {
         outgoing['reasoning'] = {'effort': effort, 'summary': reasoningSummary};
       }
+      if (provider.fastMode &&
+          (provider.protocol == ProviderProtocol.openaiResponses ||
+              provider.protocol == ProviderProtocol.codex) &&
+          !body.containsKey('service_tier') &&
+          !body.containsKey('speed')) {
+        outgoing['service_tier'] = 'priority';
+      }
     }
     if (provider.promptCacheKey) {
       if (promptCacheKey(body) case final key?) {

@@ -1679,6 +1679,20 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get sidebarDeleteAgentsTitle => 'Delete agents?';
+
+  @override
+  String sidebarDeleteAgentsMessage(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'The $count agents and their conversations will be deleted',
+      one: 'The agent and its conversation will be deleted',
+    );
+    return '$_temp0, from their kernels too. This cannot be undone.';
+  }
+
+  @override
   String sidebarDeleteAgentMessageKernel(String title, String kernel) {
     return '“$title” and its conversation will be deleted, from $kernel too. This cannot be undone.';
   }
@@ -6454,6 +6468,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sends each conversation\'s own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.';
 
   @override
+  String get modelsFastMode => 'Fast Mode';
+
+  @override
+  String get modelsFastModeDescription =>
+      'Requests the Fast service tier by default (service_tier: priority). Only works with supported models and upstreams; pricing may differ. An explicit request tier or speed takes precedence.';
+
+  @override
   String get modelsCodexVersion => 'Codex Version';
 
   @override
@@ -8564,11 +8585,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashLinkIt => 'Link';
-
-  @override
-  String stashSourceBanner(String stash, String title) {
-    return 'Source: Stash $stash · $title';
-  }
 
   @override
   String get stashSettingsDescription =>

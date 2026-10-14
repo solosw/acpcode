@@ -231,6 +231,10 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
   Rect? _barAround;
   bool _polishing = false;
 
+  /// A menu opened from the bar (the model picker, the marks under "…") is
+  /// showing: it takes the keyboard, and the bar stays where it is.
+  bool _barMenu = false;
+
   QuillController get _controller => widget.controller;
 
   @override
@@ -302,7 +306,7 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
     final selection = _controller.selection;
     Rect? around;
     if (!widget.readOnly &&
-        (_focus.hasFocus || _linking) &&
+        (_focus.hasFocus || _linking || _barMenu) &&
         selection.isValid &&
         !selection.isCollapsed) {
       around = _selectionBounds(selection);
@@ -320,6 +324,14 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
       _barAround = around;
       _caretLink = link;
     });
+  }
+
+  /// Shows the bar while a menu opened from it shows, and keeps it once
+  /// one closes: the editor's focus comes back with the menu.
+  void _barMenuShown(bool open) {
+    if (!mounted || _barMenu == open) return;
+    setState(() => _barMenu = open);
+    if (!open) _selectionChanged();
   }
 
   /// The web link the caret is in, and where its text is (stack's box):
@@ -1759,7 +1771,9 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
           onTap: () {
             final box = context.findRenderObject() as RenderBox?;
             if (box == null) return;
-            unawaited(_more(box.localToGlobal(Offset.zero) & box.size));
+            unawaited(
+              _more(context, box.localToGlobal(Offset.zero) & box.size),
+            );
           },
         ),
       ),
@@ -1800,6 +1814,13 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
     );
   }
 
+  /// The bar, told when a menu opened from it shows and hides: while one
+  /// does, the bar stays (see [_barMenuShown]).
+  Widget _barWithMenus(BuildContext context, Rect around) => IdeMenuAnchorScope(
+    onMenu: _barMenuShown,
+    child: _bar(context, around),
+  );
+
   /// Whether the selection has one of the marks under "…".
   bool _moreActive() {
     final attributes = _controller.getSelectionStyle().attributes;
@@ -1809,14 +1830,15 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
         attributes.containsKey(Attribute.underline.key);
   }
 
-  /// The marks used less, in a menu under "…".
-  Future<void> _more(Rect anchor) async {
-    final l10n = context.l10n;
+  /// The marks used less, in a menu under "…": [from] the button's context,
+  /// under the bar's scope (see [_barWithMenus]).
+  Future<void> _more(BuildContext from, Rect anchor) async {
+    final l10n = from.l10n;
     final attributes = _controller.getSelectionStyle().attributes;
     final header = attributes[Attribute.header.key]?.value;
     final list = attributes[Attribute.list.key]?.value;
     await showIdeMenu(
-      context,
+      from,
       anchor: anchor,
       entries: [
         IdeMenuAction(
@@ -2102,7 +2124,7 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
                   ),
                 ),
             if (_barAround case final around?)
-              _bar(context, around)
+              _barWithMenus(context, around)
             else if (_caretLink != null)
               _linkBar(context),
             if (_ref != null && _refOptions.isNotEmpty) _refMenu(context),

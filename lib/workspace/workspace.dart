@@ -1005,7 +1005,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// Takes [thread], deleted or dropped, out of the IDE's tabs.
-  void _closeIdeChats(AgentThread thread) {
+  void _closeIdeChats(AgentThread thread, {bool save = true}) {
     _ideChatsUnkept.remove(thread);
     for (final folder in [..._ideChats.keys]) {
       if (!_ideChats[folder]!.remove(thread)) continue;
@@ -1015,7 +1015,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (folder == _ideFolder || _windowFolders.contains(folder)) {
         _ensureIdeChat(folder);
       }
-      _save();
+      if (save) _save();
     }
   }
 
@@ -1157,7 +1157,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void reorderPinned(List<AgentThread> ordered) {
     for (final thread in ordered) {
       thread.pinned = true;
-      _keepMarks(thread);
+      _keepMarks(thread, save: false);
     }
     final ids = [for (final thread in ordered) ?thread.id];
     // Those not listed (e.g. of a project taken off the list) after.
@@ -1218,13 +1218,25 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// Lists [project]'s agents in the order of [ordered] from now on.
-  void reorder(Project project, List<AgentThread> ordered) {
+  void reorder(
+    Project project,
+    List<AgentThread> ordered, {
+    bool unpin = false,
+  }) {
+    if (unpin) {
+      for (final thread in ordered) {
+        if (thread.project != project) continue;
+        thread.pinned = false;
+        _keepMarks(thread, save: false);
+      }
+    }
     final ids = [for (final thread in ordered) ?thread.id];
+    final listed = ids.toSet();
     _order[project.path] = [
       ...ids,
       // Those not listed now (e.g. archived) keep their place after.
       for (final id in _order[project.path] ?? const <String>[])
-        if (!ids.contains(id)) id,
+        if (!listed.contains(id)) id,
     ];
     _save();
     notifyListeners();
@@ -1408,19 +1420,52 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
+  /// Pins or unpins [threads], saving and notifying once.
+  void setPinnedAll(Iterable<AgentThread> threads, bool pinned) {
+    final ordered = threads.toSet().toList();
+    var changed = false;
+    for (final thread in pinned ? ordered.reversed : ordered) {
+      changed = _setPinned(thread, pinned, save: false) || changed;
+    }
+    if (!changed) return;
+    _save();
+    notifyListeners();
+  }
+
+  /// Archives or unarchives [threads], saving and notifying once.
+  void setArchivedAll(Iterable<AgentThread> threads, bool archived) {
+    final selected = {...threads};
+    var changed = false;
+    for (final thread in selected) {
+      changed =
+          _setArchived(thread, archived, leave: false, save: false) || changed;
+    }
+    if (!changed) return;
+    if (archived) _leaveMany(selected);
+    _save();
+    notifyListeners();
+  }
+
+  /// Deletes [threads], stopping them and removing their catalog records.
+  void deleteAll(Iterable<AgentThread> threads) {
+    final selected = {...threads};
+    var changed = false;
+    for (final thread in selected) {
+      changed = _delete(thread, leave: false, save: false) || changed;
+    }
+    if (!changed) return;
+    _leaveMany(selected);
+    _save();
+    notifyListeners();
+  }
+
   /// Archives [project]'s agents (not a new one nothing was sent to).
   void archiveAll(Project project) {
-    for (final thread in [..._threads]) {
-      if (thread.project != project || thread.archived || thread.untouched) {
-        continue;
-      }
-      thread
-        ..archived = true
-        ..pinned = false;
-      _keepMarks(thread);
-      _leave(thread);
-    }
-    notifyListeners();
+    setArchivedAll([
+      for (final thread in [..._threads])
+        if (thread.project == project && !thread.archived && !thread.untouched)
+          thread,
+    ], true);
   }
 
   /// Unarchives every archived agent ([where] there is one, those it takes).
@@ -1436,9 +1481,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Deletes every archived agent ([where] there is one, those it takes),
   /// each as [delete] does.
   void deleteArchived({bool Function(AgentThread thread)? where}) {
-    for (final thread in [..._threads]) {
-      if (thread.archived && (where?.call(thread) ?? true)) delete(thread);
-    }
+    deleteAll([
+      for (final thread in [..._threads])
+        if (thread.archived && (where?.call(thread) ?? true)) thread,
+    ]);
   }
 
   // --- Workspaces -------------------------------------------------------------
@@ -2115,6 +2161,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// its first message, notes what was seen, and notifies only when
   /// something shown changed (not on every streamed character).
   void _sync(AgentThread thread) {
+    if (!_threads.contains(thread)) return;
     final session = thread.session;
     if (thread._title.isEmpty && session.itemCount > 0) {
       if (session.itemAt(0) case UserMessageItem(:final text)) {
@@ -2585,43 +2632,68 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   void setPinned(AgentThread thread, bool pinned) {
-    thread.pinned = pinned;
-    _keepMarks(thread);
+    _setPinned(thread, pinned);
     notifyListeners();
   }
 
   void setArchived(AgentThread thread, bool archived) {
+    _setArchived(thread, archived);
+    notifyListeners();
+  }
+
+  bool _setPinned(AgentThread thread, bool pinned, {bool save = true}) {
+    final changed = thread.pinned != pinned;
+    thread.pinned = pinned;
+    final kept = _keepMarks(thread, save: save);
+    return changed || kept;
+  }
+
+  bool _setArchived(
+    AgentThread thread,
+    bool archived, {
+    bool leave = true,
+    bool save = true,
+  }) {
+    final changed = thread.archived != archived || (archived && thread.pinned);
     thread.archived = archived;
     if (archived) thread.pinned = false;
-    _keepMarks(thread);
-    if (archived) _leave(thread);
-    notifyListeners();
+    final kept = _keepMarks(thread, save: save);
+    if (archived && leave) _leave(thread);
+    return changed || kept;
   }
 
   /// Keeps whether [thread] is pinned and archived for the next run, once
   /// its session has an id (see [_sync] for a new agent's).
-  void _keepMarks(AgentThread thread) {
+  bool _keepMarks(AgentThread thread, {bool save = true}) {
     final id = thread._id;
-    if (id == null) return;
+    if (id == null) return false;
     bool mark(Set<String> ids, bool on) => on ? ids.add(id) : ids.remove(id);
     // Both, not only the first that changed.
     final pinned = mark(_pinned, thread.pinned);
     final archived = mark(_archived, thread.archived);
     // Pinned last, it is on top (see [inPinnedOrder]).
     if (pinned && thread.pinned) _setPinnedIds([id, ..._pinned]);
-    if (pinned || archived) _save();
+    if (save && (pinned || archived)) _save();
+    return pinned || archived;
   }
 
   /// Deletes [thread]: stops its agent, and once it has stopped, deletes
   /// the session its kernel kept (deleting it again does nothing).
   void delete(AgentThread thread) {
+    if (!_delete(thread)) return;
+    notifyListeners();
+  }
+
+  bool _delete(AgentThread thread, {bool leave = true, bool save = true}) {
+    if (!_threads.contains(thread)) return false;
     final id =
         thread.record?.id ?? (thread.isOpen ? thread.session.sessionId : null);
     if (id != null) {
       _removed.add(id);
       _forgetDraft(id);
       final kept = [_pinned.remove(id), _archived.remove(id)];
-      if (_names.remove(id) != null || kept.contains(true)) _save();
+      final named = _names.remove(id) != null;
+      if (save && (named || kept.contains(true))) _save();
     }
     final catalog = thread.kernel.catalog;
     final listener = _listeners.remove(thread);
@@ -2629,8 +2701,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _snapshots.remove(thread);
     if (_draftKeys.remove(thread) case final key?) _forgetDraft(key);
     _threads.remove(thread);
-    _leave(thread);
-    _closeIdeChats(thread);
+    if (leave) _leave(thread);
+    _closeIdeChats(thread, save: save);
     var stopped = Future<void>.value();
     if (thread.isOpen) {
       thread.session
@@ -2642,7 +2714,28 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if ((catalog, id) case (final catalog?, final id?)) {
       unawaited(stopped.then((_) => catalog.delete(id)).catchError((_) {}));
     }
-    notifyListeners();
+    return true;
+  }
+
+  void _leaveMany(Set<AgentThread> gone) {
+    final shown = gone.where(_grid.contains).toList();
+    for (final thread in shown) {
+      _grid.remove(thread);
+    }
+    if (shown.isEmpty) return;
+    if (_grid.isEmpty) {
+      final candidates = [
+        for (final thread in _threads)
+          if (!thread.archived && _projects.contains(thread.project)) thread,
+      ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      if (candidates.isNotEmpty) {
+        _focus(candidates.first);
+      } else {
+        _focus(_newThread(shown.first.project));
+      }
+    } else if (_selected == null || gone.contains(_selected)) {
+      _focus(_grid.panes.first);
+    }
   }
 
   /// After [gone] is archived or deleted: its pane closes, the one beside

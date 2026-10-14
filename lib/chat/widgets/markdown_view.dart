@@ -288,9 +288,7 @@ Widget? _block(md.Node node, TextStyle style, MarkdownOptions options) {
       return Container(
         padding: const EdgeInsets.only(bottom: 6),
         decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(color: themeColors['textSeparator.foreground']),
-          ),
+          border: Border(bottom: BorderSide(color: AppColors.partBorder)),
         ),
         child: heading,
       );
