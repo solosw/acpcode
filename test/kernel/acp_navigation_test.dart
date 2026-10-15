@@ -45,6 +45,31 @@ class _StalledTransport implements AcpTransport {
     });
   }
 
+  void replayHistory(int count) {
+    for (var i = 0; i < count; i++) {
+      _messages.add({
+        'jsonrpc': '2.0',
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'saved-acp',
+          'update': {
+            'sessionUpdate': 'user_message_chunk',
+            'messageId': 'history_$i',
+            'content': {'type': 'text', 'text': 'Question $i'},
+          },
+        },
+      });
+    }
+    final load = written.singleWhere(
+      (message) => message['method'] == 'session/load',
+    );
+    _messages.add({
+      'jsonrpc': '2.0',
+      'id': load['id'],
+      'result': <String, Object?>{},
+    });
+  }
+
   @override
   void close() => _messages.close();
 }
@@ -182,6 +207,51 @@ void main() {
       await _openSkills(tester);
     }, variant: _desktop);
   }
+
+  testWidgets('sidebar and Skills remain reachable during ACP history burst', (
+    tester,
+  ) async {
+    final transport = _StalledTransport('session/load');
+    final workspace = await _pumpApp(tester, transport);
+    final local = workspace.selected;
+    await tester.tap(_inSidebar('Saved ACP conversation'));
+    await tester.pump(const Duration(milliseconds: 100));
+    final acp = workspace.selected;
+
+    transport.replayHistory(96);
+    expect(acp.session.itemCount, inExclusiveRange(0, 96));
+    expect(acp.session.health.status, KernelHealthStatus.starting);
+    // Click through the actual sidebar while the load result is still behind
+    // buffered history, not after the agent has finished loading.
+    await tester.tap(_inSidebar(local.title));
+    expect(workspace.selected, same(local));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      tester.widget<ChatScreen>(find.byType(ChatScreen)).session,
+      same(local.session),
+    );
+    expect(acp.session.health.status, KernelHealthStatus.ready);
+    expect(acp.session.itemCount, 96);
+    expect(tester.takeException(), isNull);
+    await _openSkills(tester);
+
+    // Give this repeat click a real timestamp; tester.tap defaults to zero,
+    // which the sidebar's double-click tracker would interpret as rename.
+    final click = await tester.createGesture();
+    await click.down(
+      tester.getCenter(_inSidebar('Saved ACP conversation')),
+      timeStamp: const Duration(seconds: 1),
+    );
+    await click.up(timeStamp: const Duration(seconds: 1, milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(workspace.selected, same(acp));
+    expect(find.byType(CustomizeView), findsNothing);
+    expect(
+      tester.widget<ChatScreen>(find.byType(ChatScreen)).session,
+      same(acp.session),
+    );
+    await _openSkills(tester);
+  }, variant: _desktop);
 
   testWidgets('composer ACP selection does not block navigation', (
     tester,

@@ -29,6 +29,15 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.1.4">
+    <h2 class="plain"><a href="#v1.1.4">1.1.4</a></h2>
+    <p>Fixed</p>
+    <ul>
+    <li>Fixed UI stalls during bursts of ACP history replay that delayed sidebar conversation switching and loading other pages. Messages are processed in batches while preserving their original order.</li>
+    <li>Restarting or closing an ACP agent cancels scheduled message processing so buffered messages from the old agent no longer update the conversation.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.1.3">
     <h2 class="plain"><a href="#v1.1.3">1.1.3</a></h2>
     <p>New</p>

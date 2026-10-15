@@ -35,6 +35,9 @@ class AcpKernel
   AcpMcpServers _mcp = const AcpMcpServers();
   AcpTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
+  Timer? _receiveTimer;
+  int _receivedInBatch = 0;
+  static const _receiveBatchSize = 32;
 
   KernelHealth _health = KernelHealth.idle;
   String? _sessionId;
@@ -111,7 +114,7 @@ class AcpKernel
       }
       _transport = QueuedAcpTransport(transport);
       _subscription = _transport!.messages.listen(
-        _receive,
+        _receiveBatched,
         onError: (Object error, StackTrace _) {
           if (!obsolete()) _fail(error);
         },
@@ -478,6 +481,24 @@ class AcpKernel
     for (final message in pending) {
       _receive(message);
     }
+  }
+
+  /// A history replay can deliver thousands of updates in one stdout read.
+  /// Pause between batches so clicks and other pages can run too. Buffer on
+  /// the subscription, keeping RPC responses behind all preceding updates:
+  /// session/load must not finish replay before its history has been applied.
+  void _receiveBatched(Map<String, Object?> message) {
+    if (_disposed) return;
+    _receive(message);
+    if (_disposed || ++_receivedInBatch < _receiveBatchSize) return;
+    final subscription = _subscription;
+    if (subscription == null) return;
+    subscription.pause();
+    _receiveTimer = Timer(Duration.zero, () {
+      _receiveTimer = null;
+      _receivedInBatch = 0;
+      subscription.resume();
+    });
   }
 
   void _receive(Map<String, Object?> message) {
@@ -1003,6 +1024,9 @@ class AcpKernel
   void restart() {
     if (_disposed) return;
     _startGeneration++;
+    _receiveTimer?.cancel();
+    _receiveTimer = null;
+    _receivedInBatch = 0;
     for (final (index, _) in _mcp.warnings.indexed) {
       emit(ItemRemoved(nextSeq, 'acp_mcp_warning_$index'));
     }
@@ -1030,6 +1054,8 @@ class AcpKernel
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _receiveTimer?.cancel();
+    _receiveTimer = null;
     _transport?.close();
     _subscription?.cancel();
     closeEvents();
