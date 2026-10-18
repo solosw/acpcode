@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../chat/chat_models.dart';
 import 'kernel_types.dart';
 
@@ -123,13 +126,42 @@ final class InteractionResolved extends KernelEvent {
 /// A file the agent changed in turn [turnId]. Pending until kept or
 /// reverted.
 final class FileEdited extends KernelEvent {
-  const FileEdited(super.seq, this.change, {this.turnId, this.original});
+  const FileEdited(
+    super.seq,
+    this.change, {
+    this.turnId,
+    this.original,
+    this.after,
+  });
 
   final FileChange change;
   final String? turnId;
 
   /// What the file was before; null when the agent did not tell.
   final FileOriginal? original;
+
+  /// The exact write's result, not a later disk read. Remote adapters must
+  /// supply this from the tool result when available; null is unknown.
+  final FileSnapshot? after;
+}
+
+/// A write-time snapshot: null bytes mean deletion, not an unknown file.
+/// Unknown snapshots are explicit so deferred reports cannot recapture disk.
+class FileSnapshot {
+  FileSnapshot(Uint8List? bytes, {this.mode = '100644'})
+    : bytes = bytes == null
+          ? null
+          : Uint8List.fromList(bytes).asUnmodifiableView(),
+      known = true;
+  FileSnapshot.text(String? text)
+    : this(text == null ? null : utf8.encode(text), mode: null);
+  const FileSnapshot.unknown() : bytes = null, mode = null, known = false;
+
+  final Uint8List? bytes;
+
+  /// Null for protocol text that does not report executable permissions.
+  final String? mode;
+  final bool known;
 }
 
 /// The agent wrote its plan, the file at [path]: not a change to review,

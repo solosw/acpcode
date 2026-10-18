@@ -9,7 +9,7 @@ import 'customization_disk.dart';
 CustomizationDisk? localCustomizationDisk() => const _LocalDisk();
 
 /// This machine's files.
-class _LocalDisk implements CustomizationDisk {
+class _LocalDisk implements AtomicCustomizationDisk {
   const _LocalDisk();
 
   @override
@@ -61,6 +61,36 @@ class _LocalDisk implements CustomizationDisk {
     final file = File(path);
     await file.parent.create(recursive: true);
     await file.writeAsString(text);
+  }
+
+  @override
+  Future<void> writeAtomically(String path, String text) async {
+    var file = File(path);
+    final exists = await file.exists();
+    final isLink = await FileSystemEntity.isLink(path);
+    if (exists || isLink) file = File(await file.resolveSymbolicLinks());
+    final mode = exists ? (await file.stat()).mode & 0x1ff : 0x180;
+    await file.parent.create(recursive: true);
+    final temporary = await file.parent.createTemp('.mcp-config-');
+    try {
+      final staged = File(p.join(temporary.path, 'config'));
+      await staged.writeAsString(text, flush: true);
+      if (!Platform.isWindows) {
+        final result = await Process.run('chmod', [
+          mode.toRadixString(8),
+          staged.path,
+        ]);
+        if (result.exitCode != 0) {
+          throw FileSystemException(
+            'Could not preserve MCP config permissions',
+            path,
+          );
+        }
+      }
+      await staged.rename(file.path);
+    } finally {
+      await temporary.delete(recursive: true);
+    }
   }
 
   @override

@@ -80,6 +80,13 @@ class _MemoryStore implements CustomizationStore {
       : null;
 
   @override
+  Future<UserMcpRegistration> registerUserMcp(
+    String name,
+    Map<String, Object?> configuration, {
+    required bool Function(Map<String, Object?> configuration) isManaged,
+  }) => throw UnsupportedError('This view fake does not register user MCPs');
+
+  @override
   Future<void> write(String path, String text) async => files[path] = text;
 
   @override
@@ -387,9 +394,7 @@ void main() {
     final store = _MemoryStore();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: CustomizeSettingsPage(customizations: store),
-        ),
+        home: Scaffold(body: CustomizeSettingsPage(customizations: store)),
       ),
     );
     await tester.pumpAndSettle();

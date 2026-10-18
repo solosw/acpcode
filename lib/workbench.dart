@@ -2043,7 +2043,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   bool get _autoSaveOn =>
       switch (widget.settings?.files?.settings['files.autoSave']) {
         final String mode => mode != 'off',
-        _ => false,
+        _ => true,
       };
 
   /// [_autoSaveOn] as the File menus last showed it.
@@ -2057,19 +2057,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (!first && mounted) setState(() {});
   }
 
-  /// Toggle Auto Save, as VS Code's: `afterDelay` when off, else off (the
-  /// setting removed, off being its default).
+  /// Toggle Auto Save: explicit `off` when on, otherwise the default
+  /// `afterDelay` (the setting removed).
   void _toggleAutoSave() {
     final settings = widget.settings?.files?.settings;
     if (settings == null) return;
     unawaited(
-      settings
-          .update('files.autoSave', _autoSaveOn ? null : 'afterDelay')
-          .catchError((Object error) {
-            // A settings file that does not parse is left as it is; its
-            // error is shown.
-            debugPrint('files.autoSave not kept: $error');
-          }),
+      settings.update('files.autoSave', _autoSaveOn ? 'off' : null).catchError((
+        Object error,
+      ) {
+        // A settings file that does not parse is left as it is; its
+        // error is shown.
+        debugPrint('files.autoSave not kept: $error');
+      }),
     );
   }
 

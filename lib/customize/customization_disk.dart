@@ -40,3 +40,8 @@ abstract interface class CustomizationDisk {
   /// Deletes [path], a folder with its contents.
   Future<void> delete(String path);
 }
+
+/// Disks which can replace a configuration without exposing partial writes.
+abstract interface class AtomicCustomizationDisk implements CustomizationDisk {
+  Future<void> writeAtomically(String path, String text);
+}

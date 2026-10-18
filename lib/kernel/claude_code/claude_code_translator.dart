@@ -1368,6 +1368,7 @@ class ClaudeTranslator {
           FileChange(path: path, added: added, removed: removed),
           turnId: turnId,
           original: _original(result),
+          after: _after(tool, result),
         ),
       );
     }
@@ -1386,6 +1387,35 @@ class ClaudeTranslator {
       return const OriginalText(null);
     }
     return null;
+  }
+
+  /// A remote tool's completed write must not be recaptured from disk when
+  /// review eventually opens. Only derive whole text from a successful
+  /// result, never from a truncated diff card or a later filesystem read.
+  static FileSnapshot? _after(_Tool tool, Map<String, Object?> result) {
+    if (result['userModified'] == true) return const FileSnapshot.unknown();
+    if (tool.name == 'Write' || result['type'] == 'create') {
+      final content = _string(result['content']);
+      return content == null ? null : FileSnapshot.text(content);
+    }
+    if (tool.name != 'Edit') return null;
+    final before = _string(result['originalFile']);
+    final old = _string(result['oldString']);
+    final replacement = _string(result['newString']);
+    if (old == null || replacement == null) return null;
+    if (before == null) {
+      return result.containsKey('originalFile') && old.isEmpty
+          ? FileSnapshot.text(replacement)
+          : null;
+    }
+    if (old.isEmpty || !before.contains(old)) return null;
+    final all = tool.input['replace_all'] == true;
+    if (!all && before.indexOf(old) != before.lastIndexOf(old)) return null;
+    return FileSnapshot.text(
+      all
+          ? before.replaceAll(old, replacement)
+          : before.replaceFirst(old, replacement),
+    );
   }
 
   static const _maxDiffLines = 400;

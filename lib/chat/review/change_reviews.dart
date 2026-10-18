@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../kernel/kernel_event.dart' show FileEdited;
 import '../../remote/remote_location.dart';
 import '../chat_models.dart';
 import 'change_review.dart';
@@ -90,6 +91,9 @@ class ChangeReviews extends ChangeNotifier {
   /// A relative path is the agent's directory's, and so the first's.
   void report(FileChange change, {FileOriginal? original}) =>
       _partOf(change.path).report(change, original: original);
+
+  void reportEdit(FileEdited edit) =>
+      _partOf(edit.change.path).reportEdit(edit);
 
   Future<void> keep(Iterable<String> paths) =>
       _each(paths, (part, paths) => part.keep(paths));

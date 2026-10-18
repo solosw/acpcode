@@ -25,6 +25,7 @@ import 'package:baocode/tips/feature_tips_view.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/workspace/main_window.dart';
 import 'package:baocode/workspace/window_controls.dart';
+import 'package:baocode/workspace/window_header/window_header.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:path/path.dart' as p;
 
@@ -118,6 +119,25 @@ void main() {
     of: find.byType(FeatureTipsCard),
     matching: find.byKey(const ValueKey(FeatureTipIds.importKeybindings)),
   );
+
+  testWidgets('Auto Save is checked by default and its toggle persists off', (
+    tester,
+  ) async {
+    await tester.runAsync(start);
+    await pumpApp(tester);
+    WindowHeader header() => tester.widget(find.byType(WindowHeader));
+    expect(header().autoSave, isTrue);
+
+    header().onFileCommand!(toggleAutoSaveCommandId);
+    await settle(tester, () => files.settings['files.autoSave'] == 'off');
+    await tester.pump();
+    expect(header().autoSave, isFalse);
+
+    header().onFileCommand!(toggleAutoSaveCommandId);
+    await settle(tester, () => files.settings['files.autoSave'] == null);
+    await tester.pump();
+    expect(header().autoSave, isTrue);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   testWidgets('the launch lists the import in the setup checklist, no '
       'dialog; turned on, it imports to keybindings.json and selects the '

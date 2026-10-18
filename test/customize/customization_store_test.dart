@@ -222,7 +222,10 @@ void main() {
       await file(CustomizationKind.mcps, CustomizationScope.project),
       p.join(project, '.mcp.json'),
     );
-    expect(await file(CustomizationKind.mcps, CustomizationScope.user), isNull);
+    expect(
+      await file(CustomizationKind.mcps, CustomizationScope.user),
+      p.join(temp.path, 'home', '.claude.json'),
+    );
     expect(
       await file(CustomizationKind.hooks, CustomizationScope.user),
       p.join(config, 'settings.json'),

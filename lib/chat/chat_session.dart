@@ -19,6 +19,7 @@ import 'mock_conversation.dart';
 import 'open_editor.dart';
 import 'review/change_review.dart';
 import 'review/change_reviews.dart';
+import 'review/file_snapshot.dart';
 import 'review/review_store.dart';
 
 /// Opens the review of a project's changes (see [ChangeReview.open]).
@@ -173,6 +174,12 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   Future<ChangeReviews?>? _reviewOpening;
   ChangeReviews? _review;
 
+  // Kernels can edit before opening the checkpoints finishes. Keep each
+  // original AND its event-time after snapshot until review can accept it;
+  // replay must never reinterpret later user content as an agent write.
+  final List<FileEdited> _pendingReviewEdits = [];
+  bool _reviewUnavailable = false;
+
   /// While a turn is running, looks again every few seconds: kernels that
   /// edit through a shell (ACP) never report the files, and a look only at
   /// the turn's end would hold the changes back until then.
@@ -199,25 +206,44 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
           [root, ...?kernelContext.workspace?.call()?.folders],
           open: open,
           session: kernelContext.resume?.id,
-        ).then((review) {
-          if (review == null) return null;
-          if (_disposed) {
-            review.dispose();
+        ).then(
+          (review) {
+            if (review == null) {
+              _reviewUnavailable = true;
+              _pendingReviewEdits.clear();
+              return null;
+            }
+            if (_disposed) {
+              review.dispose();
+              return null;
+            }
+            _review = review
+              ..session = sessionId
+              ..addListener(_reviewChanged);
+            for (final edit in _pendingReviewEdits) {
+              if (edit.seq <= math.max(_keptSeq, _transcript.revertedSeq) ||
+                  edit.seq <= (_keptPaths[_absolute(edit.change.path)] ?? -1)) {
+                continue;
+              }
+              review.reportEdit(edit);
+            }
+            _pendingReviewEdits.clear();
+            if (_kernel is AcpKernel) {
+              unawaited(review.begin());
+              // SSH may finish opening after TurnStarted.
+              if (isStreaming) _startScanning(review);
+            } else {
+              unawaited(review.refresh());
+            }
+            notifyListeners();
+            return review;
+          },
+          onError: (Object _) {
+            _reviewUnavailable = true;
+            _pendingReviewEdits.clear();
             return null;
-          }
-          _review = review
-            ..session = sessionId
-            ..addListener(_reviewChanged);
-          if (_kernel is AcpKernel) {
-            unawaited(review.begin());
-            // SSH may finish opening after TurnStarted.
-            if (isStreaming) _startScanning(review);
-          } else {
-            unawaited(review.refresh());
-          }
-          notifyListeners();
-          return review;
-        }, onError: (Object _) => null);
+          },
+        );
   }
 
   void _reviewChanged() {
@@ -238,8 +264,31 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   }
 
   void _reviewEvent(KernelEvent event) {
+    if (event is FileEdited && _openReview != null && !_reviewUnavailable) {
+      // The synchronous kernel stream still sees this write, even if the
+      // opener or the review's persistence queue is blocked. Never read a
+      // remote host's path on this machine.
+      final after =
+          event.after ??
+          (kernelContext.cwd != null &&
+                  RemoteLocation.hostOf(kernelContext.cwd!) == null
+              ? snapshotFile(_absolute(event.change.path))
+              : const FileSnapshot.unknown());
+      event = FileEdited(
+        event.seq,
+        event.change,
+        turnId: event.turnId,
+        original: event.original,
+        after: after,
+      );
+    }
     final review = _review;
-    if (review == null) return;
+    if (review == null) {
+      if (event is FileEdited && _openReview != null && !_reviewUnavailable) {
+        _pendingReviewEdits.add(event);
+      }
+      return;
+    }
     review.session = sessionId;
     switch (event) {
       case TurnStarted() when _kernel is AcpKernel:
@@ -250,8 +299,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
           _scanTimer = null;
         }
         unawaited(_kernel is AcpKernel ? review.observe() : review.refresh());
-      case FileEdited(:final change, :final original):
-        review.report(change, original: original);
+      case FileEdited():
+        review.reportEdit(event);
       default:
     }
   }
@@ -1125,6 +1174,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     _disposed = true;
     _quietTimer?.cancel();
     _scanTimer?.cancel();
+    _pendingReviewEdits.clear();
     _review
       ?..removeListener(_reviewChanged)
       ..dispose();

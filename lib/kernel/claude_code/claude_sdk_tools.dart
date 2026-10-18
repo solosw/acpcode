@@ -95,9 +95,30 @@ abstract final class ClaudeSdkTools {
   /// session counts its own): to cancel them.
   static final Map<(String?, Object), Completer<void>> _calls = {};
 
-  static void register(ClaudeSdkTool tool) => _tools[tool.name] = tool;
+  /// Standalone MCP clients must see tools enabled after they connected
+  /// (for example, the browser extension's first connection).
+  static Stream<void> get changes => _changes.stream;
+  static final _changes = StreamController<void>.broadcast();
+  static bool _notifying = false;
 
-  static void unregister(String name) => _tools.remove(name);
+  static void _changed() {
+    if (_notifying) return;
+    _notifying = true;
+    scheduleMicrotask(() {
+      _notifying = false;
+      _changes.add(null);
+    });
+  }
+
+  static void register(ClaudeSdkTool tool) {
+    if (identical(_tools[tool.name], tool)) return;
+    _tools[tool.name] = tool;
+    _changed();
+  }
+
+  static void unregister(String name) {
+    if (_tools.remove(name) != null) _changed();
+  }
 
   /// The tool an agent calls [name] (`mcp__baocode__<name>`), if one of
   /// this server's.
@@ -127,10 +148,12 @@ abstract final class ClaudeSdkTools {
       'result': result,
     };
     switch (message['method']) {
+      case 'ping':
+        return result({});
       case 'initialize':
         return result({
           'protocolVersion': params['protocolVersion'] ?? '2024-11-05',
-          'capabilities': {'tools': <String, Object?>{}},
+          'capabilities': {'tools': {'listChanged': true}},
           'serverInfo': {'name': server, 'version': '1.0.0'},
         });
       case 'tools/list':

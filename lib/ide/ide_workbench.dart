@@ -578,11 +578,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   set _gitBlame(bool value) =>
       _setSetting('git.blame.editorDecoration.enabled', value);
 
-  /// `files.autoSave`, as VS Code's: `off` (the default), `afterDelay`,
+  /// `files.autoSave`, as VS Code's: `off`, `afterDelay` (the default),
   /// `onFocusChange` or `onWindowChange`.
   String get _autoSave => switch (widget.settings?['files.autoSave']) {
     final String mode => mode,
-    _ => 'off',
+    _ => 'afterDelay',
   };
 
   /// `files.autoSaveDelay`: how long after the last edit `afterDelay` saves.
@@ -617,12 +617,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// none of them formatted, as VS Code's `afterDelay` does not.
   Future<void> _autoSaveNow([
     Set<String> modes = const {'afterDelay', 'onFocusChange', 'onWindowChange'},
+    List<IdeDocument>? documents,
   ]) async {
+    if (!mounted || !modes.contains(_autoSave)) return;
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
-    if (!mounted || !modes.contains(_autoSave)) return;
     final workspace = widget.workspace;
-    final dirty = workspace.documents.where(_autoSaves).toList();
+    final dirty = (documents ?? workspace.documents).where(_autoSaves).toList();
     if (dirty.isEmpty) return;
     await _flushEditor();
     for (final doc in dirty) {
@@ -1731,13 +1732,19 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     };
   }
 
-  /// Closes [docs] in order, asking about each unsaved one; Cancel stops.
+  /// Auto-save before closing; only files which still need a decision
+  /// (auto-save off, untitled, deleted, or failed) ask for confirmation.
   Future<void> _closeDocs(List<IdeDocument> docs) async {
     if (_busy || docs.isEmpty) return;
     setState(() => _busy = true);
     _closingEditors = true;
     try {
       await _flushEditor();
+      await _autoSaveNow(const {
+        'afterDelay',
+        'onFocusChange',
+        'onWindowChange',
+      }, docs);
       for (final doc in docs) {
         if (!mounted) return;
         if (!widget.workspace.documents.contains(doc)) continue;
@@ -2419,7 +2426,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// Has the editor's last keys in its document, for what is unsaved to be
   /// all of it (before its window closes, or the app quits).
-  Future<void> flush() async => _flushEditor();
+  Future<void> flush() async {
+    await _flushEditor();
+    await _autoSaveNow();
+  }
 
   /// Whether the panel's terminals run: a shell alive, or
   /// ([childProcesses]) one running a command

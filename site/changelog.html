@@ -29,6 +29,22 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.2.1">
+    <h2 class="plain"><a href="#v1.2.1">1.2.1</a></h2>
+    <p>The browser's tools, in every agent</p>
+    <p>A fix release: the built-in tools now reach agents that run outside the app, the chat tracks what a local agent changes again, and the editor saves as you type.</p>
+    <p>New</p>
+    <ul>
+    <li>The built-in tools, shared: the browser's tools and image generation are registered as a user-level MCP server, so the agents that run beside the app, such as ACP agents, are given the same tools Claude Code is. They act on the tabs you shared and nothing else, and stay on this machine: remote hosts still read only their own configuration.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Auto Save is on by default: an edit is written after typing stops, as in VS Code. Turn it off, or choose another mode, in Settings.</li>
+    <li>A local agent's file changes are tracked once more: files it edited through a shell show as pending in the chat, to keep or undo, as they already did over SSH. Changes that arrive before the review opens are kept too, and a keep or undo never discards your own edits.</li>
+    <li>The chat no longer holds a turn back while its review of the changes opens.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.2.0">
     <h2 class="plain"><a href="#v1.2.0">1.2.0</a></h2>
     <p>Meet Stash</p>

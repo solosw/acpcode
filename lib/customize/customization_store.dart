@@ -1,11 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:bao_remote/files.dart'
-    show IdeFileExistsException, IdeFileNotFoundException;
+    show
+        IdeFileConflictException,
+        IdeFileExistsException,
+        IdeFileNotFoundException;
 import 'package:path/path.dart' as p;
 
 import 'customization_disk.dart';
 import 'customizations.dart';
+
+/// The outcome of registering an application-managed user MCP server.
+enum UserMcpRegistration { registered, unchanged, conflict }
 
 /// Claude Code's customizations on a [CustomizationDisk] (this machine's,
 /// or a remote host's): the user's under its config folder (`~/.claude`
@@ -155,7 +162,11 @@ class CustomizationStore {
     CustomizationScope scope, {
     String? project,
   }) async {
-    if (!kind.configuredIn(scope) || !supported) return null;
+    if (!supported) return null;
+    if (kind == CustomizationKind.mcps && scope == CustomizationScope.user) {
+      return _claudeJson();
+    }
+    if (!kind.configuredIn(scope)) return null;
     if (kind == CustomizationKind.mcps) {
       return project == null ? null : _paths.join(project, '.mcp.json');
     }
@@ -163,6 +174,93 @@ class CustomizationStore {
       if (own == scope) return path;
     }
     return null;
+  }
+
+  // Registration calls in this isolate share a queue, even across stores.
+  static final _userMcpWrites = <String, Future<void>>{};
+
+  /// Registers [name] in the user's `.claude.json`, never in a project.
+  /// Existing entries are changed only when [isManaged] accepts them; otherwise
+  /// returns [UserMcpRegistration.conflict] without touching the file. Unknown
+  /// fields (including environment variables) are retained on managed entries.
+  ///
+  /// Invalid JSON, a non-object root or mcpServers, and unreadable existing
+  /// files throw rather than being replaced. Writes re-read the file and retry
+  /// a changed snapshot up to three times. This is best-effort protection from
+  /// other processes, not a cross-process compare-and-swap.
+  Future<UserMcpRegistration> registerUserMcp(
+    String name,
+    Map<String, Object?> configuration, {
+    required bool Function(Map<String, Object?> configuration) isManaged,
+  }) async {
+    final path = await configFile(
+      CustomizationKind.mcps,
+      CustomizationScope.user,
+    );
+    if (path == null) throw UnsupportedError('No files on the web');
+    final previous = _userMcpWrites[path];
+    final done = Completer<void>();
+    _userMcpWrites[path] = done.future;
+    try {
+      if (previous != null) await previous;
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final text = await _registrationText(path);
+        final decoded = text == null ? <String, Object?>{} : jsonDecode(text);
+        if (decoded is! Map<String, Object?>) {
+          throw FormatException('Expected a JSON object in $path');
+        }
+        final Object? existingServers = decoded['mcpServers'];
+        if (decoded.containsKey('mcpServers') &&
+            existingServers is! Map<String, Object?>) {
+          throw FormatException('Expected an mcpServers object in $path');
+        }
+        final servers = existingServers as Map<String, Object?>? ?? {};
+        final existing = servers[name];
+        if (servers.containsKey(name) &&
+            (existing is! Map<String, Object?> || !isManaged(existing))) {
+          return UserMcpRegistration.conflict;
+        }
+        final merged = <String, Object?>{
+          if (existing is Map<String, Object?>) ...existing,
+          ...configuration,
+        };
+        final oldEnv = existing is Map<String, Object?>
+            ? existing['env']
+            : null;
+        final newEnv = configuration['env'];
+        if (oldEnv is Map<String, Object?> && newEnv is Map<String, Object?>) {
+          merged['env'] = {...oldEnv, ...newEnv};
+        }
+        if (existing is Map<String, Object?> &&
+            jsonEncode(existing) == jsonEncode(merged)) {
+          return UserMcpRegistration.unchanged;
+        }
+        decoded['mcpServers'] = {...servers, name: merged};
+        final updated = '${_pretty.convert(decoded)}\n';
+        if (await _registrationText(path) != text) continue;
+        final disk = _files;
+        if (disk is AtomicCustomizationDisk) {
+          await disk.writeAtomically(path, updated);
+        } else {
+          await disk.write(path, updated);
+        }
+        return UserMcpRegistration.registered;
+      }
+      throw IdeFileConflictException(path);
+    } finally {
+      done.complete();
+      if (identical(_userMcpWrites[path], done.future)) {
+        _userMcpWrites.remove(path);
+      }
+    }
+  }
+
+  Future<String?> _registrationText(String path) async {
+    final text = await _files.read(path);
+    if (text == null && await _files.isDirectory(path) != null) {
+      throw StateError('Cannot read existing configuration: $path');
+    }
+    return text;
   }
 
   /// Removes [item]'s file, or its folder (a skill's).

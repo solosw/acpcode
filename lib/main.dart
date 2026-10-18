@@ -48,6 +48,8 @@ import 'chat/composer/composer_polish.dart' show ComposerPolishSetting;
 import 'kernel/queued_messages.dart';
 import 'keybindings/keybindings_sync.dart';
 import 'link/link_host.dart';
+import 'mcp/tools_host.dart'
+    show runToolsStdio, runsToolsStdio, startToolsBridge;
 import 'keybindings/keymap.dart';
 import 'keybindings/vscode_import.dart';
 import 'l10n/l10n.dart';
@@ -113,6 +115,12 @@ import 'workspace/window_controls.dart';
 import 'workspace/workspace.dart';
 
 Future<void> main(List<String> arguments) async {
+  // An agent's MCP server, the app's own tools passed on to the app that
+  // runs it (lib/mcp/tools_stdio.dart): nothing of the app itself shows.
+  if (!kIsWeb && runsToolsStdio(arguments)) {
+    await runToolsStdio(arguments);
+    return;
+  }
   // All the app keeps is in its data folder: found first, once. One the
   // user set that cannot be used (a drive gone) is reported before the app
   // shows, never swapped for the default unasked.
@@ -129,6 +137,10 @@ Future<void> main(List<String> arguments) async {
     errors = ErrorLog(DataDirectory.current.logsDir)..install();
     // And what the app went through, to read what led to it.
     EventLog.current = EventLog(DataDirectory.current.logsDir);
+    // The agents that run beside the app (ACP ones) are given its own tools
+    // through a process of its starting (lib/mcp/tools_bridge.dart):
+    // listening in the data folder, before any of them starts.
+    await startToolsBridge();
   }
   unawaited(reapClaudeProcesses());
   unawaited(reapLspProcesses());

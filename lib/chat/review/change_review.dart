@@ -5,8 +5,10 @@ import 'package:bao_remote/client.dart' show RemoteReviewStore;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../kernel/kernel_event.dart' show FileEdited, FileSnapshot;
 import '../../remote/remote_location.dart';
 import '../chat_models.dart';
+import 'file_snapshot.dart';
 import 'review_store.dart';
 import 'unpatch.dart';
 
@@ -20,7 +22,7 @@ class _Entry {
   ReviewBlob? current;
   bool conflict = false;
 
-  /// User edits between ACP turns could not be separated from the agent.
+  /// User edits between agent writes could not be separated from the agent.
   /// Keep the file, even if a later scan now matches the agent's last write.
   bool unsafe = false;
 
@@ -306,7 +308,29 @@ class ChangeReview extends ChangeNotifier {
       unawaited(_enqueue(_refresh));
       return;
     }
-    unawaited(_enqueue(() => _take(path, change, original)));
+    // Snapshot before entering the asynchronous queue. A missing remote
+    // snapshot is unknown, NOT permission to read the current disk later.
+    final snapshot =
+        _reportedAfter ??
+        (_store is RemoteReviewStore
+            ? const FileSnapshot.unknown()
+            : snapshotFile(_absolute(path)));
+    unawaited(_enqueue(() => _take(path, change, original, snapshot)));
+  }
+
+  FileSnapshot? _reportedAfter;
+
+  /// Delivers a captured kernel edit through the existing report hook. The
+  /// snapshot is read synchronously by report, before it queues any work;
+  /// overrides of report need not change their public signature.
+  void reportEdit(FileEdited edit) {
+    final previous = _reportedAfter;
+    _reportedAfter = edit.after ?? const FileSnapshot.unknown();
+    try {
+      report(edit.change, original: edit.original);
+    } finally {
+      _reportedAfter = previous;
+    }
   }
 
   void _unsee(FileChange change) {
@@ -329,14 +353,26 @@ class ChangeReview extends ChangeNotifier {
     String path,
     FileChange change,
     FileOriginal? original,
+    FileSnapshot snapshot,
   ) async {
     final session = _session;
     final absolute = _absolute(path);
-    if (session == null || _unseen.containsKey(absolute)) {
+    if (session == null || !snapshot.known || _unseen.containsKey(absolute)) {
+      _entries.remove(path);
       _unsee(change);
-      return _refresh();
+      await _refresh();
+      return _persist();
     }
-    final after = await _store.take(session, path);
+    final bytes = snapshot.bytes;
+    // Protocol text has exact bytes, but no executable bit. Resolve only
+    // that metadata through the owning store (remote for SSH); never use
+    // its later content as after, or interpret text as a symlink target.
+    final mode =
+        snapshot.mode ??
+        ((await _store.current(path))?.mode == '100755' ? '100755' : '100644');
+    final after = bytes == null
+        ? null
+        : await _store.store(session, bytes, mode: mode);
     var entry = _entries[path];
     if (entry == null) {
       final (known, base) = await _baseOf(session, path, original, after);
@@ -345,6 +381,16 @@ class ChangeReview extends ChangeNotifier {
         return _refresh();
       }
       entry = _entries[path] = _Entry(base);
+    } else {
+      // A later agent write must not absorb user edits made between writes.
+      // Without a continuous before/after chain, keep the content and fail
+      // closed rather than resetting Undo's comparison point over it.
+      final (known, before) = await _baseOf(session, path, original, after);
+      final previous = entry.after;
+      if (!known ||
+          !(previous == null ? before == null : previous.sameContent(before))) {
+        entry.unsafe = true;
+      }
     }
     entry
       ..after = after

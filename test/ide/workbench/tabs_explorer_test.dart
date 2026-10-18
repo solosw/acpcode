@@ -69,10 +69,12 @@ void main() {
     await workspace.open(inRoot('a.dart'));
     await tester.pump();
     await _menu(tester, 'a.dart', 'Close Others');
-    // b.dart is dirty: the prompt asks first.
-    expect(find.textContaining('Do you want to save'), findsOneWidget);
-    await tester.tap(find.text("Don't Save"));
-    await tester.pumpAndSettle();
+    // Default auto-save also applies before closing a dirty tab.
+    expect(find.textContaining('Do you want to save'), findsNothing);
+    expect(
+      (workspace.files as TreeFiles).contents[inRoot('b.dart')],
+      'changed',
+    );
     expect(_tabNames(tester), ['a.dart']);
   });
 
