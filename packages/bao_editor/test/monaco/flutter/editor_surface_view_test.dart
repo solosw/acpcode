@@ -14,6 +14,7 @@ import 'package:bao_editor/monaco/flutter/editor_scrollbar.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:bao_editor/monaco/flutter/editor_view_painters.dart';
+import 'package:bao_editor/monaco/flutter/wheel_glide.dart';
 import 'package:bao_editor/monaco/vs/editor/common/languages/language_configuration.dart';
 import 'package:bao_editor/monaco/vs/editor/contrib/folding/browser/folding_ranges.dart'
     show FoldRange;
@@ -595,13 +596,15 @@ void main() {
     await tester.sendEventToBinding(
       PointerScrollEvent(position: center, scrollDelta: const Offset(0, 1e6)),
     );
-    await tester.pump();
-    final gutter = _gutter(tester);
+    // A notch glides the view: under way a frame on, a third of the way.
+    await tester.pump(const Duration(microseconds: 16667));
+    var gutter = _gutter(tester);
+    final end = gutter.layout.contentHeight - gutter.layout.lineHeight;
+    expect(gutter.scrollTop / end, inInclusiveRange(0.3, 0.4));
+    await tester.pump(WheelGlide.duration);
+    gutter = _gutter(tester);
     // scrollBeyondLastLine: the last line can reach the top of the viewport.
-    expect(
-      gutter.scrollTop,
-      closeTo(gutter.layout.contentHeight - gutter.layout.lineHeight, 0.01),
-    );
+    expect(gutter.scrollTop, closeTo(end, 0.01));
     expect(gutter.layout.visibleLineNumbers.toList(), [41]);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -610,8 +613,66 @@ void main() {
     );
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await tester.pump();
+    await tester.pump(WheelGlide.duration);
     expect(_painter<EditorTextPainter>(tester).scrollLeft, 120);
     expect(_painter<EditorScrollbarPainter>(tester).horizontal.needed, isTrue);
+
+    // A trackpad's at once.
+    final trackpad = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await trackpad.panZoomStart(center);
+    await trackpad.panZoomUpdate(center, pan: const Offset(0, 40));
+    await tester.pump();
+    expect(_gutter(tester).scrollTop, closeTo(end - 40, 0.01));
+    await trackpad.panZoomEnd();
+  });
+
+  testWidgets('a wheel notch taken up mid-way goes on from where the view '
+      'is, adding to what the last had left; a trackpad stops it', (
+    tester,
+  ) async {
+    final controller = _controller(
+      List.generate(200, (i) => 'line $i').join('\n'),
+    );
+    controller.select(0, 0);
+    await _mount(tester, controller);
+    final center = tester.getCenter(find.byType(EditorSurface));
+    const frame = Duration(microseconds: 16667);
+    Future<void> wheel(double dy) => tester.sendEventToBinding(
+      PointerScrollEvent(position: center, scrollDelta: Offset(0, dy)),
+    );
+
+    await wheel(100);
+    await tester.pump(frame);
+    await tester.pump(frame);
+    final mid = _gutter(tester).scrollTop;
+    expect(mid, inExclusiveRange(0, 100));
+    await wheel(100);
+    var last = mid;
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(frame);
+      final now = _gutter(tester).scrollTop;
+      // Never still, nor back.
+      if (now < 200 - 0.01) expect(now, greaterThan(last), reason: 'frame $i');
+      last = now;
+    }
+    expect(last, closeTo(200, 0.01));
+
+    // Stopped by anything else that scrolls it.
+    await wheel(400);
+    await tester.pump(frame);
+    final stopped = _gutter(tester).scrollTop;
+    expect(stopped, inExclusiveRange(200, 600));
+    final trackpad = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+    );
+    await trackpad.panZoomStart(center);
+    await trackpad.panZoomUpdate(center, pan: const Offset(0, 10));
+    await tester.pump(frame);
+    await tester.pump(WheelGlide.duration);
+    expect(_gutter(tester).scrollTop, closeTo(stopped - 10, 0.01));
+    await trackpad.panZoomEnd();
   });
 
   testWidgets('drag selection auto-scrolls while outside the viewport', (

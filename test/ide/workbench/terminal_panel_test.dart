@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart' show CommandStatus;
 import 'package:baocode/chat/side_panel/terminal_preview.dart';
+import 'package:baocode/ide/ide_explorer.dart';
 import 'package:baocode/ide/ide_workbench.dart';
 import 'package:baocode/ide/terminal/terminal_tasks.dart';
 import 'package:baocode/kernel/kernel_types.dart';
@@ -456,5 +457,46 @@ void main() {
     expect(workspace.active?.path, inRoot('lib/a.dart'));
     expect(find.text('Ln 2, Col 3'), findsOneWidget);
     await tester.pump(kDoubleTapTimeout);
+  });
+
+  testWidgets('the explorer\'s Open in Terminal starts a terminal in the '
+      'folder clicked, a file\'s in its folder', (tester) async {
+    final ptys = <FakePty>[];
+    await pumpWorkbench(tester, {
+      'lib/a.dart': 'a',
+      'README.md': 'r',
+    }, startPty: FakePty.starter(ptys));
+    await tester.pumpAndSettle();
+    expect(ptys, isEmpty);
+
+    Finder row(String name) => find.descendant(
+      of: find.byType(IdeExplorer),
+      matching: find.text(name),
+    );
+    Future<void> openInTerminal(String name) async {
+      await tester.tapAt(
+        tester.getCenter(row(name)),
+        buttons: kSecondaryMouseButton,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open in Terminal'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+    }
+
+    // A folder: the terminal starts in it.
+    await openInTerminal('lib');
+    expect(ptys, hasLength(1));
+    expect(ptys.single.launch!.workingDirectory, inRoot('lib'));
+    // It is shown, on the TERMINAL tab.
+    expect(find.text('TERMINAL'), findsOneWidget);
+    expect(_panelHeight(tester), greaterThan(0));
+
+    // A file: in the folder holding it.
+    await openInTerminal('README.md');
+    expect(ptys, hasLength(2));
+    expect(ptys.last.launch!.workingDirectory, testRoot);
   });
 }

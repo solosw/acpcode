@@ -108,6 +108,7 @@
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		3A7E5C012F00A00000000001 /* FinderSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderSync.swift; sourceTree = "<group>"; };
 		3A7E5C012F00A00000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		3A7E5C012F00A00000000020 /* FinderExtension.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = FinderExtension.xcconfig; sourceTree = "<group>"; };
 		3A7E5C012F00A00000000004 /* FinderExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FinderExtension.entitlements; sourceTree = "<group>"; };
 		3A7E5C012F00A00000000005 /* FinderExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FinderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -231,6 +232,7 @@
 				3A7E5C012F00A00000000001 /* FinderSync.swift */,
 				3A7E5C012F00A00000000003 /* Info.plist */,
 				3A7E5C012F00A00000000004 /* FinderExtension.entitlements */,
+				3A7E5C012F00A00000000020 /* FinderExtension.xcconfig */,
 			);
 			path = FinderExtension;
 			sourceTree = "<group>";
@@ -266,6 +268,7 @@
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3A7E5C012F00A0000000000C /* Embed Foundation Extensions */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
+				3A7E5D012F00A00000000001 /* Browser Host */,
 			);
 			buildRules = (
 			);
@@ -383,6 +386,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		3A7E5D012F00A00000000001 /* Browser Host */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/BrowserBridge/host.c",
+				"$(PROJECT_DIR)/BrowserBridge/build_host.sh",
+			);
+			name = "Browser Host";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/baocode-browser-host",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$PROJECT_DIR/BrowserBridge/build_host.sh\"\n";
+		};
 		3399D490228B24CF009A79C7 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -766,6 +790,7 @@
 		};
 		3A7E5C012F00A00000000010 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3A7E5C012F00A00000000020 /* FinderExtension.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FinderExtension/FinderExtension.entitlements;
@@ -787,6 +812,7 @@
 		};
 		3A7E5C012F00A00000000011 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3A7E5C012F00A00000000020 /* FinderExtension.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FinderExtension/FinderExtension.entitlements;
@@ -807,6 +833,7 @@
 		};
 		3A7E5C012F00A00000000012 /* Profile */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3A7E5C012F00A00000000020 /* FinderExtension.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = FinderExtension/FinderExtension.entitlements;

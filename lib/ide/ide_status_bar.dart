@@ -35,6 +35,7 @@ class IdeStatusBarItem {
     this.tooltip,
     this.tooltipContent,
     this.onTap,
+    this.onTapRect,
     this.onContextMenu,
     this.color,
     this.background,
@@ -50,6 +51,10 @@ class IdeStatusBarItem {
   /// Shown on hover instead of [tooltip] (e.g. a Markdown tooltip).
   final Widget? tooltipContent;
   final VoidCallback? onTap;
+
+  /// A click with where the entry is (global), for a menu anchored on it
+  /// (the remote indicator's); [onTap] where the position is not needed.
+  final void Function(Rect rect)? onTapRect;
 
   /// A secondary click at a global position (e.g. the menu that hides it).
   final void Function(Offset position)? onContextMenu;
@@ -139,11 +144,19 @@ class _StatusItem extends StatefulWidget {
 class _StatusItemState extends State<_StatusItem> {
   bool _hover = false;
 
+  /// Where the entry is, in the window (global): what a menu anchors on.
+  Rect? get _rect {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.attached || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
     final colors = themeColors;
-    final hovered = _hover && item.onTap != null;
+    final tappable = item.onTap != null || item.onTapRect != null;
+    final hovered = _hover && tappable;
     // Its icons too (`color: inherit`); its own color stays on hover.
     final color =
         item.color ??
@@ -179,16 +192,20 @@ class _StatusItemState extends State<_StatusItem> {
         ],
       ),
     );
-    if (item.onTap != null || item.onContextMenu != null) {
+    if (tappable || item.onContextMenu != null) {
+      final anchor = item.onTapRect;
       child = MouseRegion(
-        cursor: item.onTap != null
-            ? SystemMouseCursors.click
-            : MouseCursor.defer,
+        cursor: tappable ? SystemMouseCursors.click : MouseCursor.defer,
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: item.onTap,
+          onTapUp: anchor == null
+              ? null
+              : (_) {
+                  if (_rect case final rect?) anchor(rect);
+                },
           onSecondaryTapUp: item.onContextMenu == null
               ? null
               : (details) => item.onContextMenu!(details.globalPosition),

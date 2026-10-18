@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
+import '../../ide/file_views.dart';
 import '../../ide/ide_menu.dart';
 import '../../l10n/l10n.dart';
 import '../../workspace/editor_launcher.dart';
@@ -20,8 +21,8 @@ abstract interface class ChatItemMenu {
 /// What a right click on a file the chat names offers, as an editor tab's
 /// menu does: open it (in the side panel, in the IDE), copy its path, and on this machine show it in the
 /// file manager or open it in its app. An image also shows enlarged
-/// ([onPreview]) and copies ([onCopyImage]); a web page opens in the
-/// browser ([browser]).
+/// ([onPreview]) and copies ([onCopyImage]); one opened outside the app
+/// opens there ([opener]: a web page, in the browser).
 @immutable
 class FileLinkMenu implements ChatItemMenu {
   const FileLinkMenu({
@@ -34,14 +35,15 @@ class FileLinkMenu implements ChatItemMenu {
     this.onOpenInIde,
     this.onPreview,
     this.onCopyImage,
-    this.browser = false,
+    this.opener,
   });
 
   final VoidCallback? onPreview;
   final VoidCallback? onCopyImage;
 
-  /// Whether it opens in the browser: a web page on this machine.
-  final bool browser;
+  /// What opens it outside the app (a web page on this machine, the
+  /// browser), its item first.
+  final FileOpener? opener;
 
   /// The file's absolute path, as its host spells it ([paths]).
   final String path;
@@ -50,7 +52,7 @@ class FileLinkMenu implements ChatItemMenu {
   final String root;
 
   /// Opens it where the chat's files open; none where it does not open
-  /// there (an image, not in the side panel).
+  /// there.
   final VoidCallback? onOpen;
 
   /// Whether [onOpen] opens it in the side panel.
@@ -74,10 +76,10 @@ class FileLinkMenu implements ChatItemMenu {
         [
           if (onPreview case final preview?)
             IdeMenuAction(l10n.fileLinkPreview, onSelected: preview),
-          if (browser && local)
+          if (opener case final opener? when local)
             IdeMenuAction(
-              l10n.fileLinkOpenInBrowser,
-              onSelected: () => unawaited(openExternal(path)),
+              opener.label(context),
+              onSelected: () => unawaited(opener.open(path)),
             ),
           if (onOpen case final open?)
             IdeMenuAction(

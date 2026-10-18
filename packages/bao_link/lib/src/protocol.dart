@@ -20,9 +20,19 @@ abstract final class LinkMethods {
   /// `{}`: the [LinkState] now; [LinkEvents.state] follows each change.
   static const state = 'state';
 
-  /// `{"session"}`: follows the session, [LinkEvents.session] bringing all
-  /// of it at once, then what changes.
+  /// `{"session", "window"?}`: follows the session, [LinkEvents.session]
+  /// bringing all of it at once, then what changes. With `window` (an
+  /// int N), only the last N items at first, and more as it asks
+  /// ([earlier]); `start` and `count` of every update are then counted
+  /// from the first item the phone has, not the session's first.
   static const open = 'open';
+
+  /// `{"session", "count"?}` -> `{"items": [...], "earlier"}`: up to
+  /// `count` (50 if none) items before the first the phone has, oldest
+  /// first, read from the desktop's history first when it has no more in
+  /// memory. The phone puts them before its own; `earlier` tells whether
+  /// there are yet more. Only for a session [open]ed with `window`.
+  static const earlier = 'earlier';
 
   /// `{"session"}`: no longer followed.
   static const close = 'close';
@@ -500,6 +510,7 @@ class LinkSessionUpdate {
     this.choices = const [],
     this.changes = const [],
     this.tasks = const [],
+    this.earlier,
   });
 
   factory LinkSessionUpdate.fromJson(Map<String, Object?> json) =>
@@ -525,6 +536,7 @@ class LinkSessionUpdate {
           for (final task in (json['tasks'] as List?) ?? const [])
             LinkTask.fromJson(_map(task)),
         ],
+        earlier: json['earlier'] as bool?,
       );
 
   final String session;
@@ -550,6 +562,11 @@ class LinkSessionUpdate {
   /// output).
   final List<LinkTask> tasks;
 
+  /// Whether there is more before the first item, for a session followed
+  /// with a window; null if not (the desktop does not page, or it is not
+  /// asked to).
+  final bool? earlier;
+
   Map<String, Object?> toJson() => {
     'session': session,
     'start': start,
@@ -560,6 +577,7 @@ class LinkSessionUpdate {
     'choices': [for (final choice in choices) choice.toJson()],
     'changes': changes,
     if (tasks.isNotEmpty) 'tasks': [for (final task in tasks) task.toJson()],
+    'earlier': ?earlier,
   };
 }
 

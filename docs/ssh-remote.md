@@ -71,15 +71,18 @@
 - **侧栏**：项目名旁边有一个远程图标和主机名，悬停时显示远端路径和“位于 xxx（通过 SSH）”。连接失败时图标和主机名变红，悬停显示原因，点击重连。
 - **对话输入框上方**：项目所在主机连接失败时，显示“无法连接到 xxx: 原因”，带“详细信息”（ssh 或服务端的输出、下载地址）和“重试”。如果对话本身已经因为同一原因报错，就只显示对话的那条。
 - **窗口标题**：`项目名 [SSH: 主机]`。
-- **IDE 状态栏最左边**：
+- **IDE 状态栏最左边**：`SSH: 主机`，和 VS Code 的远程指示器一样，状态随时更新；点击它打开远程菜单（见下）。
 
-| 显示 | 含义 | 点击 |
-| --- | --- | --- |
-| `SSH: dev` | 已连接 | — |
-| `SSH: dev（正在连接...）` | 第一次连接中，悬停显示当前步骤 | — |
-| `SSH: dev（正在重连...）` | 断线后等待重连 | 立即重连 |
-| `SSH: dev（已断开）`（红色） | 连接失败，且不会自动重试 | 重新连接 |
-| `SSH: dev（正在安装 Claude Code 45%）` | 正在往这台主机装 Claude Code | — |
+| 显示 | 含义 |
+| --- | --- |
+| `SSH: dev` | 已连接 |
+| `SSH: dev（正在连接...）` | 第一次连接中，悬停显示当前步骤 |
+| `SSH: dev（正在重连...）` | 断线后等待重连 |
+| `SSH: dev（已断开）`（红色） | 连接失败，且不会自动重试 |
+| `SSH: dev（正在安装 Claude Code 45%）` | 正在往这台主机装 Claude Code |
+
+  点它（任何状态下）弹出远程菜单：切换到别的主机（打开它上面某个文件夹）、断开连接/重新连接、在本机（当前主机）上打开文件夹、打开文件、添加 SSH 主机。
+- **打开文件（远程）**：远程项目里，菜单栏的“打开文件...”浏览的是远端服务器的目录（从该项目所在目录开始），选中的文件按它在那里的路径打开，而不是只能开本机文件（VS Code 的 Remote-SSH 一样）。命令面板里也有“打开远程文件...”（`baocode.remote.openFile`）。
 
 ### 2.3 断线与重连
 
@@ -137,6 +140,7 @@
 | `lib/remote/remote_claude_install.dart` | 远端没有 Claude Code 时的自动安装 |
 | `lib/remote/remote_binaries.dart` | 找应用的服务端二进制：目录里的，或按 `servers.json` 下载的；开发时从源码编译 |
 | `lib/remote/open_remote.dart` | “打开远程项目”的快速选择流程 |
+| `lib/remote/remote_files.dart` | 主机选择（`RemoteHostPicker`，两个流程共用）和“打开远程文件”流程：浏览主机目录，选中文件 |
 | `lib/remote/remote_status.dart` | 状态栏的 `SSH: 主机`、聊天上方的连接失败提示和 Claude 安装进度条 |
 | `packages/bao_remote/lib/src/client/ssh_launcher.dart` | 调用 `ssh`：探测、上传、启动服务端；失败分类 |
 | `packages/bao_remote/lib/src/client/ssh_config.dart` | 读 `~/.ssh/config` 里的主机 |

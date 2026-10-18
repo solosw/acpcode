@@ -55,8 +55,12 @@ class _HealthBannerState extends State<HealthBanner> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  health.message ??
-                      context.l10n.healthStopped(widget.kernelName),
+                  switch (health.missingFolder) {
+                    final folder? => context.l10n.healthFolderGone(folder),
+                    null =>
+                      health.message ??
+                          context.l10n.healthStopped(widget.kernelName),
+                  },
                   style: TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 12.5,

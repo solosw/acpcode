@@ -20,6 +20,7 @@ import 'package:baocode/main.dart';
 import 'package:baocode/search/search_palette.dart';
 import 'package:baocode/chat/widgets/user_message_bubble.dart';
 import 'package:baocode/sidebar/sidebar.dart';
+import 'package:baocode/sidebar/sidebar_times.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 import 'package:baocode/workspace/chat_grid_view.dart';
@@ -427,6 +428,47 @@ void main() {
     expect(inSidebar(find.textContaining('Archived')), findsNothing);
   });
 
+  testWidgets('shown, the archived agents\' heading has the same menu, on a '
+      'right click or its … button (#90)', (tester) async {
+    final workspace = await pumpApp(tester);
+    final archived = workspace.threads.skip(1).take(2).toList();
+    final heading = inSidebar(find.text('Archived'));
+    Future<void> archiveAndShow() async {
+      for (final thread in archived) {
+        workspace.setArchived(thread, true);
+      }
+      await tester.pump();
+      await tester.tap(inSidebar(find.text('Archived · 2')));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(heading, findsOneWidget);
+    }
+
+    await archiveAndShow();
+    await tester.tap(heading, buttons: kSecondaryButton);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Delete All Archived…'), findsOneWidget);
+    await tester.tap(find.text('Unarchive All'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(archived.where((thread) => thread.archived), isEmpty);
+
+    // Hovered, its … button opens it too.
+    await archiveAndShow();
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(heading));
+    await tester.pump();
+    await tester.tap(inSidebar(find.byIcon(Icons.more_horiz_rounded)));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('Delete All Archived…'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Delete archived agents?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(GestureDetector, 'Delete').last);
+    await tester.pump(const Duration(milliseconds: 300));
+    for (final thread in archived) {
+      expect(workspace.threads, isNot(contains(thread)));
+    }
+  });
+
   testWidgets('an agent\'s menu copies its session id, once it has one', (
     tester,
   ) async {
@@ -603,6 +645,22 @@ void main() {
     expect(thread.pinned, isFalse);
   });
 
+  testWidgets('with the times turned off in the settings, the rows show none', (
+    tester,
+  ) async {
+    addTearDown(() => SidebarTimes.shown.value = true);
+    await pumpApp(tester);
+    expect(inSidebar(find.text('55m')), findsOneWidget);
+
+    SidebarTimes.shown.value = false;
+    await tester.pump();
+    expect(inSidebar(find.text('55m')), findsNothing);
+
+    SidebarTimes.shown.value = true;
+    await tester.pump();
+    expect(inSidebar(find.text('55m')), findsOneWidget);
+  });
+
   testWidgets('a clipped mixed-language title stays on its baseline when '
       'hover actions appear', (tester) async {
     final workspace = await pumpApp(tester);
@@ -665,6 +723,36 @@ void main() {
     expect(outline?.border, isNotNull);
   });
 
+  testWidgets('the selection follows the agent opened from elsewhere, a new '
+      'one too', (tester) async {
+    final workspace = await pumpKept(
+      tester,
+      KeptCatalog([kept('a1', '/tmp/a', 1), kept('a2', '/tmp/a', 2)]),
+    );
+    IdeListRow rowOf(Finder title) => tester.widget<IdeListRow>(
+      find.ancestor(of: title, matching: find.byType(IdeListRow)),
+    );
+    final a1 = inSidebar(find.text('Chat a1'));
+    final a2 = inSidebar(find.text('Chat a2'));
+    await tester.tap(a1);
+    await tester.pumpAndSettle();
+    expect(rowOf(a1).selected, isTrue);
+
+    workspace.select(keptThread(workspace, 'a2'));
+    await tester.pumpAndSettle();
+    expect(rowOf(a1).selected, isFalse);
+    expect(rowOf(a2).selected, isTrue);
+
+    final created = workspace.create(project: workspace.selected.project);
+    await tester.pumpAndSettle();
+    expect(workspace.selected, same(created));
+    expect(rowOf(a2).selected, isFalse);
+    final rows = tester.widgetList<IdeListRow>(
+      inSidebar(find.byType(IdeListRow)),
+    );
+    expect(rows.where((row) => row.selected), hasLength(1));
+  });
+
   testWidgets('selected rows use the explorer colors as focus moves and '
       'Escape clears the highlight', (tester) async {
     final workspace = await pumpKept(
@@ -719,6 +807,15 @@ void main() {
     await tester.pump();
     expect(tester.widget<IdeListRow>(row).selected, isFalse);
     expect(decoration().color, isNull);
+    expect(
+      find.descendant(
+        of: row,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Positioned && widget.left == 0 && widget.width == 2,
+        ),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('high contrast themes outline the hovered row, as the IDE '
@@ -889,6 +986,32 @@ void main() {
     expect(thread.title, 'Quota per key');
     expect(inSidebar(find.textContaining('Quota per key')), findsOneWidget);
     // The double tap's timers run out.
+    await tester.pump(const Duration(milliseconds: 500));
+  });
+
+  testWidgets('a click on another agent between two makes no double click', (
+    tester,
+  ) async {
+    final workspace = await pumpApp(tester);
+    final first = threadNamed(workspace, 'Rate limit per API key');
+    final firstRow = inSidebar(find.textContaining('Rate limit per API key'));
+    final other = workspace.threads.firstWhere(
+      (thread) =>
+          thread != first &&
+          !thread.archived &&
+          inSidebar(find.text(thread.title)).evaluate().isNotEmpty,
+    );
+
+    await tester.tap(firstRow);
+    await tester.pump();
+    await tester.tap(inSidebar(find.text(other.title)));
+    await tester.pump();
+    expect(workspace.selected, other);
+    // Back at once: it opens, no rename.
+    await tester.tap(firstRow);
+    await tester.pump();
+    expect(workspace.selected, first);
+    expect(inSidebar(find.byType(TextField)), findsNothing);
     await tester.pump(const Duration(milliseconds: 500));
   });
 
@@ -1916,7 +2039,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Pin'));
+    await tester.tap(find.text('Pin 2 Agents'));
     await tester.pump();
     final pinned = workspace.inPinnedOrder([
       keptThread(workspace, 'a2'),
@@ -1993,7 +2116,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Pin'));
+    await tester.tap(find.text('Pin 2 Agents'));
     await tester.pump();
     expect(keptThread(workspace, 'a2').pinned, isTrue);
     expect(keptThread(workspace, 'a3').pinned, isTrue);
@@ -2003,7 +2126,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Archive'));
+    await tester.tap(find.text('Archive 2 Agents'));
     await tester.pump();
     expect(keptThread(workspace, 'a2').archived, isTrue);
     expect(keptThread(workspace, 'a3').archived, isTrue);
@@ -2027,14 +2150,17 @@ void main() {
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Pin'));
+    // Only what is done to them all, saying how many.
+    expect(find.text('Rename'), findsNothing);
+    expect(find.text('Fork'), findsNothing);
+    await tester.tap(find.text('Pin 2 Agents'));
     await tester.pump();
     await tester.tap(
       inSidebar(find.textContaining('Chat a3')),
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Unpin'));
+    await tester.tap(find.text('Unpin 2 Agents'));
     await tester.pump();
     expect(keptThread(workspace, 'a2').pinned, isFalse);
     expect(keptThread(workspace, 'a3').pinned, isFalse);
@@ -2044,7 +2170,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     await tester.pump();
-    await tester.tap(find.text('Archive'));
+    await tester.tap(find.text('Archive 2 Agents'));
     await tester.pump();
     await tester.tap(inSidebar(find.text('Archived · 2')));
     await tester.pumpAndSettle();
@@ -2061,8 +2187,8 @@ void main() {
     await tester.pump();
     expect(keptThread(workspace, 'a2').archived, isTrue);
     expect(keptThread(workspace, 'a3').archived, isTrue);
-    expect(find.text('Unarchive'), findsOneWidget);
-    await tester.tap(find.text('Unarchive'));
+    expect(find.text('Unarchive 2 Agents'), findsOneWidget);
+    await tester.tap(find.text('Unarchive 2 Agents'));
     await tester.pump();
     expect(keptThread(workspace, 'a2').archived, isFalse);
     expect(keptThread(workspace, 'a3').archived, isFalse);
@@ -2130,7 +2256,7 @@ void main() {
         buttons: kSecondaryButton,
       );
       await tester.pump();
-      await tester.tap(find.text('Delete').first);
+      await tester.tap(find.text('Delete 2 Agents…'));
       await tester.pump();
       expect(find.text('Delete agents?'), findsOneWidget);
       expect(

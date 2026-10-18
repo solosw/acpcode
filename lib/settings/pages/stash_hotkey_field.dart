@@ -202,7 +202,7 @@ class StashHotkeyCard extends StatelessWidget {
       settings
           .update(
             StashSettings.hotkeyKey,
-            spec == StashSettings.defaultHotkey ? null : spec,
+            spec.isEmpty ? null : spec,
           )
           .catchError((Object error) {
             debugPrint('${StashSettings.hotkeyKey} not kept: $error');
@@ -244,11 +244,16 @@ class StashHotkeyCard extends StatelessWidget {
                     secondary: true,
                     onPressed: () => _write(''),
                   ),
-                if (hotkey != StashSettings.defaultHotkey)
+                if (hotkey.isEmpty)
                   IdeButton(
-                    label: l10n.stashHotkeyDefault,
+                    label: l10n.stashHotkeySuggested(
+                      StashSettings.label(
+                        StashSettings.suggestedHotkey,
+                        mac: AppPlatform.isMacOS,
+                      ),
+                    ),
                     secondary: true,
-                    onPressed: () => _write(StashSettings.defaultHotkey),
+                    onPressed: () => _write(StashSettings.suggestedHotkey),
                   ),
               ],
             ),

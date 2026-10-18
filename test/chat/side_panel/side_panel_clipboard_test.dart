@@ -1,3 +1,4 @@
+import 'package:baocode/ide/ide_notifications.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/side_panel/side_panel_controller.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
@@ -67,6 +68,7 @@ void main() {
           child: AgentSidePanelArea(
             panel: panel,
             builder: (context) => AgentSidePanelView(
+              notifications: IdeNotifications(),
               panel: panel,
               session: session,
               files: files,

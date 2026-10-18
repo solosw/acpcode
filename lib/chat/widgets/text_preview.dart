@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../base/smooth_scroll.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
@@ -56,7 +57,7 @@ class TextPreview extends StatefulWidget {
 
 class _TextPreviewState extends State<TextPreview> {
   late final List<String> _lines = widget.text.split('\n');
-  final _scroll = ScrollController();
+  final _scroll = SmoothScrollController();
   bool _copied = false;
   Timer? _copiedTimer;
 
@@ -84,10 +85,8 @@ class _TextPreviewState extends State<TextPreview> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final size = MediaQuery.sizeOf(context);
-    final style = AppFonts.uiCodeStyle(12.5).copyWith(
-      color: AppColors.text,
-      height: 1.5,
-    );
+    final style = AppFonts.uiCodeStyle(12.5)
+        .copyWith(color: AppColors.text, height: 1.5);
     final numbers = style.copyWith(color: AppColors.textFaint);
     final gutter = '${_lines.length}'.length * 8.0 + 16;
     return Center(

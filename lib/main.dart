@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui' show AppExitResponse, AppExitType;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -11,12 +11,15 @@ import 'package:bao_editor/textmate/textmate_syntax.dart';
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
+import 'browser/browser_bridge.dart';
+import 'browser/browser_tools.dart' show BrowserHistory;
 import 'chat/composer/composer_files.dart' show ComposerFile, pastedAsPicture;
 import 'chat/chat_width.dart';
 import 'chat/user_message_style.dart';
 import 'chat/widgets/chat_minimap.dart';
 import 'chat/widgets/pixel_loader.dart';
 import 'customize/customization_store.dart';
+import 'diagnostics/app_event_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
@@ -33,11 +36,16 @@ import 'icons/icon_library.dart';
 import 'icons/icon_storage.dart';
 import 'icons/site_icons.dart';
 import 'kernel/acp_agents.dart';
+import 'kernel/claude_code/claude_code_kernel.dart';
+import 'kernel/claude_code/claude_core_setting.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
 import 'kernel/claude_code/claude_path_setting.dart';
 import 'kernel/claude_code/process_transport.dart';
 import 'kernel/commit_attribution.dart';
 import 'kernel/kernel_registry.dart';
+import 'kernel/prompt_suggestions.dart';
+import 'chat/composer/composer_polish.dart' show ComposerPolishSetting;
+import 'kernel/queued_messages.dart';
 import 'keybindings/keybindings_sync.dart';
 import 'link/link_host.dart';
 import 'keybindings/keymap.dart';
@@ -53,6 +61,7 @@ import 'notifications/attention_settings.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
+import 'platform/event_log.dart';
 import 'platform/open_requests.dart';
 import 'platform/shell_command.dart';
 import 'remote/project_host.dart';
@@ -65,9 +74,15 @@ import 'settings/app_locale.dart';
 import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
 import 'settings/user_settings.dart';
+import 'sidebar/sidebar_times.dart';
 import 'telemetry/telemetry_platform.dart';
 import 'stash/stash_editor.dart' show StashEditor;
+import 'forge/forge_accounts.dart';
+import 'forge/forge_io_stub.dart'
+    if (dart.library.io) 'forge/forge_io.dart'
+    show IoForgeHttp;
 import 'stash/stash_controller.dart';
+import 'stash/stash_forge.dart';
 import 'stash/stash_disk.dart';
 import 'stash/stash_panel_view.dart';
 import 'stash/stash_settings.dart';
@@ -77,6 +92,7 @@ import 'telemetry/telemetry_store.dart';
 import 'theme/app_theme.dart';
 import 'theme/code_font.dart';
 import 'theme/pixel_snapped_text_scaler.dart';
+import 'theme/ui_zoom.dart';
 import 'theme/workbench_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_platform.dart';
@@ -111,11 +127,14 @@ Future<void> main(List<String> arguments) async {
     }
     // What goes wrong unseen from here on, kept for the user to send.
     errors = ErrorLog(DataDirectory.current.logsDir)..install();
+    // And what the app went through, to read what led to it.
+    EventLog.current = EventLog(DataDirectory.current.logsDir);
   }
   unawaited(reapClaudeProcesses());
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb) AppEventWatch.start();
   // The Windows app's own logs go beside it.
   if (errors != null) unawaited(errors.shareWithHost());
   // The editor's language packs are the language servers' (README.md in
@@ -138,12 +157,30 @@ Future<void> main(List<String> arguments) async {
     // Read as each agent starts.
     CommitAttribution.current = () =>
         CommitAttribution.parse(files.settings[CommitAttribution.settingKey]);
+    // Read as each message is sent.
+    QueuedMessages.current = () =>
+        QueuedMessages.parse(files.settings[QueuedMessages.settingKey]);
+    // Read as each agent starts, and as each message is sent.
+    PromptSuggestions.current = () =>
+        PromptSuggestions.enabled(files.settings[PromptSuggestions.settingKey]);
+    // The composer's Polish button, shown or not as it changes.
+    ComposerPolishSetting.current = () => ComposerPolishSetting.enabled(
+      files.settings[ComposerPolishSetting.settingKey],
+    );
+    ComposerPolishSetting.changes = files.settings;
     // Settings → General → Claude Code: the build to run, read as each
     // agent starts.
     ClaudePathSetting.current = () =>
         ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
+    // Settings → General → Claude Code: the core sessions run on (BaoCode's
+    // own, or the CLI), read as each agent starts.
+    ClaudeCore.current = () =>
+        ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
     // Settings → Models: the upstreams, kept in settings.json.
     ModelProviders.current = ModelProviders.settings(files.settings);
+    // Claude Code's own models as it last listed them: in the picker
+    // before a session on them starts.
+    ClaudeCodeKernel.modelCache = files.storage;
     // The upstreams' sites' icons, for those that show no other: in the
     // cache, fetched as soon as one is added.
     SiteIcons.current = SiteIcons(
@@ -172,6 +209,21 @@ Future<void> main(List<String> arguments) async {
     ChatMinimap.follow(files.settings, (key) => files.settings[key]);
     // Settings → Appearance: what an agent and a subagent show running.
     PixelLoaderRole.follow(files.settings, (key) => files.settings[key]);
+    // Settings → Appearance: whether the sidebar's agents show their times.
+    SidebarTimes.follow(
+      files.settings,
+      () => files.settings[SidebarTimes.settingKey],
+    );
+    // Settings → Browser: whether the agents may use the user's browsers.
+    BrowserBridge.instance.follow(
+      files.settings,
+      () => files.settings[BrowserBridge.settingKey],
+    );
+    // Settings → Browser: whether the history keeps bodies and steps too.
+    BrowserHistory.instance.follow(
+      files.settings,
+      () => files.settings[BrowserHistory.detailedKey],
+    );
     // Settings → Appearance: the code's font, size and ligatures, and the
     // window's text size.
     CodeFont.follow(files.settings, (key) => files.settings[key]);
@@ -212,11 +264,14 @@ Future<void> main(List<String> arguments) async {
     ]);
     workspace.refreshKernels(KernelRegistry.all);
   });
+  // Claude Code's skills, agents, commands, rules, servers, hooks and
+  // plugins: the Customize view beside the chat, and Settings → Customize.
+  final customizations = CustomizationStore();
   // The phones paired with this computer (Settings → Mobile): listening
   // for them, if they are allowed to connect.
   final link = kIsWeb
       ? null
-      : LinkHost(workspace: workspace, customizations: CustomizationStore());
+      : LinkHost(workspace: workspace, customizations: customizations);
   unawaited(link?.load());
   // The first frame is in the kept theme, restored from storage as VS Code
   // does before the workbench shows; its file is read after. The setting
@@ -272,7 +327,19 @@ Future<void> main(List<String> arguments) async {
       settingsChanges: files.settings,
       cacheDir: DataDirectory.current.cacheDir,
       storage: files.storage,
+      // Claude Code's skills are the installed app's: a build run from the
+      // source, often on a data folder of its own (`BAOCODE_DATA_DIR`),
+      // would point the user's agents at its stashes.
+      installSkill: !kDebugMode,
+      // The user's GitHub and GitLab accounts: their tokens in the
+      // keychain, the rest in the global storage.
+      accounts: ForgeAccounts.current = ForgeAccounts(
+        http: IoForgeHttp(),
+        read: () => files.storage.get<List<Object?>>(forgeAccountsKey),
+        write: (json) => files.storage.set(forgeAccountsKey, json),
+      ),
     );
+    StashForge.current = stash.forge;
     unawaited(stash.start());
   }
   // What shows at launch (settings.json's `workbench.mainWindow`): with
@@ -329,6 +396,7 @@ Future<void> main(List<String> arguments) async {
       workspace: workspace,
       claudeStatus: localClaudeStatus,
       link: link,
+      customizations: customizations,
     );
     _startTelemetry(files);
   }
@@ -374,7 +442,7 @@ Future<void> main(List<String> arguments) async {
     // What Claude Code keeps: its sessions to search, its skills, agents,
     // commands, rules, servers, hooks and plugins to customize.
     conversations: ClaudeConversationSearch(),
-    customizations: CustomizationStore(),
+    customizations: customizations,
   );
   // With windows, each is a view of its own (see [BaoCodeApp.build]).
   if (windows.started) {
@@ -652,20 +720,28 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
     builder: (context, child) => ValueListenableBuilder<int>(
       valueListenable: CodeFont.uiScale,
       builder: (context, percent, scaled) {
-        final media = MediaQuery.of(context);
+        // The whole window is zoomed, not its text alone: its fixed heights,
+        // icons and gaps grow with the text they hold.
+        final zoom = percent / 100;
+        final media = UiZoom.zoomed(MediaQuery.of(context), zoom);
+        // The traffic lights, level with the title bar as it grows.
+        WindowControls.setTitleBarDrop(
+          AppMetrics.titleBarHeight * (zoom - 1) / 2,
+          viewId: window.viewId,
+        );
         // Windows blurs glyphs drawn at a fractional pixel size.
         TextScaler snapped(TextScaler scaler) => AppPlatform.isWindows
             ? PixelSnappedTextScaler(scaler, media.devicePixelRatio)
             : scaler;
+        final system = media.textScaler;
         return SystemTextScale(
-          scaler: snapped(media.textScaler),
+          // Code at its own size: the zoom taken back off.
+          scaler: snapped(
+            zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
+          ),
           child: MediaQuery(
-            data: media.copyWith(
-              textScaler: snapped(
-                TextScaler.linear(media.textScaler.scale(1) * percent / 100),
-              ),
-            ),
-            child: scaled!,
+            data: media.copyWith(textScaler: snapped(system)),
+            child: UiZoom(scale: zoom, child: scaled),
           ),
         );
       },

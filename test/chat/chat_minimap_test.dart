@@ -9,6 +9,7 @@ import 'package:baocode/chat/composer/composer_draft.dart';
 import 'package:baocode/chat/composer/composer_files.dart';
 import 'package:baocode/chat/widgets/assistant_text.dart';
 import 'package:baocode/chat/widgets/chat_minimap.dart';
+import 'package:baocode/chat/widgets/hover_scrollbar.dart';
 import 'package:baocode/theme/app_theme.dart';
 
 class _Feed extends ChangeNotifier implements ChatFeed {
@@ -165,6 +166,21 @@ void main() {
     expect(_opacity(tester), 0);
     // The scrollbar is back.
     expect(_scrollbar(tester).interactive, isTrue);
+  });
+
+  testWidgets('a table in the history keeps its bar while it shows', (
+    tester,
+  ) async {
+    await _pump(tester, _Feed(_conversation(30)));
+    expect(_opacity(tester), 1);
+    // The list's own bar gives way to it...
+    Color? thumb(Finder bar) =>
+        ScrollbarTheme.of(tester.element(bar)).thumbColor?.resolve(const {});
+    expect(thumb(find.byType(Scrollbar).first), Colors.transparent);
+    // ...a table's, under it, not.
+    final table = find.byType(HoverScrollbar).last;
+    expect(table, findsOneWidget);
+    expect(thumb(table), isNot(Colors.transparent));
   });
 
   testWidgets('not while all of the history shows', (tester) async {

@@ -64,6 +64,8 @@ bool FlutterWindow::OnCreate() {
   // lib/window/window_host.dart).
   app_windows_ = std::make_unique<AppWindows>(messenger, GetHandle());
   SetObserver(app_windows_.get(), 0);
+  // Where it was left at the last quit, as big.
+  app_windows_->PlaceMain();
 
   // Notifications, the taskbar button's count and the tray icon (see
   // lib/notifications/).
@@ -78,7 +80,9 @@ bool FlutterWindow::OnCreate() {
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
     if (AppWindows::MainShownAtLaunch()) {
-      this->Show();
+      ::ShowWindow(GetHandle(), app_windows_ != nullptr
+                                    ? app_windows_->MainShowCommand(SW_SHOWNORMAL)
+                                    : SW_SHOWNORMAL);
     } else if (app_windows_ != nullptr) {
       app_windows_->HoldMainBack();
     }
@@ -96,6 +100,10 @@ void FlutterWindow::OnDestroy() {
   // The IDE's windows first: their views are this engine's, which goes with
   // the controller below.
   SetObserver(nullptr, 0);
+  // Moved or resized just before quitting, before it settled.
+  if (app_windows_ != nullptr) {
+    app_windows_->KeepMainFrame();
+  }
   if (attention_ != nullptr) {
     attention_->DetachWindows();
   }

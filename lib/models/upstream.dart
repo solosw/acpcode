@@ -11,6 +11,7 @@ class RemoteModel {
     this.contextWindow,
     this.efforts,
     this.images,
+    this.kind,
   });
 
   final String id;
@@ -22,6 +23,10 @@ class RemoteModel {
 
   /// Whether it takes images, where the upstream says.
   final bool? images;
+
+  /// What it is for, where the upstream says (OpenRouter's output
+  /// modalities, SiliconFlow's type); else it goes by its name.
+  final ModelKind? kind;
 }
 
 /// How [ModelProvider.baseUrl] is read, as each protocol's SDK has it:
@@ -162,6 +167,25 @@ Map<String, String> upstreamHeaders(ModelProvider provider, String? key) => {
       'authorization': 'Bearer $key',
 };
 
+/// The custom headers [provider] is asked with ([ModelProvider.headers]),
+/// their `{{…}}` variables standing for [request]'s values, [session]
+/// (Claude Code's session id) and [model] (the upstream model): a name
+/// that may not be set left out ([sanitizeHeaders]), so a key never goes
+/// from here and no auth header is overwritten, and only whitelisted
+/// variables are replaced ([substituteVariables]).
+Map<String, String> customUpstreamHeaders(
+  ModelProvider provider, {
+  String? session,
+  String? model,
+  Map<String, String> request = const {},
+}) => {
+  for (final MapEntry(:key, :value) in sanitizeHeaders(
+    provider.headers,
+    provider.protocol,
+  ).entries)
+    key: substituteVariables(value, request, session: session, model: model),
+};
+
 /// The models in a `/v1/models` answer: OpenAI's `data` (or a bare list),
 /// Anthropic's `data` with `display_name`; a context window where the
 /// upstream says (OpenRouter's `context_length`, and others').
@@ -205,9 +229,41 @@ List<RemoteModel> parseModelList(Object? json) {
         window = tokens.toInt();
       }
     }
-    models.add(RemoteModel(id, label: label, contextWindow: window));
+    models.add(
+      RemoteModel(id, label: label, contextWindow: window, kind: _kindOf(item)),
+    );
   }
   return models;
+}
+
+/// What a listed model is for, where its entry says: what it answers with
+/// (OpenRouter's `architecture.output_modalities`, others'
+/// `output_modalities`), or its type (SiliconFlow's `image`,
+/// `text-to-image`). Null when it does not say.
+ModelKind? _kindOf(Map item) {
+  final outputs = switch (item['architecture']) {
+    {'output_modalities': final List outputs} => outputs,
+    _ => switch (item['output_modalities']) {
+      final List outputs => outputs,
+      _ => null,
+    },
+  };
+  if (outputs != null) {
+    if (!outputs.contains('image')) return ModelKind.chat;
+    return outputs.contains('text') ? ModelKind.imageChat : ModelKind.image;
+  }
+  for (final key in const ['type', 'sub_type', 'model_type', 'task']) {
+    if (item[key] case final String type) {
+      final lower = type.toLowerCase();
+      if (lower == 'image' ||
+          lower.contains('text-to-image') ||
+          lower.contains('image-generation') ||
+          lower.contains('text2image')) {
+        return ModelKind.image;
+      }
+    }
+  }
+  return null;
 }
 
 /// [provider]'s models with [listed] merged in: new ones added, off
@@ -232,6 +288,9 @@ List<ProviderModel> mergeModelList(
           efforts: model.efforts == null && remote.efforts != null
               ? () => remote.efforts
               : null,
+          kind: model.kindSet == null && _listedKind(remote) != null
+              ? () => _listedKind(remote)
+              : null,
           enabled: enable.contains(model.id) ? true : null,
         )
       else if (model.custom)
@@ -250,11 +309,19 @@ List<ProviderModel> mergeModelList(
         efforts: remote.efforts,
         images: remote.images ?? true,
         enabled: enable.contains(remote.id),
+        kind: _listedKind(remote),
       ),
     );
   }
   return merged;
 }
+
+/// What [remote] is for as its upstream lists it, where that is not what
+/// its name tells (kept then; else it goes by its name).
+ModelKind? _listedKind(RemoteModel remote) => switch (remote.kind) {
+  final kind? when kind != guessModelKind(remote.id) => kind,
+  _ => null,
+};
 
 /// An Anthropic error, for what Claude Code shows of a failed request.
 Map<String, Object?> anthropicError(int status, String message) => {

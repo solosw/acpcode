@@ -1046,6 +1046,9 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   }
 
   Future<void> _remove(AppWindow window) async {
+    // Out of full screen first, still drawn (see WindowHost.leaveFullScreen);
+    // then back to the window it covered.
+    final wasFullScreen = await host.leaveFullScreen(window.viewId);
     _ide.remove(window);
     _agents.remove(window);
     _mru.remove(window);
@@ -1059,6 +1062,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     _save();
     if (_mru.firstWhereOrNull((w) => w.shown) case final front?) {
       WindowControls.activeViewId = front.viewId;
+      if (wasFullScreen) unawaited(host.focus(front.viewId));
     }
     await _quitIfNoneShows();
   }
@@ -1069,6 +1073,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       ..remove(chat)
       ..add(chat);
     _changed();
+    await host.leaveFullScreen(chat.viewId);
     await host.hide(chat.viewId);
     _save();
     final front = active;
@@ -1290,6 +1295,9 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     if (!await _confirmUnsaved(windows)) return _decline(false);
     final front = recentIde;
     final ideInFront = front != null && identical(active, front);
+    for (final window in windows) {
+      await host.leaveFullScreen(window.viewId);
+    }
     if (ideInFront || !chat.shown) _focus(chat);
     // Their views' widgets go first, then the views; then the main window
     // takes the IDE.
@@ -1315,7 +1323,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     _declined = separate;
     _updateSetting?.call(
       WindowSettings.ideWindowsKey,
-      _separate ? null : IdeWindows.mainWindow.name,
+      _separate ? IdeWindows.separate.name : null,
     );
   }
 

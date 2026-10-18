@@ -4,6 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
+import 'package:path/path.dart' as p;
+
+import '../kernel/claude_code/claude_environment.dart';
+import 'stash_skill.dart';
 
 /// The picture at [path] (absolute), from its file.
 ImageProvider stashImageProvider(String path) => FileImage(File(path));
@@ -130,5 +134,26 @@ Future<Uint8List?> readBytesFile(String path) async {
     return await File(path).readAsBytes();
   } on Object {
     return null;
+  }
+}
+
+/// Writes the Stash skill ([StashSkill]), for the stash folder [root],
+/// into Claude Code's skills on this machine: where there is none, or
+/// BaoCode's is not the same.
+Future<void> installStashSkill(String root) async {
+  try {
+    final path = p.join(
+      await ClaudeEnvironment.configDir(),
+      'skills',
+      StashSkill.name,
+      'SKILL.md',
+    );
+    final text = StashSkill.text(root);
+    if (!StashSkill.stale(await readTextFile(path), text)) return;
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(text);
+  } on Object catch (error) {
+    debugPrint('The Stash skill was not written: $error');
   }
 }

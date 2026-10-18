@@ -1,4 +1,5 @@
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import 'edge_fade_mask.dart';
@@ -74,11 +75,23 @@ class _ScrollEdgeFadeState extends State<ScrollEdgeFade> {
     if (!metrics.hasContentDimensions) return false;
     final before = metrics.pixels > metrics.minScrollExtent + 0.5;
     final after = metrics.pixels < metrics.maxScrollExtent - 0.5;
-    if (before != _moreBefore || after != _moreAfter) {
+    if (before == _moreBefore && after == _moreAfter) return false;
+    void apply() {
+      if (!mounted) return;
       setState(() {
         _moreBefore = before;
         _moreAfter = after;
       });
+    }
+
+    // Told while it is laid out (content shrunk under a scrolled list, which
+    // settles it back in range): the next frame, as a build cannot be asked
+    // for now. The mask reads the edges as it paints this one ([_edges]).
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => apply());
+    } else {
+      apply();
     }
     return false;
   }

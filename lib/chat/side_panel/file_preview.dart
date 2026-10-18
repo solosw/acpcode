@@ -7,10 +7,13 @@ import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'package:bao_editor/monaco/flutter/language_overrides.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show SelectedContent;
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:path/path.dart' as p;
 
+import '../../base/smooth_scroll.dart';
 import '../../ide/file_service.dart';
+import '../../ide/ide_agent_edits.dart';
 import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_image_preview.dart';
@@ -35,11 +38,13 @@ import 'file_link.dart';
 import 'file_open.dart';
 import 'line_diff.dart';
 
-/// A file in the side panel: its text in the IDE's editor, to edit and
-/// save (Cmd+S, Ctrl+S), the lines asked for marked and scrolled to; its
-/// changes against the text before the agent changed it, read only; a
-/// markdown file rendered (or its text); an image. A bar over it names it,
-/// with [actions] (Open in Fast Ide) at its end.
+/// A file in the side panel: its text in the IDE's editor, to edit, search
+/// and save (Cmd+S, Ctrl+S), the lines asked for marked and scrolled to,
+/// the agent's change pending in it ([agentEdit]) shown as the IDE shows it,
+/// each part to keep or undo; its changes against the text before the
+/// agent changed it, read only; a markdown file rendered (or its text); an
+/// image. A bar over it names it, with [actions] (Open in Fast Ide) at its
+/// end, after the agent's change's own (see [IdeAgentEditActions]).
 class FilePreview extends StatefulWidget {
   const FilePreview({
     super.key,
@@ -52,13 +57,24 @@ class FilePreview extends StatefulWidget {
     this.reveal = 0,
     this.onOpenFile,
     this.actions = const [],
+    this.language = true,
     this.edit,
     this.onEdit,
     this.highlights,
     this.formatter,
+    this.agentEdit,
+    this.onOpenAgentChange,
   });
 
   final FileOpenRequest request;
+
+  /// The agent's change pending in the file, shown in its text where it is
+  /// edited here.
+  final IdeAgentEdit? agentEdit;
+
+  /// Opens the next file whose agent change is pending, at it, once this
+  /// one's is all kept or undone (see [IdeAgentHunks.open]).
+  final ValueChanged<String>? onOpenAgentChange;
 
   /// The file's text as edited already (its tab's), to go on with: read
   /// anew in it where it is not changed.
@@ -97,6 +113,9 @@ class FilePreview extends StatefulWidget {
 
   /// At the end of its bar.
   final List<Widget> actions;
+
+  /// Whether its bar names the file's language, to change it.
+  final bool language;
 
   /// Past this many lines, the text is not colored.
   static const maxColoredLines = 5000;
@@ -151,6 +170,12 @@ class _FilePreviewState extends State<FilePreview> {
   Object? _markedIn;
   final _editor = GlobalKey<IdeCodeEditorState>();
 
+  /// [FilePreview.agentEdit] in the editor, and where it is among its parts.
+  IdeAgentDiff? _agent;
+  late final _hunks = IdeAgentHunks(
+    open: (path) => widget.onOpenAgentChange?.call(path),
+  );
+
   FileOpenRequest get _request => widget.request;
 
   /// An image shows as it is, its changes too: there is no text to compare.
@@ -187,6 +212,7 @@ class _FilePreviewState extends State<FilePreview> {
 
   /// Lets go of the edit; disposes it unless its tab keeps it.
   void _detach() {
+    _dropAgent();
     final edit = _edit;
     _edit = null;
     if (edit == null) return;
@@ -223,7 +249,54 @@ class _FilePreviewState extends State<FilePreview> {
     EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     _dropMarkdown();
     _detach();
+    _hunks.dispose();
     super.dispose();
+  }
+
+  /// [FilePreview.agentEdit] in the editor of the file's text, as long as
+  /// both are there.
+  IdeAgentDiff? _syncAgent() {
+    final edit = _edit;
+    final agentEdit = widget.agentEdit;
+    if (edit == null || agentEdit == null || !_editable) {
+      _dropAgent();
+      return null;
+    }
+    if (_agent case final agent?
+        when identical(agent.controller, edit.controller)) {
+      return agent..edit = agentEdit;
+    }
+    _dropAgent();
+    return _agent = IdeAgentDiff(
+      agentEdit,
+      edit.controller,
+      onChanged: _agentChanged,
+      save: () async {
+        await edit.save();
+        if (edit.dirty && edit.error != null) throw edit.error!;
+      },
+      view: () => _editor.currentState?.view,
+      hunks: _hunks,
+    );
+  }
+
+  void _dropAgent() {
+    _agent?.dispose();
+    _agent = null;
+  }
+
+  /// The change's diff computed anew, its original highlighted: shown,
+  /// after the build if in one.
+  void _agentChanged() {
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+      return;
+    }
+    setState(() {});
   }
 
   /// The rendered markdown's own text let go of; not its edit's.
@@ -238,6 +311,8 @@ class _FilePreviewState extends State<FilePreview> {
     final load = ++_load;
     _loaded = null;
     _colors = const [];
+    // The agent's change shows in the text.
+    if (_request.agentChange && _isMarkdown) _source = true;
     _dropMarkdown();
     if (_image) return;
     // Its tab's edit shows as it is while the file is read anew.
@@ -319,9 +394,15 @@ class _FilePreviewState extends State<FilePreview> {
   }
 
   /// Marks the lines asked for and scrolls to them, the caret at their
-  /// start.
+  /// start; the agent's change's part asked for, unmarked.
   void _reveal() {
     final edit = _edit;
+    if (edit != null && _request.agentChange) {
+      _markedIn = null;
+      if (_isMarkdown && !_source) setState(() => _source = true);
+      _hunks.reveal(line: _request.range?.start);
+      return;
+    }
     final range = _range;
     if (edit == null || range == null) return;
     final (start, end) = range;
@@ -377,6 +458,7 @@ class _FilePreviewState extends State<FilePreview> {
 
   @override
   Widget build(BuildContext context) {
+    _syncAgent();
     return ColoredBox(
       color: AppColors.code,
       child: Column(
@@ -418,7 +500,9 @@ class _FilePreviewState extends State<FilePreview> {
                 TextSpan(
                   children: [
                     TextSpan(text: shown),
-                    if (range != null && !_request.diff)
+                    if (range != null &&
+                        !_request.diff &&
+                        !_request.agentChange)
                       TextSpan(
                         text: '  ${range.label}',
                         style: TextStyle(color: AppColors.textFaint),
@@ -431,17 +515,20 @@ class _FilePreviewState extends State<FilePreview> {
               ),
             ),
           ),
-          if (!_image)
-            _LanguageButton(
-              name: IdeLanguageNames.forPath(path),
+          if (!_image && widget.language)
+            _TextButton(
+              label: IdeLanguageNames.forPath(path),
+              tooltip: l10n.languageModeChange,
               onPressed: () => unawaited(changeLanguageMode(context, path)),
             ),
           if (_isMarkdown && _markdown != null)
-            IdeActionButton(
-              icon: _source ? Codicons.openPreview : Codicons.code,
-              tooltip: _source ? l10n.sidePanelPreview : l10n.sidePanelSource,
+            _TextButton(
+              label: _source ? l10n.sidePanelPreview : l10n.sidePanelEdit,
               onPressed: () => setState(() => _source = !_source),
             ),
+          if ((widget.agentEdit, _agent) case (final edit?, _?)
+              when !_isMarkdown || _source)
+            IdeAgentEditActions(edit: edit, hunks: _hunks),
           ...widget.actions,
         ],
       ),
@@ -561,6 +648,7 @@ class _FilePreviewState extends State<FilePreview> {
     final range = _range;
     final marked =
         range != null &&
+        !_request.agentChange &&
         identical(_markedIn, edit.controller.document.snapshot);
     return CallbackShortcuts(
       bindings: {save: () => unawaited(edit.save())},
@@ -571,6 +659,7 @@ class _FilePreviewState extends State<FilePreview> {
         highlights: widget.highlights,
         interfaceSized: false,
         formatter: widget.formatter,
+        agent: _agent,
         decorations: [
           if (marked)
             EditorDecoration(
@@ -704,7 +793,7 @@ class _Lines extends StatefulWidget {
 }
 
 class _LinesState extends State<_Lines> {
-  final _scroll = ScrollController();
+  final _scroll = SmoothScrollController();
   final _sideways = ScrollController();
   late final _selection = _LinesSelection(
     (first, last, text) => widget.onCopy?.call(first, last, text),
@@ -1041,18 +1130,23 @@ class _Message extends StatelessWidget {
   }
 }
 
-/// The file's language, as the IDE's status bar names it: a click changes
-/// it (Change Language Mode).
-class _LanguageButton extends StatelessWidget {
-  const _LanguageButton({required this.name, required this.onPressed});
+/// A button in the bar named by its [label], as the IDE's status bar's:
+/// the file's language (a click changes it), a markdown file's Edit or
+/// Preview. [tooltip] over it when given.
+class _TextButton extends StatelessWidget {
+  const _TextButton({
+    required this.label,
+    required this.onPressed,
+    this.tooltip,
+  });
 
-  final String name;
+  final String label;
+  final String? tooltip;
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) => IdeHover(
-    message: context.l10n.languageModeChange,
-    child: HoverBuilder(
+  Widget build(BuildContext context) {
+    final button = HoverBuilder(
       cursor: SystemMouseCursors.click,
       builder: (context, hovered) => GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1066,11 +1160,15 @@ class _LanguageButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Text(
-            name,
+            label,
             style: TextStyle(color: AppColors.textMuted, fontSize: 12),
           ),
         ),
       ),
-    ),
-  );
+    );
+    if (tooltip case final message?) {
+      return IdeHover(message: message, child: button);
+    }
+    return button;
+  }
 }

@@ -48,6 +48,7 @@ class IdeButton extends StatefulWidget {
     required this.label,
     required this.onPressed,
     this.icon,
+    this.leading,
     this.spinning = false,
     this.counts = const [],
     this.secondary = false,
@@ -68,6 +69,10 @@ class IdeButton extends StatefulWidget {
 
   /// A 16px codicon before [label], as `$(icon) label` gives.
   final IconData? icon;
+
+  /// What is not a codicon in [icon]'s place (a logo), drawn in the
+  /// button's color as the icons are (its [IconTheme]).
+  final Widget? leading;
 
   /// `$(sync~spin)` in [icon]'s place.
   final bool spinning;
@@ -108,6 +113,11 @@ class _IdeButtonState extends State<IdeButton> {
     );
     final icon = widget.spinning
         ? IdeSpinning(Icon(Codicons.sync, size: 16, color: foreground))
+        : widget.leading != null
+        ? IconTheme.merge(
+            data: IconThemeData(size: 16, color: foreground),
+            child: widget.leading!,
+          )
         : widget.icon == null
         ? null
         : Icon(widget.icon, size: 16, color: foreground);

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:bao_link/bao_link.dart';
 import 'package:path/path.dart' as p;
@@ -205,9 +206,19 @@ class WorkspaceBridge {
           session: thread.session,
           peer: peer,
           throttle: throttle,
+          window: params['window'] as int?,
           pathOf: (full) => _phonePath(thread.project, full),
         );
         return follow.start();
+      case LinkMethods.earlier:
+        final follow = _follows[params['session']];
+        if (follow == null) {
+          throw LinkRemoteException(
+            LinkErrors.notFound,
+            'No agent ${params['session']} followed',
+          );
+        }
+        return follow.earlier(params['count'] as int? ?? 50);
       case LinkMethods.close:
         if (params['session'] case final String id) {
           _follows.remove(id)?.dispose();
@@ -249,8 +260,7 @@ class WorkspaceBridge {
           mentions.add(full);
         }
         final session = thread.session;
-        if (!session.canSend &&
-            session.pendingInteraction is! PlanReviewRequest) {
+        if (!session.canSend) {
           throw const LinkRemoteException('busy', 'The agent is at work');
         }
         // Numbered on from the conversation's, as the composer numbers
@@ -656,6 +666,7 @@ class _Follow {
     required this.peer,
     required this.throttle,
     required this.pathOf,
+    this.window,
   });
 
   final String id;
@@ -663,12 +674,24 @@ class _Follow {
   final LinkPeer peer;
   final Duration throttle;
 
+  /// How many of the last items the phone follows at first, if it pages
+  /// back through the rest (see [earlier]); null for all of them.
+  final int? window;
+
   /// A changed file's path as the phone names it in the project; null for
   /// one outside it, given as it is.
   final String? Function(String full) pathOf;
 
-  /// The items as last sent: what is still the same object was not
-  /// changed (items are not changed in place).
+  /// The session's index of the phone's first item: 0 unless it has a
+  /// [window].
+  int _from = 0;
+
+  /// The session's [ChatSession.prependedCount] as last seen, to move
+  /// [_from] along with items put before the first.
+  int _prependedSeen = 0;
+
+  /// The items as last sent, from [_from]: what is still the same object
+  /// was not changed (items are not changed in place).
   List<ChatItem> _sent = const [];
 
   /// [_sent]'s items as JSON text, to tell one read afresh from a change.
@@ -678,6 +701,10 @@ class _Follow {
   bool _disposed = false;
 
   Map<String, Object?> start() {
+    _prependedSeen = session.prependedCount;
+    if (window case final window?) {
+      _from = math.max(0, session.itemCount - window);
+    }
     session
       ..attach()
       ..addListener(_changed);
@@ -697,8 +724,15 @@ class _Follow {
   /// What changed since last sent; everything when [full]. Null when
   /// nothing did.
   LinkSessionUpdate? _update({bool full = false}) {
-    final count = session.itemCount;
-    final items = [for (var i = 0; i < count; i++) session.itemAt(i)];
+    _syncFrom();
+    final total = session.itemCount;
+    if (total < _from) {
+      // Rewound to before the window.
+      _from = total;
+      full = true;
+    }
+    final count = total - _from;
+    final items = [for (var i = _from; i < total; i++) session.itemAt(i)];
     final encoded = List<Map<String, Object?>?>.filled(count, null);
     var start = 0;
     if (!full) {
@@ -719,7 +753,11 @@ class _Follow {
     final choices = _choices();
     final changes = [for (final change in session.fileChanges) _change(change)];
     final tasks = _tasks();
+    final earlier = window == null
+        ? null
+        : _from > 0 || session.hasEarlierHistory || session.loadingEarlier;
     final restText = jsonEncode([
+      earlier,
       session.isStreaming,
       interaction,
       [for (final choice in choices) choice.toJson()],
@@ -752,7 +790,37 @@ class _Follow {
       choices: choices,
       changes: changes,
       tasks: tasks,
+      earlier: earlier,
     );
+  }
+
+  /// Moves [_from] along with the items put before the session's first
+  /// (the phone's own first is still the same one).
+  void _syncFrom() {
+    final moved = session.prependedCount - _prependedSeen;
+    _prependedSeen = session.prependedCount;
+    if (window != null) _from += moved;
+  }
+
+  /// Up to [count] items before the phone's first, oldest first, read from
+  /// the history first if the session has no more in memory.
+  Future<Map<String, Object?>> earlier(int count) async {
+    if (window == null) {
+      throw const LinkRemoteException('bad', 'Not opened with a window');
+    }
+    _syncFrom();
+    if (_from == 0 && session.hasEarlierHistory) await session.loadEarlier();
+    if (_disposed) return {'items': const [], 'earlier': false};
+    // No await from here on: no update comes between taking the items and
+    // telling of them.
+    _syncFrom();
+    final n = math.min(math.max(count, 0), _from);
+    final items = [for (var i = _from - n; i < _from; i++) session.itemAt(i)];
+    final json = [for (final item in items) ChatCodec.encode(item)];
+    _sent = [...items, ..._sent];
+    _sentJson = [for (final item in json) jsonEncode(item), ..._sentJson];
+    _from -= n;
+    return {'items': json, 'earlier': _from > 0 || session.hasEarlierHistory};
   }
 
   /// Those running, and the commands that ended, for their output.

@@ -403,10 +403,7 @@ class _TasksHeader extends StatelessWidget {
         ),
         const SizedBox(width: 4),
         if (agents) ...[
-          const SizedBox.square(
-            dimension: 14,
-            child: PixelLoader.subagent(),
-          ),
+          const SizedBox.square(dimension: 14, child: PixelLoader.subagent()),
           const SizedBox(width: 6),
         ],
         Expanded(

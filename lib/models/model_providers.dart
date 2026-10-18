@@ -64,6 +64,7 @@ class ModelProviders extends ChangeNotifier {
   static const defaultKey = 'models.default';
   static const auxiliaryKey = 'models.auxiliary';
   static const actionsKey = 'models.actions';
+  static const imageKey = 'models.image';
 
   /// [actionsModel]'s value for the auxiliary model, whatever it is.
   static const followAuxiliary = 'auxiliary';
@@ -101,16 +102,21 @@ class ModelProviders extends ChangeNotifier {
       providers.where((provider) => provider.id == id).firstOrNull;
 
   /// The provider and model [ref] (a [modelRef]) picks, if both are there;
-  /// the provider's main model when the one picked is gone.
+  /// the provider's main model when the one picked is gone, or is an image
+  /// model (not one to converse with).
   (ModelProvider, ProviderModel)? resolve(String? ref) {
     final parsed = parseModelRef(ref);
     if (parsed == null) return null;
     final provider = this.provider(parsed.provider);
     if (provider == null) return null;
+    ProviderModel? chat(String id) => switch (provider.model(id)) {
+      final model? when !model.kind.generatesImages => model,
+      _ => null,
+    };
     final model =
-        provider.model(parsed.model) ??
+        chat(parsed.model) ??
         switch (provider.roles.main) {
-          final main? => provider.model(main),
+          final main? => chat(main),
           null => null,
         };
     if (model == null) return null;
@@ -168,6 +174,32 @@ class ModelProviders extends ChangeNotifier {
 
   Future<void> setActionsModel(String? model) => _write(actionsKey, model);
 
+  /// The image model the agents make pictures with unless they name
+  /// another (a [modelRef]); null for the first turned on.
+  String? get imageModel => switch (_read(imageKey)) {
+    final String model when model.isNotEmpty => model,
+    _ => null,
+  };
+
+  Future<void> setImageModel(String? model) => _write(imageKey, model);
+
+  /// The image models the agents make pictures with: those turned on of the
+  /// upstreams turned on, [imageModel] first, the others in order.
+  List<({ModelProvider provider, ProviderModel model})> get imageModels {
+    final all = [
+      for (final provider in providers)
+        if (provider.enabled && provider.connected)
+          for (final model in provider.imageModels)
+            (provider: provider, model: model),
+    ];
+    final picked = imageModel;
+    final index = all.indexWhere(
+      (entry) => modelRef(entry.provider.id, entry.model.id) == picked,
+    );
+    if (index <= 0) return all;
+    return [all[index], ...all.take(index), ...all.skip(index + 1)];
+  }
+
   /// Adds [provider], or replaces the one of its id.
   Future<void> save(ModelProvider provider) async {
     final list = [...providers];
@@ -195,6 +227,9 @@ class ModelProviders extends ChangeNotifier {
     }
     if (parseModelRef(actionsModel)?.provider == id) {
       await setActionsModel(null);
+    }
+    if (parseModelRef(imageModel)?.provider == id) {
+      await setImageModel(null);
     }
     _errors.remove(id);
     try {

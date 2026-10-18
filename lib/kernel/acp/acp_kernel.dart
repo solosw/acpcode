@@ -442,8 +442,6 @@ class AcpKernel
                 byKind['reject-always'] ??
                 'reject_once',
         };
-      case _:
-        return byKind['reject_once'] ?? byKind['reject-once'];
     }
   }
 

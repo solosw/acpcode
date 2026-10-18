@@ -521,7 +521,8 @@ void main() {
         scrollDelta: const Offset(0, -40),
       ),
     );
-    await tester.pump();
+    // A frame on: the notch is under way.
+    await tester.pump(const Duration(microseconds: 16667));
     expect(lastCaretTop(), greaterThan(before));
   });
 

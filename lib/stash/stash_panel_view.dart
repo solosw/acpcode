@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../base/give_way_row.dart';
+import '../base/smooth_scroll.dart';
 import '../chat/composer/file_drop.dart';
 import '../chat/widgets/hover_builder.dart';
 import '../chat/widgets/scroll_edge_fade.dart';
@@ -14,7 +16,6 @@ import '../ide/ide_input.dart';
 import '../ide/ide_list.dart';
 import '../ide/ide_menu.dart';
 import '../ide/ide_motion.dart';
-import '../ide/ide_spinning.dart';
 import '../keybindings/keybinding_service.dart';
 import '../l10n/l10n.dart';
 import '../models/auxiliary_model_menu.dart';
@@ -261,11 +262,14 @@ class _StashPanelViewState extends State<StashPanelView> {
                     pinned: _controller.pinned,
                     onPinned: (pinned) => _controller.pinned = pinned,
                     clarify: switch (note) {
-                      final note? when !note.isBlank => _ClarifyPill(
-                        clarifying: _controller.clarifying(note.id),
-                        failure: _controller.clarifyFailure(note.id),
-                        onClarify: () => _clarify(note.id),
-                      ),
+                      final note? when !note.isBlank =>
+                        (compact) => _ClarifyPill(
+                          clarifying: _controller.clarifying(note.id),
+                          failure: _controller.clarifyFailure(note.id),
+                          onClarify: () => _clarify(note.id),
+                          onCancel: () => _controller.cancelClarify(note.id),
+                          compact: compact,
+                        ),
                       _ => null,
                     },
                   ),
@@ -358,8 +362,9 @@ class _TopBar extends StatelessWidget {
     this.clarify,
   });
 
-  /// Says the stash clearly; none while there is nothing written.
-  final Widget? clarify;
+  /// Says the stash clearly, [compact] its icon alone; none while there is
+  /// nothing written.
+  final Widget Function(bool compact)? clarify;
 
   /// Whether the panel stays over other apps' windows; the pin changes it.
   final bool pinned;
@@ -384,6 +389,24 @@ class _TopBar extends StatelessWidget {
     final l10n = context.l10n;
     final note = this.note;
     final mac = AppPlatform.isMacOS;
+    final projectLabel = this.projectLabel;
+    // Its icon alone, its tooltip names the project.
+    Widget project({required bool compact}) => Builder(
+      builder: (context) => _PillButton(
+        icon: Codicons.folder,
+        label: compact ? null : projectLabel ?? l10n.stashNoProject,
+        faint: projectLabel == null,
+        tooltip: compact
+            ? '${l10n.stashProjectTooltip} · '
+                  '${projectLabel ?? l10n.stashNoProject}'
+            : l10n.stashProjectTooltip,
+        onTap: () {
+          final box = context.findRenderObject() as RenderBox?;
+          if (box == null) return;
+          onProject(box.localToGlobal(Offset.zero) & box.size);
+        },
+      ),
+    );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       // Moves the panel, as a title bar does.
@@ -395,69 +418,113 @@ class _TopBar extends StatelessWidget {
       child: Container(
         height: _barHeight,
         padding: const EdgeInsets.fromLTRB(8, 0, 8, 0),
-        child: Row(
+        // Too narrow, the pills give way to their icons, All's first, then
+        // New's, Say Clearly's, the project's; then the stash's number. The
+        // pin and the close button never do.
+        child: GiveWayRow(
           children: [
-            if (onAll case final onAll?) ...[
+            if (onAll case final onAll?)
+              GiveWay(
+                priority: 0,
+                compact: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _PillButton(
+                    icon: Codicons.layoutSidebarLeft,
+                    tooltip: l10n.stashAllTooltip,
+                    active: showAll,
+                    onTap: onAll,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _PillButton(
+                    icon: Codicons.layoutSidebarLeft,
+                    label: l10n.stashAll,
+                    tooltip: l10n.stashAllTooltip,
+                    active: showAll,
+                    onTap: onAll,
+                  ),
+                ),
+              )
+            else
+              const GiveWay(SizedBox(width: 6)),
+            GiveWay(
+              priority: 1,
+              compact: _PillButton(
+                icon: Codicons.add,
+                tooltip: l10n.stashNewTooltip,
+                onTap: onNew,
+              ),
               _PillButton(
-                icon: Codicons.layoutSidebarLeft,
-                label: l10n.stashAll,
-                tooltip: l10n.stashAllTooltip,
-                active: showAll,
-                onTap: onAll,
-              ),
-              const SizedBox(width: 8),
-            ] else
-              const SizedBox(width: 6),
-            _PillButton(
-              icon: Codicons.add,
-              label: l10n.stashNewButton,
-              tooltip: l10n.stashNewTooltip,
-              onTap: onNew,
-            ),
-            const SizedBox(width: 10),
-            Text(
-              note == null ? l10n.stashNew : note.tag,
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
+                icon: Codicons.add,
+                label: l10n.stashNewButton,
+                tooltip: l10n.stashNewTooltip,
+                onTap: onNew,
               ),
             ),
-            const SizedBox(width: 8),
+            GiveWay(
+              priority: 4,
+              Padding(
+                padding: const EdgeInsets.only(left: 10),
+                child: Text(
+                  note == null ? l10n.stashNew : note.tag,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
             // Its title, else its first line, else the text in its pictures.
-            Expanded(
-              child: Text(
-                headline,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+            GiveWay.fill(
+              minWidth: 16,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  headline,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+                ),
               ),
             ),
-            const SizedBox(width: 8),
-            if (clarify case final clarify?) ...[
-              clarify,
-              const SizedBox(width: 6),
-            ],
-            Builder(
-              builder: (context) => _PillButton(
-                icon: Codicons.folder,
-                label: projectLabel ?? l10n.stashNoProject,
-                faint: projectLabel == null,
-                tooltip: l10n.stashProjectTooltip,
-                onTap: () {
-                  final box = context.findRenderObject() as RenderBox?;
-                  if (box == null) return;
-                  onProject(box.localToGlobal(Offset.zero) & box.size);
-                },
+            if (clarify case final clarify?)
+              GiveWay(
+                priority: 2,
+                compact: Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: clarify(true),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: clarify(false),
+                ),
+              ),
+            GiveWay(
+              priority: 3,
+              compact: Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: project(compact: true),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: project(compact: false),
               ),
             ),
-            const SizedBox(width: 4),
-            PinWindowButton(pinned: pinned, onChanged: onPinned),
-            const SizedBox(width: 4),
-            _PillButton(
-              icon: Codicons.close,
-              tooltip: '${l10n.stashHintClose}  ${mac ? '⌘W' : 'Ctrl+W'}',
-              onTap: onClose,
+            GiveWay(
+              Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: PinWindowButton(pinned: pinned, onChanged: onPinned),
+              ),
+            ),
+            GiveWay(
+              _PillButton(
+                icon: Codicons.close,
+                tooltip: '${l10n.stashHintClose}  ${mac ? '⌘W' : 'Ctrl+W'}',
+                onTap: onClose,
+              ),
             ),
           ],
         ),
@@ -499,7 +566,7 @@ enum _Shown { all, open, done }
 
 class _AllStashesState extends State<_AllStashes> {
   final TextEditingController _query = TextEditingController();
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _scroll = SmoothScrollController();
   final GlobalKey _listKey = GlobalKey();
   _Shown _shown = _Shown.all;
 
@@ -1557,18 +1624,24 @@ class _PillButton extends StatelessWidget {
 
 /// Say Clearly in the bar, as in the Stash page's detail: the model it
 /// asks picked by its arrow (one for every AI action, picked the first
-/// time it is used); turning while it goes on, in the background; where it
-/// failed, why in its tooltip, and a click tries again.
+/// time it is used); a click cancels while it goes on; where it failed,
+/// why in its tooltip, and a click tries again.
 class _ClarifyPill extends StatelessWidget {
   const _ClarifyPill({
     required this.clarifying,
     required this.failure,
     required this.onClarify,
+    required this.onCancel,
+    this.compact = false,
   });
 
   final bool clarifying;
   final StashClarifyFailure? failure;
   final Future<void> Function() onClarify;
+  final VoidCallback onCancel;
+
+  /// Its icon without its words, in a bar with no room for them.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1576,25 +1649,26 @@ class _ClarifyPill extends StatelessWidget {
     final failure = this.failure;
     final error = themeColors['errorForeground'];
     return HoverBuilder(
-      cursor: clarifying ? MouseCursor.defer : SystemMouseCursors.click,
+      cursor: SystemMouseCursors.click,
       builder: (context, hovered) {
-        final lit = hovered && !clarifying;
         final color = failure != null
             ? error
-            : lit
+            : hovered
             ? AppColors.text
             : AppColors.textMuted;
-        final icon = clarifying
-            ? IdeSpinning(Icon(Codicons.sync, size: 13, color: color))
-            : Icon(
-                failure == null ? Codicons.sparkle : Codicons.error,
-                size: 13,
-                color: color,
-              );
+        final icon = Icon(
+          clarifying
+              ? Codicons.stop
+              : failure == null
+              ? Codicons.sparkle
+              : Codicons.error,
+          size: 13,
+          color: color,
+        );
         return Container(
           height: 24,
           decoration: BoxDecoration(
-            color: lit ? AppColors.hover : Colors.transparent,
+            color: hovered ? AppColors.hover : Colors.transparent,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: AppColors.partBorder),
           ),
@@ -1603,17 +1677,21 @@ class _ClarifyPill extends StatelessWidget {
             children: [
               Builder(
                 builder: (context) => IdeHover(
-                  message: switch (failure) {
-                    null => l10n.stashExpandHint,
-                    (changed: true, message: _) => l10n.stashClarifyChanged,
-                    (changed: false, :final message) => l10n.stashExpandFailed(
-                      message ?? l10n.stashAiNoAnswer,
-                    ),
-                  },
+                  message: clarifying
+                      ? l10n.stashCancelClarify
+                      : switch (failure) {
+                          null => l10n.stashExpandHint,
+                          (changed: true, message: _) =>
+                            l10n.stashClarifyChanged,
+                          (changed: false, :final message) =>
+                            l10n.stashExpandFailed(
+                              message ?? l10n.stashAiNoAnswer,
+                            ),
+                        },
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: clarifying
-                        ? null
+                        ? onCancel
                         : () {
                             final anchor = anchorOf(context);
                             if (anchor == null) return;
@@ -1627,16 +1705,18 @@ class _ClarifyPill extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           icon,
-                          const SizedBox(width: 5),
-                          Text(
-                            clarifying
-                                ? l10n.stashClarifying
-                                : failure != null
-                                ? l10n.stashClarifyFailedShort
-                                : l10n.stashExpand,
-                            maxLines: 1,
-                            style: TextStyle(color: color, fontSize: 12),
-                          ),
+                          if (!compact) ...[
+                            const SizedBox(width: 5),
+                            Text(
+                              clarifying
+                                  ? l10n.stashCancelClarify
+                                  : failure != null
+                                  ? l10n.stashClarifyFailedShort
+                                  : l10n.stashExpand,
+                              maxLines: 1,
+                              style: TextStyle(color: color, fontSize: 12),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1689,22 +1769,36 @@ class _Footer extends StatelessWidget {
     return Container(
       height: 30,
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
+      // Too narrow, the hints give way, the last first.
+      child: GiveWayRow(
         children: [
-          Expanded(
-            child: Text(
+          GiveWay.fill(
+            Text(
               status ?? '',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: faint,
             ),
           ),
-          for (final (key, label) in hints) ...[
-            const SizedBox(width: 12),
-            Text(key, style: faint.copyWith(color: AppColors.textMuted)),
-            const SizedBox(width: 4),
-            Text(label, style: faint),
-          ],
+          for (final (key, label) in hints)
+            GiveWay(
+              priority: 0,
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      key,
+                      maxLines: 1,
+                      style: faint.copyWith(color: AppColors.textMuted),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(label, maxLines: 1, style: faint),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );

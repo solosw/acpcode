@@ -88,7 +88,7 @@ class ProcessTransport implements ClaudeCodeTransport {
     await registry.reaped;
     final cli = await LocalClaude.locate();
     if (!Directory(launch.cwd).existsSync()) {
-      throw ClaudeUnavailable('The project folder is gone: ${launch.cwd}');
+      throw ClaudeFolderGone(launch.cwd);
     }
     // A key goes in a file only the user reads, not the command line.
     final settingsFile = launch.hasSecrets

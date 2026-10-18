@@ -72,7 +72,9 @@ class _Harness {
   final Set<String> directories;
   final Map<String, String> requestFiles;
   MainWindow mainWindow;
-  WindowSettings settings = const WindowSettings();
+  WindowSettings settings = const WindowSettings(
+    ideWindows: IdeWindows.separate,
+  );
 
   /// The settings written back to settings.json.
   final List<(String, Object?)> written = [];
@@ -215,6 +217,7 @@ void main() {
         screen: 'main',
       );
       harness.settings = const WindowSettings(
+        ideWindows: IdeWindows.separate,
         newWindowDimensions: NewWindowDimensions.inherit,
       );
       await harness.windows.newWindow();
@@ -224,12 +227,13 @@ void main() {
       );
 
       harness.settings = const WindowSettings(
+        ideWindows: IdeWindows.separate,
         newWindowDimensions: NewWindowDimensions.maximized,
       );
       await harness.windows.newWindow();
       expect(harness.host.created.last.frame!.maximized, isTrue);
 
-      harness.settings = const WindowSettings();
+      harness.settings = const WindowSettings(ideWindows: IdeWindows.separate);
       await harness.windows.newWindow();
       expect(harness.host.created.last.frame, isNull);
     });
@@ -654,6 +658,7 @@ void main() {
 
       // Not asked by default.
       harness.settings = const WindowSettings(
+        ideWindows: IdeWindows.separate,
         terminalConfirmOnExit: TerminalConfirmOnExit.always,
       );
       final closing = harness.windows.requestClose(a);
@@ -673,7 +678,7 @@ void main() {
       harness.delegateOf('/w/b')
         ..terminals = true
         ..context = harness.context;
-      harness.settings = const WindowSettings();
+      harness.settings = const WindowSettings(ideWindows: IdeWindows.separate);
       expect(await harness.windows.requestClose(b), isTrue);
     });
 
@@ -684,6 +689,7 @@ void main() {
       final a = (await harness.windows.showFolder('/w/a'))!;
       await harness.showDialogs(tester);
       harness.settings = const WindowSettings(
+        ideWindows: IdeWindows.separate,
         confirmBeforeClose: ConfirmBeforeClose.keyboardOnly,
       );
       final closing = harness.windows.requestClose(a, byKeyboard: true);
@@ -708,6 +714,29 @@ void main() {
       harness.host.events!.windowCloseRequested(a.viewId);
       await tester.pump();
       expect(harness.folders, isEmpty);
+    });
+
+    testWidgets('macOS: one in full screen leaves it before it closes, then '
+        'the window it covered comes in front (#148)', (tester) async {
+      final harness = _Harness(tester);
+      await harness.start();
+      harness.windows.showChat();
+      final a = (await harness.windows.showFolder('/w/a'))!;
+      harness.host
+        ..fullScreen.add(a.viewId)
+        ..log.clear();
+      expect(await harness.windows.requestClose(a), isTrue);
+      expect(harness.host.log, [
+        'leaveFullScreen ${a.viewId}',
+        'close ${a.viewId}',
+        'focus 0',
+      ]);
+
+      // Not in full screen, as before: the system's next window in front.
+      final b = (await harness.windows.showFolder('/w/b'))!;
+      harness.host.log.clear();
+      await harness.windows.requestClose(b);
+      expect(harness.host.log, ['close ${b.viewId}']);
     });
 
     testWidgets('the chat\'s window hides; the one behind it comes in front', (
@@ -836,6 +865,7 @@ void main() {
       host: host,
       workspace: Workspace.mock(),
       l10n: () => englishLocalizations,
+      settings: () => const WindowSettings(ideWindows: IdeWindows.separate),
     );
     var answer = AppExitResponse.cancel;
     final listener = AppLifecycleListener(onExitRequested: () async => answer);
@@ -862,6 +892,7 @@ void main() {
       workspace: Workspace.mock(),
       l10n: () => englishLocalizations,
       store: store,
+      settings: () => const WindowSettings(ideWindows: IdeWindows.separate),
       nextFrame: () async {},
     );
     var asked = 0;
@@ -940,11 +971,16 @@ void main() {
       bool chatShown = true,
       String? leftIn,
     }) async {
-      final harness = _Harness(
-        tester,
-        kept: kept(chatShown: chatShown, leftIn: leftIn),
-        mainWindow: main,
-      )..settings = WindowSettings(restoreWindows: restore);
+      final harness =
+          _Harness(
+              tester,
+              kept: kept(chatShown: chatShown, leftIn: leftIn),
+              mainWindow: main,
+            )
+            ..settings = WindowSettings(
+              ideWindows: IdeWindows.separate,
+              restoreWindows: restore,
+            );
       harness.host.screenAreas = const [_screen];
       await harness.start();
       await harness.windows.prepareLaunch();
@@ -1357,7 +1393,9 @@ void main() {
       await tester.pump();
       expect(harness.windows.multi, isTrue);
       expect(harness.folders, ['/w/a']);
-      expect(harness.written, [(WindowSettings.ideWindowsKey, null)]);
+      expect(harness.written, [
+        (WindowSettings.ideWindowsKey, IdeWindows.separate.name),
+      ]);
 
       // Before the setting is back.
       harness.windows.settingsChanged();
@@ -1372,7 +1410,7 @@ void main() {
       harness.workspace.openIdeFolder('/w/a');
       harness.workspace.layout = WorkspaceLayout.ide;
 
-      harness.settings = const WindowSettings();
+      harness.settings = const WindowSettings(ideWindows: IdeWindows.separate);
       harness.windows.settingsChanged();
       await tester.pump();
       expect(harness.windows.multi, isTrue);
@@ -1413,10 +1451,22 @@ void main() {
     });
   });
 
-  test('the defaults: separate windows, folders and files in the current '
-      'one, the last active window back at launch, no asking', () {
+  test('the defaults: the IDE in the main window, folders and files in the '
+      'current one, the last active window back at launch, no asking', () {
     final settings = WindowSettings.parse(const {});
-    expect(settings.ideWindows, IdeWindows.separate);
+    expect(settings.ideWindows, IdeWindows.mainWindow);
+    // Written before the default changed, the main window still; separate
+    // windows were never written, the default then.
+    expect(
+      WindowSettings.parse(const {WindowSettings.ideWindowsKey: 'mainWindow'})
+          .ideWindows,
+      IdeWindows.mainWindow,
+    );
+    expect(
+      WindowSettings.parse(const {WindowSettings.ideWindowsKey: 'separate'})
+          .ideWindows,
+      IdeWindows.separate,
+    );
     expect(settings.openFoldersInNewWindow, OpenInNewWindow.off);
     expect(settings.openFilesInNewWindow, OpenInNewWindow.off);
     expect(settings.restoreWindows, RestoreWindows.one);

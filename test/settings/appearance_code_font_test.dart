@@ -214,7 +214,7 @@ void main() {
     await leave(tester);
   });
 
-  testWidgets('the terminal follows the interface text size until Custom '
+  testWidgets('the terminal follows the interface size until Custom '
       'is chosen, which shows a size slider; following again removes it', (
     tester,
   ) async {
@@ -227,7 +227,7 @@ void main() {
           widget is SettingsSlider &&
           widget.semanticLabel.startsWith('Terminal font size'),
     );
-    expect(shown('Follow Interface Text Size'), findsOneWidget);
+    expect(shown('Follow Interface Size'), findsOneWidget);
     expect(slider(), findsNothing);
     Future<void> choose(String label) async {
       await tester.ensureVisible(dropdown);
@@ -254,7 +254,7 @@ void main() {
     expect(settings.written[CodeFont.terminalSizeSettingKey], 16);
     expect(tester.widget<SettingsSlider>(slider()).label, '16');
 
-    await choose('Follow Interface Text Size');
+    await choose('Follow Interface Size');
     expect(CodeFont.terminalSize.value, isNull);
     expect(
       settings.written.containsKey(CodeFont.terminalSizeSettingKey),

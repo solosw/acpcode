@@ -15,4 +15,6 @@ served as it is, `/download` being `download.html`.
   a site adds it. See `docs/upstream-import.md`.
 - `shots/`: the screenshots on the page.
 - `sounds/`: the notification sound the page plays.
+- `qr/`: the phone cards' QR codes, made by
+  `dart run tool/make_download_qr.dart`.
 - Copy marked `<mark class="todo">` is still to be written.

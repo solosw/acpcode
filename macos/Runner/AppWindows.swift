@@ -108,6 +108,12 @@ final class AppWindows: NSObject {
     case "close":
       if let viewId = Self.id(call.arguments) { close(viewId) }
       result(nil)
+    case "leaveFullScreen":
+      guard let viewId = Self.id(call.arguments), let window = window(viewId) else {
+        result(false)
+        return
+      }
+      leaveFullScreen(window) { result($0) }
     case "focus":
       if let viewId = Self.id(call.arguments), let window = window(viewId) {
         window.alphaValue = 1
@@ -251,6 +257,33 @@ final class AppWindows: NSObject {
       _ = engine.perform(NSSelectorFromString("removeViewController:"), with: flutter)
     }
     window.contentViewController = nil
+  }
+
+  /// Takes [window] out of full screen, then [done]: whether it was in it.
+  /// Closed or hidden in full screen, its Space would go black while AppKit
+  /// takes it away, its view emptied (#148); out of it first, it shrinks
+  /// back as it is, as Chromium closes a window in full screen
+  /// (NativeWidgetMacFullscreenController's OnWindowWantsToClose).
+  private func leaveFullScreen(_ window: NSWindow, then done: @escaping (Bool) -> Void) {
+    guard window.styleMask.contains(.fullScreen) else {
+      done(false)
+      return
+    }
+    let center = NotificationCenter.default
+    var observer: NSObjectProtocol?
+    var finished = false
+    let finish = {
+      guard !finished else { return }
+      finished = true
+      if let observer { center.removeObserver(observer) }
+      done(true)
+    }
+    observer = center.addObserver(
+      forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main
+    ) { _ in finish() }
+    window.toggleFullScreen(nil)
+    // AppKit may not leave it (another transition under way): closed anyway.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish() }
   }
 
   /// Brings [window] back, hidden or minimized, in front, the keyboard's.

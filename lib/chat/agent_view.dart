@@ -102,6 +102,7 @@ class SubagentHeader extends StatelessWidget {
       child: ChatColumn(
         maxWidth: maxContentWidth + 48,
         right: math.max(0, ChatColumnInset.of(context) - 24),
+        left: math.max(0, ChatColumnInset.leftOf(context) - 24),
         // Level with the history's, its padding as wide as its margin.
         room: minimap ? ChatMinimap.room - 24 : 0,
         roomFrom: ChatMinimap.roomFrom + 48,

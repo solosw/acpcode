@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'package:baocode/chat/chat_find.dart';
 import 'package:baocode/chat/side_panel/file_link_menu.dart';
 import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/widgets/markdown_view.dart';
@@ -311,6 +312,86 @@ void main() {
       expect(find.textContaining('export-cmd'), findsNothing);
       expect(find.textContaining('note'), findsNothing);
       expect(find.textContaining('after'), findsOneWidget);
+    });
+  });
+
+  group('tags', () {
+    testWidgets('a block between tags is a section headed by their name, '
+        'that folds', (tester) async {
+      await pumpMarkdown(
+        tester,
+        'Done.\n<analysis>\nWhat was **asked**.\n\nWhat was done.\n'
+        '</analysis>\n\n<summary>\n1. A list\n</summary>',
+      );
+      expect(find.textContaining('<analysis>'), findsNothing);
+      expect(find.textContaining('</summary>'), findsNothing);
+      expect(find.text('Analysis'), findsOneWidget);
+      expect(find.text('Summary'), findsOneWidget);
+      // Its markdown, as markdown.
+      expect(find.textContaining('**'), findsNothing);
+      expect(leaves(tester).map((span) => span.text), contains('asked'));
+      expect(find.textContaining('What was done.'), findsOneWidget);
+      expect(find.textContaining('A list'), findsOneWidget);
+
+      await tester.tap(find.text('Analysis'));
+      await tester.pump();
+      expect(find.textContaining('What was done.'), findsNothing);
+      expect(find.textContaining('A list'), findsOneWidget);
+      await tester.tap(find.text('Analysis'));
+      await tester.pump();
+      expect(find.textContaining('What was done.'), findsOneWidget);
+    });
+
+    testWidgets('still streaming: open to the end', (tester) async {
+      await pumpMarkdown(tester, '<analysis>\nSo far');
+      expect(find.text('Analysis'), findsOneWidget);
+      expect(find.textContaining('So far'), findsOneWidget);
+      expect(find.textContaining('<analysis>'), findsNothing);
+    });
+
+    testWidgets('a tag within its code is code; the same tag within it its '
+        'own', (tester) async {
+      await pumpMarkdown(
+        tester,
+        '<note>\n```\n</note>\n```\n<note>\ninner\n</note>\nafter\n</note>\n'
+        'outside',
+      );
+      expect(find.text('Note'), findsNWidgets(2));
+      expect(find.textContaining('</note>'), findsOneWidget);
+      // The outer one folded: all of it goes.
+      await tester.tap(find.text('Note').first);
+      await tester.pump();
+      expect(find.textContaining('after'), findsNothing);
+      expect(find.textContaining('inner'), findsNothing);
+      expect(find.textContaining('outside'), findsOneWidget);
+    });
+
+    testWidgets('<details> folded under its <summary>', (tester) async {
+      await pumpMarkdown(
+        tester,
+        '<details>\n<summary>The <b>logs</b></summary>\n\nline 1\n</details>'
+        '\n\n<details open>\n\nshown\n</details>',
+      );
+      expect(find.text('The logs'), findsOneWidget);
+      expect(find.textContaining('line 1'), findsNothing);
+      expect(find.text('Details'), findsOneWidget);
+      expect(find.textContaining('shown'), findsOneWidget);
+      await tester.tap(find.text('The logs'));
+      await tester.pump();
+      expect(find.textContaining('line 1'), findsOneWidget);
+    });
+
+    testWidgets('HTML\'s other tags stay as they were', (tester) async {
+      await pumpMarkdown(tester, '<div>\nhi\n</div>\n\n<br>');
+      expect(find.textContaining('<div>'), findsOneWidget);
+      expect(find.text('Div'), findsNothing);
+    });
+
+    test('found as it shows: its title over it', () {
+      expect(
+        ChatFind.markdownText('<analysis>\nWhy\n</analysis>\nThen'),
+        matches(RegExp(r'^Analysis\s+Why\s+Then\s*$')),
+      );
     });
   });
 }

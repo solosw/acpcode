@@ -42,6 +42,13 @@ Future<_Menu> _pump(WidgetTester tester, _Menu menu) async {
     const MaterialApp(home: Scaffold(body: GeneralSettingsPage())),
   );
   await tester.pumpAndSettle();
+  // General's options can put the context menu row below the lazy viewport.
+  await tester.scrollUntilVisible(
+    find.textContaining('Context Menu'),
+    400,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
   return menu;
 }
 

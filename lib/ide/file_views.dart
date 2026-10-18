@@ -22,10 +22,52 @@ class FileView {
   final Widget Function(BuildContext context, String path) build;
 }
 
+/// A kind of file a chat's link opens outside the app rather than in it:
+/// a web page on this machine, in the browser. Registered as [FileView]s
+/// are ([FileViews.registerOpener]); the IDE's editor still shows its text.
+@immutable
+class FileOpener {
+  const FileOpener({
+    required this.id,
+    required this.matches,
+    required this.label,
+    required this.open,
+  });
+
+  /// Tells it from the others (one registered again takes its place).
+  final String id;
+
+  /// Whether the file at [path] (absolute, on this machine) is one.
+  final bool Function(String path) matches;
+
+  /// Its item in the link's menu ("Open in Browser").
+  final String Function(BuildContext context) label;
+
+  /// Opens the file at [path] there.
+  final Future<void> Function(String path) open;
+}
+
 /// The [FileView]s: where a file opens (the side panel's tabs, the IDE's
-/// editor) asks [of] first, before it reads the file as text.
+/// editor) asks [of] first, before it reads the file as text; and the
+/// [FileOpener]s, which a chat's link asks [openerOf] first.
 abstract final class FileViews {
   static final List<FileView> _views = [];
+  static final List<FileOpener> _openers = [];
+
+  static void registerOpener(FileOpener opener) => _openers
+    ..removeWhere((other) => other.id == opener.id)
+    ..add(opener);
+
+  static void unregisterOpener(String id) =>
+      _openers.removeWhere((opener) => opener.id == id);
+
+  /// What opens the file at [path] outside the app; null to open it in it.
+  static FileOpener? openerOf(String path) {
+    for (final opener in _openers) {
+      if (opener.matches(path)) return opener;
+    }
+    return null;
+  }
 
   static void register(FileView view) => _views
     ..removeWhere((other) => other.id == view.id)

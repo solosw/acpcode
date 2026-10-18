@@ -27,6 +27,7 @@ import 'editor_view_painters.dart';
 import 'editor_view_styles.dart';
 import 'editor_view_theme.dart';
 import 'viewport_layout.dart';
+import 'wheel_glide.dart';
 
 export 'editor_decorations.dart'
     show
@@ -934,7 +935,10 @@ class _EditorSurfaceState extends State<EditorSurface>
   double _maxScrollLeft(ViewportLayout layout) =>
       math.max(0.0, _scrollWidth(layout) - layout.viewportSize.width);
 
-  void _setScroll({double? top, double? left}) {
+  /// Scrolls the view, stopping a wheel's notches gliding it unless it is
+  /// theirs ([wheel]).
+  void _setScroll({double? top, double? left, bool wheel = false}) {
+    if (!wheel) _wheel?.stop();
     final layout = _layout;
     if (layout == null) return;
     final nextTop = (top ?? _scrollTop).clamp(0.0, _maxScrollTop(layout));
@@ -956,6 +960,30 @@ class _EditorSurfaceState extends State<EditorSurface>
   void _scrollBy(double dx, double dy) {
     _scrollToCaret = false;
     _setScroll(top: _scrollTop + dy, left: _scrollLeft + dx);
+  }
+
+  /// A mouse wheel's notches gliding the view.
+  WheelGlider? _wheel;
+
+  /// Scrolls by a mouse wheel's notch: over a few frames, as lists do
+  /// ([WheelGlide]).
+  void _glideBy(double dx, double dy) {
+    final layout = _layout;
+    if (layout == null) return;
+    _scrollToCaret = false;
+    (_wheel ??= WheelGlider(vsync: this, move: _glide)).add(
+      Offset(dx, dy),
+      at: Offset(_scrollLeft, _scrollTop),
+      max: Offset(_maxScrollLeft(layout), _maxScrollTop(layout)),
+      frame: WheelGlide.frameOf(context),
+    );
+  }
+
+  ({bool x, bool y}) _glide(Offset by) {
+    final left = _scrollLeft + by.dx;
+    final top = _scrollTop + by.dy;
+    _setScroll(top: top, left: left, wheel: true);
+    return (x: _scrollLeft == left, y: _scrollTop == top);
   }
 
   void _revealScrollbars() {
@@ -1611,7 +1639,11 @@ class _EditorSurfaceState extends State<EditorSurface>
         dx *= 5;
         dy *= 5;
       }
-      _scrollBy(dx, dy);
+      if (scroll.kind == PointerDeviceKind.mouse) {
+        _glideBy(dx, dy);
+      } else {
+        _scrollBy(dx, dy);
+      }
     });
   }
 
@@ -2439,6 +2471,7 @@ class _EditorSurfaceState extends State<EditorSurface>
     _foldTimer?.cancel();
     _autoScrollTimer?.cancel();
     _scrollbarHideTimer?.cancel();
+    _wheel?.dispose();
     _scrollbarFade.dispose();
     _caretVisible.dispose();
     _minimapCache.dispose();

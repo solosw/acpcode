@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:bao_editor/monaco/flutter/diff_editor_model.dart'
+    show DiffEditorColors;
 import 'package:bao_editor/monaco/flutter/editor_code_lens.dart';
 import 'package:bao_editor/monaco/flutter/editor_inline_suggest.dart';
 import 'package:bao_editor/monaco/flutter/editor_keybindings.dart';
@@ -21,6 +24,9 @@ import '../theme/app_theme.dart';
 import '../theme/code_font.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 import 'builtin_formatting.dart';
+import 'ide_agent_edits.dart';
+import 'ide_code_find.dart';
+import 'ide_find_widget.dart';
 import 'ide_menu.dart';
 import 'ide_notifications.dart';
 import 'ide_status_bar.dart' show IdeLanguageNames;
@@ -88,12 +94,14 @@ typedef IdeTextFormatter = Future<IdeFormatOutcome> Function(
 });
 
 /// The IDE's editor on its own, for a file edited outside the IDE (a skill,
-/// a rule, settings.json): [controller]'s text in the workbench's theme,
-/// highlighted (TextMate, where the platform has it) and bracketed as the
-/// IDE does the language of [path]. No workspace, language server, find or
+/// a rule, settings.json, a file beside the chat): [controller]'s text in
+/// the workbench's theme, highlighted (TextMate, where the platform has it)
+/// and bracketed as the IDE does the language of [path], with the IDE's
+/// find and replace ([IdeCodeFind]). No workspace, language server or
 /// tabs: the text and its editing alone, with the clipboard and the IDE's
 /// formatting in its context menu: by [formatter]'s language servers, else
-/// the IDE's own ([BuiltinFormatting]).
+/// the IDE's own ([BuiltinFormatting]). An agent's change pending in it
+/// ([agent]) shows as the IDE's editor shows it, each part to keep or undo.
 class IdeCodeEditor extends StatefulWidget {
   const IdeCodeEditor({
     super.key,
@@ -110,6 +118,7 @@ class IdeCodeEditor extends StatefulWidget {
     this.highlights,
     this.interfaceSized = false,
     this.formatter,
+    this.agent,
   });
 
   final EditorSurfaceController controller;
@@ -153,6 +162,10 @@ class IdeCodeEditor extends StatefulWidget {
   /// alone when null.
   final IdeTextFormatter? formatter;
 
+  /// An agent's change pending in the text, shown in it with Undo and Keep
+  /// by each part (as the IDE's editor shows one).
+  final IdeAgentDiff? agent;
+
   @override
   State<IdeCodeEditor> createState() => IdeCodeEditorState();
 }
@@ -170,6 +183,25 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
   /// Bumped as the language is to be picked anew: an older pick is dropped.
   int _language = 0;
 
+  late final IdeCodeFind _find = IdeCodeFind(
+    widget.controller,
+    readOnly: widget.readOnly,
+  )..addListener(_findChanged);
+
+  /// The text's own, unless it is given one.
+  FocusNode? _ownFocusNode;
+  FocusNode get _focusNode =>
+      widget.focusNode ?? (_ownFocusNode ??= FocusNode(debugLabel: 'code'));
+
+  /// Bumped as the text scrolls: what is placed by its lines follows.
+  final ValueNotifier<int> _viewTick = ValueNotifier(0);
+
+  /// The editor, once laid out.
+  EditorSurfaceView? get view => switch (_surfaceKey.currentState) {
+    final EditorSurfaceView view => view,
+    _ => null,
+  };
+
   @override
   void initState() {
     super.initState();
@@ -177,6 +209,10 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     widget.controller.addListener(_textChanged);
     EditorLanguageOverrides.instance.addListener(_languageModesChanged);
     _pickLanguage();
+  }
+
+  void _findChanged() {
+    if (mounted) setState(() {});
   }
 
   /// A language picked for a file (Change Language Mode): this one's
@@ -192,6 +228,12 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
   @override
   void didUpdateWidget(IdeCodeEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _find
+      ..controller = widget.controller
+      ..readOnly = widget.readOnly;
+    if (!identical(oldWidget.agent, widget.agent)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _highlightAgent());
+    }
     if (!identical(oldWidget.controller, widget.controller)) {
       oldWidget.controller.removeListener(_textChanged);
       widget.controller.addListener(_textChanged);
@@ -212,6 +254,9 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     widget.controller.removeListener(_textChanged);
     EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     _letGo(widget);
+    _find.dispose();
+    _ownFocusNode?.dispose();
+    _viewTick.dispose();
     _ownTextMate?.dispose();
     super.dispose();
   }
@@ -231,7 +276,18 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
 
   void _show(TextMateDocument? highlight) {
     _highlight = highlight?..addListener(_highlighted);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _viewChanged());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _viewChanged();
+      _highlightAgent();
+    });
+  }
+
+  /// The deleted code of [IdeCodeEditor.agent]'s change in the text's
+  /// language too; after the build (its host hears of it).
+  void _highlightAgent() {
+    final languageId = _highlight?.languageId;
+    if (!mounted || languageId == null) return;
+    widget.agent?.diff.highlight(_textMate, languageId);
   }
 
   void _themeChanged() {
@@ -333,23 +389,49 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     'editor.action.format',
   };
 
-  /// Format Document and Format Selection by their keybindings.
+  /// The IDE editor's find commands, run by [IdeCodeFind].
+  static const _findCommands = {
+    'actions.find',
+    'editor.action.startFindReplaceAction',
+    'editor.action.nextMatchFindAction',
+    'editor.action.previousMatchFindAction',
+    'editor.action.nextSelectionMatchFindAction',
+    'editor.action.previousSelectionMatchFindAction',
+    'actions.findWithSelection',
+    'closeFindWidget',
+    'toggleFindCaseSensitive',
+    'toggleFindWholeWord',
+    'toggleFindRegex',
+    'editor.action.replaceOne',
+    'editor.action.replaceAll',
+  };
+
+  /// Find and replace, Format Document and Format Selection by their
+  /// keybindings.
   KeyEventResult _onKey(KeyEvent event) {
-    if (!_formats) return KeyEventResult.ignored;
     final found = KeybindingService.instance.resolveEvent(
       event,
       context: (key) => switch (key) {
-        'editorTextFocus' || 'editorFocus' => true,
+        'editorTextFocus' || 'editorFocus' || 'textInputFocus' => true,
         'editorReadonly' => widget.readOnly,
         'editorHasSelection' => _hasSelection,
+        'findWidgetVisible' => _find.visible,
+        'findInputFocussed' || 'replaceInputFocussed' => false,
         'editorHasFormattingProvider' ||
         'editorHasDocumentFormattingProvider' ||
-        'editorHasDocumentSelectionFormattingProvider' => true,
+        'editorHasDocumentSelectionFormattingProvider' => _formats,
         _ => null,
       },
-      canRun: (item) => _formatCommands.contains(item.command),
+      canRun: (item) =>
+          _findCommands.contains(item.command) ||
+          _formats && _formatCommands.contains(item.command),
     );
     if (found is! KeybindingFound) return KeyEventResult.ignored;
+    if (_findCommands.contains(found.command)) {
+      return _find.runCommand(found.command)
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
+    }
     unawaited(
       _format(
         selection:
@@ -513,6 +595,8 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
 
   /// The lines on screen go to the TextMate worker first.
   void _viewChanged() {
+    if (!mounted) return;
+    _viewTick.value++;
     final highlight = _highlight;
     final view = _surfaceKey.currentState;
     if (!mounted || highlight == null || view is! EditorSurfaceView) return;
@@ -521,40 +605,123 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
     }
   }
 
+  /// Keeps or undoes a part of [agent]'s change, telling of what failed.
+  Future<void> _actOnAgentChange(Future<void> Function() act) async {
+    try {
+      await act();
+    } on Object catch (error) {
+      if (mounted) {
+        IdeNotificationsScope.maybeOf(context)
+            ?.notify(IdeSeverity.error, '$error');
+      }
+    }
+  }
+
+  /// Undo and Keep by each part of [agent]'s change; null without one.
+  Widget? _agentHunkActions(IdeAgentDiff? agent) {
+    final changes = agent?.diff.model.mappings;
+    if (agent == null || changes == null || changes.isEmpty) return null;
+    // Placed by the text as laid out this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _viewTick.value++;
+    });
+    return IdeAgentHunkActions(
+      changes: changes,
+      snapshot: widget.controller.document.snapshot,
+      view: () => view,
+      repaint: _viewTick,
+      onUndo: (change) =>
+          unawaited(_actOnAgentChange(() => agent.undo(change))),
+      onKeep: (change) =>
+          unawaited(_actOnAgentChange(() => agent.keep(change))),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = _themes.colors;
-    final surface = EditorSurface(
-      key: _surfaceKey,
-      controller: widget.controller,
-      focusNode: widget.focusNode,
-      readOnly: widget.readOnly,
-      lineNumbers: !widget.bare,
-      glyphMargin: !widget.bare,
-      folding: !widget.bare,
-      indentGuides: !widget.bare,
-      scrollBeyondLastLine: !widget.bare,
-      backgroundColor: colors['editor.background'],
-      selectionColor: colors['editor.selectionBackground'],
-      caretColor: colors['editorCursor.foreground'],
-      theme: EditorViewTheme.fromColors(colors.get),
-      styledLines: _highlight?.styledLines,
-      showMinimap: false,
-      decorations: widget.decorations,
-      decorationProviders: widget.decorationProviders,
-      inlineSuggest: widget.inlineSuggest,
-      codeLens: widget.codeLens,
-      codeLensColors: EditorCodeLensColors.from(colors.get),
-      gutterIconBuilder: widget.gutterIconBuilder,
-      onViewChanged: _viewChanged,
-      onKeyEvent: widget.bare ? null : _onKey,
-      onContextMenu: widget.bare ? null : _showContextMenu,
-      style:
-          (widget.interfaceSized
-                  ? AppFonts.uiCodeStyle(13)
-                  : AppFonts.codeStyle(13))
-              .copyWith(color: colors['editor.foreground'], height: 1.45),
+    final style =
+        (widget.interfaceSized
+                ? AppFonts.uiCodeStyle(13)
+                : AppFonts.codeStyle(13))
+            .copyWith(color: colors['editor.foreground'], height: 1.45);
+    final agent = widget.bare ? null : widget.agent;
+    // In the code's scale, which the deleted code of an agent change is
+    // drawn in.
+    Widget surface(BuildContext context) {
+      final parts = agent?.parts(
+        colors: DiffEditorColors.from(colors.get),
+        style: style,
+        textScaler: MediaQuery.textScalerOf(context),
+      );
+      return EditorSurface(
+        key: _surfaceKey,
+        controller: widget.controller,
+        focusNode: _focusNode,
+        readOnly: widget.readOnly,
+        lineNumbers: !widget.bare,
+        glyphMargin: !widget.bare,
+        folding: !widget.bare,
+        indentGuides: !widget.bare,
+        scrollBeyondLastLine: !widget.bare,
+        backgroundColor: colors['editor.background'],
+        selectionColor: colors['editor.selectionBackground'],
+        caretColor: colors['editorCursor.foreground'],
+        theme: EditorViewTheme.fromColors(colors.get),
+        styledLines: _highlight?.styledLines,
+        showMinimap: false,
+        decorations: [
+          ...widget.decorations,
+          ...?parts?.decorations,
+          ..._find.decorations,
+        ],
+        viewZones: parts?.zones ?? const [],
+        decorationProviders: widget.decorationProviders,
+        inlineSuggest: widget.inlineSuggest,
+        codeLens: widget.codeLens,
+        codeLensColors: EditorCodeLensColors.from(colors.get),
+        gutterIconBuilder: widget.gutterIconBuilder,
+        onViewChanged: _viewChanged,
+        onKeyEvent: widget.bare ? null : _onKey,
+        onContextMenu: widget.bare ? null : _showContextMenu,
+        style: style,
+      );
+    }
+
+    final text = widget.interfaceSized
+        ? Builder(builder: surface)
+        : CodeTextScale(child: Builder(builder: surface));
+    if (widget.bare) return text;
+    return Stack(
+      children: [
+        Positioned.fill(child: text),
+        if (_agentHunkActions(agent) case final hunks?)
+          Positioned.fill(child: hunks),
+        if (_find.visible)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) => Align(
+                alignment: Alignment.topRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: SizedBox(
+                    width: math.min(
+                      IdeFindWidget.width,
+                      math.max(240, constraints.maxWidth - 28),
+                    ),
+                    child: _find.widget(
+                      onClose: () {
+                        if (_focusNode.canRequestFocus) {
+                          _focusNode.requestFocus();
+                        }
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
-    return widget.interfaceSized ? surface : CodeTextScale(child: surface);
   }
 }

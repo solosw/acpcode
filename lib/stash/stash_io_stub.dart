@@ -17,3 +17,5 @@ Future<String?> readTextFile(String path) async => null;
 
 Future<void> writeTextFile(String path, String text) async {}
 Future<Uint8List?> readBytesFile(String path) async => null;
+
+Future<void> installStashSkill(String root) async {}

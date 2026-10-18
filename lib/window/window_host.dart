@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../diagnostics/app_event_watch.dart';
 import '../platform/app_platform.dart';
+import '../platform/event_log.dart';
 import 'window_frame.dart';
 
 /// What a window reports, for [AppWindows].
@@ -92,6 +94,11 @@ abstract class WindowHost {
   /// only hidden.
   Future<void> close(int viewId);
 
+  /// Takes [viewId]'s window out of full screen, before it is closed or
+  /// hidden (macOS: in full screen, its Space would go black as it goes):
+  /// whether it was in it.
+  Future<bool> leaveFullScreen(int viewId) async => false;
+
   /// Shows [viewId]'s window in front of the others, the keyboard's.
   Future<void> focus(int viewId);
 
@@ -148,6 +155,8 @@ abstract class WindowHost {
 ///   create {frame?, title, width?, engineId}
 ///                                a window: its view's id
 ///   close viewId, focus viewId, hide viewId
+///   leaveFullScreen viewId       (macOS) out of full screen, once it is:
+///                                whether it was in it
 ///   setTitle {viewId, title, path?}, setEdited {viewId, edited}
 ///   frame viewId                 {x, y, width, height, maximized,
 ///                                fullscreen, screen}
@@ -177,6 +186,7 @@ class ChannelWindowHost extends WindowHost {
     }
     try {
       final available = await channel.invokeMethod<bool>('start') ?? false;
+      appEvent('window', 'multiple views ${available ? 'on' : 'off'}');
       if (!available) return false;
     } on MissingPluginException {
       return false;
@@ -186,6 +196,17 @@ class ChannelWindowHost extends WindowHost {
     }
     channel.setMethodCallHandler((call) async {
       final arguments = call.arguments;
+      if (call.method != 'frameChanged') {
+        appEvent(
+          'window',
+          '<- ${call.method}${arguments is num ? ' $arguments' : ''}',
+        );
+      }
+      // A window asked to close or brought in front: how the windows are
+      // drawn then (one that shows nothing is closed, or clicked).
+      if (call.method == 'closeRequested' || call.method == 'focused') {
+        appEvent('views', appViewStates());
+      }
       switch (call.method) {
         case 'closeRequested':
           events.windowCloseRequested(_id(arguments));
@@ -236,12 +257,40 @@ class ChannelWindowHost extends WindowHost {
     }
   }
 
+  /// What is asked of the windows, for the event log: the windows made,
+  /// closed, shown and hidden, the stash's panel; not their titles, nor
+  /// the questions asked often (frames, screens, the window list).
+  static const _logged = {
+    'create',
+    'close',
+    'leaveFullScreen',
+    'focus',
+    'hide',
+    'quit',
+    'createStash',
+    'showStash',
+    'hideStash',
+    'setMainShownAtLaunch',
+  };
+
   Future<T?> _invoke<T>(String method, [Object? arguments]) async {
+    final logged = _logged.contains(method);
+    if (logged) {
+      appEvent(
+        'window',
+        '-> $method${arguments is num || arguments is bool ? ' $arguments' : ''}',
+      );
+    }
     try {
-      return await channel.invokeMethod<T>(method, arguments);
+      final result = await channel.invokeMethod<T>(method, arguments);
+      if (logged && result != null) {
+        appEvent('window', '$method -> $result');
+      }
+      return result;
     } on MissingPluginException {
       return null;
     } on PlatformException catch (error) {
+      appEvent('window', '$method failed: ${error.code} ${error.message}');
       debugPrint('windows.$method: $error');
       return null;
     }
@@ -264,6 +313,11 @@ class ChannelWindowHost extends WindowHost {
 
   @override
   Future<void> close(int viewId) => _invoke('close', viewId);
+
+  @override
+  Future<bool> leaveFullScreen(int viewId) async =>
+      AppPlatform.isMacOS &&
+      (await _invoke<bool>('leaveFullScreen', viewId) ?? false);
 
   @override
   Future<void> focus(int viewId) => _invoke('focus', viewId);

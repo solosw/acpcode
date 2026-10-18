@@ -5,7 +5,7 @@ enum StashSort { manual, updated, created, number }
 /// The `stash.*` settings of settings.json (see docs/stash.md).
 class StashSettings {
   const StashSettings({
-    this.hotkey = defaultHotkey,
+    this.hotkey = '',
     this.showAll = false,
     this.directory,
     this.sort = StashSort.updated,
@@ -18,10 +18,13 @@ class StashSettings {
   static const sortKey = 'stash.sort';
   static const pinnedKey = 'stash.pinned';
 
-  /// ⌃⇧Space, Ctrl+Shift+Space on Windows.
-  static const defaultHotkey = 'ctrl+shift+space';
+  /// ⌃⇧Space, Ctrl+Shift+Space on Windows: offered in the settings, not
+  /// taken unasked (a shortcut of every app's, it would take the keys from
+  /// the IDEs that have them, VS Code's parameter hints among them).
+  static const suggestedHotkey = 'ctrl+shift+space';
 
-  /// The shortcut that shows the panel from any app; none when empty.
+  /// The shortcut that shows the panel from any app; none when empty, as
+  /// it is until one is set.
   final String hotkey;
 
   /// Whether the panel shows every stash beside the one written in.
@@ -40,7 +43,7 @@ class StashSettings {
   static StashSettings parse(Map<String, Object?> settings) => StashSettings(
     hotkey: switch (settings[hotkeyKey]) {
       final String hotkey => hotkey.trim(),
-      _ => defaultHotkey,
+      _ => '',
     },
     showAll: settings[showAllKey] == true,
     directory: switch (settings[directoryKey]) {

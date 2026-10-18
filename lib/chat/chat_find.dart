@@ -12,6 +12,7 @@ import '../ide/ide_find_widget.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_feed.dart';
 import 'chat_models.dart';
+import 'widgets/markdown_tags.dart';
 import 'widgets/markdown_view.dart';
 
 /// A match: in row [item] of the conversation, its [occurrence]th there,
@@ -253,6 +254,14 @@ class ChatFind extends ChangeNotifier {
           out.write(text.replaceAll(_htmlComment, ''));
         case md.Element(tag: 'math'):
           break;
+        // Its title over it, as it shows.
+        case md.Element(tag: TagBlockSyntax.tag, :final children):
+          if (out.isNotEmpty) out.write('\n');
+          if (TagSection.titleOf(node) case final title?) {
+            out.write(title);
+          }
+          children?.forEach(visit);
+          out.write('\n');
         case md.Element(:final tag, :final children):
           final block = _blocks.contains(tag);
           if (block && out.isNotEmpty) out.write('\n');
@@ -261,7 +270,7 @@ class ChatFind extends ChangeNotifier {
       }
     }
 
-    MarkdownView.document().parse(markdown).forEach(visit);
+    MarkdownView.document(tags: true).parse(markdown).forEach(visit);
     return out.toString();
   }
 

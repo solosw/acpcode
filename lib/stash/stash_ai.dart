@@ -2,6 +2,7 @@
 // as a suggestion the user takes or leaves. Each is one question to the
 // auxiliary model (Claude Haiku), through Claude Code.
 
+import 'dart:async';
 import 'dart:convert';
 
 import '../chat/chat_models.dart' show ImageAttachment;
@@ -28,6 +29,22 @@ class StashAiException implements Exception {
   String toString() => message ?? 'No answer';
 }
 
+/// Stops one clarification, including any follow-up question it might ask.
+class StashClarifyCancellation {
+  final Completer<void> _signal = Completer<void>();
+
+  Future<void> get future => _signal.future;
+  bool get cancelled => _signal.isCompleted;
+
+  void cancel() {
+    if (!cancelled) _signal.complete();
+  }
+
+  void check() {
+    if (cancelled) throw const ClaudeHaikuCancelled();
+  }
+}
+
 /// The model's reply to [prompt]: for an action the user asked for
 /// ([action]: the model picked for those, see
 /// [ModelProviders.actionsModel]), throwing [StashAiException] when there
@@ -39,7 +56,9 @@ Future<String?> _ask(
   List<StashPicture> pictures = const [],
   ClaudeHaikuTools? tools,
   bool action = false,
+  StashClarifyCancellation? cancellation,
 }) async {
+  cancellation?.check();
   final models = ModelProviders.current;
   final model = action ? models.actions : models.auxiliary(null);
   try {
@@ -54,12 +73,16 @@ Future<String?> _ask(
             (name: picture.path, image: image),
       ],
       tools: tools,
+      cancel: cancellation?.future,
     );
+    cancellation?.check();
     final text = reply.trim();
     if (text.isNotEmpty) return text;
     if (action) throw const StashAiException();
     return null;
   } on StashAiException {
+    rethrow;
+  } on ClaudeHaikuCancelled {
     rethrow;
   } on Object catch (error) {
     if (action) throw StashAiException('$error');
@@ -174,6 +197,7 @@ Future<String> Function(
   String system,
   String prompt, {
   List<StashPicture> pictures,
+  StashClarifyCancellation? cancellation,
 })?
 stashClarifier;
 
@@ -190,22 +214,36 @@ Future<String> clarifyStashText(
   String? project,
   List<StashPicture> pictures = const [],
   String? folder,
+  StashClarifyCancellation? cancellation,
 }) async {
+  cancellation?.check();
   final tools = folder == null
       ? null
       : ClaudeHaikuTools(readable: [folder], maxTurns: 8);
   Future<String> ask(
     String prompt, {
     List<StashPicture> pictures = const [],
-  }) async =>
-      await stashClarifier?.call(_clarifySystem, prompt, pictures: pictures) ??
-      (await _ask(
-        _clarifySystem,
-        prompt,
-        pictures: pictures,
-        tools: tools,
-        action: true,
-      ))!;
+  }) async {
+    cancellation?.check();
+    final reply =
+        await stashClarifier?.call(
+          _clarifySystem,
+          prompt,
+          pictures: pictures,
+          cancellation: cancellation,
+        ) ??
+        (await _ask(
+          _clarifySystem,
+          prompt,
+          pictures: pictures,
+          tools: tools,
+          action: true,
+          cancellation: cancellation,
+        ))!;
+    cancellation?.check();
+    return reply;
+  }
+
   final note =
       '${project == null ? '' : 'Project: $project\n\n'}<note>\n'
       '${_clip(text.trim(), _noteBudget)}\n</note>';

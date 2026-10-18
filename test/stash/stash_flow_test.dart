@@ -1,10 +1,13 @@
 import 'dart:async';
 
+import 'package:baocode/base/give_way_row.dart';
 import 'package:baocode/stash/stash_note_editor.dart';
 import 'package:baocode/stash/stash_ai.dart';
+import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/chat/composer/composer_files.dart';
-import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
+import 'package:baocode/chat/chat_models.dart' show oneLineExcerpt;
+import 'package:baocode/chat/chat_session.dart' show ComposerMessage;
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/stash/stash_actions.dart';
 import 'package:baocode/stash/stash_controller.dart';
@@ -184,7 +187,8 @@ void main() {
     final note = await store.create(body: 'btn hidden');
     await controller.edit(note.id);
     final answer = Completer<String>();
-    controller.clarifier = (controller, id, text) => answer.future;
+    controller.clarifier = (controller, id, text, {cancellation}) =>
+        answer.future;
     await tester.pumpWidget(
       MaterialApp(
         localizationsDelegates: const [
@@ -204,8 +208,23 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(controller.clarifying(note.id), isTrue);
-    expect(find.text(l10n.stashClarifying), findsOneWidget);
-    answer.complete('The button is hidden.');
+    expect(find.text(l10n.stashCancelClarify), findsOneWidget);
+    await tester.tap(find.text(l10n.stashCancelClarify));
+    await tester.pumpAndSettle();
+    expect(controller.clarifying(note.id), isFalse);
+    expect(find.text(l10n.stashExpand), findsOneWidget);
+    answer.complete('Old reply');
+    await tester.pumpAndSettle();
+    expect(StashNoteEditorState.showing(note.id)!.markdown, 'btn hidden');
+    expect(controller.clarifyFailure(note.id), isNull);
+
+    final retry = Completer<String>();
+    controller.clarifier = (controller, id, text, {cancellation}) =>
+        retry.future;
+    await tester.tap(find.text(l10n.stashExpand));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(controller.clarifying(note.id), isTrue);
+    retry.complete('The button is hidden.');
     await tester.pumpAndSettle();
     expect(controller.clarifying(note.id), isFalse);
     expect(
@@ -214,7 +233,7 @@ void main() {
     );
 
     var asked = 0;
-    controller.clarifier = (controller, id, text) async {
+    controller.clarifier = (controller, id, text, {cancellation}) async {
       asked++;
       throw const StashAiException('Not signed in');
     };
@@ -224,6 +243,62 @@ void main() {
     await tester.tap(find.text(l10n.stashClarifyFailedShort));
     await tester.pumpAndSettle();
     expect(asked, 2);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 3));
+    controller.dispose();
+  });
+
+  testWidgets('in a narrow panel the bar\'s pills give way to their icons, '
+      'the pin and close button kept in it (#146)', (tester) async {
+    await setUpFlow(tester);
+    tester.view.physicalSize = const Size(560, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final note = await store.create(body: 'the bar runs out of the panel');
+    await controller.edit(note.id);
+    controller.showAll = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          FlutterQuillLocalizations.delegate,
+        ],
+        home: Material(
+          child: StashPanelView(controller: controller, viewId: 0),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final l10n = englishLocalizations;
+    // The top bar's, not the footer's.
+    final bar = find.byType(GiveWayRow).first;
+    Finder inBar(Finder finder) => find.descendant(of: bar, matching: finder);
+    final close = find
+        .ancestor(
+          of: inBar(find.byIcon(Codicons.close)),
+          matching: find.byType(GestureDetector),
+        )
+        .first;
+
+    // The list of all beside it: the stash 340 wide.
+    expect(tester.getRect(close).right, lessThanOrEqualTo(560 - 8));
+    expect(
+      tester.getRect(find.byType(PinWindowButton)).right,
+      lessThan(tester.getRect(close).left),
+    );
+    expect(inBar(find.text(l10n.stashAll)), findsNothing);
+    expect(inBar(find.text(l10n.stashExpand)), findsNothing);
+    expect(inBar(find.byIcon(Codicons.sparkle)), findsOneWidget);
+    expect(inBar(find.text('#${note.id}')), findsOneWidget);
+
+    // Wide, their words again.
+    tester.view.physicalSize = const Size(1200, 600);
+    await tester.pumpAndSettle();
+    expect(inBar(find.text(l10n.stashAll)), findsOneWidget);
+    expect(inBar(find.text(l10n.stashNewButton)), findsOneWidget);
+    expect(inBar(find.text(l10n.stashExpand)), findsOneWidget);
+    expect(inBar(find.text(l10n.stashNoProject)), findsOneWidget);
+    expect(tester.getRect(close).right, 1200 - 8);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 3));
     controller.dispose();
@@ -379,46 +454,50 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('agents write stashes down and mark them done', (tester) async {
+  testWidgets('a conversation a message names a stash in is linked to it, '
+      'and keeps what its agent last said', (tester) async {
     await setUpFlow(tester);
     await controller.start();
-    expect(hotkeys, [StashSettings.defaultHotkey]);
-    expect(controller.hotkeyTaken, isTrue);
-    const call = ClaudeSdkCall(cwd: '/work/app', sessionId: 'session-1');
-    Future<Map<String, Object?>> tool(
-      String name,
-      Map<String, Object?> arguments,
-    ) async {
-      final answer = await ClaudeSdkTools.handle({
-        'id': 1,
-        'method': 'tools/call',
-        'params': {'name': name, 'arguments': arguments},
-      }, call);
-      return answer['result']! as Map<String, Object?>;
+    // No shortcut taken unasked.
+    expect(hotkeys, ['']);
+    expect(controller.hotkeyTaken, isNull);
+    final note = await store.create(body: 'Retry uploads on 503');
+    final thread = workspace.threads.first;
+
+    thread.session.send(ComposerMessage(text: 'Do [Stash #${note.id}] please'));
+    await tester.pump();
+    expect(thread.id, isNotNull);
+    final linked = store.byId(note.id)!;
+    expect(linked.status, StashStatus.implementing);
+    expect(linked.threads.single.session, thread.id);
+    expect(linked.threads.single.project, thread.project.path);
+    expect(controller.threads.threadOf(linked.threads.single), thread);
+
+    // Its turn over, what its agent said last goes with the link (and to
+    // its file, for the cards while it is not open).
+    for (var i = 0; i < 200 && thread.session.lastReply == null; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
     }
+    final reply = thread.session.lastReply;
+    expect(reply, isNotNull);
+    thread.session.stop();
+    await tester.pump(const Duration(seconds: 1));
+    final said = store.byId(note.id)!.threads.single;
+    expect(said.said, oneLineExcerpt(reply!, max: 240));
+    expect(said.title, thread.title);
+    expect(said.at, isNotNull);
+    expect(StashNote.decode(note.id, store.byId(note.id)!.encode()).threads, [
+      said,
+    ]);
 
-    final created = await tool('stash_create', {
-      'text': 'Retry uploads on 503',
-      'title': 'Upload retries',
-    });
-    expect(created['isError'], isNull);
-    final note = store.notes.single;
-    expect(note.title, 'Upload retries');
-    expect(note.project, '/work/app');
-    expect(note.source.thread, 'session-1');
-
-    final read = await tool('stash_read', {'id': note.id});
-    expect(
-      ((read['content']! as List).single as Map)['text'],
-      contains('Retry uploads on 503'),
-    );
-
-    await tool('stash_complete', {'id': '#${note.id}'});
+    // Done stays done, named again.
+    await store.update(note.id, (note) => note.status = StashStatus.done);
+    thread.session.send(ComposerMessage(text: 'And [Stash #${note.id}]'));
+    await tester.pump();
     expect(store.byId(note.id)!.status, StashStatus.done);
-    expect(store.byId(note.id)!.thread?.session, 'session-1');
-
-    final missing = await tool('stash_complete', {'id': 404});
-    expect(missing['isError'], isTrue);
+    expect(store.byId(note.id)!.threads, hasLength(1));
+    thread.session.stop();
+    await tester.pump(const Duration(seconds: 1));
 
     // Dragged or mentioned into a message, it goes as a reference.
     final reference = stashReferenceOf(store, store.byId(note.id)!);

@@ -242,6 +242,10 @@ void main() {
 
   testWidgets('Settings → General: the path set, and the one in use under '
       'it', (tester) async {
+    // Tall enough for the Claude Code group, below the chat's.
+    tester.view.physicalSize = const Size(1200, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     Future<void> show(LocalClaudeStatus status) async {
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(
@@ -257,6 +261,8 @@ void main() {
     }
 
     await show(const LocalClaudeFound('/usr/local/bin/claude', '2.1.3'));
+    // The core, unset: BaoCode's own.
+    expect(find.text('Built-in (Dart)'), findsOneWidget);
     expect(find.text('Automatic'), findsOneWidget);
     expect(find.text('In use: /usr/local/bin/claude (2.1.3)'), findsOneWidget);
     await show(

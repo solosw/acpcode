@@ -43,6 +43,7 @@ import 'package:bao_editor/textmate/textmate_worker.dart'
     show decodeTextMateResource;
 
 import '../ide/ide_color_theme_picker.dart';
+import '../platform/event_log.dart';
 import 'workbench_theme_initial_colors.dart';
 
 export 'package:bao_editor/monaco/vs/platform/theme/common/theme.dart'
@@ -448,6 +449,12 @@ class WorkbenchThemeService extends ChangeNotifier
     _current.clearCaches();
     _current = theme;
     _colors = null;
+    appEvent(
+      'theme',
+      '${theme.settingsId} (${theme.type.name}'
+          '${theme.isLoaded ? '' : ', not loaded'}'
+          '${silent ? ', restored' : preview ? ', preview' : ''})',
+    );
     if (silent) return;
     notifyListeners();
     // Remember theme data for a quick restore.

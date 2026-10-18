@@ -81,18 +81,53 @@ for (const button of document.querySelectorAll('[data-sound]')) {
         el.textContent = zh ? `更新于 ${y} 年 ${mo + 1} 月 ${d} 日` : `Updated ${d} ${months[mo]} ${y}`;
       }
     }
-    for (const [os, file] of Object.entries(m.downloads || {})) {
-      for (const a of document.querySelectorAll(`[data-file="${os}"]`)) {
-        a.href = file.url;
-        if (a.classList.contains('button')) a.title = `≈ ${Math.round(file.size / 1e6)} MB`;
-        if (a.hasAttribute('data-name')) a.textContent = `BaoCode ${v}`;
-      }
-      for (const el of document.querySelectorAll(`[data-size="${os}"]`)) {
-        el.textContent = `≈ ${Math.round(file.size / 1e6)} MB`;
-      }
-    }
+    showDownloads(m.downloads, v);
   } catch {}
 })();
+
+// The phone app's, as the desktop's: its own manifest, its own version.
+(async () => {
+  if (!document.querySelector('[data-file="android"], [data-file="ios"]')) return;
+  try {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 4000);
+    const res = await fetch('https://dl.baocode.dev/releases/mobile/latest.json', { signal: ctl.signal, cache: 'no-store' });
+    const m = await res.json();
+    const v = String(m.version).split('+')[0];
+    const zh = document.documentElement.lang.startsWith('zh');
+    for (const el of document.querySelectorAll('[data-mobile-version]')) el.textContent = zh ? `版本 ${v}` : `Version ${v}`;
+    showDownloads(m.downloads, v);
+  } catch {}
+})();
+
+// The browser extension's version, from its own manifest. Its links stay
+// /dl/browser-extension and /dl/chrome-web-store: the zip is too small to
+// be worth a size, and the store's page is the Worker's to know.
+(async () => {
+  if (!document.querySelector('[data-extension-version]')) return;
+  try {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), 4000);
+    const res = await fetch('https://dl.baocode.dev/releases/extension/latest.json', { signal: ctl.signal, cache: 'no-store' });
+    const m = await res.json();
+    const zh = document.documentElement.lang.startsWith('zh');
+    for (const el of document.querySelectorAll('[data-extension-version]')) el.textContent = zh ? `版本 ${m.version}` : `Version ${m.version}`;
+  } catch {}
+})();
+
+// Each download's link and size, as a manifest gives them.
+function showDownloads(downloads, v) {
+  for (const [os, file] of Object.entries(downloads || {})) {
+    for (const a of document.querySelectorAll(`[data-file="${os}"]`)) {
+      a.href = file.url;
+      if (a.classList.contains('button')) a.title = `≈ ${Math.round(file.size / 1e6)} MB`;
+      if (a.hasAttribute('data-name')) a.textContent = `BaoCode ${v}`;
+    }
+    for (const el of document.querySelectorAll(`[data-size="${os}"]`)) {
+      el.textContent = `≈ ${Math.round(file.size / 1e6)} MB`;
+    }
+  }
+}
 
 // The background grid: tilted, zooming in for ever. Each level of lines is
 // twice the spacing of the one below; as the view zooms one octave, every

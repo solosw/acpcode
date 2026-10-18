@@ -61,8 +61,7 @@ final class DiagnosticsFailed extends DiagnosticsResult {
 /// when the user asks to (Settings → Updates → Diagnostic Logs): with
 /// the note they typed, the app's version, the system's and the display
 /// language; nothing that tells who sent it, not the usage statistics'
-/// install id. An action of the user's, so not held back by
-/// `telemetry.telemetryLevel` or `DO_NOT_TRACK`.
+/// install id.
 class DiagnosticsUploader {
   DiagnosticsUploader({
     required this.folder,

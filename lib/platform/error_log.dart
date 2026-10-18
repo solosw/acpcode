@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../update/version.dart';
 import 'app_platform.dart';
+import 'event_log.dart';
 
 /// What went wrong in the app unseen, kept in the data folder's
 /// `logs/errors.log` (`DataDirectory.logsDir`) for a user to send: a
@@ -134,6 +135,8 @@ class ErrorLog {
     } else {
       return;
     }
+    // On the events' timeline too, for what came before and after it.
+    appEvent('error', '[$source] ${message.split('\n').first}');
     _write(entry);
   }
 

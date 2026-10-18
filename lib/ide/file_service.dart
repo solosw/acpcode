@@ -113,6 +113,18 @@ String localizedFileError(
 /// there is no such file.
 Future<Uint8List> readFileBytes(String path) => platform.readFileBytes(path);
 
+/// How many bytes [path] takes, a file of this machine's.
+Future<int> fileByteSize(String path) => platform.fileByteSize(path);
+
+/// How many bytes [path] takes through [files], as [readBytesThrough]
+/// reads it; null where that cannot be told.
+Future<int>? byteSizeThrough(IdeFileService files, String path) =>
+    switch (files) {
+      platform.LocalIdeFileService() => fileByteSize(path),
+      final IdeRangeFiles files => files.sizeOf([path]),
+      _ => null,
+    };
+
 /// Copies [from], a file or folder of this machine's (pasted from the
 /// system's clipboard), to [to] through [files]: onto a remote project's
 /// host, which is Linux or macOS. Links to folders are left out.

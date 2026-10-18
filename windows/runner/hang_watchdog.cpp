@@ -34,6 +34,19 @@ constexpr int kMaxFrames = 64;
 // one is written.
 constexpr size_t kKeptReports = 10;
 
+// Longer than this between two of the watch's 1 s rounds, the watch itself
+// was not running (the computer asleep, the process suspended): the windows'
+// thread was not either, so it is given a fresh start.
+constexpr ULONGLONG kWatchGapMilliseconds = 3000;
+
+// Milliseconds the computer has been running, its sleep and hibernation left
+// out (GetTickCount64 counts them): waking up is no hang.
+ULONGLONG Now() {
+  ULONGLONG hundreds_of_nanoseconds = 0;
+  ::QueryUnbiasedInterruptTime(&hundreds_of_nanoseconds);
+  return hundreds_of_nanoseconds / 10000;
+}
+
 std::atomic<HWND> g_window{nullptr};
 std::atomic<ULONGLONG> g_answered{0};
 std::atomic<ULONGLONG> g_loop_ended{0};
@@ -282,9 +295,12 @@ DWORD WINAPI Watch(LPVOID) {
   // Whether the hang under way was written: once until the thread answers
   // again.
   bool written = false;
+  ULONGLONG last_round = Now();
   while (reports < kMaxReports) {
     ::Sleep(1000);
-    const ULONGLONG now = ::GetTickCount64();
+    const ULONGLONG now = Now();
+    const bool resumed = now - last_round > kWatchGapMilliseconds;
+    last_round = now;
     const ULONGLONG ended = g_loop_ended.load();
     if (ended != 0) {
       if (now - ended >= kExitMilliseconds) {
@@ -299,8 +315,9 @@ DWORD WINAPI Watch(LPVOID) {
     if (window == nullptr) {
       continue;
     }
-    // Paused in a debugger, the thread answers no one.
-    if (::IsDebuggerPresent()) {
+    // Paused in a debugger, the thread answers no one; back from a pause of
+    // the watch's own, it has had no turn to.
+    if (resumed || ::IsDebuggerPresent()) {
       g_answered.store(now);
       continue;
     }
@@ -332,7 +349,7 @@ void Start(HWND window) {
     return;
   }
   g_windows_thread = ::GetCurrentThreadId();
-  g_answered.store(::GetTickCount64());
+  g_answered.store(Now());
   // There from the start: this copy watches itself.
   ReportFolder();
   const HANDLE thread = ::CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr);
@@ -342,11 +359,11 @@ void Start(HWND window) {
 }
 
 void Answer() {
-  g_answered.store(::GetTickCount64());
+  g_answered.store(Now());
 }
 
 void LoopEnded() {
-  g_loop_ended.store(::GetTickCount64());
+  g_loop_ended.store(Now());
 }
 
 void ReportRunningCopy() {

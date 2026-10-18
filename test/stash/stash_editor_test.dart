@@ -193,6 +193,56 @@ void main() {
     expect(document.toPlainText(), isNot(contains('hello')));
   });
 
+  testWidgets('the color menu keeps focus and applies and clears both colors', (
+    tester,
+  ) async {
+    final document = Document()..insert(0, 'hello world');
+    final controller = StashEditor.controllerFor(document);
+    final focus = await _edit(tester, controller);
+    const selection = TextSelection(baseOffset: 1, extentOffset: 5);
+    controller.updateSelection(selection, ChangeSource.local);
+    await tester.pumpAndSettle();
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+
+    Future<void> pick(Finder swatch) async {
+      await tester.tap(find.byIcon(Codicons.symbolColor));
+      await tester.pumpAndSettle();
+      final position = tester.getCenter(swatch);
+      await mouse.moveTo(position);
+      await mouse.down(position);
+      await tester.pump();
+      expect(focus.hasFocus, isTrue);
+      expect(controller.selection, selection);
+      await mouse.up();
+      await tester.pumpAndSettle();
+      expect(find.text('A'), findsNothing);
+      expect(find.byIcon(Codicons.symbolColor), findsOneWidget);
+    }
+
+    await pick(find.text('A').first);
+    expect(document.collectStyle(1, 4).attributes['color']?.value, 'red');
+    expect(document.collectStyle(0, 1).attributes['color'], isNull);
+    expect(document.collectStyle(5, 6).attributes['color'], isNull);
+    await pick(find.text('A').at(StashColors.text.length));
+    expect(
+      document.collectStyle(1, 4).attributes['background']?.value,
+      'mistyrose',
+    );
+    expect(document.collectStyle(1, 4).attributes['color']?.value, 'red');
+    await pick(find.text('∅').first);
+    expect(document.collectStyle(1, 4).attributes['color'], isNull);
+    expect(
+      document.collectStyle(1, 4).attributes['background']?.value,
+      'mistyrose',
+    );
+    await pick(find.text('∅').last);
+    expect(document.collectStyle(1, 4).attributes['background'], isNull);
+    expect(document.toPlainText(), 'hello world\n');
+    await mouse.removePointer();
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+  });
+
   testWidgets('a link is typed in the bar, not a dialog', (tester) async {
     final document = Document()..insert(0, 'see the docs');
     final controller = StashEditor.controllerFor(document);

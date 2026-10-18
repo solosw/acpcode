@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../base/smooth_scroll.dart';
 import '../chat/composer/composer_files.dart';
 import '../chat/composer/file_drag.dart';
 import '../chat/composer/file_drop.dart';
@@ -26,6 +27,7 @@ import '../workspace/window_controls.dart';
 
 import 'package:bao_editor/monaco/vs/base/common/labels.dart';
 
+import 'explorer_excludes.dart';
 import 'explorer_history.dart';
 import 'file_service.dart';
 import 'git/git_model.dart';
@@ -83,7 +85,12 @@ class IdeExplorerController extends ChangeNotifier {
     List<String> roots = const [],
     bool multiRoot = false,
     p.Context? paths,
+    IdeExplorerExcludes excludes = IdeExplorerExcludes.none,
   }) : paths = paths ?? p.context,
+       // A private field with a setter, so the parameter cannot be an
+       // initializing formal.
+       // ignore: prefer_initializing_formals
+       _excludes = excludes,
        root = (paths ?? p.context).normalize(root),
        _multiRoot = multiRoot || roots.isNotEmpty,
        _watchDirectory =
@@ -101,6 +108,23 @@ class IdeExplorerController extends ChangeNotifier {
   final IdeFileService files;
   final String root;
   final p.Context paths;
+
+  /// The files and folders the tree leaves out (see
+  /// [IdeExplorerExcludes]).
+  IdeExplorerExcludes get excludes => _excludes;
+  IdeExplorerExcludes _excludes;
+
+  /// Shows [excludes] (the setting changed): the rows are made again.
+  set excludes(IdeExplorerExcludes excludes) {
+    if (_excludes == excludes) return;
+    _excludes = excludes;
+    _changed();
+  }
+
+  /// Whether [path] is shown: not among [excludes]. A hidden folder is not
+  /// descended into, so what is under it is left out with it.
+  bool _shown(String path) =>
+      _excludes.isEmpty || !_excludes.hides(path, rootOf(path), paths);
 
   /// A multi-folder workspace's folders, the tree's top rows; none for a
   /// folder's project. The workspace's own folder ([root], its data
@@ -230,6 +254,8 @@ class IdeExplorerController extends ChangeNotifier {
         // A workspace folder is its own root; don't list it again under the
         // workspace's own folder.
         if (_roots.contains(path)) continue;
+        // A hidden one is left out with everything under it.
+        if (!_shown(path)) continue;
         final expanded = entry.isDirectory && _expanded.contains(path);
         rows.add(
           IdeExplorerRow(
@@ -518,6 +544,7 @@ class IdeExplorer extends StatefulWidget {
     this.onError,
     this.onOpenInDefaultApp,
     this.onFindInFolder,
+    this.onOpenInTerminal,
     this.isBound,
     this.local = true,
     this.repositories = const [],
@@ -571,6 +598,10 @@ class IdeExplorer extends StatefulWidget {
   /// Find in Folder...: searches in a folder.
   final ValueChanged<String>? onFindInFolder;
 
+  /// Open in Terminal: opens a terminal in the folder, or in the one
+  /// holding the file; null where there are no terminals.
+  final ValueChanged<String>? onOpenInTerminal;
+
   /// Whether a keybinding has a key: the explorer leaves it to the
   /// workbench, which runs its command (see [IdeExplorerState.contextKey]).
   final bool Function(KeyEvent event)? isBound;
@@ -600,7 +631,7 @@ class _ExplorerEdit {
 
 class IdeExplorerState extends State<IdeExplorer>
     with IdeKeyboardList<IdeExplorer> {
-  final ScrollController _scroll = ScrollController();
+  final ScrollController _scroll = SmoothScrollController();
   FocusNode? _ownFocusNode;
   FocusNode get _focusNode =>
       widget.focusNode ?? (_ownFocusNode ??= FocusNode(debugLabel: 'explorer'));
@@ -1830,6 +1861,16 @@ class IdeExplorerState extends State<IdeExplorer>
                   if (!target.isDirectory) open(target.path);
                 }
               },
+            ),
+          // Open in Terminal: in the folder, or in the one holding the
+          // file; VS Code's `openInTerminal` (on the folder, the file's
+          // folder too).
+          if (widget.onOpenInTerminal case final openTerminal?)
+            IdeMenuAction(
+              l10n.explorerOpenInTerminal,
+              onSelected: () => openTerminal(
+                !isFolder ? _controller.paths.dirname(path) : path,
+              ),
             ),
           // To this machine, from a remote project's host too.
           if (!isFolder && !multiple && canSaveFileCopy)

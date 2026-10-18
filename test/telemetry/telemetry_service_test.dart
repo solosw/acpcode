@@ -183,6 +183,18 @@ void main() {
       service.dispose();
     });
 
+    test('starting while off drops queued days without making an id', () async {
+      enabled = false;
+      store.pendingDays = ['2026-10-06'];
+      final service = serviceOf()..start();
+      addTearDown(service.dispose);
+      expect(store.pendingDays, isEmpty);
+      await service.flush();
+      expect(sender.sent, isEmpty);
+      expect(store.installId, isNull);
+      expect(store.lastActiveDay, isNull);
+    });
+
     testWidgets('looks at start, then every interval, while in front', (
       tester,
     ) async {
@@ -219,7 +231,11 @@ void main() {
       expect(doNotTrack(''), isFalse);
       expect(doNotTrack('0'), isFalse);
       expect(doNotTrack('false'), isFalse);
+      expect(doNotTrack(' FALSE '), isFalse);
+      expect(doNotTrack(' 0 '), isFalse);
       expect(doNotTrack('1'), isTrue);
+      expect(doNotTrack(' True '), isTrue);
+      expect(doNotTrack('yes'), isTrue);
       expect(doNotTrack('true'), isTrue);
     });
 

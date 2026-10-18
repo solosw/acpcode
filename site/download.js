@@ -15,6 +15,31 @@
   } catch {}
 })();
 
+// The phone app's cards: a touch screen has no hover to bring a card's QR
+// code up with, so a tap on the card opens it (a tap elsewhere, or Escape,
+// closes it). Its own buttons are left alone — a phone that downloads the
+// APK itself has no use for a code to scan, and tapping Download should
+// download. What a mouse does the page's own CSS sees to.
+(() => {
+  if (matchMedia('(hover: hover)').matches) return;
+  const cards = document.querySelectorAll('[data-phones] .platform');
+  if (!cards.length) return;
+  const close = () => { for (const card of cards) card.classList.remove('qr-open'); };
+  for (const card of cards) {
+    card.addEventListener('click', (e) => {
+      // Its own button downloads the app; nothing to scan, so the code goes.
+      if (e.target.closest('a, button')) { close(); return; }
+      const open = card.classList.contains('qr-open');
+      close();
+      if (!open) card.classList.add('qr-open');
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-phones] .platform')) close();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+})();
+
 // A download clicked: once it is on its way, a word of thanks and a polite
 // ask for a star on GitHub. Once a browser; Escape, Maybe later or a click
 // outside closes it.
@@ -23,7 +48,7 @@
   if (!dialog?.showModal) return;
   const key = 'baocode.starAsked';
   const asked = () => { try { return localStorage.getItem(key) === '1'; } catch { return false; } };
-  for (const a of document.querySelectorAll('.platform a[data-file]')) {
+  for (const a of document.querySelectorAll('[data-platforms] a[data-file]')) {
     a.addEventListener('click', () => {
       if (asked()) return;
       try { localStorage.setItem(key, '1'); } catch {}

@@ -6,7 +6,9 @@ import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/change_reviews.dart';
 import 'package:baocode/chat/review/review_store.dart';
+import 'package:baocode/kernel/acp/acp_kernel.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
+import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/theme/app_theme.dart';
@@ -31,7 +33,9 @@ class _Review extends ChangeReview {
 
   final calls = <String>[];
   final reported = <String>[];
+  Completer<void>? holdRefresh;
   Completer<void>? holdBegin;
+  Completer<void>? holdObserve;
   List<FileChange> listed = const [];
 
   @override
@@ -43,17 +47,26 @@ class _Review extends ChangeReview {
   }
 
   @override
+  Future<void> refresh() async {
+    calls.add('refresh');
+    await holdRefresh?.future;
+  }
+
+  @override
   Future<void> begin() async {
     calls.add('begin');
     await holdBegin?.future;
   }
 
   @override
-  Future<void> observe({bool full = true}) async =>
-      calls.add(full ? 'observe' : 'observe reported');
+  Future<void> observe() async {
+    calls.add('observe');
+    await holdObserve?.future;
+  }
 
   @override
-  void report(FileChange change) => reported.add(change.path);
+  void report(FileChange change, {FileOriginal? original}) =>
+      reported.add(change.path);
 
   @override
   Future<void> keep(Iterable<String> paths) async =>
@@ -68,6 +81,24 @@ class _Review extends ChangeReview {
 
   @override
   Future<void> undoAll() async => calls.add('undoAll');
+}
+
+class _ShellKernel extends AcpKernel {
+  _ShellKernel(KernelDescriptor descriptor, KernelContext context)
+    : super(descriptor, context, (_) => throw UnimplementedError());
+  String? turnId;
+  @override
+  String get sessionId => 'shell-session';
+  @override
+  void prepare() {}
+  @override
+  void send(KernelTurn turn) {
+    turnId = turn.id;
+    emit(TurnStarted(nextSeq, turn.id));
+    emit(ItemUpserted(nextSeq, turn.id, UserMessageItem(text: turn.text)));
+  }
+
+  void finish() => emit(TurnEnded(nextSeq, turnId!));
 }
 
 void main() {
@@ -94,7 +125,6 @@ void main() {
   }
 
   Future<void> finish(WidgetTester tester, ChatSession session) async {
-    // The message goes once the snapshot before it is taken.
     await tester.pump(const Duration(milliseconds: 100));
     for (var i = 0; i < 400 && session.isStreaming; i++) {
       switch (session.pendingInteraction) {
@@ -109,26 +139,23 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
   }
 
-  testWidgets('a message goes without waiting for the snapshot before it', (
-    tester,
-  ) async {
+  testWidgets('the edits go to the review, its files looked at again around '
+      'a turn, which does not wait for it', (tester) async {
     final session = await pump(tester);
-    // The project was snapshotted as the conversation showed.
-    expect(review.calls, ['begin']);
+    expect(review.calls, ['refresh']);
 
-    review.holdBegin = Completer();
+    review.holdRefresh = Completer();
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
-    // Shown at once, the snapshot taken as it goes.
-    expect(review.calls, ['begin', 'begin']);
+    // Shown at once.
+    expect(review.calls, ['refresh', 'refresh']);
     expect(session.itemCount, greaterThan(0));
 
-    review.holdBegin!.complete();
+    review.holdRefresh!.complete();
     await finish(tester, session);
 
-    // The edits it reported were looked at, and all at the turn's end.
     expect(review.reported, isNotEmpty);
-    expect(review.calls, contains('observe reported'));
-    expect(review.calls.last, 'observe');
+    // And again at the turn's end.
+    expect(review.calls.last, 'refresh');
     // Its background tests settle.
     await tester.pump(const Duration(seconds: 5));
   });
@@ -252,8 +279,17 @@ void main() {
   ) async {
     final opening = Completer<ChangeReview?>();
     review = _Review('/srv/project');
+    late _ShellKernel shell;
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'shell',
+      label: 'Shell',
+      icon: Icons.hub,
+      description: '',
+      create: (context) => shell = _ShellKernel(descriptor, context),
+    );
     final session = ChatSession(
-      kernel: MockKernels.claudeCode,
+      kernel: descriptor,
       kernelContext: const KernelContext(cwd: 'ssh://dev/srv/project'),
       historyCount: 0,
       openReview: (root, {session}) => opening.future,
@@ -280,26 +316,76 @@ void main() {
       review.calls.where((call) => call == 'observe').length,
       greaterThan(before),
     );
-    await finish(tester, session);
+    shell.finish();
+    await tester.pump();
     final after = review.calls.where((call) => call == 'observe').length;
     await tester.pump(const Duration(seconds: 4));
     expect(review.calls.where((call) => call == 'observe').length, after);
   });
 
-  testWidgets('while a turn runs, the project is scanned every few seconds', (
+  testWidgets('ACP scans every workspace folder, coalesces slow ticks, '
+      'and sends without waiting for a baseline', (tester) async {
+    late _ShellKernel shell;
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'shell',
+      label: 'Shell',
+      icon: Icons.hub,
+      description: '',
+      create: (context) => shell = _ShellKernel(descriptor, context),
+    );
+    final reviews = <String, _Review>{};
+    final session = ChatSession(
+      kernel: descriptor,
+      kernelContext: KernelContext(
+        cwd: '/a',
+        workspace: () => const KernelWorkspace(folders: ['/a', '/b']),
+      ),
+      historyCount: 0,
+      openReview: (root, {session}) async => reviews[root] = _Review(root),
+    );
+    addTearDown(session.dispose);
+    session.attach();
+    await tester.pump();
+    for (final review in reviews.values) {
+      review.holdBegin = Completer();
+      review.holdObserve = Completer();
+    }
+    session.send(const ComposerMessage(text: 'shell edit'));
+    await tester.pump();
+    expect(session.isStreaming, isTrue);
+    expect(session.itemCount, greaterThan(0));
+    expect(reviews.keys, ['/a', '/b']);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(seconds: 9));
+    for (final review in reviews.values) {
+      expect(review.calls.where((call) => call == 'observe'), hasLength(1));
+    }
+    shell.finish();
+    await tester.pump();
+    for (final review in reviews.values) {
+      // End-of-turn discovery is never coalesced away by a slow tick.
+      expect(review.calls.where((call) => call == 'observe'), hasLength(2));
+      review.holdBegin!.complete();
+      review.holdObserve!.complete();
+    }
+    await tester.pump(const Duration(seconds: 4));
+    for (final review in reviews.values) {
+      expect(review.calls.where((call) => call == 'observe'), hasLength(2));
+    }
+  });
+
+  testWidgets('reported-file kernels do not scan the whole project', (
     tester,
   ) async {
     final session = await pump(tester);
-    review.holdBegin = Completer()..complete();
     session.send(const ComposerMessage(text: '改一下'));
     await tester.pump(const Duration(milliseconds: 200));
     final before = review.calls.where((call) => call == 'observe').length;
 
     await tester.pump(const Duration(seconds: 3));
-    expect(
-      review.calls.where((call) => call == 'observe').length,
-      greaterThan(before),
-    );
+    expect(review.calls.where((call) => call == 'observe').length, before);
+    expect(review.calls, isNot(contains('begin')));
 
     await finish(tester, session);
     final after = review.calls.where((call) => call == 'observe').length;

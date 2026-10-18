@@ -36,6 +36,10 @@ enum DataDirectorySource {
 /// <path>/pastes/                  pastes too long to send, which agents read
 /// <path>/logs/errors.log          the errors the app did not handle
 /// <path>/extensions/              theme extensions, as VS Code lays them out
+/// <path>/browser/                 the browser's bridge: whether one connected
+/// <path>/images/                  the pictures agents made (generate_image)
+/// <path>/secrets/                 providers' keys, where the system has no
+///                                 keychain of its own (Windows, Linux)
 /// ```
 ///
 /// Other programs keep files there too (the web views' `Cookies`,
@@ -120,6 +124,15 @@ class DataDirectory {
   /// (`publisher.name-version/`, `extensions.json`).
   String get extensionsDir => p.join(path, 'extensions');
 
+  /// What the browser's bridge keeps (see lib/browser/): `connected`, the
+  /// mark that a browser has connected once.
+  String get browserDir => p.join(path, 'browser');
+
+  /// The pictures agents made where they did not say where (see
+  /// lib/images/image_tools.dart): kept, as the conversations that show
+  /// them are.
+  String get imagesDir => p.join(path, 'images');
+
   /// The app's own entries, all others' left alone: what moving the folder
   /// copies and removing old data deletes.
   static const items = [
@@ -136,6 +149,14 @@ class DataDirectory {
     'workspaces',
     'logs',
     'extensions',
+    'browser',
+    'images',
+    // Where the providers' keys are kept where the system has no keychain
+    // of its own (Windows' DPAPI files, Linux's fallback; see
+    // secret_store_io.dart). Moving the folder without it left the
+    // providers in place and their keys behind, and every task failed with
+    // "Invalid API key".
+    'secrets',
   ];
 
   /// Entries that show a folder holds the app's data.

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,6 +11,24 @@ void main() {
   test('no tools, no server', () {
     expect(ClaudeSdkTools.any, isFalse);
     expect(ClaudeSdkTools.servers, isEmpty);
+  });
+
+  test('a tool always loaded says so, not to be deferred', () async {
+    ClaudeSdkTools.register(
+      ClaudeSdkTool(
+        name: 'echo',
+        description: 'Says it back.',
+        inputSchema: const {'type': 'object'},
+        alwaysLoad: true,
+        run: (input, call) async => '',
+      ),
+    );
+    final list = await ClaudeSdkTools.handle({
+      'id': 1,
+      'method': 'tools/list',
+    }, call);
+    final tools = (list['result'] as Map)['tools'] as List;
+    expect(tools.single, containsPair('_meta', {'anthropic/alwaysLoad': true}));
   });
 
   test('lists and calls its tools, failures as errors', () async {
@@ -39,6 +59,7 @@ void main() {
     }, call);
     final tools = (list['result'] as Map)['tools'] as List;
     expect(tools.single, containsPair('name', 'echo'));
+    expect((tools.single as Map).containsKey('_meta'), isFalse);
 
     final ok = await ClaudeSdkTools.handle({
       'id': 2,
@@ -71,4 +92,49 @@ void main() {
     }, call);
     expect((unknown['error'] as Map)['code'], -32601);
   });
+
+  test(
+    'a call is given up as the agent cancels it, or as the turn stops',
+    () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'echo',
+          description: 'Waits.',
+          inputSchema: const {'type': 'object'},
+          run: (input, call) async {
+            await call.cancelled;
+            return 'given up';
+          },
+        ),
+      );
+      Future<String> answered(Future<Map<String, Object?>> answer) async =>
+          (((await answer)['result'] as Map)['content'] as List).single['text']
+              as String;
+
+      final cancelled = ClaudeSdkTools.handle({
+        'id': 7,
+        'method': 'tools/call',
+        'params': {'name': 'echo', 'arguments': <String, Object?>{}},
+      }, call);
+      // Another session's call of the same id is not this one.
+      await ClaudeSdkTools.handle({
+        'method': 'notifications/cancelled',
+        'params': {'requestId': 7},
+      }, const ClaudeSdkCall(cwd: '/p', sessionId: 'other'));
+      await ClaudeSdkTools.handle({
+        'method': 'notifications/cancelled',
+        'params': {'requestId': 7},
+      }, call);
+      expect(await answered(cancelled), 'given up');
+
+      final turn = Completer<void>();
+      final stopped = ClaudeSdkTools.handle({
+        'id': 8,
+        'method': 'tools/call',
+        'params': {'name': 'echo', 'arguments': <String, Object?>{}},
+      }, ClaudeSdkCall(cwd: '/p', sessionId: 's', cancelled: turn.future));
+      turn.complete();
+      expect(await answered(stopped), 'given up');
+    },
+  );
 }

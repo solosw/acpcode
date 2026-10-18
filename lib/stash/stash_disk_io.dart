@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 
 import '../platform/app_paths.dart';
@@ -10,7 +11,13 @@ import 'stash_disk.dart';
 
 /// The stash folder on this machine: `~/BaoCode/Stash` by default.
 class FileStashDisk implements StashDisk {
-  FileStashDisk([String? root]) : root = root ?? defaultRoot;
+  FileStashDisk([String? root, @visibleForTesting this._watchFolder = _watchOf])
+    : root = root ?? defaultRoot;
+
+  static Stream<FileSystemEvent> _watchOf(Directory folder) => folder.watch();
+
+  /// How the folder is watched: the system's, or a test's events.
+  final Stream<FileSystemEvent> Function(Directory folder) _watchFolder;
 
   static String get defaultRoot =>
       p.join(AppPaths.home(Platform.environment), 'BaoCode', 'Stash');
@@ -52,15 +59,47 @@ class FileStashDisk implements StashDisk {
     }
   }
 
+  /// Each stash's write under way: the next waits for it, so the one asked
+  /// for last is the one left (a typed save and an AI rewrite at once).
+  final Map<int, Future<void>> _writing = {};
+
+  /// Counts the temporary files written, for their names.
+  int _written = 0;
+
   @override
-  Future<void> write(int id, String text) async {
+  Future<void> write(int id, String text) {
+    final previous = _writing[id] ?? Future<void>.value();
+    final next = previous
+        .catchError((Object _) {})
+        .then((_) => _write(id, text));
+    _writing[id] = next;
+    return next.whenComplete(() {
+      if (identical(_writing[id], next)) _writing.remove(id);
+    });
+  }
+
+  Future<void> _write(int id, String text) async {
     await _folder();
-    // Written whole, then moved in place: never half a file.
+    // Written whole, then moved in place: never half a file. A name of its
+    // own, so another window (its own isolate, its own disk) writing the
+    // same stash meanwhile does not write into it.
     final file = _file(id);
-    final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(text, flush: true);
-    _ownWrites.add(p.basename(file.path));
-    await temporary.rename(file.path);
+    final temporary = File(
+      '${file.path}.$pid-${_written++}-'
+      '${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    try {
+      await temporary.writeAsString(text, flush: true);
+      _ownWrites.add(p.basename(file.path));
+      await temporary.rename(file.path);
+    } on Object {
+      try {
+        await temporary.delete();
+      } on FileSystemException {
+        // Moved in place, or never made.
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -245,10 +284,19 @@ class FileStashDisk implements StashDisk {
   Future<void> _startWatching() async {
     final folder = await _folder();
     try {
-      _watch = folder.watch().listen((event) {
-        final name = p.basename(event.path);
-        if (!_name.hasMatch(name)) return;
-        if (_ownWrites.remove(name)) return;
+      _watch = _watchFolder(folder).listen((event) {
+        // A file written whole and moved in place (this app's writes, an
+        // agent's) is, on Windows and Linux, one move: from the temporary
+        // file to the stash's.
+        var changed = false;
+        for (final path in [
+          event.path,
+          if (event case FileSystemMoveEvent(:final destination?)) destination,
+        ]) {
+          final name = p.basename(path);
+          if (_name.hasMatch(name) && !_ownWrites.remove(name)) changed = true;
+        }
+        if (!changed) return;
         // A burst of events (an editor's save) as one.
         _settle?.cancel();
         _settle = Timer(const Duration(milliseconds: 300), () {

@@ -43,10 +43,12 @@ import '../debug/base/event.dart' show DisposableStore;
 import '../debug/service/debug_service.dart';
 import 'debug_editor_glue.dart';
 import 'git/git_blame.dart';
+import 'ide_agent_edits.dart';
 import 'ide_commands.dart';
 import 'ide_find_widget.dart';
 import 'ide_menu.dart';
 import 'ide_notifications.dart';
+import 'ide_original_diff.dart';
 import 'ide_status_bar.dart' show IdeLanguageNames, ideEolEdits;
 import 'ide_workspace.dart';
 import 'lsp/language_features.dart';
@@ -93,6 +95,7 @@ class IdeEditor extends StatefulWidget {
     this.keyResolver,
     this.onPaste,
     this.debug,
+    this.agentEdits,
   });
 
   final IdeWorkspace workspace;
@@ -145,6 +148,10 @@ class IdeEditor extends StatefulWidget {
   /// the glyph margin, a click there adding or removing one.
   final DebugService? debug;
 
+  /// The agents' changes pending in the files: shown in each file, the
+  /// deleted lines above the added, with Undo and Keep by each change.
+  final IdeAgentEdits? agentEdits;
+
   @override
   State<IdeEditor> createState() => IdeEditorState();
 }
@@ -192,7 +199,14 @@ class IdeEditorState extends State<IdeEditor> {
   final Map<IdeDocument, SemanticTokensSource> _semanticSources = {};
 
   /// Each open diff tab's diff and original side.
-  final Map<IdeDocument, _DiffOriginal> _diffs = {};
+  final Map<IdeDocument, IdeOriginalDiff> _diffs = {};
+
+  /// Each open file's agent change, shown in it ([IdeEditor.agentEdits]).
+  final Map<IdeDocument, IdeAgentDiff> _agentDiffs = {};
+
+  /// Bumped as the text scrolls or is laid out again: the agent changes'
+  /// buttons follow it.
+  final ValueNotifier<int> _viewTick = ValueNotifier(0);
 
   /// The Git blame shown after the lines with a caret.
   late final IdeGitBlameController _blame = IdeGitBlameController()
@@ -266,6 +280,7 @@ class IdeEditorState extends State<IdeEditor> {
     widget.workspace.addListener(_workspaceChanged);
     _themes.addListener(_colorThemeChanged);
     EditorLanguageOverrides.instance.addListener(_languageModesChanged);
+    widget.agentEdits?.addListener(_rebuildSoon);
     if (widget.nativeEditorEnabled) _activateNativeController();
     _selectionChanged();
     _updateBlame(navigated: false);
@@ -356,6 +371,13 @@ class IdeEditorState extends State<IdeEditor> {
     _nativeController = _nativeControllers.putIfAbsent(doc, () {
       final controller = EditorSurfaceController(document: doc.model)
         ..detectIndentation();
+      // Where it was left, while it still fits the text.
+      final length = doc.model.text.length;
+      if (doc.selections case final kept?
+          when kept.isNotEmpty &&
+              kept.every((s) => s.isValid && s.start >= 0 && s.end <= length)) {
+        controller.setSelections(kept);
+      }
       // Its lines pasted into the chat go in as a reference to them; not
       // so a revision's, whose lines are not the file's.
       if (doc.readRevision == null) {
@@ -838,6 +860,7 @@ class IdeEditorState extends State<IdeEditor> {
   };
 
   void _viewChanged() {
+    _viewTick.value++;
     _language?.onViewChanged();
     _textMateViewportChanged();
     _languageChanged();
@@ -851,6 +874,10 @@ class IdeEditorState extends State<IdeEditor> {
     if ((view as EditorSurfaceView).visibleLineRange case final range?) {
       document.setViewport(range.first, range.last);
       _diffs[widget.active]?.textMate?.setViewport(range.first, range.last);
+      _agentDiffs[widget.active]?.diff.textMate?.setViewport(
+        range.first,
+        range.last,
+      );
     }
   }
 
@@ -1068,6 +1095,7 @@ class IdeEditorState extends State<IdeEditor> {
     _tokenizedDocuments.remove(doc);
     _syntaxText = snapshot.text;
     _diffs[doc]?.highlight(_textMate, languageId);
+    _agentDiffs[doc]?.diff.highlight(_textMate, languageId);
     setState(() {
       _styledDocument = doc;
       _styledSnapshot = null;
@@ -1089,6 +1117,7 @@ class IdeEditorState extends State<IdeEditor> {
         if (!open.contains(entry.key)) {
           _nativeControllers.remove(entry.key);
           _diffs.remove(entry.key)?.dispose();
+          _agentDiffs.remove(entry.key)?.dispose();
           _tokenizedDocuments.remove(entry.key);
           _textMateDocuments.remove(entry.key)?.$2.dispose();
           if (identical(_language?.controller, controller)) {
@@ -1133,7 +1162,9 @@ class IdeEditorState extends State<IdeEditor> {
       document.dispose();
     }
     _textMateDocuments.clear();
-    for (final controller in _nativeControllers.values) {
+    for (final MapEntry(key: doc, value: controller)
+        in _nativeControllers.entries) {
+      doc.selections = controller.selections;
       controller.dispose();
     }
     _nativeControllers.clear();
@@ -1141,19 +1172,70 @@ class IdeEditorState extends State<IdeEditor> {
       diff.dispose();
     }
     _diffs.clear();
+    for (final diff in _agentDiffs.values) {
+      diff.dispose();
+    }
+    _agentDiffs.clear();
   }
 
   /// [doc]'s diff and original side, where it is a diff tab.
-  _DiffOriginal? _diffOf(IdeDocument doc) {
+  IdeOriginalDiff? _diffOf(IdeDocument doc) {
     final original = doc.diff;
     if (original == null) return null;
     return _diffs.putIfAbsent(doc, () {
-      final diff = _DiffOriginal(original, doc.model, onChanged: _rebuildSoon);
+      final diff = IdeOriginalDiff(
+        original,
+        doc.model,
+        onChanged: _rebuildSoon,
+      );
       if (_textMateDocuments[doc]?.$2.languageId case final language?) {
         diff.highlight(_textMate, language);
       }
       return diff;
     });
+  }
+
+  /// [doc]'s agent change, where it has one to show (a file's own tab).
+  IdeAgentDiff? _agentDiffOf(IdeDocument doc) {
+    final edit = doc.diff == null && !doc.readOnly
+        ? widget.agentEdits?.of(doc.path)
+        : null;
+    if (edit == null) {
+      _agentDiffs.remove(doc)?.dispose();
+      return null;
+    }
+    if (_agentDiffs[doc] case final shown?) return shown..edit = edit;
+    final controller = _nativeControllers[doc];
+    if (controller == null) return null;
+    final diff = _agentDiffs[doc] = IdeAgentDiff(
+      edit,
+      controller,
+      onChanged: _rebuildSoon,
+      save: () async {
+        if (doc.dirty) await widget.workspace.save(doc);
+      },
+      view: () => identical(widget.active, doc)
+          ? switch (_surfaceKey.currentState) {
+              final EditorSurfaceView view => view,
+              _ => null,
+            }
+          : null,
+      hunks: widget.agentEdits!.hunksOf(doc.path),
+    );
+    if (_textMateDocuments[doc]?.$2.languageId case final language?) {
+      diff.diff.highlight(_textMate, language);
+    }
+    return diff;
+  }
+
+  /// Keeps or undoes a part of an agent change (see [IdeAgentDiff]),
+  /// telling of what failed.
+  Future<void> _actOnAgentChange(Future<void> Function() act) async {
+    try {
+      await act();
+    } catch (error) {
+      if (mounted) widget.onError(error);
+    }
   }
 
   void _scheduleFindRefresh() {
@@ -1214,6 +1296,10 @@ class IdeEditorState extends State<IdeEditor> {
   void didUpdateWidget(IdeEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.debug != widget.debug) _listenToDebug();
+    if (!identical(oldWidget.agentEdits, widget.agentEdits)) {
+      oldWidget.agentEdits?.removeListener(_rebuildSoon);
+      widget.agentEdits?.addListener(_rebuildSoon);
+    }
     final workspaceChanged = oldWidget.workspace != widget.workspace;
     if (workspaceChanged) {
       oldWidget.workspace.removeListener(_workspaceChanged);
@@ -1254,9 +1340,11 @@ class IdeEditorState extends State<IdeEditor> {
     widget.workspace.removeListener(_workspaceChanged);
     _themes.removeListener(_colorThemeChanged);
     EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
+    widget.agentEdits?.removeListener(_rebuildSoon);
     _debugListeners?.dispose();
     _blame.dispose();
     _disposeNativeControllers();
+    _viewTick.dispose();
     _textMate.dispose();
     _findController.dispose();
     _replaceController.dispose();
@@ -2007,44 +2095,47 @@ class IdeEditorState extends State<IdeEditor> {
           .copyWith(color: colors['editor.foreground'], height: 1.45);
 
   /// The active document's editor; in a diff, the modified side, with
-  /// what the diff gives it ([side]).
-  Widget _surface(WorkbenchColors colors, {DiffEditorSide? side}) =>
-      EditorSurface(
-        key: _surfaceKey,
-        controller: _nativeController!,
-        focusNode: _focusNode,
-        readOnly: widget.active.readOnly,
-        backgroundColor: colors['editor.background'],
-        selectionColor: colors['editor.selectionBackground'],
-        caretColor: colors['editorCursor.foreground'],
-        theme: EditorViewTheme.fromColors(colors.get),
-        styledLines: _language?.styledLines(_styledLines) ?? _styledLines,
-        decorations: [
-          ...?side?.decorations,
-          ...?_language?.decorations,
-          ..._snippetDecorations(_nativeController!, colors),
-          ..._findDecorations,
-          ..._blameDecorations(colors),
-          ..._debugDecorations(),
-        ],
-        // A diff editor's editors fold nothing and have no minimap.
-        viewZones: side?.zones ?? const [],
-        scrollPosition: side?.scrollPosition,
-        folding: side == null,
-        showMinimap: side == null,
-        onKeyEvent: _onEditorKey,
-        keyResolver: widget.keyResolver == null ? null : _resolveTextKey,
-        onHover: _language == null
-            ? null
-            : (offset, _) => _language?.onPointerHover(offset),
-        onContentPointerDown: _language?.onPointerDown,
-        onContextMenu: _showContextMenu,
-        onViewChanged: _viewChanged,
-        contentCursor: _language?.link == null
-            ? null
-            : SystemMouseCursors.click,
-        style: _editorStyle(colors),
-      );
+  /// what the diff gives it ([side]); else with its agent change in it
+  /// ([agent]).
+  Widget _surface(
+    WorkbenchColors colors, {
+    DiffEditorSide? side,
+    ({List<EditorViewZone> zones, List<EditorDecoration> decorations})? agent,
+  }) => EditorSurface(
+    key: _surfaceKey,
+    controller: _nativeController!,
+    focusNode: _focusNode,
+    readOnly: widget.active.readOnly,
+    backgroundColor: colors['editor.background'],
+    selectionColor: colors['editor.selectionBackground'],
+    caretColor: colors['editorCursor.foreground'],
+    theme: EditorViewTheme.fromColors(colors.get),
+    styledLines: _language?.styledLines(_styledLines) ?? _styledLines,
+    decorations: [
+      ...?side?.decorations,
+      ...?agent?.decorations,
+      ...?_language?.decorations,
+      ..._snippetDecorations(_nativeController!, colors),
+      ..._findDecorations,
+      ..._blameDecorations(colors),
+      ..._debugDecorations(),
+    ],
+    // A diff editor's editors fold nothing and have no minimap.
+    viewZones: side?.zones ?? agent?.zones ?? const [],
+    scrollPosition: side?.scrollPosition,
+    folding: side == null,
+    showMinimap: side == null,
+    onKeyEvent: _onEditorKey,
+    keyResolver: widget.keyResolver == null ? null : _resolveTextKey,
+    onHover: _language == null
+        ? null
+        : (offset, _) => _language?.onPointerHover(offset),
+    onContentPointerDown: _language?.onPointerDown,
+    onContextMenu: _showContextMenu,
+    onViewChanged: _viewChanged,
+    contentCursor: _language?.link == null ? null : SystemMouseCursors.click,
+    style: _editorStyle(colors),
+  );
 
   /// [_blame]'s lines, each after its end (`GitBlameEditorDecoration`).
   List<EditorDecoration> _blameDecorations(WorkbenchColors colors) {
@@ -2072,8 +2163,33 @@ class IdeEditorState extends State<IdeEditor> {
     ];
   }
 
+  /// Undo and Keep by each part of [agent], the active document's agent
+  /// change; null without one.
+  Widget? _agentHunkActions(IdeAgentDiff? agent) {
+    final changes = agent?.diff.model.mappings;
+    if (agent == null || changes == null || changes.isEmpty) return null;
+    final doc = widget.active;
+    // Placed by the text as laid out this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _viewTick.value++;
+    });
+    return IdeAgentHunkActions(
+      changes: changes,
+      snapshot: doc.model.snapshot,
+      view: () => switch (_surfaceKey.currentState) {
+        final EditorSurfaceView view => view,
+        _ => null,
+      },
+      repaint: _viewTick,
+      onUndo: (change) =>
+          unawaited(_actOnAgentChange(() => agent.undo(change))),
+      onKeep: (change) =>
+          unawaited(_actOnAgentChange(() => agent.keep(change))),
+    );
+  }
+
   /// A diff tab's editors: the original, read-only, and the document.
-  Widget _diffEditor(WorkbenchColors colors, _DiffOriginal diff) {
+  Widget _diffEditor(WorkbenchColors colors, IdeOriginalDiff diff) {
     final theme = EditorViewTheme.fromColors(colors.get);
     final type = getThemeTypeSelector(_themes.colorTheme.type);
     return DiffEditor(
@@ -2116,6 +2232,12 @@ class IdeEditorState extends State<IdeEditor> {
   Widget build(BuildContext context) {
     final language = p.extension(widget.active.path).toLowerCase();
     final colors = _themes.colors;
+    final agent =
+        widget.nativeEditorEnabled &&
+            _nativeController != null &&
+            _diffOf(widget.active) == null
+        ? _agentDiffOf(widget.active)
+        : null;
     // With the app's keybindings, save, find and replace are the
     // workbench's commands.
     return Focus(
@@ -2156,7 +2278,20 @@ class IdeEditorState extends State<IdeEditor> {
                       ? _nativeController == null
                             ? const SizedBox.expand()
                             : _diffOf(widget.active) == null
-                            ? _surface(colors)
+                            // In the code's scale, which the deleted code
+                            // of an agent change is drawn in.
+                            ? Builder(
+                                builder: (context) => _surface(
+                                  colors,
+                                  agent: agent?.parts(
+                                    colors: DiffEditorColors.from(colors.get),
+                                    style: _editorStyle(colors),
+                                    textScaler: MediaQuery.textScalerOf(
+                                      context,
+                                    ),
+                                  ),
+                                ),
+                              )
                             : _diffEditor(colors, _diffOf(widget.active)!)
                       : TextField(
                           controller: _controller,
@@ -2195,6 +2330,8 @@ class IdeEditorState extends State<IdeEditor> {
               ),
               if (_debugGlyphMargin() case final margin?)
                 Positioned(left: 0, top: 0, bottom: 0, child: margin),
+              if (_agentHunkActions(agent) case final actions?)
+                Positioned.fill(child: actions),
               if (_language case final session?)
                 Positioned.fill(
                   // Hovers and suggestions are sized with the code.
@@ -2259,53 +2396,3 @@ String languageNameForFile(String path) =>
       '.sh' || '.bash' => 'Shell',
       _ => 'Plain Text',
     };
-
-/// A diff tab's original side in the editor: its text as a read-only
-/// document, highlighted as the modified is, and the diff between them.
-class _DiffOriginal {
-  _DiffOriginal(
-    this.original,
-    EditorDocumentModel modified, {
-    required this.onChanged,
-  }) : model = DiffEditorModel(original: original.text, modified: modified) {
-    original.text.addListener(_textChanged);
-    _textChanged();
-  }
-
-  final IdeDiffOriginal original;
-  final DiffEditorModel model;
-  final VoidCallback onChanged;
-
-  EditorDocumentModel? _document;
-  EditorSurfaceController? controller;
-  TextMateDocument? textMate;
-
-  void _textChanged() {
-    final text = original.text.value;
-    if (text == null || text == _document?.text) return;
-    controller?.dispose();
-    _document?.dispose();
-    final document = _document = EditorDocumentModel(text);
-    controller = EditorSurfaceController(document: document);
-    textMate?.update(document.snapshot);
-    onChanged();
-  }
-
-  /// Highlights the original as [languageId], as the modified is.
-  void highlight(TextMateSyntax syntax, String languageId) {
-    final document = _document;
-    if (document == null || textMate?.languageId == languageId) return;
-    textMate?.dispose();
-    textMate = syntax.open(languageId, document.snapshot)
-      ?..addListener(onChanged);
-    onChanged();
-  }
-
-  void dispose() {
-    original.text.removeListener(_textChanged);
-    model.dispose();
-    textMate?.dispose();
-    controller?.dispose();
-    _document?.dispose();
-  }
-}

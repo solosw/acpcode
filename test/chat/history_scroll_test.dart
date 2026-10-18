@@ -102,6 +102,9 @@ Future<void> _wheelUp(WidgetTester tester, double by) async {
 
 Finder _text(String text) => find.textContaining(text, findRichText: true);
 
+/// A frame at 60 a second.
+const _frame = Duration(microseconds: 16667);
+
 void main() {
   testWidgets('folded work counts for nothing before it is laid out', (
     tester,
@@ -118,6 +121,201 @@ void main() {
     // Each folded step taken at a row's height, the estimate would be some
     // twenty times this.
     expect(estimated, lessThan(position.maxScrollExtent * 2));
+  });
+
+  testWidgets('a mouse wheel\'s notch moves the list its own distance over '
+      'a few frames, the next adding to what it had left; a trackpad\'s at '
+      'once', (tester) async {
+    await _pump(tester, _Feed([for (var n = 0; n < 10; n++) ..._turn(n)]));
+    final position = _position(tester);
+    final bottom = position.pixels;
+    expect(bottom, position.maxScrollExtent);
+
+    void wheel(double by, {PointerDeviceKind kind = PointerDeviceKind.mouse}) =>
+        tester.binding.handlePointerEvent(
+          PointerScrollEvent(
+            position: tester.getCenter(find.byType(ChatHistoryView)),
+            scrollDelta: Offset(0, by),
+            kind: kind,
+          ),
+        );
+
+    wheel(-100);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    // As far as the wheel says, as Chrome's.
+    const step = 100.0;
+    // On its way, not there yet.
+    expect(position.pixels, lessThan(bottom));
+    expect(position.pixels, greaterThan(bottom - step));
+    wheel(-100);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(position.pixels, closeTo(bottom - 2 * step, 0.5));
+
+    final before = position.pixels;
+    wheel(-100, kind: PointerDeviceKind.trackpad);
+    await tester.pump();
+    expect(position.pixels, closeTo(before - 100, 0.5));
+
+    // Back down past the end: at the end, anchored again.
+    wheel(1000);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(position.pixels, position.maxScrollExtent);
+  });
+
+  testWidgets('a notch is under way in the frame after it, a third of the '
+      'way, and there in 120 ms, slowing to rest; one more mid-way goes on '
+      'from where the list is, never stopping', (tester) async {
+    await _pump(tester, _Feed([for (var n = 0; n < 10; n++) ..._turn(n)]));
+    final position = _position(tester);
+    final bottom = position.pixels;
+    void wheel() => tester.binding.handlePointerEvent(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(ChatHistoryView)),
+        scrollDelta: const Offset(0, -100),
+      ),
+    );
+
+    wheel();
+    final moved = <double>[0];
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(_frame);
+      moved.add(bottom - position.pixels);
+    }
+    expect(moved[1], greaterThan(33));
+    // Each frame less than the one before (none eased in).
+    for (var i = 2; i < 8; i++) {
+      expect(moved[i] - moved[i - 1], lessThan(moved[i - 1] - moved[i - 2]));
+    }
+    expect(moved[6], lessThan(100));
+    expect(moved[8], closeTo(100, 0.5));
+
+    // Mid-way, another: the list keeps moving, and gets 200 further.
+    final start = position.pixels;
+    wheel();
+    await tester.pump(_frame);
+    await tester.pump(_frame);
+    wheel();
+    var last = position.pixels;
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(_frame);
+      expect(position.pixels, lessThan(last));
+      last = position.pixels;
+    }
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(start - position.pixels, closeTo(200, 0.5));
+  });
+
+  testWidgets('on a faster display, its first frame goes as far as a frame '
+      'of that display, not one at 60 a second', (tester) async {
+    tester.view.display.refreshRate = 144;
+    addTearDown(tester.view.display.resetRefreshRate);
+    await _pump(tester, _Feed([for (var n = 0; n < 10; n++) ..._turn(n)]));
+    final position = _position(tester);
+    final bottom = position.pixels;
+    tester.binding.handlePointerEvent(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(ChatHistoryView)),
+        scrollDelta: const Offset(0, -100),
+      ),
+    );
+    const frame = Duration(microseconds: 6944);
+    await tester.pump(frame);
+    final first = bottom - position.pixels;
+    await tester.pump(frame);
+    final second = bottom - position.pixels - first;
+    // Little more than the next, as the curve slows (not a jump, then a
+    // crawl).
+    expect(first, greaterThan(second));
+    expect(first, lessThan(second * 1.3));
+  });
+
+  testWidgets('rows laid out for the first time as the wheel moves the list '
+      'up (the whole way, in a conversation just opened) neither move it '
+      'back nor further than the wheel says', (tester) async {
+    // Answers of their own heights, far from the one they are taken at
+    // until laid out.
+    await _pump(
+      tester,
+      _Feed([
+        for (var n = 0; n < 30; n++) ...[
+          UserMessageItem(text: 'Question $n'),
+          AssistantTextItem(
+            [
+              for (var p = 0; p < 4; p++)
+                'A${n}p$p ${'word ' * (20 + (n * 37 + p * 11) % 90)}',
+            ].join('\n\n'),
+          ),
+        ],
+      ]),
+    );
+    final position = _position(tester);
+    final extent = position.maxScrollExtent;
+    final label = RegExp(r'A\d+p\d+');
+
+    /// Where each paragraph is.
+    Map<String, double> tops() {
+      final tops = <String, double>{};
+      for (final element
+          in find.textContaining(label, findRichText: true).evaluate()) {
+        if (element.widget case RichText(:final text)) {
+          final box = element.renderObject! as RenderBox;
+          tops[label.firstMatch(text.toPlainText())!.group(0)!] = box
+              .localToGlobal(Offset.zero)
+              .dy;
+        }
+      }
+      return tops;
+    }
+
+    var shown = 0.0;
+    var before = tops();
+    // Forty notches, one every three frames.
+    for (var frame = 0; frame < 150; frame++) {
+      if (frame < 120 && frame % 3 == 0) {
+        tester.binding.handlePointerEvent(
+          PointerScrollEvent(
+            position: tester.getCenter(find.byType(ChatHistoryView)),
+            scrollDelta: const Offset(0, -40),
+          ),
+        );
+      }
+      await tester.pump(_frame);
+      final after = tops();
+      // How far what is shown moved: down, the list going up.
+      final moves = [
+        for (final MapEntry(:key, :value) in before.entries)
+          if (after[key] case final top?) top - value,
+      ]..sort();
+      expect(moves, isNotEmpty);
+      final moved = moves[moves.length ~/ 2];
+      expect(moved, greaterThanOrEqualTo(-0.01), reason: 'frame $frame');
+      shown += moved;
+      before = after;
+    }
+    expect(shown, closeTo(40 * 40, 0.5));
+    // The rows on the way were laid out at heights of their own.
+    expect((position.maxScrollExtent - extent).abs(), greaterThan(100));
+  });
+
+  testWidgets('a notch up from the bottom leaves it, however little it moves '
+      'the list in its first frames', (tester) async {
+    await _pump(tester, _Feed([for (var n = 0; n < 10; n++) ..._turn(n)]));
+    final position = _position(tester);
+    final bottom = position.pixels;
+
+    tester.binding.handlePointerEvent(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(ChatHistoryView)),
+        scrollDelta: const Offset(0, -2),
+      ),
+    );
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(_frame);
+    }
+    expect(position.pixels, closeTo(bottom - 2, 0.01));
   });
 
   group('a turn starting while the user reads further up', () {

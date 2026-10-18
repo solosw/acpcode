@@ -39,6 +39,8 @@ import 'widgets/agent_step.dart';
 import 'widgets/chat_minimap.dart';
 import 'widgets/code_citation.dart';
 import 'widgets/inline_rename_field.dart';
+import 'widgets/pixel_loader.dart';
+import 'widgets/plan_start.dart';
 
 /// Layout, top to bottom:
 /// - history + live turn: a virtual list that yields height;
@@ -66,6 +68,7 @@ class ChatScreen extends StatefulWidget {
     this.colorizeCodeBlock,
     this.start,
     this.startHint,
+    this.below,
     this.sessions,
     this.fileMentions,
     this.openEditor,
@@ -139,6 +142,9 @@ class ChatScreen extends StatefulWidget {
   /// nothing to show.
   final Widget Function(BuildContext context, Widget hint)? startHint;
 
+  /// Under the composer, e.g. the branch it works on.
+  final Widget? below;
+
   /// The other conversations its messages may refer to, which `@` in the
   /// composer offers (see [ComposerVocabulary.sessions]).
   final List<Suggestion> Function()? sessions;
@@ -175,8 +181,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen>
     with TickerProviderStateMixin, ChatKeyTarget {
-  /// As wide as the setting lets the column grow (see [ChatWidth]).
-  double get _maxContentWidth => ChatWidth.current.value;
+  /// As wide as the setting lets the column grow (see [ChatWidth]); in the
+  /// IDE ([ChatScreen.embedded]) across its pane, not in its middle.
+  double get _maxContentWidth =>
+      widget.embedded ? double.infinity : ChatWidth.current.value;
 
   /// Whether the conversation has a minimap: in the agents' window, not a
   /// pane of the IDE's, unless turned off (see [ChatMinimap.enabled]).
@@ -247,11 +255,13 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _setGoal(String condition) => _session.setGoal(condition);
 
-  void _openAgent(AgentItem agent) {
+  /// Opens [agent], a card in the conversation shown; or at [path] (see
+  /// [SubagentFeed.path]), wherever it is.
+  void _openAgent(AgentItem agent, {List<String>? path}) {
     final id = agent.id;
     if (id == null) return;
     final layer = _AgentLayer(
-      SubagentFeed(_session, [...?_agentShown?.feed.path, id]),
+      SubagentFeed(_session, path ?? [...?_agentShown?.feed.path, id]),
       AnimationController(vsync: this, duration: _layerDuration),
     );
     setState(() => _layers.add(layer));
@@ -298,7 +308,6 @@ class _ChatScreenState extends State<ChatScreen>
     _session.attach();
     _session.addListener(_checkStarting);
     _planShown = _session.plan?.seq;
-    _planReviewShown = _session.pendingInteraction;
     _session.addListener(_followPlan);
     _restoreAgents();
     ChatWidth.current.addListener(_widthChanged);
@@ -342,22 +351,15 @@ class _ChatScreenState extends State<ChatScreen>
     _composerKey.currentState?.focus();
   }
 
-  /// The sequence of the plan writing last shown, and the plan to approve.
+  /// The sequence of the plan writing last shown.
   int? _planShown;
-  InteractionRequest? _planReviewShown;
 
-  /// Shows the plan beside the chat as the agent writes it, and again as
-  /// it asks to go ahead with it: the file read anew each time.
+  /// Shows the plan beside the chat as the agent writes it: the file read
+  /// anew each time.
   void _followPlan() {
     if (_session.plan case final plan? when plan.seq != _planShown) {
       _planShown = plan.seq;
       _openFile(FileOpenRequest(plan.path, plan: true));
-    }
-    final request = _session.pendingInteraction;
-    if (request == _planReviewShown) return;
-    _planReviewShown = request;
-    if (request case PlanReviewRequest(:final planPath?)) {
-      _openFile(FileOpenRequest(planPath, plan: true));
     }
   }
 
@@ -467,13 +469,14 @@ class _ChatScreenState extends State<ChatScreen>
                   // it: see window_header/).
                   child: Align(alignment: Alignment.centerLeft, child: title),
                 ),
-                if (widget.trailing case final trailing?) ...[
-                  const SizedBox(width: 8),
-                  TitleBarControls(child: trailing),
-                ],
               ],
             ),
           ),
+          if (widget.trailing case final trailing?)
+            LayoutId(
+              id: _TitleBarSlot.trailing,
+              child: TitleBarControls(child: trailing),
+            ),
         ],
       ),
     );
@@ -512,17 +515,18 @@ class _ChatScreenState extends State<ChatScreen>
       onStopTask: _session.stopTask,
       canOpenTask: (task) => task.kind == KernelTaskKind.command
           ? widget.onOpenTerminalTask != null
-          : _session.agentOf(task.toolUseId) != null,
+          : _session.agentOf(task) != null,
       onOpenTask: (task) {
         if (task.kind == KernelTaskKind.command) {
           widget.onOpenTerminalTask?.call(task);
-        } else if (_session.agentOf(task.toolUseId) case final agent?) {
-          _openAgent(agent);
+        } else if (_session.agentOf(task) case (:final agent, :final path)) {
+          // One a subagent started opens where it is, within that one's.
+          _openAgent(agent, path: path);
         }
       },
       // A subagent's last step, as its card has it.
-      detailOf: (task) => switch (_session.agentOf(task.toolUseId)) {
-        final agent? => AgentStep.latest(agent, l10n: context.l10n),
+      detailOf: (task) => switch (_session.agentOf(task)) {
+        (:final agent, path: _) => AgentStep.latest(agent, l10n: context.l10n),
         null => null,
       },
     );
@@ -634,8 +638,10 @@ class _ChatScreenState extends State<ChatScreen>
             onOpen: _openFile,
             existence: _files,
             readBytes: links.readBytes,
+            sizeOf: links.sizeOf,
             inPanel: links.inPanel,
             onOpenInIde: links.openInIde,
+            onShowBrowserTab: links.showBrowserTab,
             roots: links.roots?.call() ?? const [],
             seen: _session.filesSeen,
             local: switch (_session.kernelContext.cwd) {
@@ -645,7 +651,7 @@ class _ChatScreenState extends State<ChatScreen>
             child: scoped,
           );
         }
-        return scoped;
+        return PlanStartScope(session: _session, child: scoped);
       },
       child: _buildBody(),
     );
@@ -712,6 +718,15 @@ class _ChatScreenState extends State<ChatScreen>
                           _ => const SizedBox.shrink(),
                         },
                       ),
+                      // An earlier conversation still being read (from a
+                      // remote host it may take a while).
+                      ListenableBuilder(
+                        listenable: _session,
+                        builder: (context, _) =>
+                            _session.loadingHistory && _session.itemCount == 0
+                            ? const _HistoryLoading()
+                            : const SizedBox.shrink(),
+                      ),
                     ],
                   ),
                 ),
@@ -728,11 +743,13 @@ class _ChatScreenState extends State<ChatScreen>
           ),
           ListenableBuilder(
             listenable: _session,
-            // Level with the history's text, laid out (not built) for the
-            // width: a pane being resized does not build the composer anew.
+            // In the middle as the history's text is, laid out (not built)
+            // for the width: a pane being resized does not build the
+            // composer anew. The minimap stays beside the history, over
+            // it: no room left for it here.
             builder: (context, _) => _ConversationColumn(
               maxWidth: _maxContentWidth,
-              minimap: _minimap,
+              minimap: false,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -759,15 +776,6 @@ class _ChatScreenState extends State<ChatScreen>
                         key: ObjectKey(request),
                         request: request,
                         onAnswer: _answer,
-                        kernel: _session.kernel.id,
-                        onOpenPlan: switch (request) {
-                          PlanReviewRequest(:final planPath?)
-                              when widget.fileLinks != null =>
-                            () => _openFile(
-                              FileOpenRequest(planPath, plan: true),
-                            ),
-                          _ => null,
-                        },
                       ),
                       null => null,
                     },
@@ -884,15 +892,22 @@ class _ChatScreenState extends State<ChatScreen>
           session: _session,
           draft: _session.draft,
           openEditor: widget.openEditor,
+          // A remote project's: this machine's files are copied there.
+          hostFiles: switch (_session.kernelContext.cwd) {
+            final cwd? when RemoteLocation.isRemote(cwd) =>
+              widget.fileMentions?.files,
+            _ => null,
+          },
           contextPanelOpen: _contextPanelOpen,
           onToggleContextPanel: _toggleContextPanel,
         ),
+        ?widget.below,
       ],
     );
   }
 }
 
-enum _TitleBarSlot { leading, title }
+enum _TitleBarSlot { leading, title, trailing }
 
 /// The width of the conversation's column (the history's text, the
 /// composer) in a screen [width] wide: [chatGutter] in from either side, and
@@ -913,8 +928,9 @@ double _columnWidth(double width, double maxWidth, {required bool minimap}) =>
     );
 
 /// The title bar's [_TitleBarSlot.leading] at [inset], clear of the traffic
-/// lights; the title and the buttons after it across the conversation's
-/// column, clear of the leading.
+/// lights; the title across the conversation's column, clear of the
+/// leading; the buttons ([_TitleBarSlot.trailing]) at the bar's right end,
+/// the window's as the IDE's title bar has them, not the column's.
 class _TitleBarLayout extends MultiChildLayoutDelegate {
   _TitleBarLayout({
     required this.inset,
@@ -950,13 +966,25 @@ class _TitleBarLayout extends MultiChildLayoutDelegate {
       );
       start += leading.width + _gap;
     }
+    var end = _endInset;
+    if (hasChild(_TitleBarSlot.trailing)) {
+      final trailing = layoutChild(
+        _TitleBarSlot.trailing,
+        BoxConstraints.loose(size),
+      );
+      positionChild(
+        _TitleBarSlot.trailing,
+        Offset(
+          size.width - _endInset - trailing.width,
+          (size.height - trailing.height) / 2,
+        ),
+      );
+      end += trailing.width + _gap;
+    }
     final column =
         (size.width - _columnWidth(size.width, maxWidth, minimap: minimap)) / 2;
     final left = math.max(start, column);
-    final width = math.max(
-      0.0,
-      size.width - left - math.max(_endInset, column),
-    );
+    final width = math.max(0.0, size.width - left - math.max(end, column));
     layoutChild(
       _TitleBarSlot.title,
       BoxConstraints.tightFor(width: width, height: size.height),
@@ -1136,6 +1164,56 @@ class _FadeIn extends StatelessWidget {
         ),
       ),
       child: child,
+    );
+  }
+}
+
+/// The conversation being read, in the middle of where it will show. Only
+/// after [delay]: read at once (from this machine, most often), it would
+/// only flash.
+class _HistoryLoading extends StatefulWidget {
+  const _HistoryLoading();
+
+  static const delay = Duration(milliseconds: 300);
+
+  @override
+  State<_HistoryLoading> createState() => _HistoryLoadingState();
+}
+
+class _HistoryLoadingState extends State<_HistoryLoading> {
+  late final Timer _timer;
+  bool _shown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(_HistoryLoading.delay, () => setState(() => _shown = true));
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_shown) return const SizedBox.shrink();
+    return _FadeIn(
+      animate: true,
+      child: Center(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const PixelLoader.agent(),
+            const SizedBox(width: 8),
+            Text(
+              context.l10n.chatLoadingHistory,
+              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

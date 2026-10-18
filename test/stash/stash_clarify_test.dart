@@ -1,3 +1,5 @@
+import 'package:baocode/kernel/claude_code/claude_haiku.dart'
+    show ClaudeHaikuCancelled;
 import 'package:baocode/stash/stash_ai.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,10 +11,11 @@ void main() {
   /// The model answering [replies] in turn, the prompts it was asked kept.
   List<String> answer(List<String> replies) {
     final asked = <String>[];
-    stashClarifier = (system, prompt, {pictures = const []}) async {
-      asked.add(prompt);
-      return replies[asked.length - 1];
-    };
+    stashClarifier =
+        (system, prompt, {pictures = const [], cancellation}) async {
+          asked.add(prompt);
+          return replies[asked.length - 1];
+        };
     return asked;
   }
 
@@ -44,5 +47,22 @@ void main() {
       'later)', () async {
     answer(['滚动条不对（截图见左侧）', '[Picture: /s/10/shot.png] 滚动条不对']);
     expect(await clarifyStashText(note), '滚动条不对（截图见左侧）');
+  });
+
+  test('cancellation does not ask again after an unusable answer', () async {
+    final signal = StashClarifyCancellation();
+    var asked = 0;
+    stashClarifier =
+        (system, prompt, {pictures = const [], cancellation}) async {
+          asked++;
+          expect(cancellation, same(signal));
+          signal.cancel();
+          return '滚动条不对';
+        };
+    await expectLater(
+      clarifyStashText(note, cancellation: signal),
+      throwsA(isA<ClaudeHaikuCancelled>()),
+    );
+    expect(asked, 1);
   });
 }

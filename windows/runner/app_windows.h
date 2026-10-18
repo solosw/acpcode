@@ -170,6 +170,18 @@ class AppWindows : public WindowObserver {
   // after all if Flutter has not started its windows in a while.
   void HoldMainBack();
 
+  // The main window, not shown yet, where it was left at the last quit and
+  // as big, if that is on a monitor still (kept as it moves, KeepMainFrame).
+  void PlaceMain();
+
+  // How the main window shows: |show|, or maximized the first time if it
+  // was left so (see PlaceMain).
+  int MainShowCommand(int show);
+
+  // Where the main window is, and how big, for the next launch (see
+  // PlaceMain).
+  void KeepMainFrame();
+
   // WindowObserver:
   void WindowActivated(int64_t view_id) override;
   void WindowFrameChanged(int64_t view_id) override;
@@ -204,6 +216,7 @@ class AppWindows : public WindowObserver {
 
   flutter::BinaryMessenger* messenger_;
   HWND main_;
+  bool maximize_main_on_show_ = false;
   bool started_ = false;
   Attention* attention_ = nullptr;
   std::map<int64_t, std::unique_ptr<IdeWindow>> windows_;

@@ -4,11 +4,16 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../base/give_way_row.dart';
+import '../base/smooth_scroll.dart';
 import '../chat/chat_keys.dart';
 import '../chat/floating/floating_placement.dart';
 import '../chat/widgets/hover_builder.dart';
 import '../chat/widgets/inline_rename_field.dart';
 import '../chat/widgets/pixel_loader.dart';
+import '../forge/forge_api.dart' show ForgeState;
+import '../forge/forge_ref.dart' show ForgeItemKind;
+import '../forge/forge_view.dart' show forgeStateLook;
 import '../icons/project_icon_picker.dart';
 import '../icons/project_icon_view.dart';
 import '../ide/ide_button.dart' show IdeButtonColors;
@@ -33,6 +38,7 @@ import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
 import '../workspace/workspace_dialog.dart';
 import 'sidebar_menu.dart';
+import 'sidebar_times.dart';
 
 enum SidebarGrouping {
   project('Project', Icons.folder_outlined),
@@ -87,6 +93,9 @@ class _Group {
 }
 
 const _pinnedGroup = 'pinned';
+
+/// The group of the archived agents, while they show.
+const _archivedGroup = 'archived';
 
 /// Where an agent dragged within the list would go: in [group], before or
 /// after an agent there, or on top (neither).
@@ -165,6 +174,7 @@ class Sidebar extends StatefulWidget {
     this.customizing = false,
     this.onStash,
     this.stashing = false,
+    this.stashes,
     this.drag,
     this.link,
     this.current,
@@ -241,6 +251,10 @@ class Sidebar extends StatefulWidget {
   /// They show: the Stash row is selected.
   final bool stashing;
 
+  /// The stashes each conversation carries out, on its row; none without
+  /// the Stash.
+  final SidebarStashes? stashes;
+
   /// An agent was opened or created from here (the drawer closes).
   final VoidCallback? onOpened;
 
@@ -279,7 +293,7 @@ class _SidebarState extends State<Sidebar>
       SidebarGrouping.project;
   bool get _showArchived => _workspace.showArchived;
 
-  final ScrollController _listScroll = ScrollController();
+  final ScrollController _listScroll = SmoothScrollController();
   final FocusNode _listFocus = FocusNode();
   final IdeListSelection<AgentThread> _listSelection = IdeListSelection();
 
@@ -330,12 +344,15 @@ class _SidebarState extends State<Sidebar>
       setState(() {});
     });
     _workspace.addListener(_markRowsDirty);
+    SidebarTimes.shown.addListener(_timesChanged);
     _listFocus.addListener(_focusChanged);
     widget.link?._state = this;
     _attachDrag(widget.drag);
   }
 
   void _markRowsDirty() => _rowsDirty = true;
+
+  void _timesChanged() => setState(_markRowsDirty);
 
   void _focusChanged() {
     if (mounted) setState(() {});
@@ -365,13 +382,22 @@ class _SidebarState extends State<Sidebar>
       _detachDrag(oldWidget.drag);
       _attachDrag(widget.drag);
     }
+    // Customize or the Stash shown: its row is the one picked, not the
+    // conversation picked before it.
+    if (_onPage && !(oldWidget.customizing || oldWidget.stashing)) {
+      _listSelection.select(null);
+    }
   }
+
+  /// Customize or the Stash is shown in place of the chat.
+  bool get _onPage => widget.customizing || widget.stashing;
 
   @override
   void dispose() {
     if (widget.link?._state == this) widget.link!._state = null;
     _detachDrag(widget.drag);
     _workspace.removeListener(_markRowsDirty);
+    SidebarTimes.shown.removeListener(_timesChanged);
     _clock.cancel();
     _autoScroll?.cancel();
     _listFocus.removeListener(_focusChanged);
@@ -672,7 +698,7 @@ class _SidebarState extends State<Sidebar>
         ],
       },
       if (_showArchived)
-        _Group('archived', l10n.sidebarArchived, [
+        _Group(_archivedGroup, l10n.sidebarArchived, [
           for (final thread in threads)
             if (thread.archived) thread,
         ]),
@@ -1174,7 +1200,8 @@ class _SidebarState extends State<Sidebar>
   static const _listSlot = #list;
 
   Widget _buildList() {
-    if (_listedCurrent != _current) _rowsDirty = true;
+    final switched = !identical(_listedCurrent, _current);
+    if (switched) _rowsDirty = true;
     if (_rowsDirty) {
       _listedCurrent = _current;
       final groups = [
@@ -1226,6 +1253,13 @@ class _SidebarState extends State<Sidebar>
       _threadIndices = {
         for (final (index, row) in rows.indexed) ?row.thread: index,
       };
+      // Another agent shown, opened from wherever (a new one, the search,
+      // a shortcut): the rows picked follow it, not left on the one before.
+      if (switched && !_listSelection.values.contains(_current)) {
+        _listSelection.select(
+          _onPage || !_threadIndices.containsKey(_current) ? null : _current,
+        );
+      }
       _listSelection.values.retainWhere(_threadIndices.containsKey);
       if (!_threadIndices.containsKey(_listSelection.focused)) {
         _listSelection.focused = null;
@@ -1341,7 +1375,13 @@ class _SidebarState extends State<Sidebar>
       light: !collapsible,
       onToggle: collapsible ? () => _workspace.toggleCollapsed(group.id) : null,
       onCreate: project == null ? null : () => _create(project),
-      menu: project == null ? null : () => _projectItems(project),
+      // The archived agents' as the footer's toggle has it: unarchive or
+      // delete them all.
+      menu: project != null
+          ? () => _projectItems(project)
+          : group.id == _archivedGroup
+          ? () => _archivedItems(context.l10n)
+          : null,
       folders: project == null
           ? null
           : _workspace.workspaceOf(project)?.folders,
@@ -1369,18 +1409,38 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
-  Widget _buildRow(AgentThread thread, _Group group) {
+  Widget _buildRow(AgentThread thread, _Group group) =>
+      switch (widget.stashes) {
+        // Linked to one, or done with it, meanwhile.
+        final stashes? => ListenableBuilder(
+          listenable: stashes.changes,
+          builder: (context, _) => _buildThreadRow(thread, group),
+        ),
+        null => _buildThreadRow(thread, group),
+      };
+
+  Widget _buildThreadRow(AgentThread thread, _Group group) {
     return _ThreadRow(
       thread: thread,
       height: _rowHeight,
+      stashes: switch ((widget.stashes, thread.id)) {
+        (final stashes?, final session?) => stashes.of(session),
+        _ => const [],
+      },
+      onOpenStash: widget.stashes?.open,
+      pulls: switch ((widget.stashes, thread.id)) {
+        (final stashes?, final session?) => stashes.pulls(session),
+        _ => const [],
+      },
+      onOpenPull: widget.stashes?.openPull,
       selected:
           _listSelection.values.contains(thread) ||
-          (!_listFocus.hasFocus &&
+          (!_onPage &&
+              !_listFocus.hasFocus &&
               _listSelection.values.isEmpty &&
               identical(thread, _current)),
       focusedItem: identical(_listSelection.focused, thread),
       focused: _listFocus.hasFocus,
-      shown: _workspace.grid.contains(thread) || identical(thread, _current),
       menuTargets: () => _targetsFor(thread),
       onContextMenu: () => _rowContext(thread),
       onPinAll: (threads, pinned) => _workspace.setPinnedAll(threads, pinned),
@@ -1390,6 +1450,7 @@ class _SidebarState extends State<Sidebar>
       dragThreads: () => _targetsFor(thread),
       drag: widget.drag,
       showProject: group.project == null,
+      showTime: SidebarTimes.shown.value,
       projectIcon: switch (_workspace.iconOf(thread.project)) {
         null when _workspace.workspaceOf(thread.project) != null => Icon(
           Codicons.folderLibrary,
@@ -2099,7 +2160,8 @@ class _GroupHeader extends StatelessWidget {
   final bool light;
   final VoidCallback? onCreate;
 
-  /// The project's menu, on a right click or its "…" button.
+  /// The project's menu (or the archived agents'), on a right click or its
+  /// "…" button.
   final List<SidebarMenuItem> Function()? menu;
 
   /// Being dragged to another place among the projects.
@@ -2655,12 +2717,16 @@ class _ThreadRow extends StatelessWidget {
   const _ThreadRow({
     required this.thread,
     required this.height,
+    this.stashes = const [],
+    this.onOpenStash,
+    this.pulls = const [],
+    this.onOpenPull,
     required this.selected,
     required this.focusedItem,
     required this.focused,
-    required this.shown,
     required this.drag,
     required this.showProject,
+    required this.showTime,
     this.projectIcon,
     required this.renaming,
     required this.onTap,
@@ -2680,14 +2746,26 @@ class _ThreadRow extends StatelessWidget {
 
   final AgentThread thread;
   final double height;
+
+  /// The stashes it carries out: a tag on it, opened by [onOpenStash].
+  final List<SidebarStash> stashes;
+  final ValueChanged<int>? onOpenStash;
+
+  /// The pull requests it opened (or worked on), by their stash: a tag
+  /// on it, opened by [onOpenPull].
+  final List<SidebarPull> pulls;
+  final ValueChanged<String>? onOpenPull;
+
   final bool selected;
   final bool focusedItem;
   final bool focused;
 
-  /// Open in a pane beside the selected one.
-  final bool shown;
   final ChatDrag? drag;
   final bool showProject;
+
+  /// Whether the time it last did something shows at its end (its hover
+  /// shows it either way).
+  final bool showTime;
 
   /// Before the project's name, when it shows and has an icon.
   final Widget? projectIcon;
@@ -2714,26 +2792,63 @@ class _ThreadRow extends StatelessWidget {
     final targets = menuTargets();
     final pinned = targets.every((thread) => thread.pinned);
     final archived = targets.every((thread) => thread.archived);
+    final count = targets.length;
+    // Several: only what is done to them all, saying how many.
+    if (count > 1) {
+      return [
+        if (targets.every((thread) => !thread.archived))
+          SidebarMenuItem(
+            pinned
+                ? l10n.sidebarUnpinCount(count)
+                : l10n.sidebarPinCount(count),
+            icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
+            onSelected: () => onPinAll(targets, !pinned),
+          ),
+        SidebarMenuItem(
+          archived
+              ? l10n.sidebarUnarchiveCount(count)
+              : l10n.sidebarArchiveCount(count),
+          icon: Icons.inventory_2_outlined,
+          onSelected: () => onArchiveAll(targets, !archived),
+        ),
+        SidebarMenuItem(
+          l10n.sidebarDeleteCount(count),
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
+          onSelected: () => onDeleteAll(targets),
+        ),
+      ];
+    }
     return [
+      if (onOpenStash case final open?)
+        for (final stash in stashes)
+          SidebarMenuItem(
+            l10n.sidebarOpenStash(stash.id),
+            icon: Codicons.note,
+            onSelected: () => open(stash.id),
+          ),
+      if (onOpenPull case final open?)
+        for (final pull in pulls)
+          SidebarMenuItem(
+            l10n.sidebarOpenPull(pull.tag),
+            icon: Codicons.gitPullRequest,
+            onSelected: () => open(pull.url),
+          ),
       SidebarMenuItem(
         l10n.commonRename,
         icon: Icons.edit_outlined,
         onSelected: onRename,
       ),
-      if (targets.every((thread) => !thread.archived))
+      if (!thread.archived)
         SidebarMenuItem(
           pinned ? l10n.sidebarUnpin : l10n.sidebarPin,
           icon: pinned ? Icons.push_pin : Icons.push_pin_outlined,
-          onSelected: targets.length == 1
-              ? onPin
-              : () => onPinAll(targets, !pinned),
+          onSelected: onPin,
         ),
       SidebarMenuItem(
         archived ? l10n.sidebarUnarchive : l10n.sidebarArchive,
         icon: Icons.inventory_2_outlined,
-        onSelected: targets.length == 1
-            ? onArchive
-            : () => onArchiveAll(targets, !archived),
+        onSelected: onArchive,
       ),
       // A conversation to copy: none before the first message.
       if (thread.id != null && (!thread.isOpen || thread.session.canFork))
@@ -2755,7 +2870,7 @@ class _ThreadRow extends StatelessWidget {
         l10n.commonDelete,
         icon: Icons.delete_outline_rounded,
         destructive: true,
-        onSelected: targets.length == 1 ? onDelete : () => onDeleteAll(targets),
+        onSelected: onDelete,
       ),
     ];
   }
@@ -2789,15 +2904,24 @@ class _ThreadRow extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(left: 8, right: 4),
-                child: Row(
+                // Too narrow, what is beside the title gives way (its hover
+                // tells it), before the title is cut to nothing.
+                child: GiveWayRow(
                   children: [
-                    SizedBox(
-                      width: 14,
-                      child: Center(child: StatusIndicator(thread.shownStatus)),
+                    GiveWay(
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: SizedBox(
+                          width: 14,
+                          child: Center(
+                            child: StatusIndicator(thread.shownStatus),
+                          ),
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: renaming
+                    GiveWay.fill(
+                      minWidth: renaming ? 0 : _titleMinWidth,
+                      renaming
                           ? InlineRenameField(
                               initial: thread.localizedTitle(context.l10n),
                               onDone: onRenamed,
@@ -2817,16 +2941,6 @@ class _ThreadRow extends StatelessWidget {
                   ],
                 ),
               ),
-              if (shown && !selected)
-                Positioned(
-                  left: 0,
-                  top: 6,
-                  bottom: 6,
-                  width: 2,
-                  child: ColoredBox(
-                    color: IdeListColors.inactiveSelectionForeground,
-                  ),
-                ),
             ],
           );
         },
@@ -2864,6 +2978,20 @@ class _ThreadRow extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Text(thread.project.path, style: faint),
+          for (final stash in stashes)
+            Text(
+              'Stash #${stash.id} · ${stash.title}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: faint,
+            ),
+          for (final pull in pulls)
+            Text(
+              [pull.tag, ?pull.title].join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: faint,
+            ),
           Text(
             [
               ?status,
@@ -2920,79 +3048,292 @@ class _ThreadRow extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildTrailing(
+  /// The least the title is cut to before what is beside it gives way.
+  static const _titleMinWidth = 80.0;
+
+  /// What is beside the title, each a gap before it; giving way the diff
+  /// first, then the time, the pull request's tag, the stash's.
+  List<GiveWay> _buildTrailing(
     bool active,
     AppLocalizations l10n,
     Color foreground,
   ) {
     final diff = thread.diff;
+    Widget gap(Widget child) =>
+        Padding(padding: const EdgeInsets.only(left: 6), child: child);
     return [
-      if (diff != null && !active) ...[
-        const SizedBox(width: 6),
-        Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: '+${diff.added}',
-                style: TextStyle(
-                  color: themeColors['chat.linesAddedForeground'],
-                ),
-              ),
-              TextSpan(
-                text: ' −${diff.removed}',
-                style: TextStyle(
-                  color: themeColors['chat.linesRemovedForeground'],
-                ),
-              ),
-            ],
-          ),
-          style: const TextStyle(
-            fontSize: 11,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-        ),
-      ],
-      const SizedBox(width: 6),
-      // The time; while hovered, pin and archive in its place (the rest is
-      // in the context menu).
-      if (active) ...[
-        if (!thread.archived)
-          SidebarIconButton(
-            icon: thread.pinned ? Icons.push_pin : Icons.push_pin_outlined,
-            tooltip: thread.pinned ? l10n.sidebarUnpin : l10n.sidebarPin,
-            size: 20,
-            onTap: onPin,
-          ),
-        SidebarIconButton(
-          icon: thread.archived
-              ? Icons.unarchive_outlined
-              : Icons.inventory_2_outlined,
-          tooltip: thread.archived
-              ? l10n.sidebarUnarchive
-              : l10n.sidebarArchive,
-          size: 20,
-          onTap: onArchive,
-        ),
-      ] else
-        // Wider where the language's times are.
-        ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 26),
-          child: Text(
-            thread.status == ThreadStatus.needsInput
-                ? ''
-                : relativeTime(thread.updatedAt, DateTime.now(), l10n),
-            textAlign: TextAlign.right,
-            maxLines: 1,
-            // The color of the buttons it gives way to on hover.
-            style: TextStyle(
+      if (stashes.isNotEmpty)
+        GiveWay(
+          priority: 3,
+          gap(
+            _StashTag(
+              stashes: stashes,
               color: selected ? foreground : AppColors.textMuted,
-              fontSize: 11,
+              onOpen: onOpenStash,
             ),
           ),
         ),
-      const SizedBox(width: 2),
+      if (pulls.isNotEmpty)
+        GiveWay(
+          priority: 2,
+          gap(
+            _PullTag(
+              pulls: pulls,
+              color: selected ? foreground : AppColors.textMuted,
+              onOpen: onOpenPull,
+            ),
+          ),
+        ),
+      if (diff != null && !active)
+        GiveWay(
+          priority: 0,
+          gap(
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: '+${diff.added}',
+                    style: TextStyle(
+                      color: themeColors['chat.linesAddedForeground'],
+                    ),
+                  ),
+                  TextSpan(
+                    text: ' −${diff.removed}',
+                    style: TextStyle(
+                      color: themeColors['chat.linesRemovedForeground'],
+                    ),
+                  ),
+                ],
+              ),
+              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 11,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ),
+      // The time; while hovered, pin and archive in its place (the rest is
+      // in the context menu), which never give way.
+      if (active)
+        GiveWay(
+          gap(
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!thread.archived)
+                  SidebarIconButton(
+                    icon: thread.pinned
+                        ? Icons.push_pin
+                        : Icons.push_pin_outlined,
+                    tooltip: thread.pinned
+                        ? l10n.sidebarUnpin
+                        : l10n.sidebarPin,
+                    size: 20,
+                    onTap: onPin,
+                  ),
+                SidebarIconButton(
+                  icon: thread.archived
+                      ? Icons.unarchive_outlined
+                      : Icons.inventory_2_outlined,
+                  tooltip: thread.archived
+                      ? l10n.sidebarUnarchive
+                      : l10n.sidebarArchive,
+                  size: 20,
+                  onTap: onArchive,
+                ),
+              ],
+            ),
+          ),
+        )
+      else if (showTime)
+        GiveWay(
+          priority: 1,
+          gap(
+            // Wider where the language's times are.
+            ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 26),
+              child: Text(
+                thread.status == ThreadStatus.needsInput
+                    ? ''
+                    : relativeTime(thread.updatedAt, DateTime.now(), l10n),
+                textAlign: TextAlign.right,
+                maxLines: 1,
+                // The color of the buttons it gives way to on hover.
+                style: TextStyle(
+                  color: selected ? foreground : AppColors.textMuted,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ),
+        ),
+      const GiveWay(SizedBox(width: 2)),
     ];
   }
+}
+
+/// A stash a conversation carries out, as its row shows it.
+typedef SidebarStash = ({int id, String title, bool done});
+
+/// What the sidebar shows of the stashes (docs/stash.md): those each
+/// conversation carries out, by its session, and how to open one; told
+/// by [changes] when they may have changed.
+class SidebarStashes {
+  const SidebarStashes({
+    required this.changes,
+    required this.of,
+    required this.open,
+    this.pulls = _none,
+    this.openPull,
+  });
+
+  final Listenable changes;
+  final List<SidebarStash> Function(String session) of;
+  final ValueChanged<int> open;
+
+  /// The pull requests each conversation opened, by its session; opened
+  /// (in the browser) by [openPull].
+  final List<SidebarPull> Function(String session) pulls;
+  final ValueChanged<String>? openPull;
+
+  static List<SidebarPull> _none(String session) => const [];
+}
+
+/// A pull (merge) request a conversation opened, as its row shows it: its
+/// link, `o/r#7`, its title and state when known.
+typedef SidebarPull = ({
+  String url,
+  String tag,
+  String? title,
+  ForgeState? state,
+});
+
+/// On a conversation's row: the pull request it opened (`#7`, `+1` for
+/// each other) in its state's icon and color, its title on hover; a click
+/// opens it.
+class _PullTag extends StatelessWidget {
+  const _PullTag({
+    required this.pulls,
+    required this.color,
+    required this.onOpen,
+  });
+
+  final List<SidebarPull> pulls;
+  final Color color;
+  final ValueChanged<String>? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = pulls.first;
+    final (icon, stateColor) = forgeStateLook(ForgeItemKind.pull, first.state);
+    final number = RegExp(r'[#!]\d+$').firstMatch(first.tag)?[0] ?? first.tag;
+    // In its state's color, its icon telling it from a stash's.
+    final tag = _TagPill(
+      color: first.state == null ? color : stateColor,
+      icon: icon,
+      label: '$number${pulls.length > 1 ? ' +${pulls.length - 1}' : ''}',
+    );
+    return IdeHover(
+      message: [
+        for (final pull in pulls) [pull.tag, ?pull.title].join(' · '),
+      ].join('\n'),
+      child: switch (onOpen) {
+        final open? => MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => open(first.url),
+            child: tag,
+          ),
+        ),
+        null => tag,
+      },
+    );
+  }
+}
+
+/// On a conversation's row: the stash it carries out (`#31`, `+1` for
+/// each other) in a pill of the row's text's color, faded once done; its
+/// title on hover; a click opens it.
+class _StashTag extends StatelessWidget {
+  const _StashTag({
+    required this.stashes,
+    required this.color,
+    required this.onOpen,
+  });
+
+  final List<SidebarStash> stashes;
+  final Color color;
+  final ValueChanged<int>? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = stashes.first;
+    final tag = Opacity(
+      opacity: first.done ? .55 : 1,
+      child: _TagPill(
+        color: color,
+        label:
+            '#${first.id}${stashes.length > 1 ? ' +${stashes.length - 1}' : ''}',
+      ),
+    );
+    return IdeHover(
+      message: [
+        for (final stash in stashes) 'Stash #${stash.id} · ${stash.title}',
+      ].join('\n'),
+      child: switch (onOpen) {
+        final open? => MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => open(first.id),
+            child: tag,
+          ),
+        ),
+        null => tag,
+      },
+    );
+  }
+}
+
+/// A conversation's row's tag: [label] in [color], on a pill of it, faint.
+class _TagPill extends StatelessWidget {
+  const _TagPill({required this.color, required this.label, this.icon});
+
+  final Color color;
+  final String label;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 16,
+    padding: const EdgeInsets.symmetric(horizontal: 6),
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: .14),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon case final icon?) ...[
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 2),
+        ],
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 10.5,
+            height: 1.2,
+            fontWeight: FontWeight.w500,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// What an agent needs: a spinner while it runs, an amber dot when it

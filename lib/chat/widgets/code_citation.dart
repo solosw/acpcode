@@ -215,6 +215,84 @@ class MarkdownCodeBlock extends StatelessWidget {
       _CodeCard(code: code, language: language, onPreview: onPreview);
 }
 
+/// A markdown quote, as a plain code block's card: its [child] (the quote
+/// rendered) in it, the copy button over its corner copying [text].
+class MarkdownQuoteBlock extends StatefulWidget {
+  const MarkdownQuoteBlock({
+    super.key,
+    required this.text,
+    required this.child,
+  });
+
+  final String text;
+  final Widget child;
+
+  @override
+  State<MarkdownQuoteBlock> createState() => _MarkdownQuoteBlockState();
+}
+
+class _MarkdownQuoteBlockState extends State<MarkdownQuoteBlock> {
+  bool _hovered = false;
+  bool _copied = false;
+  Timer? _copiedTimer;
+
+  @override
+  void dispose() {
+    _copiedTimer?.cancel();
+    super.dispose();
+  }
+
+  void _copy() {
+    unawaited(Clipboard.setData(ClipboardData(text: widget.text)));
+    _copiedTimer?.cancel();
+    setState(() => _copied = true);
+    _copiedTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = themeColors;
+    final background = colors['textCodeBlock.background'];
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Container(
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colors['chat.requestBorder']),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            // Clear of the copy button on the right.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 36, 8),
+              child: widget.child,
+            ),
+            Positioned(
+              top: 5,
+              right: 6,
+              child: SelectionContainer.disabled(
+                child: Visibility.maintain(
+                  visible: _hovered || _copied,
+                  child: CodeBlockIconButton(
+                    icon: _copied ? Codicons.check : Codicons.copy,
+                    tooltip: context.l10n.commonCopy,
+                    onTap: _copy,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A [citation]'s card, or a code block's in [language] without one.
 class _CodeCard extends StatefulWidget {
   const _CodeCard({

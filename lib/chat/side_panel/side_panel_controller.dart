@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
+import '../../browser/browser_bridge.dart';
 import '../../ide/file_service.dart';
 import '../../ide/git/git_repository.dart';
 import '../../ide/git/ide_scm_view.dart' show IdeScmSession;
 import '../../ide/ide_code_editor.dart' show IdeCodeHighlights;
 import '../../ide/ide_explorer.dart';
+import '../../ide/search/ide_search_view.dart';
+import '../../ide/search/text_search.dart';
 import '../../settings/user_settings.dart';
 import 'file_edit.dart';
 import 'file_open.dart';
@@ -55,7 +58,9 @@ class SidePanelTab {
 /// The side panel's pages, each a list at the left and the tabs it opened
 /// at the right: the project's files, the agent's changes, its background
 /// commands; and the plan the agent wrote, alone, while there is one.
-enum SidePanelSection { files, changes, terminal, plan }
+/// The browser's page is there once a browser of the user's has connected
+/// (see lib/browser/browser_bridge.dart).
+enum SidePanelSection { files, changes, terminal, browser, plan }
 
 /// The pages there whether or not there is anything on them: not the
 /// plan's, there only once the agent wrote one.
@@ -74,9 +79,12 @@ class SidePanelTabs {
 
   /// The page that shows: [section], but the changes page for the plan's
   /// without a plan.
-  SidePanelSection get shown => section == SidePanelSection.plan && plan == null
-      ? SidePanelSection.changes
-      : section;
+  SidePanelSection get shown => switch (section) {
+    SidePanelSection.plan when plan == null => SidePanelSection.changes,
+    SidePanelSection.browser when !BrowserBridge.instance.used =>
+      SidePanelSection.changes,
+    _ => section,
+  };
 
   /// The files previewed, on the files page.
   final List<SidePanelTab> files = [];
@@ -95,16 +103,17 @@ class SidePanelTabs {
   SidePanelTab? get current => switch (section) {
     SidePanelSection.files => active,
     SidePanelSection.changes => activeDiff,
-    SidePanelSection.terminal => null,
+    SidePanelSection.terminal || SidePanelSection.browser => null,
     SidePanelSection.plan => plan,
   };
 }
 
 /// The agent window's side panel, at the right of the conversations as
-/// the secondary side bar is in VS Code: the project's files, the changes
-/// of the agent focused and its background commands. Shown or not, its
-/// width, its lists' width and how changes are listed are the window's,
-/// kept between runs ([toJson]); the tabs open are each conversation's own.
+/// the secondary side bar is in VS Code (or at their left, [atLeft]): the
+/// project's files, the changes of the agent focused and its background
+/// commands. Shown or not, its side, its width, its lists' width and how
+/// changes are listed are the window's, kept between runs ([toJson]); the
+/// tabs open are each conversation's own.
 class AgentSidePanel extends ChangeNotifier {
   AgentSidePanel({Map<String, Object?>? state, this.onSave, this.settings}) {
     _read(state);
@@ -131,6 +140,7 @@ class AgentSidePanel extends ChangeNotifier {
     }
     if (state?['listShown'] case final bool shown) _listShown = shown;
     if (state?['changesAsTree'] case final bool tree) _changesAsTree = tree;
+    if (state?['atLeft'] case final bool left) _atLeft = left;
   }
 
   /// Told when what [toJson] gives changed, to keep it.
@@ -144,9 +154,17 @@ class AgentSidePanel extends ChangeNotifier {
   /// while the panel is (as the IDE's Source Control view keeps its own).
   final Map<IdeGitRepository, IdeScmSession> _scm = {};
 
-  /// The commit message and choices of [git].
+  /// The commit message and choices of [git]; its changes as a tree or a
+  /// list as last picked ([changesAsTree]).
   IdeScmSession scmOf(IdeGitRepository git) =>
-      _scm[git] ??= IdeScmSession(settings: settings);
+      _scm[git] ??= IdeScmSession(settings: settings)..treeView = changesAsTree;
+
+  /// The repositories folded under their headers on the changes page of
+  /// each project (by its folder), as Source Control's.
+  final Map<String, Set<String>> _scmCollapsed = {};
+
+  Set<String> scmCollapsedOf(String root) =>
+      _scmCollapsed.putIfAbsent(p.normalize(root), () => {});
 
   static const defaultWidth = 640.0;
   static const minWidth = 280.0;
@@ -181,6 +199,19 @@ class AgentSidePanel extends ChangeNotifier {
   /// View as Tree), or as a list.
   bool get changesAsTree => _changesAsTree;
   bool _changesAsTree = true;
+
+  /// Whether it is at the conversations' left, not their right (Move Side
+  /// Panel Left / Right): it keeps its width and pages there.
+  bool get atLeft => _atLeft;
+  bool _atLeft = false;
+
+  set atLeft(bool left) {
+    if (left == _atLeft) return;
+    _atLeft = left;
+    _changed = true;
+    notifyListeners();
+    onSave?.call();
+  }
 
   final Expando<SidePanelTabs> _tabs = Expando();
 
@@ -221,6 +252,27 @@ class AgentSidePanel extends ChangeNotifier {
       multiRoot: multiRoot,
       paths: paths ?? p.context,
     );
+  }
+
+  /// The files page's text search of each project (by its folder), kept
+  /// while the panel is: its query and results stay as they were when
+  /// another page or project shows.
+  final Map<String, IdeSearchSession> _searches = {};
+
+  /// The search of the project in [root], run by [engine]; made once per
+  /// project (its results then still there on coming back).
+  IdeSearchSession searchOf(String root, IdeTextSearch engine) =>
+      _searches[root] ??= IdeSearchSession(engine: engine);
+
+  /// The projects whose files page shows the search rather than the tree.
+  final Set<String> _searching = {};
+
+  /// Whether the project in [root] shows its files page's search.
+  bool searchShown(String root) => _searching.contains(root);
+
+  void setSearchShown(String root, bool shown) {
+    final changed = shown ? _searching.add(root) : _searching.remove(root);
+    if (changed) notifyListeners();
   }
 
   /// Has the tree of the workspace in [root] show [roots], its folders
@@ -495,6 +547,8 @@ class AgentSidePanel extends ChangeNotifier {
         if (tabs.terminal case final id?) {
           return closeTerminal(conversation, id);
         }
+      case SidePanelSection.browser:
+        break;
     }
     hide();
   }
@@ -505,6 +559,7 @@ class AgentSidePanel extends ChangeNotifier {
     'listWidth': _listWidth,
     'listShown': _listShown,
     'changesAsTree': _changesAsTree,
+    if (_atLeft) 'atLeft': true,
   };
 
   bool _disposed = false;
@@ -525,6 +580,10 @@ class AgentSidePanel extends ChangeNotifier {
       explorer.dispose();
     }
     _explorers.clear();
+    for (final search in _searches.values) {
+      search.dispose();
+    }
+    _searches.clear();
     super.dispose();
   }
 }

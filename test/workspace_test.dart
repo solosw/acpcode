@@ -14,6 +14,8 @@ import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/mock_claude_code_transport.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/models/model_provider.dart';
+import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/workspace/agent_title.dart';
@@ -469,6 +471,96 @@ void main() {
     });
     first.stop();
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('Fast stays with its conversation, not the next agent', (
+    tester,
+  ) async {
+    final previous = ModelProviders.current;
+    ModelProviders.current = ModelProviders.memory(
+      providers: const [
+        ModelProvider(
+          id: 'cx',
+          name: 'Codex',
+          protocol: ProviderProtocol.codex,
+          models: [ProviderModel(id: 'gpt-5')],
+        ),
+      ],
+    );
+    addTearDown(() => ModelProviders.current = previous);
+    await ModelProviders.current.setDefaultModel('@cx/gpt-5');
+    late final KernelDescriptor local;
+    local = KernelDescriptor(
+      id: 'claude-code',
+      label: 'Claude Code',
+      icon: Icons.auto_awesome_rounded,
+      description: '',
+      catalog: FakeCatalog(),
+      create: (context) => ClaudeCodeKernel(
+        local,
+        context,
+        start: MockClaudeCodeTransport.start,
+        readHistory: _readHistory,
+        providerEnvironment: (_, _) async => const {},
+      ),
+    );
+    final store = MemoryPreferenceStore({
+      'agents': {
+        FakeCatalog.kept.id: {'model': '@cx/gpt-5'},
+      },
+    });
+    final workspace = await pumpLoaded(
+      tester,
+      preferences: store,
+      kernel: local,
+    );
+    final kept = workspace.threads.firstWhere(
+      (thread) => thread.record?.id == FakeCatalog.kept.id,
+    );
+    final session = kept.session;
+    final fast = session.modelSettings('@cx/gpt-5').last;
+    expect(fast.kind, KernelChoiceKind.fast);
+    expect(fast.selected, isNull);
+    fast.onSelected(fast.options.single);
+    await tester.pump();
+    final choices =
+        (store.preferences['agents'] as Map)[FakeCatalog.kept.id] as Map;
+    expect(choices['fast'], 'fast');
+    expect(
+      choices[modelSettingKey(KernelChoiceKind.fast, '@cx/gpt-5')],
+      'fast',
+    );
+    expect(
+      (store.preferences['settings'] as Map?)?.containsKey('fast'),
+      isNot(true),
+    );
+
+    workspace.create();
+    await tester.pump();
+    final fresh = workspace.selected.session;
+    expect(fresh.models?.selected.id, '@cx/gpt-5');
+    expect(fresh.selected(KernelChoiceKind.fast), 'standard');
+    expect(fresh.modelSettings('@cx/gpt-5').last.selected, isNull);
+    expect(kept.session.selected(KernelChoiceKind.fast), 'fast');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final reopened = await pumpLoaded(
+      tester,
+      preferences: store,
+      kernel: local,
+    );
+    final restored = reopened.threads.firstWhere(
+      (thread) => thread.record?.id == FakeCatalog.kept.id,
+    );
+    expect(restored.session.selected(KernelChoiceKind.fast), 'fast');
+    expect(
+      restored.session.modelSettings('@cx/gpt-5').last.selected?.id,
+      'fast',
+    );
+    expect(
+      reopened.selected.session.selected(KernelChoiceKind.fast),
+      'standard',
+    );
   });
 
   testWidgets('batch pinning preserves the supplied order', (tester) async {

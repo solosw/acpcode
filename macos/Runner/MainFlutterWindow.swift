@@ -98,7 +98,57 @@ class BaoWindow: NSWindow {
     ] {
       center.addObserver(self, selector: #selector(syncScale), name: name, object: self)
     }
+    // AppKit lays the traffic lights out again as the window changes.
+    for name in [
+      NSWindow.didResizeNotification, NSWindow.didExitFullScreenNotification,
+      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+    ] {
+      center.addObserver(self, selector: #selector(placeTrafficLights), name: name, object: self)
+    }
   }
+
+  /// How much lower than AppKit puts them the traffic lights are kept, so
+  /// they stay level with the title bar Flutter draws as the interface is
+  /// zoomed (see setTitleBarDrop), as VS Code's Electron moves them
+  /// (setWindowButtonPosition) as its window is.
+  private var trafficLightsDrop: CGFloat = 0
+
+  /// AppKit's own places: the title bar's height, and the close button's
+  /// center from its top. Read before the first move.
+  private var trafficLightsHome: (barHeight: CGFloat, center: CGFloat)?
+
+  /// Puts the traffic lights [trafficLightsDrop] below where AppKit does,
+  /// the title bar tall enough to hold them there; as Electron's
+  /// WindowButtonsProxy::RedrawTrafficLights does. Not in full screen,
+  /// where the title bar is the system's to show.
+  @objc func placeTrafficLights() {
+    guard !styleMask.contains(.fullScreen),
+          let close = standardWindowButton(.closeButton),
+          let titleBar = close.superview,
+          let container = titleBar.superview
+    else { return }
+    let buttonHeight = close.frame.height
+    let fromTop = { (y: CGFloat, height: CGFloat) in
+      titleBar.isFlipped ? y + buttonHeight / 2 : height - y - buttonHeight / 2
+    }
+    if trafficLightsHome == nil {
+      if trafficLightsDrop == 0 { return }
+      trafficLightsHome = (
+        container.frame.height, fromTop(close.frame.origin.y, container.frame.height)
+      )
+    }
+    guard let home = trafficLightsHome else { return }
+    let center = home.center + trafficLightsDrop
+    var bar = container.frame
+    bar.size.height = max(home.barHeight, center * 2)
+    bar.origin.y = frame.height - bar.size.height
+    container.frame = bar
+    let y = titleBar.isFlipped
+      ? center - buttonHeight / 2 : bar.height - center - buttonHeight / 2
+    for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+      guard let button = standardWindowButton(kind) else { continue }
+      button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: y))
+    }  }
 
   private var drops: FileDropView?
 
@@ -160,6 +210,12 @@ class BaoWindow: NSWindow {
         width: arguments?["width"] as? Double ?? 0,
         height: arguments?["height"] as? Double ?? 0
       ))
+      result(nil)
+    case "setTitleBarDrop":
+      // How much lower the traffic lights go, the title bar Flutter draws
+      // grown by twice that as the interface is zoomed (see ui_zoom.dart).
+      trafficLightsDrop = CGFloat(call.arguments as? Double ?? 0)
+      placeTrafficLights()
       result(nil)
     case "handleTitleDoubleClick":
       // A double click on the empty part of the title bar Flutter draws
@@ -457,9 +513,17 @@ class BaoWindow: NSWindow {
 /// It also answers for the app what is the app's, not a window's: the color
 /// theme's appearance, the File menu.
 class MainFlutterWindow: BaoWindow {
+  /// Where its place and size are kept (the user defaults'), for the next
+  /// launch.
+  private static let frameName = "BaoCodeMainWindow"
+
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     setUp(flutter: flutterViewController, suffix: "", size: Self.defaultSize)
+    // Where the user left it, as big as they made it (kept in the user
+    // defaults as it changes); centered, as above, the first time.
+    setFrameUsingName(Self.frameName)
+    setFrameAutosaveName(Self.frameName)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 

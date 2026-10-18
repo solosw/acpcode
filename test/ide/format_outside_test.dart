@@ -100,6 +100,38 @@ void main() {
     expect((await formatting).edits, [_edit]);
   });
 
+  test('two of one file at once: each formats its own text', () async {
+    final servers = _Servers(supported: {})
+      ..statuses[a] = const [
+        LanguageServerStatus(
+          serverId: 'ts',
+          state: LanguageServerState.starting,
+        ),
+      ];
+    final formatted = <String?>[];
+    servers.onFormat = (path, range) {
+      formatted.add(servers.open[path]);
+      return const [_edit];
+    };
+    final workspace = workspaceWith(servers);
+    // The second asked for while the first waits for its servers.
+    final first = format(workspace, 'let b=2');
+    final second = format(workspace, 'let c=3');
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    servers
+      ..supported = {LanguageRequest.format}
+      ..statuses[a] = const [
+        LanguageServerStatus(
+          serverId: 'ts',
+          state: LanguageServerState.running,
+        ),
+      ];
+    expect((await first).edits, [_edit]);
+    expect((await second).edits, [_edit]);
+    expect(formatted, ['let b=2', 'let c=3']);
+    expect(servers.events, ['open', 'close', 'open', 'close']);
+  });
+
   test('none formats it: which server would, to install', () async {
     final servers = _Servers(supported: {})
       ..statuses[a] = const [

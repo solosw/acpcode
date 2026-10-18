@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/side_panel/shown_files.dart';
+import 'package:baocode/chat/side_panel/shown_files_io.dart' show pruneShown;
 import 'package:baocode/chat/side_panel/side_panel_controller.dart';
 import 'package:baocode/chat/widgets/text_preview.dart';
 import 'package:baocode/l10n/l10n.dart';
@@ -105,5 +106,27 @@ void main() {
     expect(request.local && request.readOnly && request.preview, isTrue);
     // No dialog.
     expect(find.byType(TextPreview), findsNothing);
+  });
+
+  test('those not shown for a week are removed, the folders left empty '
+      'too', () async {
+    final root = Directory.systemTemp.createTempSync('shown');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final now = DateTime(2026, 10, 15);
+    File write(String folder, String name, Duration age) =>
+        File(p.join(root.path, folder, name))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('secret')
+          ..setLastModifiedSync(now.subtract(age));
+    final old = write('aaaa', 'paste.txt', const Duration(days: 8));
+    final recent = write('bbbb', 'paste.txt', const Duration(days: 2));
+    final mixedOld = write('cccc', 'a.png', const Duration(days: 30));
+    final mixedNew = write('cccc', 'b.png', const Duration(hours: 1));
+    await pruneShown(root.path, now: now);
+    expect(old.existsSync(), isFalse);
+    expect(old.parent.existsSync(), isFalse);
+    expect(recent.existsSync(), isTrue);
+    expect(mixedOld.existsSync(), isFalse);
+    expect(mixedNew.existsSync(), isTrue);
   });
 }

@@ -238,20 +238,32 @@ class _IdeListRowState extends State<IdeListRow> {
   Duration? _lastTap;
   Duration? _down;
 
+  /// The row clicked last, of every list: a click on another row between
+  /// two on this one makes them two clicks, not a double click.
+  static _IdeListRowState? _lastTapped;
+
   void _tapped() {
     final now = _down;
     final last = _lastTap;
     final double =
         widget.onDoubleTap != null &&
+        identical(_lastTapped, this) &&
         now != null &&
         last != null &&
         now - last <= kDoubleTapTimeout;
     _lastTap = double ? null : now;
+    _lastTapped = double ? null : this;
     if (double) {
       widget.onDoubleTap!();
     } else {
       widget.onTap?.call();
     }
+  }
+
+  @override
+  void dispose() {
+    if (identical(_lastTapped, this)) _lastTapped = null;
+    super.dispose();
   }
 
   /// The row's outline (`listWidget.ts` `DefaultStyleController`): the

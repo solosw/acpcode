@@ -9,13 +9,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_quill/quill_delta.dart';
 
-import '../../ide/ide_dialog.dart';
 import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../keybindings/chat_keybindings.dart';
 import '../../l10n/l10n.dart';
-import '../../settings/settings_dialog.dart'
-    show SettingsOpener, SettingsSection;
 import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show WorkbenchColors, themeColors;
 import '../chat_keys.dart';
@@ -35,10 +32,18 @@ import 'composer_files.dart';
 import 'composer_images.dart';
 import 'composer_mock_data.dart';
 import 'composer_picker.dart';
+import 'composer_polish.dart';
+import 'pickers_row.dart';
+import 'session_model_picker.dart';
 import 'kernel_option_text.dart';
 import 'file_drop.dart';
 import 'suggestion_menu.dart';
 import '../../ide/ide_hover.dart';
+import '../../ide/ide_spinning.dart';
+import '../../theme/codicons.dart';
+import '../../ide/file_service.dart' show IdeFileService;
+import '../../ide/ide_notifications.dart';
+import 'remote_drops.dart';
 
 /// An open query: a /command's, the slash starting the message, or a
 /// mention's (an @ starting a word: a file, a folder or a conversation);
@@ -55,6 +60,12 @@ class _Trigger {
 
   bool sameAnchor(_Trigger? other) =>
       other != null && other.kind == kind && other.start == start;
+}
+
+/// A rich-text shortcut of Quill's: with no action for it, the key is not
+/// handled (see [ChatComposerState._richTextShortcuts]).
+class _NoRichTextIntent extends Intent {
+  const _NoRichTextIntent();
 }
 
 /// The chat input, built on flutter_quill.
@@ -85,6 +96,7 @@ class ChatComposer extends StatefulWidget {
     this.tapRegionGroupId,
     this.draft,
     this.openEditor,
+    this.hostFiles,
   });
 
   final ChatSession session;
@@ -110,6 +122,11 @@ class ChatComposer extends StatefulWidget {
 
   /// The file open in the editor beside the chat (see [ChatSession.send]).
   final OpenEditor? Function()? openEditor;
+
+  /// A remote project's host's files, where files of this machine's put
+  /// in (let go from another app, pasted, picked) are copied first, for its
+  /// agent to read (see [RemoteDrops]); null for a local project.
+  final IdeFileService? hostFiles;
 
   @override
   State<ChatComposer> createState() => ChatComposerState();
@@ -143,6 +160,9 @@ class ChatComposerState extends State<ChatComposer>
   final GlobalKey<ComposerPickerState> _modelPickerKey = GlobalKey();
 
   bool _hasContent = false;
+
+  /// Polish asked, its answer awaited (see [_polish]).
+  bool _polishing = false;
 
   /// Every image put in, by number, kept until sent: the text's references
   /// pick which go (see [_images]), so one taken out and brought back by
@@ -201,7 +221,13 @@ class ChatComposerState extends State<ChatComposer>
     final config = QuillControllerConfig(
       // Quill's only hook for taking over paste; experimental in 11.x.
       // ignore: experimental_member_use
-      clipboardConfig: QuillClipboardConfig(onClipboardPaste: _paste),
+      clipboardConfig: QuillClipboardConfig(
+        // ignore: experimental_member_use
+        onClipboardPaste: _paste,
+        // Nor, where that leaves it to Quill, its HTML or Markdown as such.
+        // ignore: experimental_member_use
+        enableExternalRichPaste: false,
+      ),
     );
     if (widget.draft case final draft? when draft.saved) {
       final document = Document.fromDelta(draft.content!);
@@ -248,16 +274,18 @@ class ChatComposerState extends State<ChatComposer>
   /// copied from the history, from this editor or from elsewhere alike.
   /// Also keeps Quill from pasting HTML or Markdown as rich text into this
   /// plain-text input. Returns false (Quill's own handling) for nothing.
-  Future<bool> _paste() async {
+  /// With `raw` (⇧⌘V / Ctrl+Shift+V), its text goes in as it is, past the
+  /// long-paste tag; files and images still come in as such.
+  Future<bool> _paste({bool raw = false}) async {
     final files = await WindowControls.readPasteboardFiles();
     if (!mounted) return false;
     if (files.isNotEmpty) {
-      await insertFiles(files);
+      await insertFiles(files, here: true);
       return true;
     }
     final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
     if (!mounted) return false;
-    if (text != null) {
+    if (text != null && !raw) {
       if (CopiedCode.matching(text) case final code?) {
         _insertTags([
           ComposerCodeEmbed.of(
@@ -280,7 +308,10 @@ class ChatComposerState extends State<ChatComposer>
       plain = await _picturesIn(plain);
       if (!mounted) return false;
     }
-    if (PastedText.isLong(plain)) {
+    // Pasted raw, the text goes in as it is, whatever its length: no paste
+    // tag (the shortcut is for exactly that), and no attachment offload,
+    // which happens as the message is sent (see PasteStore.offload).
+    if (!raw && PastedText.isLong(plain)) {
       _insertTags([
         ComposerPastedTextEmbed.of(
           PastedText(number: _nextPastedNumber(), text: plain),
@@ -290,17 +321,22 @@ class ChatComposerState extends State<ChatComposer>
     }
     final selection = _controller.selection;
     final start = selection.start;
-    final content = composerDeltaFromPaste(
-      plain,
-      ComposerVocabulary.read(context),
-      atStart: start == 0,
-      images: _pool.keys.toSet(),
-    );
+    final Delta token;
+    if (raw) {
+      token = Delta()..insert(plain);
+    } else {
+      token = composerDeltaFromPaste(
+        plain,
+        ComposerVocabulary.read(context),
+        atStart: start == 0,
+        images: _pool.keys.toSet(),
+      );
+    }
     final delta =
         (Delta()
               ..retain(start)
               ..delete(selection.end - start))
-            .concat(content);
+            .concat(token);
     // `compose` keeps the caret where it was (before the insert), whatever
     // selection it is given: move it after the pasted text.
     _controller
@@ -308,8 +344,7 @@ class ChatComposerState extends State<ChatComposer>
       ..updateSelection(
         TextSelection.collapsed(
           // Delta.length counts operations, not characters.
-          offset:
-              start + content.toList().fold(0, (sum, op) => sum + op.length!),
+          offset: start + token.toList().fold(0, (sum, op) => sum + op.length!),
         ),
         ChangeSource.local,
       );
@@ -339,6 +374,7 @@ class ChatComposerState extends State<ChatComposer>
     _controller.addListener(_handleEditorChanged);
     _focusNode.addListener(_handleFocusChanged);
     widget.draft?.addListener(_handleDraftChanged);
+    ComposerPolishSetting.changes?.addListener(_handleSettingsChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _focusNode.requestFocus();
@@ -356,9 +392,15 @@ class ChatComposerState extends State<ChatComposer>
     }
   }
 
+  /// Settings → General's Polish button, turned on or off.
+  void _handleSettingsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     widget.draft?.removeListener(_handleDraftChanged);
+    ComposerPolishSetting.changes?.removeListener(_handleSettingsChanged);
     FloatingRegistry.closePopover(_menuOwner);
     _clickWindow?.cancel();
     _controller.dispose();
@@ -429,8 +471,15 @@ class ChatComposerState extends State<ChatComposer>
 
   /// Puts [files] in at [at] (in place of the selection when null), in
   /// their order: each a tag of its path, from the project's root when it
-  /// is in it, or, for an image the conversation takes, the image.
-  Future<void> insertFiles(List<ComposerFile> files, {int? at}) async {
+  /// is in it, or, for an image the conversation takes, the image. [here],
+  /// they are this machine's: a remote project's agent is given copies on
+  /// its host ([ChatComposer.hostFiles]), those that could not be copied
+  /// left out.
+  Future<void> insertFiles(
+    List<ComposerFile> files, {
+    int? at,
+    bool here = false,
+  }) async {
     if (files.isEmpty) return;
     var images = <ImageAttachment?>[for (final _ in files) null];
     if (widget.session.acceptsImages) {
@@ -444,17 +493,80 @@ class ChatComposerState extends State<ChatComposer>
       );
     }
     if (!mounted) return;
+    // The pictures go with the message as they are; the rest are copied.
+    final List<ComposerFile?> paths = [
+      for (final (index, file) in files.indexed)
+        images[index] == null ? file : null,
+    ];
+    if (here && widget.hostFiles != null && paths.nonNulls.isNotEmpty) {
+      final copies = await _copyToHost(paths.nonNulls.toList());
+      if (!mounted) return;
+      final copied = copies?.iterator;
+      for (var i = 0; i < paths.length; i++) {
+        if (paths[i] == null) continue;
+        paths[i] = copied != null && copied.moveNext() ? copied.current : null;
+      }
+    }
     final root = widget.session.root;
     _insertTags([
       for (final (index, file) in files.indexed)
         if (images[index] case final image?)
           ComposerImageEmbed.of(image.number!)
-        else
+        else if (paths[index] case final path?)
           ComposerTokenEmbed.file(
-            displayPath(file.path, root),
+            displayPath(path.path, root),
             directory: file.directory,
           ),
     ], at: at);
+  }
+
+  /// [files], this machine's, copied onto the remote project's host, how
+  /// far told in a notification once it takes a moment; null when they
+  /// could not be, as a notification says.
+  Future<List<ComposerFile>?> _copyToHost(List<ComposerFile> files) async {
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    final l10n = context.l10n;
+    var done = 0;
+    var total = files.length;
+    IdeNotification? shown;
+    IdeNotificationProgress progress() =>
+        IdeNotificationProgress(done.toDouble(), total: total.toDouble());
+    final timer = notifications == null
+        ? null
+        : Timer(const Duration(milliseconds: 300), () {
+            shown = notifications.notify(
+              IdeSeverity.info,
+              l10n.explorerUploading(done, total),
+              progress: progress(),
+              sticky: true,
+            );
+          });
+    try {
+      return await RemoteDrops.copy(
+        widget.hostFiles!,
+        files,
+        onProgress: (worked, of) {
+          done = worked;
+          total = of;
+          if (shown case final shown?) {
+            notifications!.update(
+              shown,
+              message: l10n.explorerUploading(done, total),
+              progress: progress(),
+            );
+          }
+        },
+      );
+    } on Object catch (error) {
+      notifications?.notify(
+        IdeSeverity.error,
+        l10n.composerCopyToHostFailed('$error'),
+      );
+      return null;
+    } finally {
+      timer?.cancel();
+      if (shown case final shown?) notifications!.close(shown);
+    }
   }
 
   /// [text]'s `@paths` of pictures that go in as such ([pastedAsPicture]:
@@ -581,9 +693,15 @@ class ChatComposerState extends State<ChatComposer>
 
   // --- Editor state --------------------------------------------------------
 
+  /// An input method is composing text: a composition not empty. A macOS
+  /// one may leave an empty one (its letters deleted, or after a commit)
+  /// until its next: not composing, as Quill draws it, or the keys (Tab,
+  /// Enter) went to Quill (#143).
   bool get _isComposing {
     final state = _editorKey.currentState;
-    return state is QuillRawEditorState && state.composingRange.value.isValid;
+    if (state is! QuillRawEditorState) return false;
+    final range = state.composingRange.value;
+    return range.isValid && !range.isCollapsed;
   }
 
   void _handleFocusChanged() {
@@ -999,6 +1117,8 @@ class ChatComposerState extends State<ChatComposer>
     return {
       // Always: with nothing to send, Enter does nothing (no new line).
       ChatCommandIds.submit: _submit,
+      // Paste the clipboard as plain text, past the long-paste tag.
+      ChatCommandIds.pasteRaw: () => unawaited(_paste(raw: true)),
       ChatCommandIds.cancelEdit: ?widget.onCancel,
       if (history && (_historyAt ?? _sentPrompts().length) > 0)
         ChatCommandIds.showPreviousPrompt: () => _showPrompt(-1),
@@ -1040,7 +1160,7 @@ class ChatComposerState extends State<ChatComposer>
   Future<void> _attachContext() async {
     final files = await WindowControls.pickFiles();
     if (!mounted) return;
-    await insertFiles(files);
+    await insertFiles(files, here: true);
     _focusNode.requestFocus();
   }
 
@@ -1164,12 +1284,22 @@ class ChatComposerState extends State<ChatComposer>
   @override
   void fileDragLeave() => _hideGhost();
 
+  /// From another app: this machine's files.
   @override
-  void fileDrop(Offset position, List<ComposerFile> files) {
+  void fileDrop(Offset position, List<ComposerFile> files) =>
+      _dropFiles(position, files, here: true);
+
+  /// [files] let go at [position]; [here], this machine's (else the
+  /// project's, dragged from the IDE).
+  void _dropFiles(
+    Offset position,
+    List<ComposerFile> files, {
+    required bool here,
+  }) {
     if (!mounted) return;
     final at = _ghostAt ?? _dropOffset(position);
     _hideGhost();
-    unawaited(insertFiles(files, at: at));
+    unawaited(insertFiles(files, at: at, here: here));
   }
 
   // --- Prompt history ------------------------------------------------------
@@ -1254,6 +1384,62 @@ class ChatComposerState extends State<ChatComposer>
     } else {
       _historyAt = at;
       _historyShown = _controller.document.toPlainText();
+    }
+  }
+
+  // --- Polish --------------------------------------------------------------
+
+  /// The text as the model is given it to polish (see [composerPolishText]).
+  ComposerPolishText _polishText() {
+    final document = _controller.document;
+    return composerPolishText(
+      document.toDelta().slice(0, math.max(0, document.length - 1)),
+    );
+  }
+
+  /// Has the auxiliary model polish the text, its tags, images, code and
+  /// links kept as they are; put in its place as one change (⌘Z takes it
+  /// back), unless the text changed meanwhile. Why not, in a notification.
+  Future<void> _polish() async {
+    if (_polishing) return;
+    final asked = _polishText();
+    if (!asked.hasWords) return;
+    final before = _controller.document.toDelta();
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    final l10n = context.l10n;
+    setState(() => _polishing = true);
+    try {
+      final Delta polished;
+      try {
+        polished = await polishComposerText(
+          asked,
+          model: widget.session.selected(KernelChoiceKind.model),
+          location: widget.session.kernelContext.cwd,
+        );
+      } on ComposerPolishException catch (error) {
+        notifications?.notify(
+          IdeSeverity.error,
+          l10n.composerPolishFailed(error.message ?? l10n.stashAiNoAnswer),
+        );
+        return;
+      }
+      if (!mounted || _controller.document.toDelta() != before) return;
+      final length = polished.toList().fold(
+        0,
+        (sum, op) => sum + (op.length ?? 0),
+      );
+      // One change of its own to undo: not merged with what was typed just
+      // before it, nor with what is typed next.
+      final history = _controller.document.history..lastRecorded = 0;
+      _controller.compose(
+        (Delta()..delete(_controller.document.length - 1)).concat(polished),
+        TextSelection.collapsed(offset: length),
+        ChangeSource.local,
+      );
+      history.lastRecorded = 0;
+      _focusNode.requestFocus();
+    } finally {
+      if (mounted) setState(() => _polishing = false);
     }
   }
 
@@ -1372,7 +1558,7 @@ class ChatComposerState extends State<ChatComposer>
             onMove: (details) => _showGhost(details.offset, details.data.files),
             onLeave: (_) => _hideGhost(),
             onAcceptWithDetails: (details) =>
-                fileDrop(details.offset, details.data.files),
+                _dropFiles(details.offset, details.data.files, here: false),
             builder: (context, candidates, rejected) => _buildBox(
               focused: focused || _ghostAt != null || stashes.isNotEmpty,
             ),
@@ -1688,12 +1874,47 @@ class ChatComposerState extends State<ChatComposer>
         ],
         // ignore: experimental_member_use
         onKeyPressed: _handleKey,
+        customShortcuts: _richTextShortcuts(),
         onTapOutside: (event, focusNode) {},
         showCursor: false,
         customStyles: _editorStyles(context),
       ),
     );
   }
+
+  /// Quill's rich-text shortcuts (headers, styles, lists, indents, its link,
+  /// image and search dialogs), bound to nothing: they do nothing here and
+  /// go on to the window. [_handleKey] swallows them first, but not when an
+  /// open menu answers for the key; and the controller takes no style.
+  static Map<ShortcutActivator, Intent> _richTextShortcuts() {
+    // Quill's own modifier: ⌘ on macOS, Ctrl elsewhere.
+    final mac = defaultTargetPlatform == TargetPlatform.macOS;
+    return {
+      for (final (key, shift) in _quillShortcutKeys)
+        SingleActivator(key, meta: mac, control: !mac, shift: shift):
+            const _NoRichTextIntent(),
+    };
+  }
+
+  static final _quillShortcutKeys = [
+    (LogicalKeyboardKey.keyB, false),
+    (LogicalKeyboardKey.keyB, true),
+    (LogicalKeyboardKey.keyU, false),
+    (LogicalKeyboardKey.keyI, false),
+    (LogicalKeyboardKey.keyS, true),
+    (LogicalKeyboardKey.backquote, false),
+    (LogicalKeyboardKey.tilde, true),
+    (LogicalKeyboardKey.keyK, false),
+    (LogicalKeyboardKey.keyL, true),
+    (LogicalKeyboardKey.keyO, true),
+    (LogicalKeyboardKey.keyC, true),
+    (LogicalKeyboardKey.keyM, false),
+    (LogicalKeyboardKey.keyM, true),
+    for (var digit = 0; digit <= 6; digit++)
+      (LogicalKeyboardKey(LogicalKeyboardKey.digit0.keyId + digit), false),
+    (LogicalKeyboardKey.keyG, false),
+    (LogicalKeyboardKey.keyF, false),
+  ];
 
   /// [text] as Quill's placeholder takes it. Quill reads the placeholder as
   /// JSON it splices the text into, escaping only its quotes: a backslash
@@ -1724,39 +1945,6 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  /// The model with its settings, e.g. "Opus · 1M · High": the context
-  /// only when it is not the standard one; its upstream before it only
-  /// when another upstream has a model of its name.
-  String _modelLabel(KernelOption model, List<KernelOption> options) => [
-    if (model.group case final group?
-        when options.any(
-          (other) => other.label == model.label && other.group?.id != group.id,
-        ))
-      group.label,
-    model.label,
-    for (final setting in widget.session.modelSettings(model.id))
-      if (setting.selected case final selected?
-          when setting.kind != KernelChoiceKind.context ||
-              selected != setting.options.first)
-        selected.label,
-  ].join(' · ');
-
-  /// Runs [pick], which switches to [option]: once confirmed, if that
-  /// restarts the agent on another upstream mid-conversation.
-  Future<void> _switchModel(KernelOption option, VoidCallback pick) async {
-    final session = widget.session;
-    if (!session.switchRestarts(option.id)) return pick();
-    final l10n = context.l10n;
-    final choice = await showIdeDialog(
-      context,
-      message: l10n.modelsSwitchTitle(option.group?.label ?? option.label),
-      detail: l10n.modelsSwitchDetail,
-      buttons: [l10n.modelsSwitchConfirm],
-      type: IdeDialogType.question,
-    );
-    if (choice == 0 && mounted) pick();
-  }
-
   Widget _buildToolbar() {
     final session = widget.session;
     // Only the dock's composer picks the kernel, and only until it starts.
@@ -1779,105 +1967,84 @@ class ChatComposerState extends State<ChatComposer>
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
       child: Row(
         children: [
-          // Takes the room left, so the actions sit at the far end; scrolls
-          // when the pickers do not fit.
+          // Takes the room left, so the actions sit at the far end; the
+          // model's label cut short to fit, scrolls when even that does not.
           Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  if (kernel != null) ...[
-                    ComposerPicker(
-                      options: kernel.options,
-                      selected: kernel.selected,
-                      tapRegionGroupId: widget.tapRegionGroupId,
-                      focusNode: _focusNode,
-                      onSelected: kernel.onSelected,
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  if (mode != null) ...[
-                    ComposerPicker(
-                      key: _modePickerKey,
-                      options: mode.options,
-                      selected: mode.selected,
-                      emphasized: true,
-                      tooltip: ChatKeys.titleWithKey(
-                        l10n.composerSetMode,
-                        ChatCommandIds.openModePicker,
-                        input,
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: PickersRow(
+                  maxWidth: constraints.maxWidth,
+                  children: [
+                    if (kernel != null) ...[
+                      ComposerPicker(
+                        options: kernel.options,
+                        selected: kernel.selected,
+                        tapRegionGroupId: widget.tapRegionGroupId,
+                        focusNode: _focusNode,
+                        onSelected: kernel.onSelected,
                       ),
-                      tapRegionGroupId: widget.tapRegionGroupId,
-                      focusNode: _focusNode,
-                      onSelected: mode.onSelected,
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  if (permission != null) ...[
-                    ComposerPicker(
-                      options: [
-                        for (final option in permission.options)
-                          localized(option),
-                      ],
-                      selected: localized(permission.selected),
-                      // `context` is the session's here.
-                      title: l10n.composerApprovalTitle(session.kernel.label),
-                      menuWidth: 290,
-                      tapRegionGroupId: widget.tapRegionGroupId,
-                      focusNode: _focusNode,
-                      onSelected: permission.onSelected,
-                    ),
-                    const SizedBox(width: 2),
-                  ],
-                  if (model != null)
-                    ComposerPicker(
-                      key: _modelPickerKey,
-                      options: model.options,
-                      selected: model.selected,
-                      label: _modelLabel(model.selected, model.options),
-                      // Each its name alone, one line; its maker's logo
-                      // and its upstream's heading tell the rest.
-                      describes: false,
-                      settingsOf: (option) => [
-                        for (final setting in session.modelSettings(option.id))
-                          ModelSettingChoice(
-                            kind: setting.kind,
-                            options: setting.options,
-                            selected: setting.selected,
-                            onSelected: (choice) => unawaited(
-                              _switchModel(
-                                option,
-                                () => setting.onSelected(choice),
-                              ),
-                            ),
-                          ),
-                      ],
-                      tooltip: ChatKeys.titleWithKey(
-                        l10n.composerPickModel,
-                        ChatCommandIds.openModelPicker,
-                        input,
-                      ),
-                      menuWidth: 260,
-                      searchPlaceholder: l10n.modelsSearch,
-                      footer: switch (SettingsOpener.maybeOf(this.context)) {
-                        final open? => (
-                          label: l10n.modelsManage,
-                          icon: Icons.tune_rounded,
-                          onTap: () => open(SettingsSection.models),
+                      const SizedBox(width: 2),
+                    ],
+                    if (mode != null) ...[
+                      ComposerPicker(
+                        key: _modePickerKey,
+                        options: mode.options,
+                        selected: mode.selected,
+                        emphasized: true,
+                        tooltip: ChatKeys.titleWithKey(
+                          l10n.composerSetMode,
+                          ChatCommandIds.openModePicker,
+                          input,
                         ),
-                        null => null,
-                      },
-                      tapRegionGroupId: widget.tapRegionGroupId,
-                      focusNode: _focusNode,
-                      onSelected: (option) => unawaited(
-                        _switchModel(option, () => model.onSelected(option)),
+                        tapRegionGroupId: widget.tapRegionGroupId,
+                        focusNode: _focusNode,
+                        onSelected: mode.onSelected,
                       ),
-                    ),
-                ],
+                      const SizedBox(width: 2),
+                    ],
+                    if (permission != null) ...[
+                      ComposerPicker(
+                        options: [
+                          for (final option in permission.options)
+                            localized(option),
+                        ],
+                        selected: localized(permission.selected),
+                        // `context` is the session's here.
+                        title: l10n.composerApprovalTitle(session.kernel.label),
+                        menuWidth: 290,
+                        tapRegionGroupId: widget.tapRegionGroupId,
+                        focusNode: _focusNode,
+                        onSelected: permission.onSelected,
+                      ),
+                      const SizedBox(width: 2),
+                    ],
+                    if (model != null)
+                      SessionModelPicker(
+                        session: session,
+                        pickerKey: _modelPickerKey,
+                        tooltip: ChatKeys.titleWithKey(
+                          l10n.composerPickModel,
+                          ChatCommandIds.openModelPicker,
+                          input,
+                        ),
+                        tapRegionGroupId: widget.tapRegionGroupId,
+                        focusNode: _focusNode,
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
           const SizedBox(width: 8),
+          if (ComposerPolishSetting.current()) ...[
+            _PolishButton(
+              busy: _polishing,
+              enabled: _polishing || _polishText().hasWords,
+              onTap: () => unawaited(_polish()),
+            ),
+            const SizedBox(width: 2),
+          ],
           if ((widget.onToggleContextPanel, context) case (
             final onToggle?,
             final usage?,
@@ -1903,6 +2070,56 @@ class ChatComposerState extends State<ChatComposer>
             onStop: session.stop,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Polish (see [ChatComposerState._polish]): a sparkle, spinning while the
+/// model answers; faint with no words to polish.
+class _PolishButton extends StatelessWidget {
+  const _PolishButton({
+    required this.busy,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final colors = themeColors;
+    final active = enabled && !busy;
+    final icon = Icon(
+      busy ? Codicons.loading : Codicons.sparkle,
+      size: 14,
+      color: enabled ? colors['icon.foreground'] : AppColors.textFaint,
+    );
+    return IdeHover(
+      message: busy ? l10n.composerPolishing : l10n.composerPolishHint,
+      child: HoverBuilder(
+        cursor: active ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        builder: (context, hovered) => GestureDetector(
+          // Keeps the editor's focus.
+          onTapDown: (_) {},
+          onTap: active ? onTap : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: 23,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active && hovered
+                  ? colors['toolbar.hoverBackground']
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(5),
+            ),
+            child: busy ? IdeSpinning(icon) : icon,
+          ),
+        ),
       ),
     );
   }

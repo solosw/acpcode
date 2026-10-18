@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bao_agent/bao_agent.dart';
+
 import '../../chat/chat_models.dart' show ImageAttachment;
 import '../../models/launch_environment.dart';
 import '../../network/network_proxy_io.dart';
+import 'claude_core_setting.dart';
 import 'claude_environment.dart';
 import 'claude_haiku.dart';
 import 'claude_settings_file.dart';
@@ -94,6 +97,20 @@ Future<(String, int)> _run(
   ClaudeHaikuTools? tools,
   void Function()? onStart,
 }) async {
+  if (ClaudeCore.current() == ClaudeCore.builtin) {
+    return _runBuiltin(
+      system,
+      prompt,
+      cancel: cancel,
+      model: model,
+      env: env,
+      stream: stream,
+      message: message,
+      tools: tools,
+      onLine: onLine,
+      onStart: onStart,
+    );
+  }
   final cli = await LocalClaude.locate(install: false);
   // In a file: it may hold a provider's key, and a shell (Windows') would
   // mangle it on the command line.
@@ -167,4 +184,97 @@ Future<(String, int)> _run(
   if (cancelled) throw const ClaudeHaikuCancelled();
   await stdout;
   return (await stderr, code);
+}
+
+/// [_run] on BaoCode's own core: one turn of an engine in an isolate of its
+/// own, set up as [claudeHaikuArguments] sets up the CLI, its messages
+/// given to [onLine] as the CLI prints them (only its result, unless
+/// [stream] or [message]).
+Future<(String, int)> _runBuiltin(
+  String system,
+  String prompt, {
+  required Future<void>? cancel,
+  required String? model,
+  required Map<String, String>? env,
+  required bool stream,
+  required bool message,
+  required ClaudeHaikuTools? tools,
+  required void Function(String line) onLine,
+  void Function()? onStart,
+}) async {
+  final base = await ClaudeEnvironment.of();
+  final proxy = await NetworkProxy.instance.environment();
+  final environment = <String, String>{...base, ...proxy};
+  if (env != null) {
+    for (final name in ClaudeModelVariables.inherited) {
+      environment.remove(name);
+    }
+  }
+  environment.addAll(ClaudeEnvironment.stateDirectory(base));
+  final options = EngineOptions(
+    // Elsewhere than a project, unless it is to look at one.
+    cwd: switch (tools?.directory) {
+      final directory? when Directory(directory).existsSync() => directory,
+      _ => Directory.systemTemp.resolveSymbolicLinksSync(),
+    },
+    model: model ?? 'haiku',
+    // Nothing asked: what is not allowed is refused.
+    permissionMode: 'dontAsk',
+    persist: false,
+    flagSettings: {'env': ?env, ...?tools?.settings},
+    environment: environment,
+    systemPrompt: system,
+    tools: tools?.tools ?? const [],
+    maxTurns: tools?.maxTurns,
+    strictMcpConfig: true,
+    slashCommands: false,
+  );
+  final AgentIsolate agent;
+  try {
+    agent = await AgentIsolate.spawn(options, debugName: 'bao-agent-haiku');
+  } on Object catch (error) {
+    throw ClaudeHaikuException('The built-in core could not start: $error');
+  }
+  onStart?.call();
+  final ended = Completer<int>();
+  final subscription = agent.messages.listen(
+    (line) {
+      final isResult = line['type'] == 'result';
+      if (stream || message || isResult) onLine(jsonEncode(line));
+      if (isResult && !ended.isCompleted) {
+        ended.complete(line['is_error'] == true ? 1 : 0);
+      }
+    },
+    onDone: () {
+      if (!ended.isCompleted) ended.complete(1);
+    },
+  );
+  var cancelled = false;
+  unawaited(
+    cancel?.then((_) {
+      cancelled = true;
+      if (!ended.isCompleted) ended.complete(130);
+    }),
+  );
+  agent.write(
+    message
+        ? (jsonDecode(prompt.trim()) as Map).cast<String, Object?>()
+        : {
+            'type': 'user',
+            'message': {'role': 'user', 'content': prompt},
+          },
+  );
+  try {
+    final code = await ended.future.timeout(
+      Duration(minutes: tools == null ? 2 : 5),
+      onTimeout: () => throw const ClaudeHaikuException(
+        'Claude Code took too long to answer.',
+      ),
+    );
+    if (cancelled) throw const ClaudeHaikuCancelled();
+    return (agent.errors.join('\n'), code);
+  } finally {
+    unawaited(subscription.cancel());
+    agent.close();
+  }
 }

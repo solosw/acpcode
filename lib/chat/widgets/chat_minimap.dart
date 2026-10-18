@@ -143,10 +143,10 @@ class ChatMinimap extends StatefulWidget {
 
   /// How tall [item] samples in a column [width] wide, for tests.
   @visibleForTesting
-  static double sampledHeight(ChatItem item, {double width = 720}) =>
-      _Sampler(width, bubbles: true)
-          .sample((item: item, shown: true, foldLines: 0, gap: 0))
-          .height;
+  static double sampledHeight(ChatItem item, {double width = 720}) => _Sampler(
+    width,
+    bubbles: true,
+  ).sample((item: item, shown: true, foldLines: 0, gap: 0)).height;
 
   /// Kept above and below it.
   static const _inset = 14.0;

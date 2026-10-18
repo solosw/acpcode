@@ -2,22 +2,28 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../chat/chat_models.dart';
 import '../../chat/composer/paste_store.dart';
+import '../../chat/composer/remote_drops.dart';
 import '../../models/launch_environment.dart';
 import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
 import '../../remote/remote_location.dart';
+import '../../settings/user_settings.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
 import '../commit_attribution.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
+import '../prompt_suggestions.dart';
+import '../transcript.dart';
+import '../queued_messages.dart';
 import 'claude_code_transport.dart';
 import 'claude_code_translator.dart';
 import 'claude_elicitation.dart';
@@ -30,6 +36,14 @@ import 'control_channel.dart';
 typedef ClaudeHistoryReader = Future<List<Map<String, Object?>>> Function(
   SessionRecord session,
 );
+
+/// Reads some of a kept session: its last [turns], or the [turns] before
+/// the line [before].
+typedef ClaudeHistoryPager = Future<ClaudeHistoryPage> Function(
+  SessionRecord session, {
+  required int turns,
+  String? before,
+});
 
 /// Copies the session [id], run in [cwd], into a new one, [into] (see
 /// ClaudeSessions.fork): the new session's file.
@@ -65,17 +79,20 @@ typedef ProviderEnvironment = Future<Map<String, String>> Function(
 /// One process per session, started when first needed: the conversation
 /// goes to its stdin as user messages, settings and questions as control
 /// requests; its output is translated by [ClaudeTranslator]. Tool
-/// permissions, questions and plan approvals come back as control requests
-/// of its own and become [InteractionRequest]s.
+/// permissions and questions come back as control requests of its own and
+/// become [InteractionRequest]s; a plan is put to the user without waiting
+/// (see [StartsPlans]).
 class ClaudeCodeKernel
     with KernelEventSource
     implements
         AgentKernel,
         SelectsModel,
         SelectsMode,
+        StartsPlans,
         SelectsPermission,
         SelectsEffort,
         SelectsContextSize,
+        SelectsFast,
         ProvidesCommands,
         SuggestsFiles,
         ReportsContext,
@@ -89,12 +106,14 @@ class ClaudeCodeKernel
         AcceptsImages,
         SuggestsPrompts,
         ManagesMcpServers,
-        ConfirmsModelSwitch {
+        ConfirmsModelSwitch,
+        LoadsHistory {
   ClaudeCodeKernel(
     this.descriptor,
     this._context, {
     required this._start,
     ClaudeHistoryReader? readHistory,
+    ClaudeHistoryPager? readHistoryPage,
     this._readGoal,
     this._forkSession,
     ClaudeUsageSwitch? usageOffBy,
@@ -131,6 +150,7 @@ class ClaudeCodeKernel
     };
     final efforts = '${KernelChoiceKind.effort.name}@';
     final contexts = '${KernelChoiceKind.context.name}@';
+    final speeds = '${KernelChoiceKind.fast.name}@';
     for (final MapEntry(:key, :value) in settings.entries) {
       if (key.startsWith(efforts)) {
         _pickedEfforts[key.substring(efforts.length)] = value;
@@ -138,12 +158,29 @@ class ClaudeCodeKernel
         if (parseTokens(value) case final tokens? when tokens > 0) {
           _pickedWindows[key.substring(contexts.length)] = tokens;
         }
+      } else if (key.startsWith(speeds)) {
+        _pickedFast[key.substring(speeds.length)] = value == 'fast';
       }
     }
-    if ((_context.resume, readHistory) case (final session?, final read?)) {
+    if (_model case final model? when !_pickedFast.containsKey(model)) {
+      _pickedFast[model] = settings[KernelChoiceKind.fast.name] == 'fast';
+    }
+    Future<ClaudeHistoryPage> wholePage(
+      SessionRecord session, {
+      required int turns,
+      String? before,
+    }) async => ClaudeHistoryPage.whole(await readHistory!(session));
+    final pager = readHistoryPage ?? (readHistory == null ? null : wholePage);
+    if ((_context.resume, pager) case (final session?, final read?)) {
+      _pager = read;
       _history = _replay(read, session);
     }
   }
+
+  /// How many turns of a long session are read at first, from its end, and
+  /// then each time the user asks for the earlier ones.
+  static const _firstTurns = 10;
+  static const _earlierTurns = 20;
 
   @override
   final KernelDescriptor descriptor;
@@ -179,6 +216,35 @@ class ClaudeCodeKernel
   (String, String)? _tooOldExit;
   Future<void> _history = Future.value();
 
+  @override
+  bool get loadingHistory => _loadingHistory;
+  bool _loadingHistory = false;
+
+  @override
+  bool get hasEarlierHistory => _earlier != null && !_loadingHistory;
+
+  @override
+  bool get loadingEarlier => _earlierLoad != null;
+  ClaudeHistoryPager? _pager;
+
+  /// What to read the turns before those read by, if there are some.
+  String? _earlier;
+  Future<void>? _earlierLoad;
+
+  /// Whether what was read begins within a turn (a long one is cut so):
+  /// the turn the page before it ends with goes on past it, so is not
+  /// timed.
+  bool _readInTurn = false;
+
+  /// Whether [page] begins within a turn: with a message of the agent's,
+  /// not the user's prompt.
+  static bool _beginsInTurn(ClaudeHistoryPage page) {
+    for (final line in page.entries) {
+      if (line['type'] != 'attachment') return line['type'] == 'assistant';
+    }
+    return false;
+  }
+
   /// Writes wait on this: for the process to be ready, and for a rewind to
   /// land before the message that follows it.
   Future<void> _writes = Future.value();
@@ -209,9 +275,48 @@ class ClaudeCodeKernel
   String? _pendingTitle;
 
   // What the CLI offers and has in effect. The catalog of the last session
-  // to start stands in until this one's arrives.
-  static _Catalog _lastCatalog = const _Catalog();
+  // to start stands in until this one's arrives; before any has this run,
+  // Claude Code's own models as [modelCache] kept them.
+  static _Catalog? _last;
+  static _Catalog get _lastCatalog => _last ??= _Catalog(models: _keptModels());
+  static set _lastCatalog(_Catalog catalog) => _last = catalog;
   _Catalog _catalog = _lastCatalog;
+
+  /// Where Claude Code's own models are kept between runs (main.dart sets
+  /// it), so the picker lists them while every session is on a provider's:
+  /// as it last listed them, set up as the user has it.
+  static GlobalStorage? get modelCache => _modelCache;
+  static set modelCache(GlobalStorage? storage) {
+    _modelCache = storage;
+    _last = null;
+  }
+
+  static GlobalStorage? _modelCache;
+  static const modelCacheKey = 'claudeCode.models';
+
+  /// The models [modelCache] kept, as the CLI listed them.
+  static List<_ModelInfo> _keptModels() => [
+    for (final raw
+        in _modelCache?.get<List<Object?>>(modelCacheKey) ?? const [])
+      if (raw is Map && raw['value'] is String)
+        _ModelInfo.from(raw.cast<String, Object?>()),
+  ];
+
+  /// Keeps [models] (the CLI's own, as listed) in [modelCache], when they
+  /// changed.
+  static void _keepModels(List<Map<Object?, Object?>> models) {
+    final storage = _modelCache;
+    if (storage == null) return;
+    final kept = storage.get<List<Object?>>(modelCacheKey);
+    if (kept != null && jsonEncode(kept) == jsonEncode(models)) return;
+    unawaited(
+      storage
+          .set(modelCacheKey, models)
+          .catchError(
+            (Object error) => debugPrint('$modelCacheKey not kept: $error'),
+          ),
+    );
+  }
 
   /// The model asked for, as the CLI names it (e.g. `opus[1m]`), or a
   /// provider's ([modelRef]).
@@ -248,15 +353,19 @@ class ClaudeCodeKernel
   /// picked (the CLI's `autoCompactWindow`); null to leave the CLI's own.
   int? _window;
 
-  /// The effort and context each model (by option id) was last on: one
-  /// switched back to takes up its own, not the one before's. Kept with
-  /// the settings (see [modelSettingKey]).
+  /// Each model's last choices, restored when switching back to it.
   final Map<String, String> _pickedEfforts = {};
   final Map<String, int> _pickedWindows = {};
+  final Map<String, bool> _pickedFast = {};
 
   /// The [_window] the process was started with: the CLI takes it only
   /// at start, so another is taken up by a restart (see [_applyWindow]).
   int? _launchedWindow;
+
+  /// Whether the process was started to suggest the next prompt
+  /// ([PromptSuggestions]): taken only at start, so a change is taken up by
+  /// a restart (see [_applyWindow]).
+  bool _launchedSuggestions = true;
 
   /// The context window, as the CLI reports it: the smaller of the
   /// model's and [_window].
@@ -339,6 +448,7 @@ class ClaudeCodeKernel
           provider,
           info,
           effort: effort,
+          fast: _pickedFast[_model] ?? false,
         ),
         null when parseModelRef(_model) != null => null,
         null => _model,
@@ -365,6 +475,7 @@ class ClaudeCodeKernel
       final workspace = _workspace;
       _launchedProvider = _providerKey;
       _launchedWindow = _autocompact;
+      _launchedSuggestions = PromptSuggestions.current();
       final sdkServers = ClaudeSdkTools.servers;
       final transport = await _start(
         ClaudeLaunch(
@@ -380,11 +491,15 @@ class ClaudeCodeKernel
               : null,
           thinking: custom != null && direct && effort == 'none' ? false : null,
           autocompact: _autocompact,
+          promptSuggestions: _launchedSuggestions,
           attribution: CommitAttribution.current(),
           env: env,
           directories: workspace?.folders ?? const [],
           // Long pastes are kept on this machine: only its agent reads them.
-          readable: [if (!RemoteLocation.isRemote(_cwd)) ?PasteStore.directory],
+          // A remote one's reads the files of this machine's copied there.
+          readable: RemoteLocation.isRemote(_cwd)
+              ? RemoteDrops.folders
+              : [?PasteStore.directory],
           instructions: workspace?.instructions,
           models: switch (custom) {
             (final provider, _) => _requestedModels(provider),
@@ -401,7 +516,7 @@ class ClaudeCodeKernel
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
         await control.request('initialize', {
-          'promptSuggestions': true,
+          'promptSuggestions': _launchedSuggestions,
           if (sdkServers.isNotEmpty) 'sdkMcpServers': sdkServers,
         }),
       );
@@ -434,7 +549,14 @@ class ClaudeCodeKernel
       }
       unawaited(_refreshContext());
     } on ClaudeUnavailable catch (error) {
-      _fail(error.message, error.detail);
+      _fail(
+        error.message,
+        error.detail,
+        missingFolder: switch (error) {
+          ClaudeFolderGone(:final folder) => folder,
+          _ => null,
+        },
+      );
       rethrow;
     } on ControlError catch (error) {
       // Too old: a newer one, if there is one, started in its place.
@@ -453,10 +575,15 @@ class ClaudeCodeKernel
     }
   }
 
-  void _fail(String message, String? detail) {
+  void _fail(String message, String? detail, {String? missingFolder}) {
     _teardown();
     _setHealth(
-      KernelHealth(KernelHealthStatus.failed, message: message, detail: detail),
+      KernelHealth(
+        KernelHealthStatus.failed,
+        message: message,
+        detail: detail,
+        missingFolder: missingFolder,
+      ),
     );
   }
 
@@ -533,16 +660,17 @@ class ClaudeCodeKernel
     prepare();
   }
 
-  /// Whether stopping the process would cut work short: a turn (or the
-  /// CLI's work past one), one to come, or a task in the background whose
-  /// notice the agent awaits.
-  bool get _busy =>
+  /// Whether stopping the process would cut work short: [_working], or a
+  /// task in the background whose notice the agent awaits.
+  bool get _busy => _working || _translator.workingInBackground;
+
+  /// A turn (or the CLI's work past one), one to come, or the start.
+  bool get _working =>
       _turn != null ||
       _cliWorking ||
       _queued.isNotEmpty ||
       _permissions.isNotEmpty ||
-      _starting != null ||
-      _translator.workingInBackground;
+      _starting != null;
 
   /// Frees the process now if idle, else once the CLI says it is (one
   /// that does not say keeps it until asked again).
@@ -562,14 +690,23 @@ class ClaudeCodeKernel
   /// compacts where it was told at start, whatever it is told after. Done
   /// only as a message is sent, so a pick leaves the conversation be.
   ///
+  /// So is the prompt suggestions' setting turned on or off since.
+  ///
   /// So is another provider, or one whose setup changed: the session goes
-  /// on, resumed, on it.
+  /// on, resumed, on it. That even with tasks at work in the background
+  /// (a server it started), which end with the process: the user agreed
+  /// to the restart, and the message is not for the provider before.
   void _applyWindow() {
-    if (!_running || _busy) return;
-    if (_providerKey == _launchedProvider && _autocompact == _launchedWindow) {
+    if (!_running) return;
+    final otherProvider = _providerKey != _launchedProvider;
+    if (!otherProvider &&
+        _autocompact == _launchedWindow &&
+        PromptSuggestions.current() == _launchedSuggestions) {
       return;
     }
+    if (otherProvider ? _working : _busy) return;
     _teardown();
+    _translator.endTasks();
     _setHealth(KernelHealth.idle);
   }
 
@@ -579,17 +716,68 @@ class ClaudeCodeKernel
     _goalRetry?.cancel();
     _providers.removeListener(_providersChanged);
     _live.remove(this);
+    _cancelSdkCalls();
     _teardown();
     closeEvents();
   }
 
   // --- The conversation -----------------------------------------------------------
 
+  /// Set by [startBuilding]: the next message starts the plan awaiting.
+  bool _startsPlan = false;
+
   @override
-  void send(KernelTurn turn) {
-    if (_sent.containsKey(turn.id)) return;
+  void startBuilding() {
+    _startsPlan = true;
+    _work = 'agent';
+    _applyMode();
+  }
+
+  @override
+  void send(KernelTurn sent) {
+    if (_sent.containsKey(sent.id)) return;
+    var turn = sent;
+    if (_startsPlan) {
+      _startsPlan = false;
+      // Told the model with it, so that it builds rather than plans on;
+      // the note marks the plan started (see the translator).
+      if (_translator.awaitingPlan case final plan?) {
+        turn = KernelTurn(
+          id: sent.id,
+          text: sent.text,
+          mentions: sent.mentions,
+          images: sent.images,
+          now: sent.now,
+          notes: [...sent.notes, ClaudeTranslator.planStartedNote(plan.path)],
+        );
+      }
+    }
     _sent[turn.id] = turn;
+    if (_turn != null && _running && _providerKey != _launchedProvider) {
+      // Another upstream picked while a turn runs (one retrying a provider
+      // out of its usage, say): the message is for it, not for the process
+      // on the one before, behind that turn. The turn stops, and the process
+      // with it (as the switch's confirmation says it restarts); the
+      // messages queued go again after, on the new one.
+      final queued = [..._queued];
+      cancel();
+      _queued.clear();
+      _held.clear();
+      _teardown();
+      _translator.endTasks();
+      _setHealth(KernelHealth.idle);
+      for (final id in [...queued, turn.id]) {
+        if (_sent[id] case final queuedTurn?) _submit(queuedTurn);
+      }
+      return;
+    }
+    _submit(turn);
+  }
+
+  /// Starts a turn with [turn], or queues it behind the one running.
+  void _submit(KernelTurn turn) {
     final busy = _turn != null;
+    final hold = busy && _holds;
     if (busy) {
       _queued.add(turn.id);
     } else {
@@ -608,8 +796,42 @@ class ClaudeCodeKernel
         UserMessageItem(text: turn.text, queued: busy, images: turn.images),
       ),
     );
-    // Taken now: the message may wait for the CLI to start.
+    // Taken now, as the message was sent.
     final ask = _work == 'ask';
+    if (hold) {
+      _held[turn.id] = ask;
+    } else {
+      _write(turn, ask: ask);
+    }
+  }
+
+  /// Queued messages not given to the CLI yet, with whether each was sent
+  /// to be answered only ([_askNote]). The CLI takes up all it queued as one
+  /// turn: one of them waits there at a time (see [_holds]), the rest here.
+  final Map<String, bool> _held = {};
+
+  /// Whether a message queued now waits in [_held]: while another waits in
+  /// the CLI, unless messages join the turn running (then all wait there,
+  /// but for one sent now, to be taken up alone).
+  bool get _holds {
+    final waiting = _queued.where((id) => !_held.containsKey(id));
+    return waiting.any((id) => _sent[id]?.now ?? false) ||
+        (waiting.isNotEmpty &&
+            QueuedMessages.current() == QueuedMessages.afterTurn);
+  }
+
+  /// Gives the CLI the messages held for it, as far as [_holds] lets it: one
+  /// waiting there was taken up, or taken back.
+  void _release() {
+    while (_held.isNotEmpty && !_holds) {
+      final MapEntry(key: id, value: ask) = _held.entries.first;
+      _held.remove(id);
+      if (_sent[id] case final turn?) _write(turn, ask: ask);
+    }
+  }
+
+  void _write(KernelTurn turn, {required bool ask}) {
+    // The message may wait for the CLI to start.
     final askEnded = _inAsk && !ask;
     _inAsk = ask;
     _whenReady((transport) {
@@ -618,6 +840,13 @@ class ClaudeCodeKernel
         'uuid': turn.id,
         'session_id': _sessionId ?? '',
         'parent_tool_use_id': null,
+        // Taken up once the turn before it ends, unless the user would have
+        // it folded into the turn running, between its tool calls (the
+        // CLI's own default).
+        'priority': switch (QueuedMessages.current()) {
+          QueuedMessages.afterTurn => 'later',
+          QueuedMessages.duringTurn => 'next',
+        },
         'message': {
           'role': 'user',
           'content': [
@@ -666,6 +895,7 @@ class ClaudeCodeKernel
     final turn = _turn;
     if (turn == null) return;
     _turn = null;
+    if (interrupted) _cancelSdkCalls();
     worked ??= switch (_turnStarted) {
       final started? => DateTime.now().difference(started),
       null => null,
@@ -704,40 +934,66 @@ class ClaudeCodeKernel
     _endTurn(interrupted: true);
   }
 
+  /// Completes as the turn's calls of the app's own tools are given up
+  /// (see [ClaudeSdkCall.cancelled]): a turn stopped, the session ended.
+  var _sdkCallsCancelled = Completer<void>();
+
+  void _cancelSdkCalls() {
+    final cancelled = _sdkCallsCancelled;
+    _sdkCallsCancelled = Completer<void>();
+    cancelled.complete();
+  }
+
   @override
   Future<bool> cancelQueued(String turnId) async {
-    if (!_queued.contains(turnId) || !_running) return false;
+    if (!_queued.contains(turnId)) return false;
+    if (_held.remove(turnId) != null) {
+      _queued.remove(turnId);
+      emit(ItemRemoved(nextSeq, turnId));
+      return true;
+    }
+    if (!_running) return false;
     try {
       final response = await _control!.request('cancel_async_message', {
         'message_uuid': turnId,
       });
-      if (response['cancelled'] != true || !_queued.remove(turnId)) {
-        return false;
-      }
+      if (response['cancelled'] != true) return false;
     } on Object {
       return false;
     }
-    emit(ItemRemoved(nextSeq, turnId));
+    // The CLI tells of it as cancelled before it answers: then already
+    // taken out (see _lifecycle).
+    if (_queued.remove(turnId)) emit(ItemRemoved(nextSeq, turnId));
+    _release();
     return true;
   }
 
   @override
   void sendQueuedNow(String turnId) {
     if (!_queued.contains(turnId) || !_running) return;
-    final ahead = _queued.takeWhile((id) => id != turnId).toList();
-    // Next anyway: only the turn running is in the way.
-    if (ahead.isEmpty) {
+    final others = [
+      for (final id in _queued)
+        if (id != turnId) id,
+    ];
+    // The only one in the CLI, the others held: next anyway, only the turn
+    // running is in the way.
+    if (!_held.containsKey(turnId) && others.every(_held.containsKey)) {
       cancel();
       return;
     }
-    // The CLI runs what it queued in the order sent: those ahead are taken
-    // back, and sent again after it.
+    // The CLI takes up all it queued as one turn, in the order sent: the
+    // others are taken back too, and sent again after it, held until it is
+    // taken up. Those held first, for none to be given the CLI meanwhile.
+    final order = [turnId, ...others];
     unawaited(() async {
-      final taken = [
-        for (final id in [turnId, ...ahead])
+      final taken = {
+        for (final id in [
+          ...order.where(_held.containsKey),
+          ...order.where((id) => !_held.containsKey(id)),
+        ])
           if (await cancelQueued(id)) id,
-      ];
-      for (final id in taken) {
+      };
+      for (final id in order.where(taken.contains)) {
         final turn = _sent[id]!;
         send(
           KernelTurn(
@@ -1047,7 +1303,6 @@ class ClaudeCodeKernel
           if (url != null && url.isNotEmpty) unawaited(_openLink(url));
           return {'action': 'accept'};
         }(),
-        PlanAnswer() => {'action': 'cancel'},
       });
       return;
     }
@@ -1074,14 +1329,6 @@ class ClaudeCodeKernel
           },
         },
       },
-      PlanAnswer(decision: PlanDecision.approve) => allow(
-        rules: [_setMode(_startBuilding())],
-      ),
-      PlanAnswer(:final feedback) => deny(
-        feedback == null || feedback.trim().isEmpty
-            ? 'The user wants to keep planning. Do not start yet.'
-            : 'The user wants to keep planning: $feedback',
-      ),
       ApprovalAnswer(decision: ApprovalDecision.allowOnce) => allow(),
       ApprovalAnswer(decision: ApprovalDecision.allowAlways) => allow(
         rules: permission.suggestions,
@@ -1094,21 +1341,6 @@ class ClaudeCodeKernel
     });
   }
 
-  /// Out of Plan, into Agent with the approvals picked: the mode the CLI
-  /// goes on in.
-  String _startBuilding() {
-    _work = 'agent';
-    _cliMode = _cliApproval;
-    emitInfoChanged();
-    return _cliApproval;
-  }
-
-  static Map<String, Object?> _setMode(String mode) => {
-    'type': 'setMode',
-    'mode': mode,
-    'destination': 'session',
-  };
-
   Future<void> _permission(
     String requestId,
     Map<String, Object?> request,
@@ -1116,13 +1348,21 @@ class ClaudeCodeKernel
     final tool = request['tool_name'] as String? ?? 'Tool';
     final input = (request['input'] as Map?)?.cast<String, Object?>() ?? {};
     final suggestions = request['permission_suggestions'] as List? ?? const [];
+    // The plan is put to the user without waiting on them: its card
+    // awaits, the turn ends, and their next message starts it (see
+    // startBuilding) or says what should change. The CLI stays in Plan.
+    if (tool == 'ExitPlanMode') {
+      _control!.respond(requestId, {
+        'behavior': 'deny',
+        'message': ClaudeTranslator.planPresented,
+      });
+      return;
+    }
     // Answered here, with nothing shown: in Don't ask nothing that is not
     // pre-approved is asked about (the CLI asks in Plan all the same). A
-    // question and a plan are always the user's to answer, in any mode:
-    // the approvals are about what the agent does, not what it asks.
-    if (_approval == 'dontAsk' &&
-        tool != 'AskUserQuestion' &&
-        tool != 'ExitPlanMode') {
+    // question is always the user's to answer, in any mode: the approvals
+    // are about what the agent does, not what it asks.
+    if (_approval == 'dontAsk' && tool != 'AskUserQuestion') {
       _control!.respond(requestId, {'behavior': 'deny', 'message': _notAsked});
       return;
     }
@@ -1134,7 +1374,6 @@ class ClaudeCodeKernel
     if (_approval == 'bypassPermissions' &&
         (_work != 'plan' || !_classifies) &&
         tool != 'AskUserQuestion' &&
-        tool != 'ExitPlanMode' &&
         !_askedInFullAccess(request)) {
       _control!.respond(requestId, {
         'behavior': 'allow',
@@ -1172,29 +1411,6 @@ class ClaudeCodeKernel
                   ],
                 ),
           ],
-        );
-      case 'ExitPlanMode':
-        var plan = input['plan'] as String?;
-        if (plan == null) {
-          try {
-            plan = (await _control!.request('get_plan'))['content'] as String?;
-          } on Object {
-            plan = null;
-          }
-        }
-        final approvals = _approvals
-            .where((a) => a.id == _approval)
-            .firstOrNull;
-        interaction = PlanReviewRequest(
-          id: requestId,
-          title: 'Ready to code?',
-          plan: plan ?? '(The plan could not be read.)',
-          planPath: _translator.planPath,
-          approvals: approvals,
-          approveLabel: switch (approvals) {
-            final approvals? => 'Yes, start · ${approvals.label}',
-            null => 'Yes, start building',
-          },
         );
       default:
         interaction = ApprovalRequest(
@@ -1380,7 +1596,11 @@ class ClaudeCodeKernel
         _lifecycle(message);
       case 'prompt_suggestion':
         final suggestion = (message['suggestion'] as String?)?.trim();
-        if (_turn == null && _queued.isEmpty && suggestion != _suggestion) {
+        // One turned off since the process started is not offered.
+        if (_turn == null &&
+            _queued.isEmpty &&
+            suggestion != _suggestion &&
+            PromptSuggestions.current()) {
           _suggestion = suggestion == null || suggestion.isEmpty
               ? null
               : suggestion;
@@ -1418,7 +1638,11 @@ class ClaudeCodeKernel
     }
     final response = await ClaudeSdkTools.handle(
       message,
-      ClaudeSdkCall(cwd: _cwd, sessionId: _sessionId),
+      ClaudeSdkCall(
+        cwd: _cwd,
+        sessionId: _sessionId,
+        cancelled: _sdkCallsCancelled.future,
+      ),
     );
     _control?.respond(id, {'mcp_response': response});
   }
@@ -1483,8 +1707,10 @@ class ClaudeCodeKernel
             !_stoppedTurns.contains(id)) {
           _beginTurn(id);
         }
+        _release();
       case 'cancelled':
         if (_queued.remove(id)) emit(ItemRemoved(nextSeq, id));
+        _release();
     }
   }
 
@@ -1970,6 +2196,7 @@ class ClaudeCodeKernel
       emit(ItemRemoved(nextSeq, id));
     }
     _queued.clear();
+    _held.clear();
     _translator.endTasks();
     if (_disposed) return;
     if (code == 0 && wasReady) {
@@ -2042,12 +2269,16 @@ class ClaudeCodeKernel
 
   // --- History ------------------------------------------------------------------------
 
-  Future<void> _replay(ClaudeHistoryReader read, SessionRecord session) async {
+  Future<void> _replay(ClaudeHistoryPager read, SessionRecord session) async {
+    // Read in the constructor, before anyone listens: seen when asked.
+    _loadingHistory = true;
     try {
-      final lines = await read(session);
+      final page = await read(session, turns: _firstTurns);
+      _earlier = page.earlier;
+      _readInTurn = _beginsInTurn(page);
       _translator.replaying = true;
       var counted = false;
-      for (final line in lines) {
+      for (final line in page.entries) {
         if (line['type'] == 'assistant') counted |= _countRequest(line);
         _translator.translate(line);
       }
@@ -2063,6 +2294,56 @@ class ClaudeCodeKernel
       );
     } finally {
       _translator.replaying = false;
+      _loadingHistory = false;
+      if (!_disposed) emitInfoChanged();
+    }
+  }
+
+  @override
+  Future<void> loadEarlier() {
+    if (_earlier == null || _disposed) return Future.value();
+    return _earlierLoad ??= _readEarlier().whenComplete(() {
+      _earlierLoad = null;
+      if (!_disposed) emitInfoChanged();
+    });
+  }
+
+  Future<void> _readEarlier() async {
+    emitInfoChanged();
+    try {
+      final page = await _pager!(
+        _context.resume!,
+        turns: _earlierTurns,
+        before: _earlier,
+      );
+      if (_disposed) return;
+      // Told apart from the live one: it only gathers the items, and its
+      // events never reach the stream.
+      var seq = 0;
+      final items = Transcript();
+      final translator = ClaudeTranslator(
+        emit: items.apply,
+        nextSeq: () => ++seq,
+      )..replaying = true;
+      var counted = false;
+      for (final line in page.entries) {
+        if (line['type'] == 'assistant') counted |= _countRequest(line);
+        translator.translate(line);
+      }
+      if (!_readInTurn) translator.endPage();
+      if (counted) _reportStats();
+      _earlier = page.earlier;
+      _readInTurn = _beginsInTurn(page);
+      emit(HistoryPrepended(nextSeq, [...items.liveItems]));
+    } on Object catch (error) {
+      if (_disposed) return;
+      emit(
+        ItemUpserted(
+          nextSeq,
+          'history-error',
+          NoticeItem(NoticeKind.error, 'Could not read earlier: $error'),
+        ),
+      );
     }
   }
 
@@ -2072,12 +2353,17 @@ class ClaudeCodeKernel
     // Claude Code's own models are those it lists set up as the user has
     // it: one on a provider lists what the provider's names stand in for.
     final own = _launchedProvider.isEmpty;
+    final listed = [
+      for (final raw in response['models'] as List? ?? const [])
+        if (raw is Map) raw.cast<Object?, Object?>(),
+    ];
+    if (own) _keepModels(listed);
     _catalog = _lastCatalog = _catalog.copyWith(
       commands: _commandsFrom(response['commands']),
       models: own
           ? [
-              for (final raw in response['models'] as List? ?? const [])
-                if (raw is Map) _ModelInfo.from(raw.cast<String, Object?>()),
+              for (final raw in listed)
+                _ModelInfo.from(raw.cast<String, Object?>()),
             ]
           : _lastCatalog.models,
     );
@@ -2287,7 +2573,14 @@ class ClaudeCodeKernel
       _change([
         (
           'set_model',
-          {'model': requestedModel(provider, info, effort: effort)},
+          {
+            'model': requestedModel(
+              provider,
+              info,
+              effort: effort,
+              fast: _pickedFast[id] ?? false,
+            ),
+          },
         ),
         if (!provider.protocol.proxied) ?_thinkingSettings(effort),
       ]);
@@ -2324,13 +2617,18 @@ class ClaudeCodeKernel
   /// Each name [provider]'s models are asked for by, with each effort
   /// through the proxy.
   static List<String> _requestedModels(ModelProvider provider) => {
-    for (final info in provider.models)
-      if (info.enabled) ...[
-        requestedModel(provider, info),
-        if (provider.protocol.proxied)
-          for (final effort in info.effortLevels)
-            requestedModel(provider, info, effort: effort),
+    for (final info in provider.enabledModels) ...[
+      requestedModel(provider, info),
+      if (provider.protocol.proxied)
+        for (final effort in info.effortLevels)
+          requestedModel(provider, info, effort: effort),
+      if (provider.protocol == ProviderProtocol.openaiResponses ||
+          provider.protocol == ProviderProtocol.codex) ...[
+        requestedModel(provider, info, fast: true),
+        for (final effort in info.effortLevels)
+          requestedModel(provider, info, effort: effort, fast: true),
       ],
+    ],
   }.toList();
 
   /// The efforts Claude Code itself takes (`--effort`, `effortLevel`).
@@ -2378,24 +2676,22 @@ class ClaudeCodeKernel
   @override
   late final KernelChoiceSource model = _Choice(
     options: () {
-      final current = _custom;
       final providers = _providers.enabled;
       return [
-        // Hidden only with a provider's models to pick instead.
-        if (!_providers.builtinHidden || providers.isEmpty || current == null)
-          if (_models.isEmpty) ...[
-            // Its models not known (it is not logged in, or has not
-            // started): left out for a provider's, unless in use.
-            if (providers.isEmpty || current == null)
-              KernelOption(
-                'default',
-                'Default',
-                Icons.bolt_rounded,
-                '',
-                group: _builtinGroup,
-                iconBuilder: _modelIcon(builtinProviderId, 'default'),
-              ),
-          ] else
+        // Shown unless turned off in Settings → Models.
+        if (!_providers.builtinHidden)
+          if (_models.isEmpty)
+            // Its models not known (it is not logged in, or no session has
+            // started on it yet): picking this starts one, which lists them.
+            KernelOption(
+              'default',
+              'Default',
+              Icons.bolt_rounded,
+              '',
+              group: _builtinGroup,
+              iconBuilder: _modelIcon(builtinProviderId, 'default'),
+            )
+          else
             for (final MapEntry(key: id, value: variants) in _models.entries)
               KernelOption(
                 id,
@@ -2759,7 +3055,17 @@ class ClaudeCodeKernel
         // to Anthropic's API, as Claude Code's own setting.
         _change([
           if (provider.protocol.proxied)
-            ('set_model', {'model': requestedModel(provider, info, effort: id)})
+            (
+              'set_model',
+              {
+                'model': requestedModel(
+                  provider,
+                  info,
+                  effort: id,
+                  fast: _pickedFast[model] ?? false,
+                ),
+              },
+            )
           else
             ?_thinkingSettings(id),
         ]);
@@ -2777,6 +3083,44 @@ class ClaudeCodeKernel
           },
         ),
       ]);
+    },
+  );
+
+  @override
+  late final ModelSetting fast = _ModelSetting(
+    toggle: true,
+    optionsFor: (model) => switch (_providers.resolve(model)) {
+      (final provider, _)
+          when provider.protocol == ProviderProtocol.openaiResponses ||
+              provider.protocol == ProviderProtocol.codex =>
+        const [KernelOption('fast', 'Fast', Icons.bolt_rounded, '')],
+      _ => const [],
+    },
+    selected: () => _pickedFast[_model] == true ? 'fast' : 'standard',
+    selectedFor: (model) => _pickedFast[model] == true ? 'fast' : 'standard',
+    select: (model, id) {
+      if (id != 'fast' || fast.optionsFor(model).isEmpty) return;
+      if (model != this.model.selected) _keepModelSettings();
+      _pickedFast[model] = _pickedFast[model] != true;
+      if (_providers.resolve(model) case (final provider, final info)) {
+        if (model != _model || _providerKeyOf(model) != _launchedProvider) {
+          _selectModel(model, keep: false);
+        } else {
+          _change([
+            (
+              'set_model',
+              {
+                'model': requestedModel(
+                  provider,
+                  info,
+                  effort: _effortFor(info),
+                  fast: _pickedFast[model]!,
+                ),
+              },
+            ),
+          ]);
+        }
+      }
     },
   );
 
@@ -2904,12 +3248,16 @@ class _ModelSetting implements ModelSetting {
     required this._selected,
     required this._selectedFor,
     required this._select,
+    this.toggle = false,
   });
 
   final List<KernelOption> Function(String model) _optionsFor;
   final String? Function() _selected;
   final String? Function(String model) _selectedFor;
   final void Function(String model, String id) _select;
+
+  @override
+  final bool toggle;
 
   @override
   List<KernelOption> optionsFor(String model) => _optionsFor(model);

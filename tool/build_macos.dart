@@ -58,6 +58,9 @@ const _architectures = {'arm64': 'arm64', 'x86_64': 'x64'};
 /// Where the remote server is built (tool/build_remote_server.dart).
 const _remoteRelative = 'build/remote';
 
+/// The browser's native messaging host, beside the app's executable.
+const _browserHost = 'baocode-browser-host';
+
 /// What has to be in the .app for it to start. As on Windows, a build that
 /// failed late still leaves an .app behind that looks complete — these are
 /// what tell the difference.
@@ -72,6 +75,8 @@ const _required = [
   // Finder's context menu (macos/FinderExtension), which Settings → General
   // turns on.
   'Contents/PlugIns/FinderExtension.appex',
+  // What Chrome runs for BaoCode's extension (macos/BrowserBridge).
+  'Contents/MacOS/$_browserHost',
   // The server remote projects run on their host (Linux and macOS, x64 and
   // arm64; tool/build_remote_server.dart): which build, and where it is
   // downloaded from.
@@ -299,8 +304,9 @@ class _Signing {
 
   final ({String key, String keyId, String issuer})? notary;
 
-  /// Signs the .app inside out: its frameworks, then the Finder extension,
-  /// then the app around them ([sign] says with what).
+  /// Signs the .app inside out: its frameworks, the browser's host, then the
+  /// Finder extension, then the app around them ([sign] says with what). The
+  /// host's own signature, Xcode's ad hoc, would not be notarised.
   ///
   /// Not `codesign --deep`: it would give the Finder extension the app's
   /// entitlements, sandbox off, and the system refuses to load an extension
@@ -322,6 +328,7 @@ class _Signing {
         await sign(entry.path);
       }
     }
+    await sign('${app.path}/Contents/MacOS/$_browserHost');
     await sign(
       '${app.path}/Contents/PlugIns/FinderExtension.appex',
       entitlements: 'macos/FinderExtension/FinderExtension.entitlements',
@@ -427,10 +434,11 @@ String _bundleRemote(Directory remote, Directory target) {
   );
 }
 
-/// The executables in [app]: its own, the Finder extension's, and each
-/// framework's.
+/// The executables in [app]: its own, the browser's host, the Finder
+/// extension's, and each framework's.
 List<String> _executables(Directory app) => [
   '${app.path}/Contents/MacOS/BaoCode',
+  '${app.path}/Contents/MacOS/$_browserHost',
   '${app.path}/Contents/PlugIns/FinderExtension.appex/Contents/MacOS/'
       'FinderExtension',
   // A framework's executable is named as the framework: X.framework/X.

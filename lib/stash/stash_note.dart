@@ -11,10 +11,11 @@ enum StashStatus {
   /// A "需求" section was written after it ([StashNote.requirementHeading]).
   requirement,
 
-  /// A conversation was started on it, its first message sent.
+  /// A message sent in a conversation named it ([StashNote.threads]).
   implementing,
 
-  /// The work is over: the agent said so ([stash_complete]), or the user.
+  /// The work is over: the agent said so (in its file, as the Stash skill
+  /// has it do), or the user.
   done;
 
   static StashStatus parse(Object? value) =>
@@ -72,50 +73,158 @@ class StashSource {
   int get hashCode => Object.hash(project, branch, thread);
 }
 
-/// The conversation a stash is being (or was) carried out in.
+/// A conversation a stash is carried out in: one a message sent in named
+/// it (`[Stash #12]`), as BaoCode last saw it (see `StashThreads`).
 @immutable
 class StashThreadLink {
-  const StashThreadLink({required this.project, this.session, this.title});
+  const StashThreadLink({
+    required this.session,
+    required this.project,
+    this.title,
+    this.said,
+    this.at,
+  });
+
+  /// Its session's id.
+  final String session;
 
   /// The project's path it runs in.
   final String project;
 
-  /// Its session's id, once it has one (the first message sent).
-  final String? session;
-
   /// As it was titled when last seen.
   final String? title;
 
+  /// The start of what the agent last said, on one line.
+  final String? said;
+
+  /// When its last turn ended.
+  final DateTime? at;
+
   Map<String, Object?> toJson() => {
+    'session': session,
     'project': project,
-    'session': ?session,
     'title': ?title,
+    'said': ?said,
+    'at': ?at?.toIso8601String(),
   };
 
   static StashThreadLink? fromJson(Object? json) => switch (json) {
-    {'project': final String project} => StashThreadLink(
-      project: project,
-      session: json['session'] as String?,
-      title: json['title'] as String?,
-    ),
+    {'session': final String session, 'project': final String project}
+        when session.isNotEmpty =>
+      StashThreadLink(
+        session: session,
+        project: project,
+        title: json['title'] as String?,
+        said: json['said'] as String?,
+        at: switch (json['at']) {
+          final String at => DateTime.tryParse(at),
+          _ => null,
+        },
+      ),
     _ => null,
   };
 
-  StashThreadLink copyWith({String? session, String? title}) => StashThreadLink(
-    project: project,
-    session: session ?? this.session,
-    title: title ?? this.title,
-  );
+  StashThreadLink copyWith({String? title, String? said, DateTime? at}) =>
+      StashThreadLink(
+        session: session,
+        project: project,
+        title: title ?? this.title,
+        said: said ?? this.said,
+        at: at ?? this.at,
+      );
 
   @override
   bool operator ==(Object other) =>
       other is StashThreadLink &&
-      other.project == project &&
       other.session == session &&
-      other.title == title;
+      other.project == project &&
+      other.title == title &&
+      other.said == said &&
+      other.at == at;
 
   @override
-  int get hashCode => Object.hash(project, session, title);
+  int get hashCode => Object.hash(session, project, title, said, at);
+}
+
+/// An issue or pull request a stash is about (linked in its text, or
+/// imported from), or that carries it out (opened in one of its
+/// conversations, [session]): its page, and how it was when last seen.
+@immutable
+class StashIssueLink {
+  const StashIssueLink({
+    required this.url,
+    this.title,
+    this.state,
+    this.checks,
+    this.session,
+    this.answered = false,
+  });
+
+  /// Its page: `https://github.com/o/r/issues/3`.
+  final String url;
+  final String? title;
+
+  /// `open`, `draft`, `closed` or `merged` (a ForgeState's name).
+  final String? state;
+
+  /// A pull request's checks: `pending`, `success` or `failure`.
+  final String? checks;
+
+  /// The conversation it was opened in.
+  final String? session;
+
+  /// What its state asked of the user (closed: mark the stash done; still
+  /// open, the stash done: say so there) was answered.
+  final bool answered;
+
+  Map<String, Object?> toJson() => {
+    'url': url,
+    'title': ?title,
+    'state': ?state,
+    'checks': ?checks,
+    'session': ?session,
+    if (answered) 'answered': true,
+  };
+
+  static StashIssueLink? fromJson(Object? json) => switch (json) {
+    {'url': final String url} when url.isNotEmpty => StashIssueLink(
+      url: url,
+      title: json['title'] as String?,
+      state: json['state'] as String?,
+      checks: json['checks'] as String?,
+      session: json['session'] as String?,
+      answered: json['answered'] == true,
+    ),
+    _ => null,
+  };
+
+  StashIssueLink copyWith({
+    String? title,
+    String? state,
+    String? checks,
+    String? session,
+    bool? answered,
+  }) => StashIssueLink(
+    url: url,
+    title: title ?? this.title,
+    state: state ?? this.state,
+    checks: checks ?? this.checks,
+    session: session ?? this.session,
+    answered: answered ?? this.answered,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is StashIssueLink &&
+      other.url == url &&
+      other.title == title &&
+      other.state == state &&
+      other.checks == checks &&
+      other.session == session &&
+      other.answered == answered;
+
+  @override
+  int get hashCode => Object.hash(url, title, state, checks, session, answered);
 }
 
 /// One stash: a markdown file, `<id>.md`, its pictures and files in the
@@ -131,10 +240,13 @@ class StashNote {
     this.status = StashStatus.collected,
     this.pinned = false,
     this.project,
-    this.thread,
+    List<StashThreadLink>? threads,
+    List<StashIssueLink>? issues,
     this.source = StashSource.none,
     this.suggestedProject,
-  }) : updated = updated ?? created;
+  }) : updated = updated ?? created,
+       threads = threads ?? [],
+       issues = issues ?? [];
 
   /// Its number, `#12`: never given to another, even once it is gone.
   final int id;
@@ -153,8 +265,19 @@ class StashNote {
   /// The project (its path) it is about, if it was said.
   String? project;
 
-  /// Where it is carried out.
-  StashThreadLink? thread;
+  /// The conversations it is carried out in, the first linked first.
+  List<StashThreadLink> threads;
+
+  /// The issues and pull requests it is about or carried out in.
+  List<StashIssueLink> issues;
+
+  /// [url]'s link, if it is one of [issues].
+  StashIssueLink? issueOf(String url) =>
+      issues.where((link) => link.url == url).firstOrNull;
+
+  /// [session]'s link, if it is one of [threads].
+  StashThreadLink? threadOf(String session) =>
+      threads.where((link) => link.session == session).firstOrNull;
 
   final StashSource source;
 
@@ -243,7 +366,8 @@ class StashNote {
     status: status,
     pinned: pinned,
     project: project,
-    thread: thread,
+    threads: [...threads],
+    issues: [...issues],
     source: source,
     suggestedProject: suggestedProject,
   );
@@ -260,7 +384,10 @@ class StashNote {
       'status': status.name,
       if (pinned) 'pinned': true,
       'project': ?project,
-      if (thread case final thread?) 'thread': thread.toJson(),
+      if (threads.isNotEmpty)
+        'threads': [for (final link in threads) link.toJson()],
+      if (issues.isNotEmpty)
+        'issues': [for (final link in issues) link.toJson()],
       if (!source.isEmpty) 'source': source.toJson(),
       'suggestedProject': ?suggestedProject,
     };
@@ -291,7 +418,21 @@ class StashNote {
       status: StashStatus.parse(meta['status']),
       pinned: meta['pinned'] == true,
       project: meta['project'] as String?,
-      thread: StashThreadLink.fromJson(meta['thread']),
+      threads: [
+        // One alone, as it was kept before there could be more.
+        for (final json in switch (meta['threads']) {
+          final List<Object?> list => list,
+          _ => [meta['thread']],
+        })
+          ?StashThreadLink.fromJson(json),
+      ],
+      issues: [
+        for (final json in switch (meta['issues']) {
+          final List<Object?> list => list,
+          _ => const <Object?>[],
+        })
+          ?StashIssueLink.fromJson(json),
+      ],
       source: StashSource.fromJson(meta['source']),
       suggestedProject: meta['suggestedProject'] as String?,
     );

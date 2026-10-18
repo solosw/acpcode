@@ -299,7 +299,8 @@ void main() {
     expect(fadesShown(), [false, true]);
   });
 
-  testWidgets('mouse wheel scrolls the history faster than 1:1', (
+  testWidgets('a mouse wheel scrolls the history as far as it says, as '
+      'Chrome does', (
     tester,
   ) async {
     await tester.pumpWidget(BaoCodeApp(workspace: Workspace.mock()));
@@ -317,8 +318,9 @@ void main() {
     pointer.hover(tester.getCenter(list));
     await tester.sendEventToBinding(pointer.scroll(const Offset(0, -40)));
     await tester.pump();
-    // Faster than the raw 40px delta (the exact factor is a tuning knob).
-    expect(marker.localToGlobal(Offset.zero).dy - before, greaterThan(40));
+    // The wheel's notches eased out (120 ms).
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(marker.localToGlobal(Offset.zero).dy - before, closeTo(40, 0.5));
   });
 
   testWidgets('a trackpad swipe up does not snap back to the bottom', (
@@ -498,10 +500,13 @@ void main() {
     await tester.pump();
     final wheel = TestPointer(2, PointerDeviceKind.mouse);
     wheel.hover(middle);
-    for (var i = 0; i < 40; i++) {
+    // As far up as a wheel goes in ninety notches of 40.
+    for (var i = 0; i < 90; i++) {
       await tester.sendEventToBinding(wheel.scroll(const Offset(0, -40)));
       await tester.pump(const Duration(milliseconds: 16));
     }
+    // The wheel's notches eased out (120 ms).
+    await tester.pump(const Duration(milliseconds: 200));
     // End on a line of the list's own text, clear of the user message
     // stuck at its top (a point over that copy is a case of its own).
     final end = middle + const Offset(0, 150);
@@ -606,6 +611,8 @@ void main() {
           await tester.sendEventToBinding(wheel.scroll(const Offset(0, -60)));
           await tester.pump(const Duration(milliseconds: 16));
         }
+        // The wheel's notches eased out (120 ms).
+        await tester.pump(const Duration(milliseconds: 200));
         // A terminal line on screen (cached items above are built too);
         // scroll on until one is.
         final visible = tester.getRect(find.byType(SuperListView));
@@ -618,7 +625,8 @@ void main() {
             .firstOrNull;
         while (onScreen() == null) {
           await tester.sendEventToBinding(wheel.scroll(const Offset(0, -60)));
-          await tester.pump(const Duration(milliseconds: 16));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 200));
         }
         final targetBox = onScreen()!;
         final targetTopLeft = topLeftOf(targetBox);

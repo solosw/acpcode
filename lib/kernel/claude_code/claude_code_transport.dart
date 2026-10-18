@@ -3,7 +3,8 @@ import 'dart:convert';
 import '../../models/launch_environment.dart';
 import '../commit_attribution.dart';
 
-export 'package:bao_remote/claude.dart' show ClaudeUnavailable;
+export 'package:bao_remote/claude.dart'
+    show ClaudeFolderGone, ClaudeUnavailable;
 
 /// Claude Code's side of the adapter (the Adaptee): the messages of
 /// `claude -p --input-format stream-json --output-format stream-json`, one
@@ -62,7 +63,12 @@ class ClaudeLaunch {
     this.instructions,
     this.models = const [],
     this.sdkServers = const [],
+    this.promptSuggestions = true,
   });
+
+  /// Whether it suggests the next prompt after each turn
+  /// (`--prompt-suggestions`), each a request of its own.
+  final bool promptSuggestions;
 
   /// Folders it may read without asking, its tools' work outside them
   /// aside: where the long pastes it is told of are kept (PasteStore).
@@ -164,6 +170,7 @@ class ClaudeLaunch {
     readable: readable,
     instructions: instructions,
     models: models,
+    promptSuggestions: promptSuggestions,
   );
 
   Map<String, String>? get _attribution => switch (attribution) {
@@ -201,13 +208,17 @@ class ClaudeLaunch {
   /// The permission rule that lets it read what is in [folder] (absolute):
   /// `Read(//Users/me/x/**)`, a Windows path as Claude Code matches it
   /// (`C:\\x` as `/c/x`).
-  static String readRule(String folder) {
+  static String readRule(String folder) => folderRule('Read', folder);
+
+  /// The permission rule for [tool] (`Read`, `Edit`) on what is in
+  /// [folder] (absolute), as [readRule]'s.
+  static String folderRule(String tool, String folder) {
     var path = folder.replaceAll(r'\', '/');
     if (RegExp(r'^[A-Za-z]:').hasMatch(path)) {
       path = '/${path[0].toLowerCase()}${path.substring(2)}';
     }
     if (path.endsWith('/')) path = path.substring(0, path.length - 1);
-    return 'Read(/$path/**)';
+    return '$tool(/$path/**)';
   }
 
   /// Has Claude Code read the `CLAUDE.md` of the folders given with
@@ -236,7 +247,7 @@ class ClaudeLaunch {
     '--thinking-display',
     'summarized',
     // A prompt_suggestion message after each turn.
-    '--prompt-suggestions',
+    if (promptSuggestions) '--prompt-suggestions',
     if (permissionMode case final mode?) ...['--permission-mode', mode],
     if (model case final model? when model != 'default') ...['--model', model],
     if (effort case final effort?) ...['--effort', effort],

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:path/path.dart' as p;
 
+import '../../ide/ide_hover.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show WorkbenchThemeScope, themeColors;
@@ -12,10 +13,12 @@ import '../side_panel/file_link_menu.dart';
 import '../composer/composer_embeds.dart' show FileImageChip;
 import '../side_panel/file_open.dart';
 import 'code_citation.dart';
+import 'content_image.dart';
 import 'hover_scrollbar.dart';
 import 'inline_code.dart';
 import 'markdown_cjk.dart';
 import 'markdown_math.dart';
+import 'markdown_tags.dart';
 import 'mermaid_code_block.dart';
 
 /// GitHub-flavored markdown as plain widgets (so a surrounding
@@ -48,15 +51,16 @@ class MarkdownView extends StatefulWidget {
   ];
 
   /// A document parsing as it does; one keeps the link definitions it
-  /// read (see the IDE's markdown preview).
-  static md.Document document() => md.Document(
+  /// read (see the IDE's markdown preview). The chat's has [tags] too: a
+  /// block between tags as a section that folds ([TagBlockSyntax]).
+  static md.Document document({bool tags = false}) => md.Document(
     extensionSet: md.ExtensionSet.gitHubFlavored,
-    blockSyntaxes: blockSyntaxes,
+    blockSyntaxes: [...blockSyntaxes, if (tags) const TagBlockSyntax()],
     inlineSyntaxes: inlineSyntaxes,
     encodeHtml: false,
   );
 
-  static final _document = document();
+  static final _document = document(tags: true);
 
   @override
   State<MarkdownView> createState() => _MarkdownViewState();
@@ -106,6 +110,10 @@ class _MarkdownViewState extends State<MarkdownView> {
           : FileIcon(path, size: _fileIconSize);
     }
 
+    // The message's image files, for a click on one to go through them.
+    late final gallery = [
+      for (final src in _imageSources(nodes)) ?markdownImagePath(src, files),
+    ];
     final options = MarkdownOptions(
       link: (href) =>
           _linkRecognizer(href) ?? files.linkRecognizer(href, context: context),
@@ -128,6 +136,17 @@ class _MarkdownViewState extends State<MarkdownView> {
           textStyle: style ?? baseStyle,
         );
       },
+      // An image file as it is; the others of the message a click away.
+      image: (src, alt, title, {width, height}) {
+        final path = markdownImagePath(src, files);
+        if (path == null) return _imageLink(src, alt);
+        return MarkdownImage(
+          path: path,
+          alt: alt,
+          files: files,
+          gallery: gallery,
+        );
+      },
     );
     Widget blocks(BuildContext context) => MarkdownBlocks(
       nodes: nodes,
@@ -141,6 +160,39 @@ class _MarkdownViewState extends State<MarkdownView> {
       builder: (context, _) => blocks(context),
     );
   }
+}
+
+/// The `src` of each image in [nodes], in the order they come.
+List<String> _imageSources(List<md.Node> nodes) {
+  final sources = <String>[];
+  void visit(md.Node node) {
+    if (node is! md.Element) return;
+    if (node.tag == 'img') sources.add(_unescape(node.attributes['src'] ?? ''));
+    node.children?.forEach(visit);
+  }
+
+  nodes.forEach(visit);
+  return sources;
+}
+
+/// An image the chat does not show (one on the web: its address could
+/// tell a server what the agent read): its alt text, a link to it.
+Widget _imageLink(String src, String alt) {
+  final label = '[${alt.isEmpty ? 'image' : alt}]';
+  final recognizer = _linkRecognizer(src);
+  if (recognizer is! TapGestureRecognizer) {
+    return Text(label, style: TextStyle(color: AppColors.textMuted));
+  }
+  return MouseRegion(
+    cursor: SystemMouseCursors.click,
+    child: GestureDetector(
+      onTap: recognizer.onTap,
+      child: IdeHover(
+        message: src,
+        child: Text(label, style: TextStyle(color: AppColors.accent)),
+      ),
+    ),
+  );
 }
 
 /// How [MarkdownBlocks] draws and what its links, images and task boxes
@@ -316,19 +368,12 @@ Widget? _block(md.Node node, TextStyle style, MarkdownOptions options) {
         language: name == null || name.isEmpty ? null : name,
       );
     case 'blockquote':
-      return Container(
-        padding: const EdgeInsets.only(left: 12),
-        decoration: BoxDecoration(
-          color: themeColors['textBlockQuote.background'],
-          border: Border(
-            left: BorderSide(
-              color: themeColors['textBlockQuote.border'],
-              width: 3,
-            ),
-          ),
-        ),
+      final children = node.children ?? const <md.Node>[];
+      return MarkdownQuoteBlock(
+        // Its paragraphs' text, as they read.
+        text: children.map((child) => child.textContent).join('\n\n'),
         child: MarkdownBlocks(
-          nodes: node.children ?? const [],
+          nodes: children,
           style: style.copyWith(color: AppColors.textMuted),
           options: options,
         ),
@@ -345,6 +390,8 @@ Widget? _block(md.Node node, TextStyle style, MarkdownOptions options) {
       );
     case 'table':
       return _Table(node: node, style: style, options: options);
+    case TagBlockSyntax.tag:
+      return TagSection(node: node, style: style, options: options);
     default:
       return InlineCodeText(_inlines([node], style, options));
   }

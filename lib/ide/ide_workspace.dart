@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show TextSelection;
 import 'package:path/path.dart' as p;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
@@ -8,11 +9,13 @@ import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'file_service.dart';
 import 'file_views.dart';
 import 'git/git_repository.dart';
+import 'git/scm_host.dart';
 import 'git/repository_scan.dart';
 import 'ide_layout.dart';
 import 'ide_notifications.dart';
 import 'lsp/language_features.dart';
 import 'lsp/lsp_protocol.dart';
+import 'search/ide_search_view.dart' show IdeSearchReplaceBackend;
 
 /// The original side of a diff tab: text at a revision, read again when
 /// the repository changes (VS Code's `git:` documents).
@@ -178,6 +181,11 @@ class IdeDocument {
   /// makes the file again (VS Code's orphaned editors).
   bool deleted = false;
 
+  /// Where its carets were when its editor was last let go (a preview, an
+  /// image or a placeholder shown in its place): given back when it is
+  /// shown again, as upstream keeps an editor's view state.
+  List<TextSelection>? selections;
+
   /// Tells the tab apart from [path]'s others.
   String get key => label == null ? path : '$path\u0000$label';
 
@@ -205,7 +213,8 @@ class IdeDocument {
 }
 
 /// Open files belong to the IDE pane, not to any one agent conversation.
-class IdeWorkspace extends ChangeNotifier {
+class IdeWorkspace extends ChangeNotifier
+    implements IdeSearchReplaceBackend, IdeScmHost {
   IdeWorkspace(
     this.root, {
     IdeFileService? files,
@@ -235,6 +244,7 @@ class IdeWorkspace extends ChangeNotifier {
 
   /// The project's folder; a multi-folder workspace's own (empty) folder
   /// when it has [roots].
+  @override
   final String root;
 
   /// Path syntax of the project's host, with relative paths based at [root]
@@ -341,6 +351,7 @@ class IdeWorkspace extends ChangeNotifier {
   /// one folder's, its own and those found in its subfolders, when there
   /// are any (none otherwise: [git] is its one). A folder that is not a
   /// repository is left out when ones were found in it.
+  @override
   List<(String root, IdeGitRepository git)> get repositories => [
     for (final folder in isMultiRoot ? _roots : [root])
       if (isMultiRoot || (_found[folder]?.isNotEmpty ?? false))
@@ -353,8 +364,27 @@ class IdeWorkspace extends ChangeNotifier {
 
   IdeGitRepository? _activeRepository;
 
-  /// The repository Source Control, the status bar and the timeline show:
+  /// Repositories whose groups are folded in CHANGES, by root (#76).
+  @override
+  final Set<String> scmCollapsedRepositories = {};
+
+  /// Appends [lines] to the file at [path]: in its editor, saved, when it
+  /// is open; else on disk.
+  @override
+  Future<void> appendLines(String path, String lines) async {
+    final normalized = paths.normalize(path);
+    final doc = _documents.where((d) => d.path == normalized).firstOrNull;
+    if (doc == null || doc.openError != null) {
+      await ideAppendLinesToFile(files, path, lines);
+      return;
+    }
+    edit(doc.path, ideAppendLines(doc.text, lines));
+    await save(doc);
+  }
+
+  /// The repository SCm, the status bar and the timeline show:
   /// the one picked of a workspace's (its first until one is).
+  @override
   void selectRepository(IdeGitRepository repository) {
     if (identical(repository, _activeRepository)) return;
     _activeRepository = repository;
@@ -408,6 +438,8 @@ class IdeWorkspace extends ChangeNotifier {
   /// empty window, [root] then the home folder), there is no explorer
   /// tree, and Search and Quick Open cover the open files alone.
   final bool hasFolder;
+
+  @override
   final IdeFileService files;
 
   /// Language servers for this workspace's documents; null for none.
@@ -421,11 +453,17 @@ class IdeWorkspace extends ChangeNotifier {
   /// Control and the timeline; null for none. Disposed with the workspace.
   /// A multi-folder workspace's is the one picked of its [repositories], as
   /// is a folder's with repositories in its subfolders.
+  @override
   IdeGitRepository? get git =>
       isMultiRoot || (_found[root]?.isNotEmpty ?? false)
       ? _activeRepository ?? repositories.firstOrNull?.$2
       : _git;
   final IdeGitRepository? _git;
+
+  /// Tells the project's Git its files changed, after a search replaced
+  /// some ([IdeSearchReplaceBackend.refreshGit]).
+  @override
+  void refreshGit() => git?.scheduleRefresh();
 
   LanguageDocumentSync? get _sync => switch (languages) {
     final LanguageDocumentSync sync => sync,
@@ -460,6 +498,7 @@ class IdeWorkspace extends ChangeNotifier {
   int _selection = 0;
   bool _disposed = false;
 
+  @override
   List<IdeDocument> get documents => List.unmodifiable(_documents);
   IdeDocument? get active =>
       _documents.where((d) => d.key == _activeKey).firstOrNull;
@@ -722,6 +761,7 @@ class IdeWorkspace extends ChangeNotifier {
   /// changed their files (a discard, an undone commit, an agent's edit), as
   /// VS Code reloads an editor whose file changed on disk. Documents with
   /// unsaved changes keep them; those whose file is gone are [deleted].
+  @override
   Future<void> reload(Iterable<String> paths) async {
     final wanted = {for (final path in paths) this.paths.normalize(path)};
     var changed = false;
@@ -841,6 +881,7 @@ class IdeWorkspace extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   void edit(String path, String text) {
     if (_disposed) return;
     final doc = _fileDocument(path);
@@ -919,13 +960,45 @@ class IdeWorkspace extends ChangeNotifier {
     LspRange? range,
     required int tabSize,
     required bool insertSpaces,
+  }) {
+    path = paths.normalize(paths.absolute(path));
+    // One of a file at a time: the servers have one text of it, lent by the
+    // one under way; the next lends its own once that is given back.
+    final previous = _formatting[path] ?? Future<void>.value();
+    final next = previous.then(
+      (_) => _formatOutside(
+        path,
+        text,
+        range: range,
+        tabSize: tabSize,
+        insertSpaces: insertSpaces,
+      ),
+    );
+    final done = next.then<void>((_) {}, onError: (Object _) {});
+    _formatting[path] = done;
+    unawaited(
+      done.whenComplete(() {
+        if (identical(_formatting[path], done)) _formatting.remove(path);
+      }),
+    );
+    return next;
+  }
+
+  /// Each file's [formatOutside] under way, the next waiting for it.
+  final Map<String, Future<void>> _formatting = {};
+
+  Future<IdeFormatOutcome> _formatOutside(
+    String path,
+    String text, {
+    LspRange? range,
+    required int tabSize,
+    required bool insertSpaces,
   }) async {
     final languages = this.languages;
     final sync = _sync;
     if (_disposed || languages == null || sync == null) {
       return const IdeFormatOutcome(null);
     }
-    path = paths.normalize(paths.absolute(path));
     final request = range == null
         ? LanguageRequest.format
         : LanguageRequest.rangeFormat;
@@ -1074,6 +1147,7 @@ class IdeWorkspace extends ChangeNotifier {
     return saved;
   }
 
+  @override
   Future<void> save(IdeDocument doc) {
     if (doc.isUntitled) return saveAs(doc);
     final text = doc.text;

@@ -53,6 +53,7 @@ import 'package:bao_editor/monaco/vs/editor/contrib/gotoError/browser/marker_nav
 
 import 'extensions/ide_extensions.dart';
 import 'extensions/ide_extensions_view.dart';
+import 'explorer_excludes.dart';
 import 'explorer_history.dart'
     show explorerRedoCommandId, explorerUndoCommandId;
 import 'file_views.dart';
@@ -65,6 +66,7 @@ import 'git/git_model.dart';
 import 'git/git_repository.dart';
 import 'git/ide_scm_view.dart';
 import 'git/ide_timeline_view.dart';
+import 'ide_agent_edits.dart';
 import 'ide_breadcrumbs.dart';
 import 'ide_button.dart';
 import 'ide_color_theme_picker.dart';
@@ -154,6 +156,7 @@ class IdeWorkbench extends StatefulWidget {
     this.onAddFolder,
     this.onRemoveFolder,
     this.recentWorkspaceOf,
+    this.agentEdits,
   });
 
   final IdeWorkspace workspace;
@@ -229,6 +232,10 @@ class IdeWorkbench extends StatefulWidget {
   /// Writes the Source Control view's commit messages (Claude Haiku; a
   /// fake in widget tests).
   final IdeCommitMessageModel commitMessage;
+
+  /// The agents' changes pending in its files, shown in the editor with
+  /// Undo and Keep by each change, and over its tabs for the file's.
+  final IdeAgentEdits? agentEdits;
 
   /// Whether the window is kept on top of other apps; [onPinnedChanged]
   /// toggles it from the title bar, as the chat's pin does.
@@ -425,7 +432,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// Servers whose install was recommended in this session.
   final Set<String> _recommended = {};
-  String _lspStatus = 'Language services';
   Position _caretPosition = const Position(1, 1);
   int _statusColumn = 1;
   int _selectionLength = 0;
@@ -652,6 +658,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     );
   }
 
+  /// The file and folder patterns the explorer leaves out
+  /// (`explorer.exclude` in settings.json; see [IdeExplorerExcludes]).
+  IdeExplorerExcludes get _excludes => IdeExplorerExcludes.parse(
+    widget.settings?[IdeExplorerExcludes.settingKey],
+  );
+
   /// Whether the editors kept are being opened again: until they are, the
   /// window is not kept, lest those not open yet be forgotten.
   bool _restoring = false;
@@ -739,6 +751,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// settings.json read again: what it says now, written here or not.
   void _settingsChanged() {
     _settingsSet.clear();
+    // The explorer's exclusions follow the file (a pattern added elsewhere
+    // shows at once).
+    _explorer.excludes = _excludes;
     // Auto save turned on (or its delay changed) saves what is unsaved.
     _scheduleAutoSave();
     setState(() {});
@@ -1028,6 +1043,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     FocusManager.instance.addLateKeyEventHandler(_onLateKey);
     KeybindingService.instance.addListener(_keybindingsChanged);
     _registerCommandKeybindings();
+    widget.agentEdits?.open = _openAgentChange;
     widget.settings?.addListener(_settingsChanged);
     widget.remote?.addListener(_remoteChanged);
     if (widget.terminalBackend.supported) {
@@ -1085,6 +1101,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       root: workspace.root,
       roots: workspace.roots,
       paths: workspace.paths,
+      excludes: _excludes,
       // Without a folder, no tree to keep current.
       watch: workspace.hasFolder
           ? workspace.watchFolder
@@ -1109,6 +1126,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     final languages = _languages = workspace.languages;
     _symbols = languages == null ? null : IdeDocumentSymbols(languages)
       ?..addListener(_symbolsChanged);
+    // A remote project's listed at once, for Quick Open not to wait on it.
+    if (workspace.hasFolder && workspace.files is IdeHostFiles) {
+      unawaited(_fileIndex.refresh());
+    }
     _quickRefresh = Listenable.merge([_fileIndex, ?_symbols]);
     languages?.addListener(_languagesChanged);
     _editRequests = languages?.workspaceEdits.listen(_applyEditRequest);
@@ -1238,6 +1259,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _editWatches.clear();
     workspace.layout.removeListener(_layoutChanged);
     _git?.removeListener(_gitChanged);
+    for (final git in _watchedRepositories) {
+      git.removeListener(_repositoryChanged);
+    }
+    _watchedRepositories.clear();
     _git = null;
     _gitState = null;
     for (final session in _scmSessions.values) {
@@ -1276,12 +1301,54 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       _gitState = state;
       if (state != null) unawaited(widget.workspace.reloadRevisions());
     }
-    final count = state?.count ?? 0;
+    // The activity bar's badge counts every repository's changes (#68); the
+    // status bar's branch, the one shown.
+    _listenToRepositories();
+    final count = _changesInAllRepositories;
     final branch = state?.head.branch;
     if (count == _gitCount && branch == _gitBranch && !loaded) return;
     _gitCount = count;
     _gitBranch = branch;
     if (mounted) setState(() {});
+  }
+
+  /// Every repository's changes, or the shown one's where the workspace is
+  /// one ([_gitCount]).
+  int get _changesInAllRepositories {
+    final repositories = widget.workspace.repositories;
+    if (repositories.length <= 1) return _git?.state?.count ?? 0;
+    return repositories.fold(
+      0,
+      (sum, repository) => sum + (repository.$2.state?.count ?? 0),
+    );
+  }
+
+  /// Follows every repository of the workspace, so a change in any of them
+  /// updates the badge (#68). The shown one is followed by [_gitChanged]'s
+  /// own listener.
+  void _listenToRepositories() {
+    final repositories = widget.workspace.repositories;
+    final current = {for (final (_, git) in repositories) git};
+    for (final git in _watchedRepositories.toList()) {
+      if (current.contains(git)) continue;
+      git.removeListener(_repositoryChanged);
+      _watchedRepositories.remove(git);
+    }
+    for (final git in current) {
+      if (_watchedRepositories.add(git)) {
+        git.addListener(_repositoryChanged);
+      }
+    }
+  }
+
+  final Set<IdeGitRepository> _watchedRepositories = {};
+
+  void _repositoryChanged() {
+    if (!mounted) return;
+    final count = _changesInAllRepositories;
+    if (count == _gitCount) return;
+    _gitCount = count;
+    setState(() {});
   }
 
   /// The status bar's bell follows them.
@@ -1340,6 +1407,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   @override
   void didUpdateWidget(IdeWorkbench oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.agentEdits, widget.agentEdits)) {
+      if (oldWidget.agentEdits?.open == _openAgentChange) {
+        oldWidget.agentEdits?.open = null;
+      }
+      widget.agentEdits?.open = _openAgentChange;
+    }
     if (!identical(oldWidget.commands, widget.commands)) {
       _registerCommandKeybindings();
     }
@@ -1367,6 +1440,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   @override
   void dispose() {
+    if (widget.agentEdits?.open == _openAgentChange) {
+      widget.agentEdits?.open = null;
+    }
     FocusManager.instance.removeEarlyKeyEventHandler(_onChordKey);
     FocusManager.instance.removeLateKeyEventHandler(_onLateKey);
     KeybindingService.instance.removeListener(_keybindingsChanged);
@@ -1509,6 +1585,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   // --- Editors ---------------------------------------------------------------
+
+  /// The next file with an agent's change pending, once one is done.
+  void _openAgentChange(String path) => unawaited(_open(path));
 
   Future<void> _open(
     String path, {
@@ -2069,6 +2148,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _showTerminal();
   }
 
+  /// Open in Terminal (the explorer's context menu): a terminal started in
+  /// [folder], shown and focused. As VS Code's `openInTerminal`.
+  void _openInTerminal(String folder) {
+    final terminals = _terminals;
+    if (terminals == null) return;
+    terminals.create(cwd: folder);
+    _showTerminal();
+  }
+
   /// Create New Terminal (With Profile): the profile [args] names
   /// (`{"profileName": "bash"}`, upstream's keybinding argument), else the
   /// one picked.
@@ -2226,24 +2314,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     }
   }
 
-  /// The status bar's missing server: why it cannot be installed, or its
-  /// recommendation again.
-  void _installServer(LanguageServerStatus status) {
-    final path = widget.workspace.active?.path;
-    if (path == null) return;
-    if (status.installable && status.missingRuntime == null) {
-      _recommendServer(status, path);
-      return;
-    }
-    final runtime = status.missingRuntime;
-    _notifications.notify(
-      IdeSeverity.warning,
-      runtime != null
-          ? context.l10n.extMissingRuntime(status.serverId, runtime)
-          : (status.message ?? context.l10n.extUnavailable(status.serverId)),
-    );
-  }
-
   // --- Layout ------------------------------------------------------------
 
   void _showView(IdeSideView view) {
@@ -2290,13 +2360,22 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// a modifier of those chords accepts, and the input is hidden unless a
   /// quick input shows already; [itemActivation] is the row active first
   /// (the second by default with [quickNavigate]).
+  /// How old a remote project's listing is before Quick Open lists it again.
+  static const _remoteListingAge = Duration(seconds: 30);
+
   void _showQuickInput(
     String prefix, {
     IdeQuickPickFocus? itemActivation,
     List<KeyChord>? quickNavigate,
   }) {
     if (_quickAccessOf(prefix).$1 == _QuickAccess.files) {
-      unawaited(_fileIndex.refresh());
+      // A remote project's files come over the connection, all of them:
+      // listed again once a while old, not each time.
+      unawaited(
+        _local
+            ? _fileIndex.refresh()
+            : _fileIndex.refreshIfOlder(_remoteListingAge),
+      );
     }
     final shown = _quickInput != null || _quickModel != null;
     if (_quickInput != null &&
@@ -3512,23 +3591,33 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     IdeSideView.search => IdeSearchView(
       key: _searchKey,
       session: _search,
-      workspace: widget.workspace,
+      root: widget.workspace.root,
+      // The workspace's own: replacing writes into its documents.
+      replaceBackend: widget.workspace,
       onOpen: (path, range, {required focusEditor}) =>
           _open(path, range: range, select: true, focusEditor: focusEditor),
       onError: _report,
     ),
     IdeSideView.sourceControl => IdeScmView(
       key: _scmKey,
-      workspace: widget.workspace,
+      host: widget.workspace,
       session: _scm,
+      sessionOf: (git) => identical(git, _git)
+          ? _scm
+          : _scmSessions.putIfAbsent(
+              git,
+              () => IdeScmSession(settings: widget.settings),
+            ),
       notifications: _notifications,
       onOpen: (path, {focusEditor = false}) =>
           _open(path, focusEditor: focusEditor),
       onOpenChange: _openChange,
       onRevealInExplorer: _revealInExplorer,
+      onOpenInTerminal: _terminals == null ? null : _openInTerminal,
       onAddToChat: widget.onAddToChat,
       trash: WindowControls.canMoveToTrash ? WindowControls.moveToTrash : null,
       commitMessage: widget.commitMessage,
+      onCheckout: _gitCheckoutOf,
     ),
     IdeSideView.debug => switch (_debug) {
       final debug? => DebugView(
@@ -3697,6 +3786,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         );
                         _showView(IdeSideView.search);
                       },
+                      onOpenInTerminal: _terminals == null
+                          ? null
+                          : _openInTerminal,
                     ),
                   ),
                 IdePane(
@@ -3779,6 +3871,21 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
               onMarkdownPreview: (preview) =>
                   unawaited(_setMarkdownPreview(preview)),
               page: page == null ? null : _extensionPageTab(page),
+              actions: switch (widget.agentEdits) {
+                final edits? when !pageShown && active != null =>
+                  ListenableBuilder(
+                    listenable: edits,
+                    builder: (context, _) => switch (edits.of(active.path)) {
+                      final edit? when active.diff == null =>
+                        IdeAgentEditActions(
+                          edit: edit,
+                          hunks: edits.hunksOf(active.path),
+                        ),
+                      _ => const SizedBox.shrink(),
+                    },
+                  ),
+                _ => null,
+              },
             ),
             if (!pageShown && active != null && !active.isUntitled)
               IdeBreadcrumbs(
@@ -3892,11 +3999,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                 workspace: widget.workspace,
                                 active: active,
                                 onError: _report,
-                                onLspStatus: (status) {
-                                  if (mounted) {
-                                    setState(() => _lspStatus = status);
-                                  }
-                                },
+                                onLspStatus: (_) {},
                                 onPositionChanged: _positionChanged,
                                 onOpenLocation: _openLocation,
                                 onShowReferences: _showReferences,
@@ -3906,6 +4009,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                 onPaste: _pasteInEditor,
                                 formatOnSave: _formatOnSave,
                                 debug: _debug,
+                                agentEdits: widget.agentEdits,
                               ),
                   ),
                 ),
@@ -4481,19 +4585,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
             ),
             onTap: () => _showView(IdeSideView.sourceControl),
           ),
-      IdeStatusBarItem(
-        switch (_lspStatus) {
-          'Language services' => l10n.wbLanguageServices,
-          'Monaco editor' => l10n.wbMonacoEditor,
-          'Text editor' => l10n.wbTextEditor,
-          final status => status,
-        },
-        tooltip: keys.titleWithKeybinding(
-          l10n.wbRetryLanguageServices,
-          'baocode.ide.retryLanguageServices',
-        ),
-        onTap: () => unawaited(_editor?.retryLanguageServer()),
-      ),
       if (_languages case final languages?) ...[
         () {
           final counts = ideDiagnosticCounts(languages.allDiagnostics);
@@ -4516,12 +4607,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           );
         }(),
         if (widget.workspace.active case final doc?)
-          ...ideLanguageStatusItems(
-            languages,
-            doc.path,
-            onInstall: _installServer,
-            l10n: l10n,
-          ),
+          ...ideLanguageStatusItems(languages, doc.path, l10n: l10n),
       ],
       if (_statusMessage case final message?) IdeStatusBarItem(message),
     ];

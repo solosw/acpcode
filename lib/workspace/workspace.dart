@@ -199,6 +199,7 @@ class AgentThread {
     model: _session?.selected(KernelChoiceKind.model),
     effort: _session?.selected(KernelChoiceKind.effort),
     context: _session?.selected(KernelChoiceKind.context),
+    fast: _session?.selected(KernelChoiceKind.fast),
   );
 }
 
@@ -213,6 +214,7 @@ typedef _Snapshot = ({
   String? model,
   String? effort,
   String? context,
+  String? fast,
 });
 
 /// Projects and their agents. Any number of agents may run at once; the
@@ -1844,7 +1846,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
               number: image['number'] as int?,
             ),
       ];
-      final content = Delta.fromJson(kept['content']! as List<Object?>);
+      // As plain text: not with a style kept from before the composer's
+      // text was kept plain (a header ⌘2 made, several times its size).
+      final content = Delta();
+      for (final op in Delta.fromJson(
+        kept['content']! as List<Object?>,
+      ).toList()) {
+        if (op.isInsert) content.insert(op.data);
+      }
       final selection = TextSelection(
         baseOffset: kept['base']! as int,
         extentOffset: kept['extent']! as int,
@@ -2115,8 +2124,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         (KernelChoiceKind.model, snapshot.model),
         (KernelChoiceKind.effort, snapshot.effort),
         (KernelChoiceKind.context, snapshot.context),
+        (KernelChoiceKind.fast, snapshot.fast),
       ])
         kind.name: ?value,
+      for (final entry
+          in _agentSettings[id]?.entries ?? <String, String>{}.entries)
+        if (entry.key.startsWith('${KernelChoiceKind.fast.name}@'))
+          entry.key: entry.value,
+      if (snapshot.model case final model? when snapshot.fast != null)
+        modelSettingKey(KernelChoiceKind.fast, model): snapshot.fast!,
     };
     if (choices.isEmpty || mapEquals(choices, _agentSettings[id])) {
       return false;
@@ -2524,7 +2540,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (record == null || _disposed) return null;
     final settings = {
       for (final kind in KernelChoiceKind.values)
-        kind.name: ?session.selected(kind),
+        if (kind != KernelChoiceKind.fast) kind.name: ?session.selected(kind),
     };
     if (settings.isNotEmpty) {
       _agentSettings[record.id] = settings;

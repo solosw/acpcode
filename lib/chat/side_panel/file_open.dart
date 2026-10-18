@@ -7,7 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../../ide/file_service.dart';
-import '../../workspace/editor_launcher.dart';
+import '../../ide/file_views.dart';
 import '../../workspace/window_controls.dart';
 import '../chat_models.dart';
 import 'file_link.dart';
@@ -30,6 +30,7 @@ class FileOpenRequest {
     this.local = false,
     this.readOnly = false,
     this.preview = false,
+    this.agentChange = false,
   });
 
   /// Absolute, on the project's host (on this machine when [local]).
@@ -53,6 +54,11 @@ class FileOpenRequest {
 
   /// Its changes rather than its text, where they are known.
   final bool diff;
+
+  /// The agent's change pending in the file, shown in its text (each part
+  /// to keep or undo) rather than as its changes: scrolled to, the part at
+  /// [range] (else the first), the lines not marked.
+  final bool agentChange;
 
   /// The change [diff] shows, when the session lists it.
   final FileChange? change;
@@ -79,6 +85,7 @@ class FileOpenRequest {
     local: local,
     readOnly: readOnly,
     preview: preview,
+    agentChange: agentChange,
   );
 
   @override
@@ -86,7 +93,7 @@ class FileOpenRequest {
       'FileOpenRequest($path${range == null ? '' : ', $range'}'
       '${diff ? ', diff' : ''}${plan ? ', plan' : ''}'
       '${local ? ', local' : ''}${readOnly ? ', read-only' : ''}'
-      '${preview ? ', preview' : ''})';
+      '${preview ? ', preview' : ''}${agentChange ? ', agent change' : ''})';
 }
 
 /// Where a chat's files open (the agent window's side panel, the IDE's
@@ -96,13 +103,19 @@ class FileLinkTarget {
     required this.open,
     this.exists,
     this.readBytes,
+    this.sizeOf,
     this.paths,
     this.roots,
     this.inPanel = false,
     this.openInIde,
+    this.showBrowserTab,
   });
 
   final ValueChanged<FileOpenRequest> open;
+
+  /// Shows a tab of the user's browser (its id, as the agents' tools have
+  /// it) beside the conversation: on the side panel's browser page.
+  final ValueChanged<int>? showBrowserTab;
 
   /// Whether [open] shows them in the side panel (the agent window's).
   final bool inPanel;
@@ -113,6 +126,10 @@ class FileLinkTarget {
   /// Reads the file at an absolute path (on the project's host): an image
   /// the chat names, to show; none, and images open as other files.
   final Future<Uint8List> Function(String path)? readBytes;
+
+  /// How many bytes the file at an absolute path takes (on the project's
+  /// host): an image too big to show small is not read for it.
+  final Future<int> Function(String path)? sizeOf;
 
   /// A multi-folder workspace's folders as they are now: its files are
   /// theirs (see [FileOpenScope.roots]).
@@ -219,10 +236,15 @@ class FileOpenScope extends InheritedWidget {
     this.seen = const [],
     this.local = true,
     this.readBytes,
+    this.sizeOf,
     this.inPanel = false,
     this.onOpenInIde,
+    this.onShowBrowserTab,
     required super.child,
   });
+
+  /// See [FileLinkTarget.showBrowserTab].
+  final ValueChanged<int>? onShowBrowserTab;
 
   /// See [FileLinkTarget.inPanel].
   final bool inPanel;
@@ -232,6 +254,9 @@ class FileOpenScope extends InheritedWidget {
 
   /// See [FileLinkTarget.readBytes].
   final Future<Uint8List> Function(String path)? readBytes;
+
+  /// See [FileLinkTarget.sizeOf].
+  final Future<int> Function(String path)? sizeOf;
 
   final String root;
 
@@ -362,14 +387,15 @@ class FileOpenScope extends InheritedWidget {
     )..onTap = () => activate(link, path, context);
   }
 
-  /// A click on [link], to the file at [path]: a web page here opens in
-  /// the browser ([opensInBrowser]); an image shows enlarged over
-  /// [context]'s window ([preview]); anything else opens (see [openLink]).
+  /// A click on [link], to the file at [path]: one opened outside the app
+  /// opens there ([openerOf], a web page here in the browser); an image
+  /// shows enlarged over [context]'s window ([preview]); anything else
+  /// opens (see [openLink]).
   void activate(FileLink link, String path, BuildContext? context) {
     if (context != null && link.range == null && showsImage(path)) {
       unawaited(preview(context, path, orElse: () => openLink(link)));
-    } else if (link.range == null && opensInBrowser(path)) {
-      unawaited(openExternal(path));
+    } else if (link.range == null ? openerOf(path) : null case final opener?) {
+      unawaited(opener.open(path));
     } else {
       openLink(link);
     }
@@ -383,14 +409,10 @@ class FileOpenScope extends InheritedWidget {
         (paths ?? p.context).extension(path).toLowerCase(),
       );
 
-  /// Whether a click on [path] opens it in the browser: a web page on this
-  /// machine.
-  bool opensInBrowser(String path) =>
-      local &&
-      const {
-        '.html',
-        '.htm',
-      }.contains((paths ?? p.context).extension(path).toLowerCase());
+  /// What a click on [path] opens it with outside the app (see
+  /// [FileViews.openerOf]): only a file on this machine; null to open it in
+  /// the app.
+  FileOpener? openerOf(String path) => local ? FileViews.openerOf(path) : null;
 
   static const _imageTypes = {
     '.png': 'image/png',
@@ -423,11 +445,16 @@ class FileOpenScope extends InheritedWidget {
     return true;
   }
 
-  /// The image at [path], read; null when it cannot be.
-  Future<ImageAttachment?> image(String path) async {
+  /// The image at [path], read; null when it cannot be, or (where its
+  /// size can be known) takes more than [maxBytes].
+  Future<ImageAttachment?> image(String path, {int? maxBytes}) async {
     final read = readBytes;
     if (read == null) return null;
     try {
+      if ((maxBytes, sizeOf) case (final most?, final sizeOf?)
+          when await sizeOf(path) > most) {
+        return null;
+      }
       return ImageAttachment(
         bytes: await read(path),
         mediaType:
@@ -464,9 +491,8 @@ class FileOpenScope extends InheritedWidget {
 
   /// The right click's menu of the file at [path] (absolute), [open]
   /// opening it (in the side panel, or the IDE: see [inPanel]); in the
-  /// IDE too ([onOpenInIde]). An image shows enlarged over [context]'s
-  /// window (unless it is [previewing]), not in the side panel, and
-  /// copies.
+  /// IDE too ([onOpenInIde]). An image also shows enlarged over
+  /// [context]'s window (unless it is [previewing]), and copies.
   FileLinkMenu menuFor(
     String path,
     VoidCallback open, {
@@ -479,7 +505,7 @@ class FileOpenScope extends InheritedWidget {
       root: root,
       paths: paths,
       local: local,
-      onOpen: image && inPanel ? null : open,
+      onOpen: open,
       inPanel: inPanel,
       onOpenInIde: switch (onOpenInIde) {
         final inIde? => () => inIde(FileOpenRequest(path)),
@@ -495,7 +521,7 @@ class FileOpenScope extends InheritedWidget {
               }
             }())
           : null,
-      browser: opensInBrowser(path),
+      opener: openerOf(path),
     );
   }
 

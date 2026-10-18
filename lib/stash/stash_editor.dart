@@ -26,6 +26,8 @@ import '../chat/widgets/image_thumbnails.dart' show showImageGallery;
 import '../chat/widgets/markdown_math.dart';
 import '../chat/widgets/markdown_view.dart';
 import '../chat/widgets/scroll_edge_fade.dart';
+import '../forge/forge_api.dart' show ForgeState;
+import '../forge/forge_view.dart' show ForgeStateIcon;
 import '../ide/ide_dialog.dart';
 import '../ide/ide_hover.dart';
 import '../ide/ide_input.dart';
@@ -42,6 +44,7 @@ import '../workspace/window_controls.dart';
 import '../ide/ide_motion.dart';
 import 'stash_ai.dart' show StashAiException;
 import 'stash_caret.dart';
+import 'stash_forge.dart';
 import 'stash_html.dart';
 import 'stash_io_stub.dart' if (dart.library.io) 'stash_io.dart' as io;
 import 'stash_markdown.dart';
@@ -1432,7 +1435,7 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
   }
 
   Future<void> _titleCard(String url) async {
-    final title = await io.fetchPageTitle(url);
+    final title = await _forgeTitle(url) ?? await io.fetchPageTitle(url);
     if (title == null || !mounted) return;
     replaceEmbedWhere(
       (type, data) =>
@@ -1441,6 +1444,20 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
           data['title'] == url,
       {'url': url, 'title': title},
     );
+  }
+
+  /// An issue's or pull request's card's title (`o/r#3 Its title`), as
+  /// its forge says, where it can be asked.
+  Future<String?> _forgeTitle(String url) async {
+    final forge = StashForge.current;
+    final ref = forge?.refOf(url);
+    final api = ref == null ? null : forge!.accounts.apiOf(ref);
+    if (ref == null || api == null) return null;
+    try {
+      return '${ref.fullTag} ${(await api.item(ref)).title}';
+    } on Object {
+      return null;
+    }
   }
 
   void _insertInline(String type, Map<String, Object?> data) {
@@ -2422,6 +2439,7 @@ class _ColorButtonState extends State<_ColorButton> {
               color: background ? AppColors.text : (color ?? AppColors.text),
               fontSize: 12,
               fontWeight: FontWeight.w600,
+              decoration: TextDecoration.none,
             ),
           ),
         ),
@@ -2440,41 +2458,46 @@ class _ColorButtonState extends State<_ColorButton> {
           Positioned(
             left: origin.dx,
             top: origin.dy,
-            child: PopIn(
-              alignment: Alignment.topLeft,
-              offset: const Offset(0, -4),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: themeColors['editorWidget.background'],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: themeColors['editorWidget.border']),
-                  boxShadow: [
-                    BoxShadow(
-                      color: themeColors['widget.shadow'],
-                      blurRadius: 10,
+            // Like the bar, picking a color is still inside the editor.
+            child: TextFieldTapRegion(
+              child: PopIn(
+                alignment: Alignment.topLeft,
+                offset: const Offset(0, -4),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: themeColors['editorWidget.background'],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: themeColors['editorWidget.border'],
                     ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        swatch('color', null, background: false),
-                        for (final name in StashColors.text)
-                          swatch('color', name, background: false),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        swatch('background', null, background: true),
-                        for (final name in StashColors.background)
-                          swatch('background', name, background: true),
-                      ],
-                    ),
-                  ],
+                    boxShadow: [
+                      BoxShadow(
+                        color: themeColors['widget.shadow'],
+                        blurRadius: 10,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          swatch('color', null, background: false),
+                          for (final name in StashColors.text)
+                            swatch('color', name, background: false),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          swatch('background', null, background: true),
+                          for (final name in StashColors.background)
+                            swatch('background', name, background: true),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -3532,19 +3555,45 @@ class _CardEmbedBuilder extends _StashEmbedBuilder with _Tagged {
     final data = dataOf(embed);
     final url = data['url'] as String? ?? '';
     final title = data['title'] as String? ?? url;
+    void onTap() {
+      final scope = StashEditorScope.maybeOf(context);
+      if (scope?.onCard case final onCard?) {
+        onCard(embed.node.documentOffset, url);
+      } else {
+        unawaited(openExternal(url));
+      }
+    }
+
+    // An issue or pull request: in its state, titled as it is now.
+    final forge = StashForge.current;
+    if (forge?.refOf(url) case final ref?) {
+      return ListenableBuilder(
+        listenable: forge!,
+        builder: (context, _) {
+          final link = forge.stashOf(url)?.issueOf(url);
+          final now = forge.itemOf(url)?.title ?? link?.title;
+          return _StashChip(
+            textStyle: embed.textStyle,
+            leading: ForgeStateIcon(
+              ref.kind,
+              forge.itemOf(url)?.state ?? ForgeState.parse(link?.state),
+              size: 12,
+            ),
+            label: now == null
+                ? (title.isEmpty || title == url ? ref.fullTag : title)
+                : '${ref.fullTag} $now',
+            hint: url,
+            onTap: onTap,
+          );
+        },
+      );
+    }
     return _StashChip(
       textStyle: embed.textStyle,
       leading: Icon(Codicons.globe, size: 12, color: AppColors.textMuted),
       label: title.isEmpty ? url : title,
       hint: url,
-      onTap: () {
-        final scope = StashEditorScope.maybeOf(context);
-        if (scope?.onCard case final onCard?) {
-          onCard(embed.node.documentOffset, url);
-        } else {
-          unawaited(openExternal(url));
-        }
-      },
+      onTap: onTap,
     );
   }
 

@@ -42,10 +42,17 @@ class Transcript {
   /// Bumped on every change, to cache projections.
   int version = 0;
 
+  /// How many items were put before the others ([HistoryPrepended]) in all:
+  /// what the indexes of those there were moved by.
+  int prepended = 0;
+
   String? activeTurn;
 
   /// What the agent is busy with out of sight, while a turn runs.
   KernelActivity? activity;
+
+  /// What the model has written in the turn under way, and how fast.
+  TurnOutput? output;
   final Set<String> _endedTurns = {};
 
   /// Sequence of the last turn end; 0 before any.
@@ -118,6 +125,7 @@ class Transcript {
         if (_endedTurns.contains(turnId)) return false;
         activeTurn = turnId;
         _activeUnprompted = unprompted;
+        output = null;
       case TurnEnded(
         :final turnId,
         :final interrupted,
@@ -128,6 +136,7 @@ class Transcript {
         lastTurnUnprompted = activeTurn == turnId && _activeUnprompted;
         if (activeTurn == turnId) activeTurn = null;
         activity = null;
+        output = null;
         lastTurnEndSeq = event.seq;
         lastTurnInterrupted = interrupted;
         _pending.clear();
@@ -148,6 +157,8 @@ class Transcript {
         if (!_streaming.remove(id) && item == null) return false;
       case ItemRemoved(:final id):
         if (!_remove(id)) return false;
+      case HistoryPrepended(:final items):
+        if (!_prepend(items)) return false;
       case InteractionRequested(:final request):
         _pending[request.id] = request;
       case InteractionResolved(:final requestId):
@@ -167,6 +178,8 @@ class Transcript {
         _truncate(at);
       case ActivityReported(activity: final reported):
         activity = reported;
+      case OutputReported(output: final reported):
+        output = reported;
       case UsageReported(usage: final reported):
         usage = reported;
       case TasksReported(tasks: final reported):
@@ -212,6 +225,21 @@ class Transcript {
     for (var i = at; i < _ids.length; i++) {
       _indexOf[_ids[i]] = i;
     }
+  }
+
+  bool _prepend(List<(String, ChatItem)> items) {
+    final fresh = [
+      for (final (id, item) in items)
+        if (!_indexOf.containsKey(id)) (id, item),
+    ];
+    if (fresh.isEmpty) return false;
+    prepended += fresh.length;
+    _ids.insertAll(0, [for (final (id, _) in fresh) id]);
+    _items.insertAll(0, [for (final (_, item) in fresh) item]);
+    for (var i = 0; i < _ids.length; i++) {
+      _indexOf[_ids[i]] = i;
+    }
+    return true;
   }
 
   bool _remove(String id) {

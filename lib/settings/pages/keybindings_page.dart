@@ -43,6 +43,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../base/smooth_scroll.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_input.dart';
@@ -332,7 +333,7 @@ class _KeybindingsSettingsPageState extends State<KeybindingsSettingsPage> {
     debugLabel: 'Keybindings',
     onKeyEvent: _listKey,
   );
-  final _scroll = ScrollController();
+  final _scroll = SmoothScrollController();
   final _when = TextEditingController();
   final _whenFocus = FocusNode(debugLabel: 'Keybinding when');
 

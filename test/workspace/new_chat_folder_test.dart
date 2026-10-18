@@ -216,7 +216,13 @@ void main() {
     expect(find.text('/home/me/app'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('Choose Folder…')).dy,
-      lessThan(tester.getTopLeft(find.text('app').last).dy),
+      lessThan(
+        tester
+            .getTopLeft(
+              find.descendant(of: _bar, matching: find.text('app')).last,
+            )
+            .dy,
+      ),
     );
     expect(
       tester.getTopLeft(find.text('/home/me/api')).dx,

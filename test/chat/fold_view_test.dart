@@ -176,7 +176,9 @@ void main() {
     pointer.hover(tester.getCenter(list));
     for (var i = 0; i < 40; i++) {
       await tester.sendEventToBinding(pointer.scroll(const Offset(0, -200)));
+      // The wheel's notch eased out (120 ms).
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
     }
     expect(_text('Fix the bug'), findsWidgets);
 
@@ -191,6 +193,7 @@ void main() {
     for (var i = 0; i < 80; i++) {
       await tester.sendEventToBinding(pointer.scroll(const Offset(0, 400)));
       await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
     }
     await tester.pump();
     expect(_text('Worked for 30s'), findsOneWidget);

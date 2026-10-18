@@ -18,6 +18,7 @@ import '../../ide/terminal/terminal_colors.dart' show terminalColorTheme;
 import '../../ide/terminal/terminal_render_theme.dart'
     show terminalBaseFontSize, vscodeTerminalFontSize;
 import '../../ide/ide_menu.dart';
+import '../../sidebar/sidebar_times.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/code_font.dart';
@@ -30,7 +31,8 @@ import 'settings_widgets.dart';
 /// Preferences: Color Theme picks it), the chat's, the IDE's and the
 /// terminal's alike, and how wide the conversation grows
 /// (`chat.maxWidth`, see [ChatWidth]); what an agent and a subagent show
-/// running (see [PixelLoaderRole]); then the code's font, size and
+/// running (see [PixelLoaderRole]); whether the sidebar's agents show
+/// their times ([SidebarTimes]); then the code's font, size and
 /// ligatures, the window's text size and the terminal's (see [CodeFont]). A
 /// choice is applied and kept at once.
 class AppearanceSettingsPage extends StatelessWidget {
@@ -175,6 +177,11 @@ class AppearanceSettingsPage extends StatelessWidget {
   void _selectMinimapElasticity(ChatMinimapElasticity level) {
     ChatMinimap.elasticity.value = level;
     _keep(ChatMinimap.elasticityKey, ChatMinimap.elasticitySetting(level));
+  }
+
+  void _selectSidebarTimes(bool on) {
+    SidebarTimes.shown.value = on;
+    _keep(SidebarTimes.settingKey, SidebarTimes.setting(on));
   }
 
   static String elasticityName(
@@ -341,6 +348,7 @@ class AppearanceSettingsPage extends StatelessWidget {
         ChatMinimap.enabled,
         ChatMinimap.glass,
         ChatMinimap.elasticity,
+        SidebarTimes.shown,
         for (final role in PixelLoaderRole.values) ...[role.style, role.speed],
         CodeFont.families,
         CodeFont.size,
@@ -496,6 +504,16 @@ class AppearanceSettingsPage extends StatelessWidget {
                   PixelLoaderRole.subagent,
                   label: l10n.appearanceSettingsSubagentLoader,
                   description: l10n.appearanceSettingsSubagentLoaderDescription,
+                ),
+              ],
+            ),
+            SettingsCard(
+              children: [
+                SettingsSwitchRow(
+                  label: l10n.appearanceSettingsSidebarTimes,
+                  description: l10n.appearanceSettingsSidebarTimesDescription,
+                  value: SidebarTimes.shown.value,
+                  onChanged: _selectSidebarTimes,
                 ),
               ],
             ),

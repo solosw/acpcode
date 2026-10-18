@@ -18,6 +18,7 @@ class _LiveFeed extends ChangeNotifier implements ChatFeed {
   final List<ChatItem> items = [const UserMessageItem(text: 'A question')];
   bool statusVisible = true;
   bool streaming = true;
+  TurnOutput? output;
 
   void add(ChatItem item, {required bool statusVisible}) {
     items.add(item);
@@ -35,6 +36,7 @@ class _LiveFeed extends ChangeNotifier implements ChatFeed {
           'Planning next move',
           whimsical: true,
           visible: statusVisible,
+          output: output,
         );
 
   @override
@@ -154,6 +156,58 @@ void main() {
     await tester.pump();
     expect(tester.getRect(status).top, greaterThan(top));
     await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('what is written shows where the turn\'s footer will be, '
+      'under its last item, as items come', (tester) async {
+    final feed = await _pump(tester);
+    feed
+      ..output = const TurnOutput(tokens: 1234, tokensPerSecond: 83.4)
+      ..notifyListeners();
+    await tester.pump();
+    final written = find.text('↓ 1.2k tokens');
+    expect(written, findsOneWidget);
+    expect(find.text('83 tok/s'), findsOneWidget);
+    // Under the question, over the status row.
+    expect(
+      tester.getRect(written).top,
+      greaterThan(tester.getRect(find.text('A question').first).bottom),
+    );
+    expect(
+      tester.getRect(written).bottom,
+      lessThan(tester.getRect(find.byType(ActivityRow)).top),
+    );
+
+    feed.add(_thought, statusVisible: false);
+    await tester.pump();
+    final thought = find.byType(ThinkingSection);
+    // Under the thought now, at once.
+    expect(written, findsOneWidget);
+    expect(
+      tester.getRect(written).top,
+      greaterThan(tester.getRect(thought).top),
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(written, findsOneWidget);
+    expect(
+      tester.getRect(written).top,
+      greaterThan(tester.getRect(thought).bottom),
+    );
+
+    // No speed before there is one to say.
+    feed
+      ..output = const TurnOutput(tokens: 1300)
+      ..notifyListeners();
+    await tester.pump();
+    expect(find.textContaining('tok/s'), findsNothing);
+    expect(find.text('↓ 1.3k tokens'), findsOneWidget);
+
+    // Done, the footer in its place.
+    feed
+      ..streaming = false
+      ..notifyListeners();
+    await tester.pump();
+    expect(find.textContaining('↓'), findsNothing);
   });
 
   testWidgets('where motion is turned down, all is at once', (tester) async {

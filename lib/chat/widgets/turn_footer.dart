@@ -21,13 +21,26 @@ const _clockIcon = 'assets/icons/lucide-clock.svg';
 /// Under a finished turn: a button to copy its answer, then, faint, how
 /// fast the model wrote, the tokens the turn used, how long it took and
 /// what it cost, as far as known. Out of the history's selection.
+///
+/// Under a turn under way ([live]), where it will be: how fast the model
+/// writes and what it has written so far, in its place among the rest.
 class TurnFooter extends StatelessWidget {
-  const TurnFooter({super.key, this.answer, this.worked, this.usage});
+  const TurnFooter({
+    super.key,
+    this.answer,
+    this.worked,
+    this.usage,
+    this.live,
+  });
 
   /// What the copy button copies; no button when null.
   final String? answer;
   final Duration? worked;
   final TurnUsage? usage;
+
+  /// What the turn under way has written so far, all it shows: its copy
+  /// button's place kept for it.
+  final TurnOutput? live;
 
   /// "$0.42", "$0.0031": two figures past the first that is not 0, at
   /// least two decimals.
@@ -43,10 +56,37 @@ class TurnFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final live = this.live;
+    return SelectionContainer.disabled(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (live != null)
+              const ExcludeSemantics(
+                child: IgnorePointer(
+                  child: Opacity(opacity: 0, child: _CopyButton(text: '')),
+                ),
+              )
+            else if (answer case final answer?)
+              _CopyButton(text: answer),
+            for (final stat
+                in live == null ? _stats(l10n) : _live(live, l10n)) ...[
+              const SizedBox(width: 12),
+              stat,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _stats(AppLocalizations l10n) {
     final speed = usage?.tokensPerSecond;
     final cost = usage?.costUsd;
     final tokens = usage?.totalTokens;
-    final stats = [
+    return [
       if (speed != null)
         _Stat(
           icon: _zapIcon,
@@ -67,33 +107,42 @@ class TurnFooter extends StatelessWidget {
           text: AgentStep.formatDuration(worked, l10n: l10n),
           hint: l10n.turnDurationHint,
         ),
-      if (cost != null)
-        _Stat(text: formatCost(cost), hint: l10n.turnCostHint),
+      if (cost != null) _Stat(text: formatCost(cost), hint: l10n.turnCostHint),
     ];
-    return SelectionContainer.disabled(
-      child: Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (answer case final answer?) _CopyButton(text: answer),
-            for (final stat in stats) ...[
-              const SizedBox(width: 12),
-              stat,
-            ],
-          ],
+  }
+
+  /// Its figures changing as it goes, all as wide: the line keeps still.
+  List<Widget> _live(TurnOutput live, AppLocalizations l10n) {
+    final speed = live.tokensPerSecond;
+    return [
+      if (speed != null)
+        _Stat(
+          icon: _zapIcon,
+          text: l10n.turnSpeed(speed.round().toString()),
+          hint: l10n.turnSpeedLiveHint,
+          tabular: true,
         ),
+      _Stat(
+        text: l10n.turnOutputTokens(AgentStep.formatTokens(live.tokens)),
+        hint: l10n.turnOutputTokensHint,
+        tabular: true,
       ),
-    );
+    ];
   }
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({this.icon, required this.text, required this.hint});
+  const _Stat({
+    this.icon,
+    required this.text,
+    required this.hint,
+    this.tabular = false,
+  });
 
   final String? icon;
   final String text;
   final String hint;
+  final bool tabular;
 
   @override
   Widget build(BuildContext context) {
@@ -114,8 +163,13 @@ class _Stat extends StatelessWidget {
           ],
           Text(
             text,
-            // Not monospaced: its 1 would stand apart from the icon.
-            style: TextStyle(color: color, fontSize: 12),
+            // Not monospaced: its 1 would stand apart from the icon. Its
+            // figures as wide, where they change as one looks.
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontFeatures: [if (tabular) const FontFeature.tabularFigures()],
+            ),
           ),
         ],
       ),

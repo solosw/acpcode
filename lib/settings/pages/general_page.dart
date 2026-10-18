@@ -3,11 +3,17 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../../ide/explorer_excludes.dart';
+import '../../ide/ide_agent_changes.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_menu.dart';
 import '../../ide/ide_notifications.dart' show IdeSeverity;
+import '../../kernel/claude_code/claude_core_setting.dart';
 import '../../kernel/claude_code/claude_path_setting.dart';
 import '../../kernel/commit_attribution.dart';
+import '../../kernel/prompt_suggestions.dart';
+import '../../chat/composer/composer_polish.dart' show ComposerPolishSetting;
+import '../../kernel/queued_messages.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
 import '../../platform/context_menu.dart';
@@ -26,11 +32,15 @@ import 'settings_widgets.dart';
 /// Settings → General: what the app shows at launch
 /// (`workbench.mainWindow`), where the IDE opens and how its windows open,
 /// come back and close (`window.*`), who the commits and pull requests
-/// agents write credit (`chat.commitAttribution` in settings.json), whether
-/// the app sends its usage data (`telemetry.telemetryLevel`), the
-/// Claude Code to run (`claudeCode.path`), the `code` shell command, and
-/// Open with BaoCode in Finder's or Explorer's context menu. A choice is
-/// written at once; the default is not written.
+/// agents write credit (`chat.commitAttribution` in settings.json), when a
+/// message sent while the agent works is taken up (`chat.queuedMessages`),
+/// whether the next prompt is suggested after each turn
+/// (`chat.promptSuggestions`), whether the composer has its Polish button
+/// (`chat.composer.polish`), whether usage data is sent
+/// (`telemetry.telemetryLevel`), the Claude Code to run (`claudeCode.path`),
+/// the `code` shell command, and Open with BaoCode in Finder's or
+/// Explorer's context menu. A choice is written at once; the default is not
+/// written.
 class GeneralSettingsPage extends StatelessWidget {
   const GeneralSettingsPage({
     super.key,
@@ -105,8 +115,8 @@ class GeneralSettingsPage extends StatelessWidget {
         label: l10n.generalSettingsIdeWindows,
         description: l10n.generalSettingsIdeWindowsDescription,
         values: {
-          IdeWindows.separate.name: l10n.generalSettingsIdeWindowsSeparate,
           IdeWindows.mainWindow.name: l10n.generalSettingsIdeWindowsMain,
+          IdeWindows.separate.name: l10n.generalSettingsIdeWindowsSeparate,
         },
       ),
       _choiceRow(
@@ -195,7 +205,7 @@ class GeneralSettingsPage extends StatelessWidget {
     );
   }
 
-  void _write(String key, String? value) {
+  void _write(String key, Object? value) {
     final settings = this.settings;
     if (settings == null) return;
     unawaited(
@@ -205,6 +215,47 @@ class GeneralSettingsPage extends StatelessWidget {
         debugPrint('$key not kept: $error');
       }),
     );
+  }
+
+  /// The explorer's exclusions as a list for
+  /// [IdeExplorerExcludes.settingKey]: the comma-separated patterns typed
+  /// in the field, trimmed; null (the setting removed) when there are none.
+  @visibleForTesting
+  static List<String>? excludePatterns(String value) {
+    final patterns = [
+      for (final part in splitPatterns(value))
+        if (part.trim().isNotEmpty) part.trim(),
+    ];
+    return patterns.isEmpty ? null : patterns;
+  }
+
+  /// [value] split at its commas, but not those in a glob's `{a,b}` or
+  /// `[…]`: `*.{log,tmp}` is one pattern.
+  @visibleForTesting
+  static List<String> splitPatterns(String value) {
+    final parts = <String>[];
+    final part = StringBuffer();
+    var braces = 0;
+    var brackets = false;
+    for (final char in value.split('')) {
+      switch (char) {
+        case '[' when !brackets:
+          brackets = true;
+        case ']' when brackets:
+          brackets = false;
+        case '{' when !brackets:
+          braces++;
+        case '}' when !brackets && braces > 0:
+          braces--;
+        case ',' when braces == 0 && !brackets:
+          parts.add('$part');
+          part.clear();
+          continue;
+      }
+      part.write(char);
+    }
+    parts.add('$part');
+    return parts;
   }
 
   @override
@@ -284,6 +335,29 @@ class GeneralSettingsPage extends StatelessWidget {
                     ],
                   ),
                 ),
+                _choiceRow(
+                  context,
+                  key: QueuedMessages.settingKey,
+                  label: l10n.generalSettingsQueuedMessages,
+                  description: l10n.generalSettingsQueuedMessagesDescription,
+                  values: {
+                    QueuedMessages.afterTurn.name:
+                        l10n.generalSettingsQueuedAfterTurn,
+                    QueuedMessages.duringTurn.name:
+                        l10n.generalSettingsQueuedDuringTurn,
+                  },
+                ),
+                SettingsSwitchRow(
+                  label: l10n.generalSettingsPromptSuggestions,
+                  description: l10n.generalSettingsPromptSuggestionsDescription,
+                  value: PromptSuggestions.enabled(
+                    settings?[PromptSuggestions.settingKey],
+                  ),
+                  onChanged: (on) => _write(
+                    PromptSuggestions.settingKey,
+                    on ? null : PromptSuggestions.off,
+                  ),
+                ),
                 SettingsSwitchRow(
                   label: l10n.generalSettingsTelemetry,
                   description: l10n.generalSettingsTelemetryDescription,
@@ -295,6 +369,17 @@ class GeneralSettingsPage extends StatelessWidget {
                     on ? null : TelemetrySetting.off,
                   ),
                 ),
+                SettingsSwitchRow(
+                  label: l10n.generalSettingsComposerPolish,
+                  description: l10n.generalSettingsComposerPolishDescription,
+                  value: ComposerPolishSetting.enabled(
+                    settings?[ComposerPolishSetting.settingKey],
+                  ),
+                  onChanged: (on) => _write(
+                    ComposerPolishSetting.settingKey,
+                    on ? null : ComposerPolishSetting.off,
+                  ),
+                ),
               ],
             ),
             if (claudeStatus case final claudeStatus? when !kIsWeb)
@@ -303,6 +388,17 @@ class GeneralSettingsPage extends StatelessWidget {
                 children: [
                   SettingsCard(
                     children: [
+                      _choiceRow(
+                        context,
+                        key: ClaudeCore.settingKey,
+                        label: l10n.generalSettingsClaudeCore,
+                        description: l10n.generalSettingsClaudeCoreDescription,
+                        values: {
+                          ClaudeCore.builtin.name:
+                              l10n.generalSettingsClaudeCoreBuiltin,
+                          ClaudeCore.cli.name: l10n.generalSettingsClaudeCoreCli,
+                        },
+                      ),
                       _ClaudePathSetting(
                         path: ClaudePathSetting.parse(
                           settings?[ClaudePathSetting.settingKey],
@@ -320,6 +416,43 @@ class GeneralSettingsPage extends StatelessWidget {
             SettingsGroup(
               title: l10n.generalSettingsWindows,
               children: _windowRows(context),
+            ),
+            SettingsGroup(
+              title: l10n.generalSettingsIde,
+              children: [
+                SettingsCard(
+                  children: [
+                    SettingsSwitchRow(
+                      label: l10n.generalSettingsAutoOpenChanges,
+                      description:
+                          l10n.generalSettingsAutoOpenChangesDescription,
+                      value: IdeAgentChanges.enabledBy(
+                        settings?[IdeAgentChanges.enabledSetting],
+                      ),
+                      onChanged: (on) => _write(
+                        IdeAgentChanges.enabledSetting,
+                        on ? true : null,
+                      ),
+                    ),
+                    SettingsRow(
+                      label: l10n.explorerExcludeSetting,
+                      description: l10n.explorerExcludeSettingDescription,
+                      trailing: SettingsTextField(
+                        value: IdeExplorerExcludes.parse(
+                          settings?[IdeExplorerExcludes.settingKey],
+                        ).patterns.join(', '),
+                        width: 260,
+                        hint: l10n.explorerExcludeSettingPlaceholder,
+                        semanticLabel: l10n.explorerExcludeSetting,
+                        onSubmitted: (value) => _write(
+                          IdeExplorerExcludes.settingKey,
+                          excludePatterns(value),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
             if (ShellCommand.supported)
               const SettingsCard(children: [_ShellCommandSetting()]),

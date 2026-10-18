@@ -146,6 +146,23 @@ h2.plain::before { content: none; }
 .platform .get { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .platform .size { margin-left: 4px; font: 13.5px var(--sans); color: var(--muted); white-space: nowrap; }
 @media (max-width: 640px) { .platforms { grid-template-columns: 1fr; } }
+/* The phone app, a beta still: its heading's word for it. */
+.beta { display: inline-block; margin-left: 8px; padding: 2px 8px; font: 500 12px/1.5 var(--sans); letter-spacing: .02em; vertical-align: .35em; color: var(--muted); border: 1px solid var(--rule); border-radius: 999px; background: var(--tint); }
+#phone + .meta { margin-top: -6px; }
+[data-phones] + p { margin-top: 24px; }
+/* The phone app's cards, each with a QR code of its download (site/qr/,
+   tool/make_download_qr.dart): hovered, or tapped where there is no hover,
+   the code comes up over the card to be scanned (download.js). Its link is
+   the card's own, which the button still shows — and the button stays over
+   the code, so a mouse on its way to download on this computer reaches it
+   rather than the card being in the way. The 64px left under it are the
+   button's own row: its 40px and the card's 24px of bottom padding. */
+[data-phones] .platform { position: relative; }
+[data-phones] .platform .get { position: relative; z-index: 2; }
+.qr { position: absolute; inset: 0 0 64px; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 20px; border-radius: 9px 9px 0 0; background: var(--paper); opacity: 0; visibility: hidden; transition: opacity .16s ease, visibility 0s .16s; }
+[data-phones] .platform:hover .qr, [data-phones] .platform.qr-open .qr { opacity: 1; visibility: visible; transition: opacity .16s ease; }
+.qr img { width: 148px; height: 148px; }
+@media (prefers-reduced-motion: reduce) { .qr { transition: none; } }
 
 /* The changelog (made by tool/build_changelog.dart): a version a section,
    its heading a link to itself; the version the app links to is marked. */

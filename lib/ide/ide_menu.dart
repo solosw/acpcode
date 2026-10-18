@@ -68,6 +68,8 @@ class IdeMenuAction extends IdeMenuEntry {
     this.checked = false,
     this.submenu,
     this.icon,
+    this.keepOpen = false,
+    this.checkedNow,
   });
 
   final String label;
@@ -75,7 +77,7 @@ class IdeMenuAction extends IdeMenuEntry {
   /// Before [label] (a project's icon), 16px square.
   final Widget? icon;
 
-  /// Run once the menu has closed.
+  /// Run once the menu has closed ([keepOpen]: at once).
   final VoidCallback? onSelected;
 
   /// Its shortcut, as the platform writes it (`⇧⌘P`).
@@ -85,6 +87,16 @@ class IdeMenuAction extends IdeMenuEntry {
   /// Shows a check mark (`menu-selection`).
   final bool checked;
   final List<IdeMenuEntry>? submenu;
+
+  /// Runs [onSelected] at once and leaves the menu open, the checks read
+  /// anew ([checkedNow]): a multi-select filter's options.
+  final bool keepOpen;
+
+  /// Whether it is checked as it shows, in place of [checked]: as a
+  /// [keepOpen] action leaves it.
+  final ValueGetter<bool>? checkedNow;
+
+  bool get isChecked => checkedNow?.call() ?? checked;
 }
 
 /// Drops leading, trailing and doubled separators, as VS Code's menus do
@@ -381,6 +393,11 @@ class _MenuHostState extends State<_MenuHost> {
   void _choose(IdeMenuAction action) {
     if (!action.enabled) return;
     if (action.submenu != null) return;
+    if (action.keepOpen) {
+      action.onSelected?.call();
+      setState(() {});
+      return;
+    }
     widget.onChosen(action.onSelected);
   }
 
@@ -744,7 +761,7 @@ class _MenuItem extends StatelessWidget {
               children: [
                 SizedBox(
                   width: _em2,
-                  child: action.checked
+                  child: action.isChecked
                       ? Icon(Codicons.menuSelection, size: 14, color: color)
                       : null,
                 ),

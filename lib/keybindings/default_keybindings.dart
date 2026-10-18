@@ -48,6 +48,14 @@ const resetFeatureTipsCommandId = 'baocode.tips.reset';
 /// conversations, any time.
 const starOnGitHubCommandId = 'baocode.starOnGitHub';
 
+/// Connect Your Browser…: what the agents do with the user's browser, and
+/// its extension to get (showBrowserWelcome), as after the update.
+const browserWelcomeCommandId = 'baocode.browser.welcome';
+
+/// Meet Stash…: what Stash is, and the shortcut that notes a stash down
+/// (showStashWelcome), as the first time its page shows.
+const stashWelcomeCommandId = 'baocode.stash.welcome';
+
 /// A command a keybinding may run, as the Keyboard Shortcuts page lists it.
 @immutable
 class CommandInfo {
@@ -153,6 +161,12 @@ final Map<String, CommandInfo> commandCatalog = {
       'Star BaoCode on GitHub',
       category: 'Help',
     ),
+    const CommandInfo(
+      browserWelcomeCommandId,
+      'Connect Your Browser...',
+      category: 'Help',
+    ),
+    const CommandInfo(stashWelcomeCommandId, 'Meet Stash...', category: 'Help'),
     const CommandInfo(
       'workbench.action.closeActiveEditor',
       'Close Editor',

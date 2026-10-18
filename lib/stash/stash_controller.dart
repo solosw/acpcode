@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_quill/flutter_quill.dart' show ChangeSource;
 import 'package:path/path.dart' as p;
 
-import '../kernel/claude_code/claude_sdk_tools.dart';
+import '../forge/forge_accounts.dart';
+import '../platform/event_log.dart';
+import '../kernel/claude_code/claude_haiku.dart' show ClaudeHaikuCancelled;
 import '../remote/remote_location.dart';
 import '../settings/user_settings.dart' show GlobalStorage;
 import '../window/app_windows.dart';
@@ -20,7 +22,10 @@ import 'stash_markdown.dart';
 import 'stash_note.dart';
 import 'stash_note_editor.dart';
 import 'stash_settings.dart';
+import 'stash_skill.dart' show StashSkill;
+import 'stash_forge.dart';
 import 'stash_store.dart';
+import 'stash_threads.dart';
 
 /// Why a stash could not be said clearly ([StashController.clarify]): its
 /// text [changed] meanwhile, or the model's [message] (none: no answer
@@ -41,6 +46,8 @@ class StashController extends ChangeNotifier {
     this.settingsChanges,
     this.cacheDir,
     this.storage,
+    this.installSkill = false,
+    this.accounts,
   }) : host = host ?? StashHost.instance,
        _settings = settings ?? (() => const {});
 
@@ -63,6 +70,14 @@ class StashController extends ChangeNotifier {
   /// Where the stashes' page keeps its layout; not kept without one.
   final GlobalStorage? storage;
 
+  /// The user's accounts on GitHub, GitLab…: the stashes' issues and
+  /// pull requests are asked of them ([forge]); none without.
+  final ForgeAccounts? accounts;
+
+  /// Whether to write the Stash skill into Claude Code's skills on this
+  /// machine (see [StashSkill]): the app's, not a test's.
+  final bool installSkill;
+
   static const detailWidthKey = 'stash.detailWidth';
 
   /// The width of the stash shown beside the cards, as last dragged; null
@@ -80,6 +95,40 @@ class StashController extends ChangeNotifier {
     );
   }
 
+  static const filtersKey = 'stash.filters';
+
+  /// The Stash page's filters, as last picked (its time, projects and
+  /// statuses, by name; see StashView); null for its own.
+  Map<String, Object?>? get filters =>
+      _filters ?? storage?.get<Map<String, Object?>>(filtersKey);
+  Map<String, Object?>? _filters;
+
+  set filters(Map<String, Object?>? filters) {
+    _filters = filters;
+    unawaited(
+      storage
+          ?.set(filtersKey, filters)
+          .catchError((Object error) => debugPrint('$error')),
+    );
+  }
+
+  static const welcomedKey = 'stash.welcomed';
+
+  /// Whether the Stash page has said what it is (the first time it shows,
+  /// see showStashWelcome); as if it had where nothing is kept (a test).
+  bool get welcomed =>
+      _welcomed ?? (storage == null || storage!.get<bool>(welcomedKey) == true);
+  bool? _welcomed;
+
+  set welcomed(bool welcomed) {
+    _welcomed = welcomed;
+    unawaited(
+      storage
+          ?.set(welcomedKey, welcomed)
+          .catchError((Object error) => debugPrint('$error')),
+    );
+  }
+
   StashSettings get settings => StashSettings.parse(_settings());
 
   bool _started = false;
@@ -91,10 +140,14 @@ class StashController extends ChangeNotifier {
     _started = true;
     host.onPressed = pressed;
     windows?.stashCloseRequested = () => unawaited(hide());
-    _registerTools();
     settingsChanges?.addListener(_settingsChanged);
     store.addListener(_storeChanged);
     await store.load();
+    threads.start();
+    forge?.start();
+    if (installSkill && store.root.isNotEmpty) {
+      unawaited(io.installStashSkill(store.root));
+    }
     await _takeHotkey();
     Timer(const Duration(seconds: 2), () => unawaited(windows?.startStash()));
     _storeChanged();
@@ -110,7 +163,9 @@ class StashController extends ChangeNotifier {
     final hotkey = settings.hotkey;
     if (hotkey == _hotkey) return;
     _hotkey = hotkey;
-    _hotkeyTaken = await host.setHotkey(hotkey);
+    // None: the one held let go, nothing to have been given.
+    final taken = await host.setHotkey(hotkey);
+    _hotkeyTaken = hotkey.isEmpty ? null : taken;
     notifyListeners();
   }
 
@@ -131,10 +186,12 @@ class StashController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    for (final name in const ['stash_create', 'stash_complete', 'stash_read']) {
-      ClaudeSdkTools.unregister(name);
+    for (final cancellation in _clarifying.values) {
+      cancellation.cancel();
     }
-    if (_followingThreads) workspace.removeListener(_threadsChanged);
+    _clarifying.clear();
+    threads.dispose();
+    if (accounts != null) forge?.dispose();
     settingsChanges?.removeListener(_settingsChanged);
     store.removeListener(_storeChanged);
     if (identical(host.onPressed, pressed)) host.onPressed = null;
@@ -144,127 +201,6 @@ class StashController extends ChangeNotifier {
     }
     _suggesting.clear();
     super.dispose();
-  }
-
-  // --- The agents' tools --------------------------------------------------------
-
-  /// What an agent can do with stashes: write one down (something to do
-  /// later that came up in the conversation), mark one done once it has
-  /// carried it out, read one.
-  void _registerTools() {
-    ClaudeSdkTools.register(
-      ClaudeSdkTool(
-        name: 'stash_create',
-        description:
-            "Saves a note to the user's Stash (their inbox of ideas, bugs and "
-            'to-dos, which they later turn into work for an agent). Use it '
-            'when the user asks you to note something down for later, or to '
-            'record a follow-up you were asked to leave for later. The note '
-            'is linked to this project and conversation. Returns its number.',
-        inputSchema: const {
-          'type': 'object',
-          'properties': {
-            'text': {
-              'type': 'string',
-              'description':
-                  'The note, as Markdown, in the language of the conversation.',
-            },
-            'title': {
-              'type': 'string',
-              'description': 'A short title for it (optional).',
-            },
-          },
-          'required': ['text'],
-        },
-        run: (input, call) async {
-          final text = '${input['text'] ?? ''}'.trim();
-          if (text.isEmpty) throw ArgumentError('The note is empty.');
-          final note = await store.create(
-            body: text,
-            project: call.cwd,
-            source: StashSource(project: call.cwd, thread: call.sessionId),
-          );
-          if (input['title'] case final String title
-              when title.trim().isNotEmpty) {
-            await store.update(
-              note.id,
-              (note) => note.title = title.trim(),
-              touch: false,
-            );
-          }
-          return 'Saved as Stash ${note.tag}.';
-        },
-      ),
-    );
-    ClaudeSdkTools.register(
-      ClaudeSdkTool(
-        name: 'stash_complete',
-        description:
-            "Marks a note of the user's Stash done, once what it asks for is "
-            'carried out (the user started this conversation from it, as '
-            '[Stash #N]). Only call it when the work is actually finished.',
-        inputSchema: const {
-          'type': 'object',
-          'properties': {
-            'id': {
-              'type': 'integer',
-              'description': 'The note\'s number: 12 for [Stash #12].',
-            },
-          },
-          'required': ['id'],
-        },
-        run: (input, call) async {
-          final id = switch (input['id']) {
-            final num id => id.toInt(),
-            final String id => int.tryParse(id.replaceAll('#', '')),
-            _ => null,
-          };
-          final note = id == null ? null : store.byId(id);
-          if (note == null) throw ArgumentError('There is no Stash #$id.');
-          await store.update(note.id, (note) {
-            note.status = StashStatus.done;
-            if (call.sessionId case final session?) {
-              note.thread = StashThreadLink(
-                project: note.thread?.project ?? call.cwd,
-                session: session,
-                title: note.thread?.title,
-              );
-            }
-          });
-          return 'Stash ${note.tag} is marked done.';
-        },
-      ),
-    );
-    ClaudeSdkTools.register(
-      ClaudeSdkTool(
-        name: 'stash_read',
-        description:
-            "Reads a note of the user's Stash by its number (e.g. one the "
-            'user mentions as #12), as Markdown with its status.',
-        inputSchema: const {
-          'type': 'object',
-          'properties': {
-            'id': {'type': 'integer', 'description': 'The note\'s number.'},
-          },
-          'required': ['id'],
-        },
-        run: (input, call) async {
-          final id = (input['id'] as num?)?.toInt();
-          final note = id == null ? null : store.byId(id);
-          if (note == null) throw ArgumentError('There is no Stash #$id.');
-          return [
-            '# ${note.tag} ${note.displayTitle}',
-            'Status: ${note.status.name}',
-            if (note.project case final project?) 'Project: $project',
-            '',
-            note.body.replaceAllMapped(
-              RegExp('(?<=\\]\\(<?|src=")(\\d+/[^\\s)"\'>]+)'),
-              (match) => store.absolute(match[1]!),
-            ),
-          ].join('\n');
-        },
-      ),
-    );
   }
 
   // --- The panel ---------------------------------------------------------------
@@ -296,6 +232,11 @@ class StashController extends ChangeNotifier {
   /// what the keyboard is in, or gives it the keyboard back (another app
   /// clicked meanwhile), as it was.
   void pressed(StashCapture capture) {
+    appEvent(
+      'stash',
+      'shortcut, ${shown ? 'shown' : 'hidden'}, '
+          'from ${capture.inApp ? 'BaoCode' : 'another app'}',
+    );
     if (!shown) {
       unawaited(present(capture));
     } else if (capture.panelInFront ?? true) {
@@ -424,6 +365,19 @@ class StashController extends ChangeNotifier {
     if (edited != null) _suggestSoon(edited);
   }
 
+  /// A new stash to write in on the Stash page, beside the cards: the
+  /// draft there is, else one made; of [project], if given. Its id.
+  Future<int> draft({String? project}) async {
+    await store.load();
+    final id =
+        _draft()?.id ?? (await store.create(source: StashSource.none)).id;
+    if (project != null) {
+      // Not written in for this: still the draft, if left blank.
+      await store.update(id, (note) => note.project = project, touch: false);
+    }
+    return id;
+  }
+
   /// The stash the panel shows, made (with [body]) if it was not yet.
   Future<int> ensureNote({String body = ''}) async {
     if (_editing case final id? when store.byId(id) != null) return id;
@@ -466,14 +420,19 @@ class StashController extends ChangeNotifier {
 
   /// What says a stash's text clearly: [clarifyStash], but in tests.
   @visibleForTesting
-  Future<String> Function(StashController controller, int id, String text)
+  Future<String> Function(
+    StashController controller,
+    int id,
+    String text, {
+    StashClarifyCancellation? cancellation,
+  })
   clarifier = clarifyStash;
 
-  final Set<int> _clarifying = {};
+  final Map<int, StashClarifyCancellation> _clarifying = {};
   final Map<int, StashClarifyFailure> _clarifyFailures = {};
 
   /// Whether [id]'s stash is being said clearly ([clarify]).
-  bool clarifying(int id) => _clarifying.contains(id);
+  bool clarifying(int id) => _clarifying.containsKey(id);
 
   /// Why [id]'s stash could not be said clearly, the last time it was
   /// asked to be; null when it was, or was not asked.
@@ -483,6 +442,14 @@ class StashController extends ChangeNotifier {
     if (_clarifyFailures.remove(id) != null) notifyListeners();
   }
 
+  /// Stops [id]'s current clarification; a new one may start at once.
+  void cancelClarify(int id) {
+    final cancellation = _clarifying.remove(id);
+    if (cancellation == null) return;
+    cancellation.cancel();
+    if (!_disposed) notifyListeners();
+  }
+
   /// Says [id]'s stash clearly (see [clarifyStash]), in the background,
   /// whatever shows meanwhile: its text replaced once the answer comes, in
   /// the editor showing it if one does (Undo takes it back), else in its
@@ -490,7 +457,7 @@ class StashController extends ChangeNotifier {
   /// goes on; [clarifyFailure] after, where it failed (no answer, or the
   /// text changed meanwhile).
   Future<void> clarify(int id) async {
-    if (_clarifying.contains(id)) return;
+    if (_disposed || _clarifying.containsKey(id)) return;
     final note = store.byId(id);
     if (note == null) return;
     final asked = switch (StashNoteEditorState.showing(id)?.editor) {
@@ -498,14 +465,24 @@ class StashController extends ChangeNotifier {
       null => stashTextPart(stashDocument(note.body), store.absolute),
     };
     if (asked == null) return;
-    _clarifying.add(id);
+    final cancellation = StashClarifyCancellation();
+    bool current() => identical(_clarifying[id], cancellation);
+    _clarifying[id] = cancellation;
     _clarifyFailures.remove(id);
     notifyListeners();
     try {
-      final reply = await clarifier(this, id, asked.text);
+      final reply = await clarifier(
+        this,
+        id,
+        asked.text,
+        cancellation: cancellation,
+      );
+      if (!current()) return;
       if (!await _rewrite(id, asked.text, reply)) {
-        _clarifyFailures[id] = (changed: true, message: null);
-      } else {
+        if (current()) {
+          _clarifyFailures[id] = (changed: true, message: null);
+        }
+      } else if (current()) {
         await store.update(id, (note) {
           if (note.status == StashStatus.collected) {
             note.status = StashStatus.requirement;
@@ -513,10 +490,16 @@ class StashController extends ChangeNotifier {
         });
       }
     } on StashAiException catch (error) {
-      _clarifyFailures[id] = (changed: false, message: error.message);
+      if (current()) {
+        _clarifyFailures[id] = (changed: false, message: error.message);
+      }
+    } on ClaudeHaikuCancelled {
+      // Cancelled requests do not leave a failure to dismiss.
     } finally {
-      _clarifying.remove(id);
-      if (!_disposed) notifyListeners();
+      if (current()) {
+        _clarifying.remove(id);
+        if (!_disposed) notifyListeners();
+      }
     }
   }
 
@@ -541,67 +524,22 @@ class StashController extends ChangeNotifier {
 
   // --- Carried out in conversations ---------------------------------------------
 
-  /// New agents a stash is to be carried out in, by the stash's number,
-  /// until their first message is sent (their session then has an id).
-  final Map<int, AgentThread> _starting = {};
-  bool _followingThreads = false;
+  /// The conversations the stashes are carried out in.
+  late final StashThreads threads = StashThreads(
+    store: store,
+    workspace: workspace,
+    forgeKindOf: accounts?.kindOf,
+  );
 
-  /// [id]'s stash is to be carried out in [thread] (a new agent, its
-  /// message not sent yet): linked to it, and implementing once it is.
-  Future<void> linkThread(int id, AgentThread thread) async {
-    _starting[id] = thread;
-    if (!_followingThreads) {
-      _followingThreads = true;
-      workspace.addListener(_threadsChanged);
-    }
-    await store.update(
-      id,
-      (note) => note.thread = StashThreadLink(project: thread.project.path),
-      touch: false,
-    );
-  }
-
-  void _threadsChanged() {
-    for (final MapEntry(key: id, value: thread) in [..._starting.entries]) {
-      final session = thread.id;
-      if (session == null || thread.untouched) continue;
-      _starting.remove(id);
-      unawaited(
-        store.update(id, (note) {
-          note.thread = StashThreadLink(
-            project: thread.project.path,
-            session: session,
-            title: thread.title,
-          );
-          if (note.status != StashStatus.done) {
-            note.status = StashStatus.implementing;
-          }
-        }, touch: false),
-      );
-    }
-  }
-
-  /// The agent [note] is carried out in, if it is listed.
-  AgentThread? threadOf(StashNote note) {
-    final session = note.thread?.session;
-    if (session == null) return _starting[note.id];
-    for (final thread in workspace.threads) {
-      if (thread.id == session) return thread;
-    }
-    return null;
-  }
-
-  /// The stash carried out in the conversation [session], if any.
-  StashNote? stashOfThread(String? session) {
-    if (session == null) return null;
-    for (final note in store.notes) {
-      if (note.thread?.session == session) return note;
-    }
-    for (final MapEntry(key: id, value: thread) in _starting.entries) {
-      if (thread.id == session) return store.byId(id);
-    }
-    return null;
-  }
+  /// The stashes' issues and pull requests; none without [accounts].
+  late final StashForge? forge = switch (accounts) {
+    final accounts? => StashForge(
+      store: store,
+      workspace: workspace,
+      accounts: accounts,
+    ),
+    null => null,
+  };
 
   /// What `[[`, `@` and `#` offer in a stash's text, links followed by
   /// [open].

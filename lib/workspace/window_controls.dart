@@ -7,6 +7,7 @@ import '../chat/chat_models.dart';
 import '../chat/composer/composer_files.dart';
 import '../chat/composer/file_drop.dart';
 import '../platform/app_platform.dart';
+import '../platform/event_log.dart';
 
 /// One of the window's own buttons, over a header the app draws itself: the
 /// system hit-tests and acts on those pixels, so the header only paints them
@@ -72,6 +73,7 @@ abstract final class WindowControls {
   /// All the app's windows take it.
   static Future<void> setDarkAppearance(bool dark) async {
     if (!(AppPlatform.isMacOS || AppPlatform.isWindows)) return;
+    appEvent('window', 'appearance ${dark ? 'dark' : 'light'}');
     try {
       await _main.invokeMethod<void>('setAppearance', dark);
     } on MissingPluginException {
@@ -196,6 +198,23 @@ abstract final class WindowControls {
     _hovered.remove(viewId)?.dispose();
     _maximized.remove(viewId)?.dispose();
     _channels.remove(viewId);
+    _titleBarDrops.remove(viewId);
+  }
+
+  static final _titleBarDrops = <int, double>{};
+
+  /// Keeps the macOS traffic lights level with the title bar Flutter draws
+  /// as the interface is zoomed: [drop] (the window's points) below where
+  /// the system puts them. Said once a change; 0 is where they start.
+  static Future<void> setTitleBarDrop(double drop, {required int viewId}) async {
+    if (!AppPlatform.isMacOS) return;
+    if ((_titleBarDrops[viewId] ?? 0) == drop) return;
+    _titleBarDrops[viewId] = drop;
+    try {
+      await channelFor(viewId).invokeMethod<void>('setTitleBarDrop', drop);
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
   }
 
   static WindowButton? _buttonNamed(String name) => switch (name) {

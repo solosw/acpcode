@@ -17,11 +17,15 @@ void main() {
         status: StashStatus.requirement,
         pinned: true,
         project: '/Users/me/monad',
-        thread: const StashThreadLink(
-          project: '/Users/me/monad',
-          session: 'abc',
-          title: 'Fix',
-        ),
+        threads: [
+          StashThreadLink(
+            session: 'abc',
+            project: '/Users/me/monad',
+            title: 'Fix',
+            said: 'Done: the hosts are listed.',
+            at: DateTime(2026, 10, 12, 19),
+          ),
+        ],
         source: const StashSource(
           project: '/Users/me/monad',
           branch: 'main',
@@ -34,9 +38,27 @@ void main() {
       expect(back.status, StashStatus.requirement);
       expect(back.pinned, isTrue);
       expect(back.project, '/Users/me/monad');
-      expect(back.thread, note.thread);
+      expect(back.threads, note.threads);
       expect(back.source, note.source);
       expect(back.created, note.created);
+    });
+
+    test('one conversation linked, as it was kept before, is read', () {
+      final note = StashNote.decode(
+        4,
+        '---\nthread: {"project":"/p","session":"s1","title":"Fix"}\n---\n\nx\n',
+      );
+      expect(note.threads, [
+        const StashThreadLink(session: 's1', project: '/p', title: 'Fix'),
+      ]);
+      // Not yet sent, it was no conversation.
+      expect(
+        StashNote.decode(
+          5,
+          '---\nthread: {"project":"/p"}\n---\n\nx\n',
+        ).threads,
+        isEmpty,
+      );
     });
 
     test('a file without front matter is all text', () {

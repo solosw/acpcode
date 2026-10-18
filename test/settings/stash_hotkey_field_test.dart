@@ -3,6 +3,7 @@ import 'package:bao_editor/monaco/flutter/keybinding_entry.dart'
 import 'package:baocode/keybindings/key_chord.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/settings/pages/stash_hotkey_field.dart';
+import 'package:baocode/stash/stash_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -75,5 +76,30 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     expect(changes, ['alt+k', '']);
+  });
+
+  test('no shortcut until one is set: one of every app\'s is not taken '
+      'unasked', () {
+    expect(StashSettings.parse(const {}).hotkey, '');
+    expect(const StashSettings().hotkey, '');
+    expect(
+      StashSettings.parse(const {
+        StashSettings.hotkeyKey: StashSettings.suggestedHotkey,
+      }).hotkey,
+      'ctrl+shift+space',
+    );
+  });
+
+  testWidgets('without one, the card offers the suggested one', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: StashHotkeyCard(settings: null),
+      ),
+    );
+    expect(find.textContaining('Use '), findsOneWidget);
+    expect(find.text('Clear'), findsNothing);
   });
 }

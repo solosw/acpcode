@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
+import '../../base/smooth_scroll.dart';
 import '../../theme/app_theme.dart';
 import 'hover_builder.dart';
+import 'image_thumbnails.dart' show PreviewClick, PreviewPressScope;
 import 'shimmer_text.dart';
 import 'wheel_latch.dart';
 
@@ -25,6 +27,7 @@ class StepHeader extends StatelessWidget {
     this.openTooltip,
     this.icon,
     this.trailing,
+    this.trailingGap = 6,
     this.action,
     this.spans,
     this.bold = false,
@@ -39,7 +42,8 @@ class StepHeader extends StatelessWidget {
   final bool expanded;
   final VoidCallback? onToggle;
 
-  /// Opens the file it is about (in the side panel, say).
+  /// Opens the file it is about (in the side panel, say): its click,
+  /// unless it opens to more ([onToggle]).
   final VoidCallback? onOpen;
 
   /// What [onOpen] does, for assistive technologies and the hover.
@@ -50,6 +54,10 @@ class StepHeader extends StatelessWidget {
 
   /// After the line, e.g. an edit's "+12 -3".
   final Widget? trailing;
+
+  /// Between the line and [trailing]: none for one that keeps its own, to
+  /// go with it (a [StepThumbnails]'s).
+  final double trailingGap;
 
   /// A button after it all, apart from the click that opens it.
   final Widget? action;
@@ -112,8 +120,9 @@ class StepHeader extends StatelessWidget {
               fontWeight: weight,
             ),
           );
-    final open = onOpen;
-    // Opening the file, the line's click; the chevron alone toggles.
+    // One that opens to more toggles on its click: the file it is about
+    // opens from its right click then (see FileLinkMenuRegion).
+    final open = toggle == null ? onOpen : null;
     final click = open ?? toggle;
     final header = HoverBuilder(
       cursor: click == null ? MouseCursor.defer : SystemMouseCursors.click,
@@ -129,7 +138,7 @@ class StepHeader extends StatelessWidget {
             // Shrinks in a narrow window rather than overflow.
             Flexible(child: line),
             if (trailing case final trailing?) ...[
-              const SizedBox(width: 6),
+              SizedBox(width: trailingGap),
               trailing,
             ],
             if (open != null && hovered) ...[
@@ -142,7 +151,7 @@ class StepHeader extends StatelessWidget {
                 ),
               ),
             ],
-            if (toggle != null && open == null && (hovered || expanded)) ...[
+            if (toggle != null && (hovered || expanded)) ...[
               const SizedBox(width: 2),
               // Comes and goes with the hover: kept out of the selection,
               // which would otherwise re-resolve its edges each time.
@@ -158,37 +167,13 @@ class StepHeader extends StatelessWidget {
     if (open != null) {
       clickable = Semantics(button: true, label: openTooltip, child: clickable);
     }
-    Widget row(bool rowHovered) => Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Flexible(child: clickable),
-        // Its own target: the line's click opens the file. Shown as the
-        // chevron of a step that only toggles is, kept in place between.
-        if (open != null && toggle != null)
-          SelectionContainer.disabled(
-            child: Opacity(
-              opacity: rowHovered || expanded ? 1 : 0,
-              child: HoverBuilder(
-                cursor: SystemMouseCursors.click,
-                builder: (context, hovered) => GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: toggle,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 2,
-                      vertical: 3,
-                    ),
-                    child: _chevron(hovered),
-                  ),
-                ),
-              ),
-            ),
-          ),
         if (action case final action?) ...[const SizedBox(width: 10), action],
       ],
     );
-    if (open == null || toggle == null) return row(false);
-    return HoverBuilder(builder: (context, hovered) => row(hovered));
   }
 
   Widget _chevron(bool hovered) => AnimatedRotation(
@@ -218,15 +203,24 @@ class _ClickListener extends StatefulWidget {
 class _ClickListenerState extends State<_ClickListener> {
   Offset? _down;
 
+  /// Whether the press going down is on a picture in it, which a click
+  /// shows whole (see [PreviewClick]): heard before the line's.
+  bool _onPicture = false;
+
   @override
   Widget build(BuildContext context) {
     return Listener(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: (event) => _down =
-          event.buttons == kPrimaryButton &&
-              !HardwareKeyboard.instance.isShiftPressed
-          ? event.position
-          : null,
+      onPointerDown: (event) {
+        final onPicture = _onPicture;
+        _onPicture = false;
+        _down =
+            !onPicture &&
+                event.buttons == kPrimaryButton &&
+                !HardwareKeyboard.instance.isShiftPressed
+            ? event.position
+            : null;
+      },
       onPointerMove: (event) {
         final down = _down;
         if (down != null && (event.position - down).distance > 4) _down = null;
@@ -237,7 +231,10 @@ class _ClickListenerState extends State<_ClickListener> {
         widget.onClick();
       },
       onPointerCancel: (_) => _down = null,
-      child: widget.child,
+      child: PreviewPressScope(
+        onPress: () => _onPicture = true,
+        child: widget.child,
+      ),
     );
   }
 }
@@ -274,11 +271,14 @@ class StepBody extends StatelessWidget {
       children: [
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxHeight),
-          child: SingleChildScrollView(
-            reverse: followEnd,
-            padding: padding,
-            child: WheelLatch(
-              child: SizedBox(width: double.infinity, child: child),
+          child: SmoothScrolling(
+            builder: (context, controller) => SingleChildScrollView(
+              controller: controller,
+              reverse: followEnd,
+              padding: padding,
+              child: WheelLatch(
+                child: SizedBox(width: double.infinity, child: child),
+              ),
             ),
           ),
         ),

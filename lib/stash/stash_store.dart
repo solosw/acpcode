@@ -99,6 +99,11 @@ class StashStore extends ChangeNotifier {
   /// [path] as a stash's text gives it, absolute.
   String absolute(String path) => stashAbsolute(disk.root, path);
 
+  /// [id]'s stash's file (`<root>/12.md`), if it is kept; where it opens as
+  /// the Stash page shows it (see `stashFileView`).
+  String? fileOf(int id) =>
+      root.isEmpty || _notes[id] == null ? null : p.join(root, '$id.md');
+
   /// The stash whose file [path] is (`<root>/12.md`), if one is.
   int? idOfFile(String path) {
     if (root.isEmpty || !p.equals(p.dirname(path), root)) return null;

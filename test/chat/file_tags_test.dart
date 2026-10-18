@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_feed.dart';
 import 'package:baocode/chat/chat_history_view.dart';
@@ -11,6 +12,8 @@ import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer_draft.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/side_panel/file_open.dart';
+import 'package:baocode/chat/side_panel/web_page_opener.dart';
+import 'package:baocode/ide/file_views.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/material_file_icons.dart';
 
@@ -60,6 +63,7 @@ void main() {
     List<ChatItem> items, {
     bool local = true,
     bool inPanel = false,
+    Map<String, int> sizes = const {},
   }) async {
     opened.clear();
     requests.clear();
@@ -87,6 +91,7 @@ void main() {
               read.add(path);
               return Uint8List.fromList(_png);
             },
+            sizeOf: (path) async => sizes[path] ?? _png.length,
             child: ChatHistoryView(feed: _Feed(items)),
           ),
         ),
@@ -130,6 +135,38 @@ void main() {
     expect(opened, isEmpty);
   }, variant: _desktop);
 
+  testWidgets('an image\'s tag is centered on the text of its line, '
+      'whatever its line height', (tester) async {
+    await pump(tester, screenshots, inPanel: true);
+
+    final chip = find.byType(FileImageChip).first;
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.ancestor(of: chip, matching: find.byType(RichText)).first,
+    );
+    final dot = paragraph.text
+        .toPlainText(includePlaceholders: true)
+        .indexOf('·');
+    // The glyphs' box, without the line's leading.
+    final glyphs = paragraph
+        .getBoxesForSelection(
+          TextSelection(baseOffset: dot, extentOffset: dot + 1),
+        )
+        .single
+        .toRect()
+        .shift(paragraph.localToGlobal(Offset.zero));
+    final tag = tester.getRect(
+      find.descendant(of: chip, matching: find.byType(Container)).first,
+    );
+    expect(tag.center.dy, moreOrLessEquals(glyphs.center.dy, epsilon: .5));
+  }, variant: _desktop);
+
+  testWidgets('an image too big to show small is not read for its tag', (
+    tester,
+  ) async {
+    await pump(tester, screenshots, sizes: {'/p/shots/old.png': 1 << 30});
+    expect(read, ['/p/shots/new.png']);
+  }, variant: _desktop);
+
   testWidgets('its right click has the file\'s menu, with the image\'s '
       'own', (tester) async {
     await pump(tester, screenshots);
@@ -143,11 +180,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, ['/p/shots/new.png']);
 
-    // Where files open in the side panel, an image does not: in the IDE.
+    // Where files open in the side panel, an image does too, and in the
+    // IDE.
     await pump(tester, screenshots, inPanel: true);
     await rightClick(tester, tester.getCenter(find.text('新版截图')));
     expect(find.text('Open'), findsNothing);
-    expect(find.text('Open in Side Panel'), findsNothing);
+    expect(find.text('Open in Side Panel'), findsOneWidget);
     await tester.tap(find.text('Open in Fast Ide'));
     await tester.pumpAndSettle();
     expect(inIde, ['/p/shots/new.png']);
@@ -160,9 +198,26 @@ void main() {
       UserMessageItem(text: 'Where is it?'),
       AssistantTextItem('See [the report](out/report.html).'),
     ];
+    // As the app registers it, the browser told of instead.
+    final browsed = <String>[];
+    FileViews.registerOpener(
+      FileOpener(
+        id: webPageOpener.id,
+        matches: webPageOpener.matches,
+        label: webPageOpener.label,
+        open: (path) async => browsed.add(path),
+      ),
+    );
+    addTearDown(() => FileViews.unregisterOpener(webPageOpener.id));
     await pump(tester, report);
     final scope = tester.widget<FileOpenScope>(find.byType(FileOpenScope));
-    expect(scope.opensInBrowser('/p/out/report.html'), isTrue);
+    expect(scope.openerOf('/p/out/report.html')?.id, webPageOpener.id);
+    await tester.tapAt(
+      tester.getCenter(find.byType(FileIcon)) + const Offset(30, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(browsed, ['/p/out/report.html']);
+    expect(opened, isEmpty);
     await rightClick(
       tester,
       tester.getCenter(find.byType(FileIcon)) + const Offset(30, 0),
@@ -191,7 +246,16 @@ void main() {
     // A remote project's opens as other files.
     await pump(tester, report, local: false);
     final remote = tester.widget<FileOpenScope>(find.byType(FileOpenScope));
-    expect(remote.opensInBrowser('/p/out/report.html'), isFalse);
+    expect(remote.openerOf('/p/out/report.html'), isNull);
+
+    // Nothing registered for it: it opens as other files.
+    FileViews.unregisterOpener(webPageOpener.id);
+    await pump(tester, report);
+    await tester.tapAt(
+      tester.getCenter(find.byType(FileIcon)) + const Offset(30, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(opened, ['/p/out/report.html']);
   }, variant: _desktop);
 
   testWidgets('an attached image\'s right click offers to show and copy '

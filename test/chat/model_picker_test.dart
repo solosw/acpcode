@@ -1,6 +1,7 @@
 import 'package:baocode/chat/chat_session.dart' show ModelSettingChoice;
 import 'package:baocode/chat/composer/composer_picker.dart';
 import 'package:baocode/chat/floating/floating_registry.dart';
+import 'package:baocode/ide/ide_switch.dart';
 import 'package:baocode/kernel/agent_kernel.dart' show KernelChoiceKind;
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/theme/app_theme.dart';
@@ -212,6 +213,157 @@ void main() {
     expect(find.text('High'), findsOneWidget);
     expect(drawn, 0);
     expect(asked.toSet().length, asked.length);
+  });
+
+  testWidgets('Fast appears as a switch at the end of model settings, and '
+      'picking it leaves the menu open', (tester) async {
+    const fastOption = KernelOption('fast', 'Fast', Icons.bolt, '');
+    const effort = KernelOption('high', 'High', Icons.speed, '');
+    var enabled = false;
+    await pump(
+      tester,
+      [_option('@gw/gpt-5', 'GPT-5', _gateway)],
+      settingsOf: (_) => [
+        ModelSettingChoice(
+          kind: KernelChoiceKind.effort,
+          options: const [effort],
+          selected: effort,
+          onSelected: (_) {},
+        ),
+        ModelSettingChoice(
+          kind: KernelChoiceKind.fast,
+          options: const [fastOption],
+          selected: enabled ? fastOption : null,
+          toggle: true,
+          onSelected: (_) => enabled = !enabled,
+        ),
+      ],
+    );
+    await open(tester, 'GPT-5');
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.text('GPT-5').last));
+    await tester.pumpAndSettle();
+    expect(find.text('Fast'), findsOneWidget);
+    // The app's own switch, not Flutter's.
+    expect(find.byType(IdeSwitch), findsOneWidget);
+    expect(find.byType(Switch), findsNothing);
+    expect(tester.widget<IdeSwitch>(find.byType(IdeSwitch)).value, isFalse);
+
+    // Picked: on, and both menus stay where they are.
+    await tester.tap(find.text('Fast'));
+    await tester.pumpAndSettle();
+    expect(enabled, isTrue);
+    expect(find.text('Fast'), findsOneWidget);
+    expect(find.text('High'), findsOneWidget);
+
+    // Toggled off again from the switch itself, the menu still open.
+    await tester.tap(find.byType(IdeSwitch));
+    await tester.pumpAndSettle();
+    expect(enabled, isFalse);
+    expect(find.text('Fast'), findsOneWidget);
+
+    // From the keyboard too: → into the setting, ↓ onto the switch,
+    // Enter flips it, and the menu stays.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(enabled, isTrue);
+    expect(find.text('Fast'), findsOneWidget);
+  });
+
+  testWidgets('the switch turns over where it stands, the menu rebuilt '
+      'around it as the kernel reports it', (tester) async {
+    // The menues are rebuilt from outside on every kernel report
+    // (emitInfoChanged); the switch that was picked must show what the
+    // kernel now says, with no reopen.
+    const fastOption = KernelOption('fast', 'Fast', Icons.bolt, '');
+    var fast = false;
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    Future<void> host() => tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomLeft,
+            child: Focus(
+              focusNode: focus,
+              onKeyEvent: (_, event) =>
+                  FloatingRegistry.handleKey(event) ?? KeyEventResult.ignored,
+              child: StatefulBuilder(
+                builder: (context, setState) => ComposerPicker(
+                  options: [_option('@gw/gpt-5', 'GPT-5', _gateway)],
+                  selected: _option('@gw/gpt-5', 'GPT-5', _gateway),
+                  focusNode: focus,
+                  settingsOf: (_) => [
+                    ModelSettingChoice(
+                      kind: KernelChoiceKind.fast,
+                      options: const [fastOption],
+                      // As the kernel now reports it.
+                      selected: fast ? fastOption : null,
+                      toggle: true,
+                      onSelected: (_) => setState(() => fast = !fast),
+                    ),
+                  ],
+                  onSelected: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await host();
+    await open(tester, 'GPT-5');
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.text('GPT-5').last));
+    await tester.pumpAndSettle();
+    expect(tester.widget<IdeSwitch>(find.byType(IdeSwitch)).value, isFalse);
+
+    await tester.tap(find.byType(IdeSwitch));
+    await tester.pumpAndSettle();
+    expect(fast, isTrue);
+    expect(find.text('Fast'), findsOneWidget);
+    expect(tester.widget<IdeSwitch>(find.byType(IdeSwitch)).value, isTrue);
+
+    await tester.tap(find.byType(IdeSwitch));
+    await tester.pumpAndSettle();
+    expect(fast, isFalse);
+    expect(find.text('Fast'), findsOneWidget);
+    expect(tester.widget<IdeSwitch>(find.byType(IdeSwitch)).value, isFalse);
+  });
+
+  testWidgets('a setting that is a choice closes the menu, as before', (
+    tester,
+  ) async {
+    const effort = KernelOption('high', 'High', Icons.speed, '');
+    await pump(
+      tester,
+      [_option('@gw/gpt-5', 'GPT-5', _gateway)],
+      settingsOf: (_) => [
+        ModelSettingChoice(
+          kind: KernelChoiceKind.effort,
+          options: const [effort],
+          selected: effort,
+          onSelected: (_) {},
+        ),
+      ],
+    );
+    await open(tester, 'GPT-5');
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.moveTo(tester.getCenter(find.text('GPT-5').last));
+    await tester.pumpAndSettle();
+    expect(find.text('High'), findsOneWidget);
+
+    await tester.tap(find.text('High'));
+    await tester.pumpAndSettle();
+    expect(find.text('High'), findsNothing);
   });
 
   testWidgets(

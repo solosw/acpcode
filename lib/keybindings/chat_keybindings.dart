@@ -67,6 +67,10 @@ abstract final class ChatCommandIds {
   /// The side panel at the right of the conversations: the focused
   /// agent's changes and the files opened from its conversation.
   static const toggleSidePanel = 'baocode.chat.toggleSidePanel';
+
+  /// The side panel to the conversations' other side: their left, or
+  /// back to their right.
+  static const toggleSidePanelPosition = 'baocode.chat.toggleSidePanelPosition';
   static const sidePanelChanges = 'baocode.chat.sidePanel.changes';
   static const sidePanelFiles = 'baocode.chat.sidePanel.files';
   static const sidePanelTerminal = 'baocode.chat.sidePanel.terminal';
@@ -101,6 +105,7 @@ abstract final class ChatCommandIds {
   static const nextMode = 'baocode.chat.nextMode';
   static const openModelPicker = 'workbench.action.chat.openModelPicker';
   static const attachContext = 'workbench.action.chat.attachContext';
+  static const pasteRaw = 'baocode.chat.pasteRaw';
   static const selectNextSuggestion = 'baocode.chat.selectNextSuggestion';
   static const selectPrevSuggestion = 'baocode.chat.selectPrevSuggestion';
   static const acceptSelectedSuggestion =
@@ -190,6 +195,7 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.searchAgents, 'Search Agents'),
     (ChatCommandIds.openIde, 'Open in Fast Ide'),
     (ChatCommandIds.toggleSidePanel, 'Toggle Side Panel'),
+    (ChatCommandIds.toggleSidePanelPosition, 'Toggle Side Panel Position'),
     (ChatCommandIds.sidePanelChanges, 'Show Agent Changes'),
     (ChatCommandIds.sidePanelFiles, 'Show Agent Files'),
     (ChatCommandIds.sidePanelTerminal, 'Show Agent Terminals'),
@@ -213,6 +219,7 @@ final List<CommandInfo> chatExtraCommands = [
     (ChatCommandIds.nextMode, 'Switch to Next Mode'),
     (ChatCommandIds.openModelPicker, 'Open Model Picker'),
     (ChatCommandIds.attachContext, 'Add Context…'),
+    (ChatCommandIds.pasteRaw, 'Paste as Plain Text'),
     (ChatCommandIds.selectNextSuggestion, 'Select Next Suggestion'),
     (ChatCommandIds.selectPrevSuggestion, 'Select Previous Suggestion'),
     (ChatCommandIds.acceptSelectedSuggestion, 'Accept Selected Suggestion'),
@@ -524,6 +531,15 @@ final List<KeybindingEntry> chatExtraKeybindings = [
     key: 'ctrl+/',
     mac: 'cmd+/',
     command: ChatCommandIds.attachContext,
+    when: _input,
+  ),
+  // Paste the clipboard as plain text, past the long-paste tag (⇧⌘V/⇧Ctrl+V,
+  // as a terminal's Paste on Windows); the plain ⌘V/Ctrl+V keeps its tags.
+  const KeybindingEntry(
+    win: 'ctrl+shift+v',
+    mac: 'shift+cmd+v',
+    linux: 'ctrl+shift+v',
+    command: ChatCommandIds.pasteRaw,
     when: _input,
   ),
   // The @ and / menu's, after the input's: where both hold, they win.
