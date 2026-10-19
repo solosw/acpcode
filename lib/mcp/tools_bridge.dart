@@ -1,11 +1,9 @@
-// The app's own tools, for an agent that runs outside it: the agent's
-// process starts the app as its MCP server (tools_stdio.dart), which passes
-// every request back here, where the tools are (the browser's, the
-// pictures').
-//
-// A socket of the data folder, one line per message (JSON), and a token made
-// up for the run, kept in a file only the user reads: nothing on the
-// network, and no other program of the machine let in.
+// The app's own tools for local agents. HTTP-capable ACP conversations
+// connect directly to one shared in-process listener (tools_http.dart).
+// Legacy stdio clients launch a headless proxy (tools_stdio.dart) which
+// forwards requests to the private socket and the same tool registry.
+// Socket credentials live in the private data folder; HTTP capabilities
+// are conversation-scoped and exist only in memory.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,6 +14,7 @@ import 'package:path/path.dart' as p;
 
 import '../kernel/claude_code/claude_sdk_tools.dart';
 import '../platform/data_dir.dart';
+import 'tools_http.dart';
 import 'tools_protocol.dart';
 
 /// Serves [ClaudeSdkTools] to the processes of the app's ACP agents.
@@ -35,6 +34,10 @@ class ToolsBridge {
   /// The one a process of this run may open with.
   String? get token => _token;
   String? _token;
+
+  /// Shared by HTTP-capable local ACP agents; no stdio launcher is needed.
+  ToolsHttpServer? get http => _http;
+  ToolsHttpServer? _http;
 
   ServerSocket? _server;
   Future<void>? _starting;
@@ -77,6 +80,15 @@ class ToolsBridge {
       );
       await endpoint.rename(p.join(dir, 'endpoint.json'));
       server.listen(_accept);
+      final http = ToolsHttpServer();
+      try {
+        await http.start();
+        _http = http;
+      } on Object catch (error) {
+        await http.stop();
+        // Keep legacy stdio available when loopback HTTP cannot bind.
+        debugPrint('tools HTTP bridge: $error');
+      }
     } on Object catch (error) {
       // The agents are given no tools of the app's: it goes on.
       debugPrint('tools bridge: $error');
@@ -245,6 +257,9 @@ class ToolsBridge {
 
   /// Lets the agents' processes go (the app is quitting).
   Future<void> stop() async {
+    final http = _http;
+    _http = null;
+    await http?.stop();
     for (final socket in [..._sockets]) {
       socket.destroy();
     }

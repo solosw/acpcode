@@ -3,6 +3,7 @@ library;
 
 // The app's own executable, started as an agent's MCP server, answers with
 // the running app's tools: what an ACP agent does (lib/mcp/tools_stdio.dart).
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -18,6 +19,69 @@ void main() {
       Platform.environment['BAOCODE_MCP_TEST_APP'] ??
       'build/macos/Build/Products/Release/BaoCode.app/Contents/MacOS/BaoCode';
   final built = File(app).existsSync();
+
+  test(
+    'MCP stdio stays headless while waiting for client requests on macOS',
+    () async {
+      final data = Directory.systemTemp.createTempSync('tools-stdio-headless-');
+      addTearDown(() => data.deleteSync(recursive: true));
+      final probe = '${data.path}/window-probe';
+      final compiled = await Process.run('xcrun', [
+        'swiftc',
+        'test/fixtures/mcp/window_probe.swift',
+        '-o',
+        probe,
+      ]);
+      expect(compiled.exitCode, 0, reason: '${compiled.stderr}');
+      DataDirectory.current = DataDirectory(data.path);
+      final bridge = ToolsBridge.instance;
+      await bridge.start();
+      addTearDown(bridge.stop);
+      final process = await Process.start(app, const [
+        ToolsProtocol.flag,
+      ], environment: bridge.environmentFor(cwd: '/tmp/project-headless'));
+      addTearDown(() => process.kill());
+      final errors = process.stderr.transform(utf8.decoder).join();
+      final lines = StreamIterator(
+        process.stdout.transform(utf8.decoder).transform(const LineSplitter()),
+      );
+      addTearDown(lines.cancel);
+      process.stdin.writeln(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 1,
+          'method': 'initialize',
+          'params': {},
+        }),
+      );
+      await process.stdin.flush();
+      expect(
+        await lines.moveNext().timeout(const Duration(seconds: 30)),
+        isTrue,
+      );
+      expect(jsonDecode(lines.current), containsPair('id', 1));
+      // Keep stdin open like an agent does for the entire conversation.
+      // The previous test closed it immediately and missed the blank window.
+      final result = await Process.run(probe, ['${process.pid}']);
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+      final state = jsonDecode(result.stdout as String) as Map;
+      expect(
+        state['maxVisibleWindows'],
+        0,
+        reason: 'An MCP server must not open a conversation window',
+      );
+      expect(state['activationPolicies'], [
+        2,
+      ], reason: 'An MCP child must be prohibited from activating a GUI');
+      await process.stdin.close();
+      expect(await process.exitCode.timeout(const Duration(seconds: 10)), 0);
+      expect(await errors, isNot(contains('BaoCode MCP:')));
+    },
+    skip: !Platform.isMacOS || !built
+        ? 'requires a built macOS app and the macOS window server'
+        : false,
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   for (final discover in [false, true]) {
     test(

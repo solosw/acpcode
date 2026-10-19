@@ -61,10 +61,16 @@ Claude Code 由应用自己启动，所以它的浏览器工具和 `generate_ima
 2. 应用将 `baocode` 注册到**用户级** `.claude.json` 的 `mcpServers`，不是
    项目的 `.mcp.json`。默认是 `~/.claude.json`；自定义 Claude 配置目录时
    是该目录中的 `.claude.json`，设置的自定义 MCP 列表也能读到。
-3. 服务器命令为应用自己的可执行文件加 `--mcp-stdio`；持久配置只保存
+3. 对支持 HTTP 的本地 ACP Agent，对话直接连接应用进程内唯一的 Streamable
+   HTTP MCP 监听器，不再为每个对话启动 `BaoCode --mcp-stdio`。所有对话
+   共用服务地址，但使用各自的临时凭据和项目上下文；取消调用互不影响。
+   这些地址和凭据只通过 ACP 传递，不写入用户或项目配置。对话销毁、代理
+   退出或重启时撤销连接并取消未完成调用。
+4. 用户级持久注册仍兼容外部客户端及只支持 stdio 的代理：
+   服务器命令为应用自己的可执行文件加 `--mcp-stdio`；持久配置只保存
    `BAOCODE_MCP_DATA_DIR`。进程每次启动时读取当前连接地址和令牌，
    默认以进程工作目录作为项目目录，因此应用重启后不需要重新配置令牌。
-4. stdout 只输出 MCP JSON-RPC，错误写 stderr。扩展首次连接或工具开关变化
+5. stdio 的 stdout 只输出 MCP JSON-RPC，错误写 stderr。扩展首次连接或工具开关变化
    后，已初始化的客户端会收到 `notifications/tools/list_changed`。
 
 因此本地 ACP Agent 与 Claude Code 用到的工具完全一致，浏览器工具也仍然
@@ -80,7 +86,13 @@ Claude Code 由应用自己启动，所以它的浏览器工具和 `generate_ima
   图片模型决定，关闭的工具不会因注册为用户级而变得可调用。
 - `--mcp-stdio` 的进程不启动界面，只转发；应用退出后它也随之结束。
   客户端关闭 stdin 时最多等待 2 秒排空回复，再断开以取消未完成调用。
-- 令牌只属于本次运行，写入文件供应用拉起的进程读取，不经网络。
+- stdio 令牌只属于本次运行，写入私有文件供应用拉起的进程读取。
+  HTTP 仅监听 `127.0.0.1` 的随机端口，要求每个对话独立的 bearer 凭据，
+  拒绝浏览器 Origin 和非本机 Host，不对局域网开放。HTTP 使用无状态传输，
+  POST 返回 JSON，GET 提供工具列表变化的 SSE 通知；会话生命周期由 ACP 管理。
+- 只有当前数据目录的应用托管配置才会升级为共享连接，用户自定义同名
+  服务器、项目覆盖、禁用状态和 SSH 远端配置保持原样。只支持 stdio 的
+  代理仍需各自的无界面转发进程，不能混用不同代理的 stdin/stdout。
 
 ## SSH 工作区
 

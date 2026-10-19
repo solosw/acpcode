@@ -8,6 +8,7 @@ class AppDelegate: FlutterAppDelegate {
   /// out as closed (see Attention.swift). With the IDE's windows, the app
   /// stays, as a Mac app does: the Dock's icon opens the main window again.
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    if MainFlutterWindow.isToolsStdio { return false }
     if AppWindows.shared?.started ?? false { return false }
     // Launched for what the system asks to open, the main window is put
     // out of sight before Flutter has started (see application(_:open:)).
@@ -19,6 +20,7 @@ class AppDelegate: FlutterAppDelegate {
   /// window (the one in front, with the IDE's): brought up for it, from
   /// the Dock's Quit too.
   override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    if MainFlutterWindow.isToolsStdio { return .terminateNow }
     bringWindowFront()
     return super.applicationShouldTerminate(sender)
   }
@@ -30,6 +32,7 @@ class AppDelegate: FlutterAppDelegate {
   override func applicationShouldHandleReopen(
     _ sender: NSApplication, hasVisibleWindows flag: Bool
   ) -> Bool {
+    if MainFlutterWindow.isToolsStdio { return false }
     if flag || sender.windows.contains(where: { $0.isMiniaturized }) { return true }
     if let windows = AppWindows.shared, windows.started {
       windows.reopen()
@@ -85,6 +88,7 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   private func bringWindowFront() {
+    if MainFlutterWindow.isToolsStdio { return }
     if let windows = AppWindows.shared, windows.started {
       windows.bringFront()
     } else if let window = mainFlutterWindow {

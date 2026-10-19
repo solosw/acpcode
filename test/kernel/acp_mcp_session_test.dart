@@ -272,4 +272,63 @@ void main() {
       ]);
     },
   );
+  test('dispose revokes MCP access returned after an obsolete load', () async {
+    final pending = Completer<AcpMcpServers>();
+    var closed = false;
+    final kernel = AcpKernel(
+      descriptor(),
+      const KernelContext(),
+      (_) async => MockAcpTransport(),
+      loadMcpServers: (_, _) => pending.future,
+    );
+    kernel.prepare();
+    await Future<void>.delayed(Duration.zero);
+    kernel.dispose();
+    pending.complete(AcpMcpServers(onClose: () => closed = true));
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isTrue);
+  });
+
+  test(
+    'restart revokes only the old MCP access; dispose revokes the new one',
+    () async {
+      final closed = <int>{};
+      var loads = 0;
+      final kernel = AcpKernel(
+        descriptor(),
+        const KernelContext(),
+        (_) async => MockAcpTransport(),
+        loadMcpServers: (_, _) async {
+          final id = ++loads;
+          return AcpMcpServers(onClose: () => closed.add(id));
+        },
+      );
+      kernel.prepare();
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, isEmpty);
+      kernel.restart();
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, {1});
+      kernel.dispose();
+      expect(closed, {1, 2});
+    },
+  );
+  test('agent exit revokes its MCP access exactly once', () async {
+    var closes = 0;
+    final transport = MockAcpTransport();
+    final kernel = AcpKernel(
+      descriptor(),
+      const KernelContext(),
+      (_) async => transport,
+      loadMcpServers: (_, _) async => AcpMcpServers(onClose: () => closes++),
+    );
+    kernel.prepare();
+    await Future<void>.delayed(Duration.zero);
+    transport.close();
+    await Future<void>.delayed(Duration.zero);
+    expect(kernel.health.status, KernelHealthStatus.failed);
+    expect(closes, 1);
+    kernel.dispose();
+    expect(closes, 1);
+  });
 }

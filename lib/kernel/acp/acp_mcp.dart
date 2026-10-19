@@ -6,10 +6,18 @@ import 'acp_mcp_stub.dart' if (dart.library.io) 'acp_mcp_io.dart' as platform;
 /// MCP connection details to send, and configuration problems to show rather
 /// than silently losing a tool. These are not a report of connected servers.
 class AcpMcpServers {
-  const AcpMcpServers({this.servers = const [], this.warnings = const []});
+  const AcpMcpServers({
+    this.servers = const [],
+    this.warnings = const [],
+    this.onClose,
+  });
 
   final List<Map<String, Object?>> servers;
   final List<String> warnings;
+
+  /// Revokes transient in-app MCP connections when this agent stops.
+  final void Function()? onClose;
+  void close() => onClose?.call();
 }
 
 typedef AcpMcpLoader = Future<AcpMcpServers> Function(
@@ -38,6 +46,7 @@ Future<AcpMcpServers> buildAcpMcpServers(
   required Map<String, Object?> capabilities,
   required Map<String, String> environment,
   required AcpMcpCommandResolver resolveCommand,
+  Map<String, Object?>? Function(Customization item)? configurationFor,
 }) async {
   int priority(CustomizationScope scope) => switch (scope) {
     CustomizationScope.user => 0,
@@ -60,7 +69,7 @@ Future<AcpMcpServers> buildAcpMcpServers(
   for (final item in effective.values) {
     if (item.enabled == false) continue;
     try {
-      final config = item.server;
+      final config = configurationFor?.call(item) ?? item.server;
       if (config == null) throw const FormatException('Invalid configuration');
       String expand(String value) {
         for (final match in RegExp(

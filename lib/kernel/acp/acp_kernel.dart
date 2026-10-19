@@ -33,6 +33,7 @@ class AcpKernel
   final AcpCatalog? _catalog;
   final AcpMcpLoader? _loadMcpServers;
   AcpMcpServers _mcp = const AcpMcpServers();
+  bool _mcpClosed = false;
   AcpTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Timer? _receiveTimer;
@@ -136,9 +137,12 @@ class AcpKernel
       final mcp =
           await _loadMcpServers?.call(_context, capabilities) ??
           const AcpMcpServers();
-      if (obsolete()) return;
-      if (_health.status == KernelHealthStatus.failed) return;
+      if (obsolete() || _health.status == KernelHealthStatus.failed) {
+        mcp.close();
+        return;
+      }
       _mcp = mcp;
+      _mcpClosed = false;
       await _ensureSession();
       if (obsolete() || _health.status == KernelHealthStatus.failed) return;
       _initialized = true;
@@ -1008,8 +1012,15 @@ class AcpKernel
     _closeAssistantStream();
   }
 
+  void _closeMcp() {
+    if (_mcpClosed) return;
+    _mcpClosed = true;
+    _mcp.close();
+  }
+
   void _fail(Object error) {
     if (_disposed || _health.status == KernelHealthStatus.failed) return;
+    _closeMcp();
     _health = KernelHealth(KernelHealthStatus.failed, message: '$error');
     for (final completer in _pending.values) {
       if (!completer.isCompleted) completer.completeError(error);
@@ -1034,6 +1045,7 @@ class AcpKernel
     _subscription = null;
     _sessionId = null;
     _initialized = false;
+    _closeMcp();
     _mcp = const AcpMcpServers();
     _starting = false;
     _turnCount = 0;
@@ -1052,6 +1064,7 @@ class AcpKernel
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _closeMcp();
     _receiveTimer?.cancel();
     _receiveTimer = null;
     _transport?.close();

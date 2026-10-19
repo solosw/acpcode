@@ -513,11 +513,37 @@ class BaoWindow: NSWindow {
 /// It also answers for the app what is the app's, not a window's: the color
 /// theme's appearance, the File menu.
 class MainFlutterWindow: BaoWindow {
+  /// MCP clients start a separate copy for stdio. This must be decided before
+  /// a view, plugins, app channels or any window-launch observers are created:
+  /// Dart main's early return cannot undo AppKit showing a native window.
+  static let isToolsStdio = ProcessInfo.processInfo.arguments.contains("--mcp-stdio")
+
+  /// Retain the headless engine for the lifetime of the MCP connection.
+  private var toolsEngine: FlutterEngine?
+
   /// Where its place and size are kept (the user defaults'), for the next
   /// launch.
   private static let frameName = "BaoCodeMainWindow"
 
   override func awakeFromNib() {
+    if Self.isToolsStdio {
+      holdingBack = true
+      shownAtLaunch = false
+      NSApp.setActivationPolicy(.prohibited)
+      orderOut(nil)
+      let project = FlutterDartProject()
+      project.dartEntrypointArguments = Array(ProcessInfo.processInfo.arguments.dropFirst())
+      let engine = FlutterEngine(
+        name: "BaoCodeMcpStdio", project: project, allowHeadlessExecution: true)
+      toolsEngine = engine
+      if !engine.run(withEntrypoint: nil) {
+        FileHandle.standardError.write(Data("BaoCode MCP: could not start the stdio engine\n".utf8))
+        engine.shutDownEngine()
+        exit(EXIT_FAILURE)
+      }
+      super.awakeFromNib()
+      return
+    }
     let flutterViewController = FlutterViewController()
     setUp(flutter: flutterViewController, suffix: "", size: Self.defaultSize)
     // Where the user left it, as big as they made it (kept in the user
