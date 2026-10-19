@@ -68,7 +68,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          published=$(curl -fsS https://dl.baocode.dev/releases/latest.json | jq -r .version || true)
+          # Compare against this repository's update channel, not upstream.
+          published=$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json" | jq -r '.version // empty' || true)
           echo "Published: ${published:-none}, this: $VERSION"
           [ -z "$published" ] && exit 0
           # x.y.z+build, compared number by number.
