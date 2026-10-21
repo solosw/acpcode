@@ -29,6 +29,28 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.4.0">
+    <h2 class="plain"><a href="#v1.4.0">1.4.0</a></h2>
+    <p>新功能</p>
+    <ul>
+    <li>新增 Linux 桌面支持，通过 GitHub Releases 提供 x64 和 arm64 安装包。</li>
+    <li>可在应用内新增和编辑 SSH 服务器，配置跳板机及每台服务器使用的内核，并保留原有主机登录设置。</li>
+    <li>用量限制重置后可自动继续会话，也可关闭自动继续。</li>
+    <li>显示实时回合统计，并在历史记录中保留回合耗时与费用。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>合入上游 Windows、Linux 浏览器集成，以及模型代理和子代理模型支持。</li>
+    <li>改善编辑器输入、触控板滚动、会话渲染和差异审阅体验。</li>
+    <li>保留本地 ACP 智能体、共享及无窗口 MCP 连接、修改审阅安全、自动保存行为和遥测控制。</li>
+    </ul>
+    <p>修复</p>
+    <ul>
+    <li>SSH 连接与主机密钥配置检查统一使用已保存的用户、端口和密钥设置。</li>
+    <li>新增 Linux 下载入口的同时，保留手机端下载按钮与二维码。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.3.2">
     <h2 class="plain"><a href="#v1.3.2">1.3.2</a></h2>
     <p>浏览器工具连接更稳定</p>
