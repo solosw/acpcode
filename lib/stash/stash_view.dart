@@ -774,7 +774,7 @@ class StashViewState extends State<StashView>
               ),
             SidebarIconButton(
               icon: Codicons.folderOpened,
-              tooltip: l10n.stashReveal,
+              tooltip: l10n.revealInFileManager,
               onTap: () => unawaited(openExternal(store.root)),
             ),
             SidebarIconButton(
@@ -1284,7 +1284,7 @@ mixin _StashActions<T extends StatefulWidget> on State<T> {
         const IdeMenuSeparator(),
         if (!several && WindowControls.canRevealInFileManager)
           IdeMenuAction(
-            l10n.stashReveal,
+            l10n.revealInFileManager,
             onSelected: () => unawaited(
               WindowControls.revealInFileManager(
                 p.join(_controller.store.root, '${note.id}.md'),

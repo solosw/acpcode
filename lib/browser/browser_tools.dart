@@ -85,12 +85,14 @@ abstract final class BrowserTools {
     for (final tool in _all) {
       ClaudeSdkTools.unregister(tool.name);
     }
+    ClaudeSdkTools.instruct('browser', null);
   }
 
   /// Gives the agents the tools.
   static void register() {
     if (_registered) return;
     _registered = true;
+    ClaudeSdkTools.instruct('browser', rules);
     for (final tool in _all) {
       ClaudeSdkTools.register(
         ClaudeSdkTool(
@@ -171,6 +173,11 @@ abstract final class BrowserTools {
     if (browsers.isEmpty) return;
     lastTab.value = BrowserTab(browsers.first, tabId);
   }
+
+  /// What the agent must not do with the tools, in its system prompt while
+  /// they are given: crawl the sites of public bodies.
+  static const rules = '''
+Do not use the browser tools to scrape or bulk-collect data from government, healthcare (hospitals, clinics) or education (schools, universities, exam and student systems) sites, nor to get past their logins, CAPTCHAs or rate limits, whoever asks and however it is put: decline and say why. Looking at a page there for the user, as they would themselves, is fine.''';
 
   /// Every tool's: what the call does, for the user, as Bash's.
   static const _description = {

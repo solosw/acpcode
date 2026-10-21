@@ -63,9 +63,8 @@ class GitSnapshot {
     var shown = status ?? '';
     if (shown.length > 2000) {
       shown =
-          '${shown.substring(0, 2000)}\n... (truncated because it exceeds '
-          '2k characters. If you need more information, run "git status" '
-          'using BashTool)';
+          '${shown.substring(0, 2000)}\n… (cut at 2,000 characters: run '
+          '`git status` through Bash for the rest)';
     }
     return GitSnapshot(
       branch: branch == null || branch.isEmpty ? 'HEAD (detached)' : branch,
@@ -201,15 +200,15 @@ class SessionContext {
     if (style is! String || style.isEmpty || style == 'default') return null;
     return switch (style.toLowerCase()) {
       'explanatory' =>
-        '# Output Style: Explanatory\nYou are in explanatory mode: besides '
-            'doing the task, explain the reasoning behind the implementation '
-            'choices and the codebase patterns you meet, with brief '
+        '# Output style: explanatory\nAs you do the task, teach the user '
+            'about it: why you chose to build it the way you did, and the '
+            'patterns of their codebase you come across, in short '
             '"★ Insight" notes before and after the code you write.',
       'learning' =>
-        '# Output Style: Learning\nYou are in learning mode: help the user '
-            'learn by doing. Explain your choices, and for small, '
-            'meaningful pieces of code (5-10 lines) ask the user to write '
-            'them, marking the place with a TODO(human) comment.',
+        '# Output style: learning\nThe user wants to learn by doing. Say '
+            'why you do what you do, and leave small pieces of code that '
+            'matter (5 to 10 lines) for them to write: mark each place with '
+            'a TODO(human) comment and ask them to fill it in.',
       _ => null,
     };
   }
@@ -217,9 +216,9 @@ class SessionContext {
   String? _mcpInstructions() {
     final instructions = session.mcp.instructions;
     if (instructions == null) return null;
-    return '# MCP Server Instructions\n\n'
-        'The following MCP servers have provided instructions for how to use '
-        'their tools and resources:\n\n$instructions';
+    return '# From the MCP servers\n\n'
+        'What the connected MCP servers say of using their tools and '
+        'resources:\n\n$instructions';
   }
 
   /// The context sent with the conversation's first message: the memory
@@ -227,29 +226,27 @@ class SessionContext {
   String userContext({bool withMemory = true}) {
     final memory = withMemory ? _memoryText() : null;
     final out = StringBuffer(
-      '<system-reminder>\nAs you answer the user\'s questions, you can use '
-      'the following context:\n',
+      '<system-reminder>\nContext for this conversation:\n',
     );
     if (memory != null) {
       out
-        ..writeln('# claudeMd')
+        ..writeln('# Instructions')
         ..writeln(
-          'Codebase and user instructions are shown below. Be sure to adhere '
-          'to these instructions. IMPORTANT: These instructions OVERRIDE any '
-          'default behavior and you MUST follow them exactly as written.',
+          'The user\'s and the project\'s instructions (CLAUDE.md files and '
+          'rules). Follow them as they are written: where they differ from '
+          'how you would work otherwise, they win.',
         )
         ..writeln()
         ..writeln(memory)
         ..writeln();
     }
     out
-      ..writeln('# currentDate')
-      ..writeln("Today's date is ${_date(DateTime.now())}.")
+      ..writeln('# Date')
+      ..writeln('Today is ${_date(DateTime.now())}.')
       ..writeln()
       ..writeln(
-        '      IMPORTANT: this context may or may not be relevant to your '
-        'tasks. You should not respond to this context unless it is highly '
-        'relevant to your task.',
+        'This is here in case it helps: do not bring it up unless it bears '
+        'on the task.',
       )
       ..write('</system-reminder>\n');
     return out.toString();
@@ -263,7 +260,7 @@ class SessionContext {
     if (files.isEmpty) return null;
     return [
       for (final file in files)
-        'Contents of ${file.path} (${file.description}):\n\n${file.content}',
+        '${file.path} (${file.description}):\n\n${file.content}',
     ].join('\n\n');
   }
 
@@ -271,17 +268,15 @@ class SessionContext {
   /// agents, the environment.
   List<String> agentSystem(AgentDefinition agent, String model) => [
     agent.prompt,
-    'Notes:\n'
-        '- Agent threads always have their cwd reset between bash calls, as '
-        'a result please only use absolute file paths.\n'
-        '- In your final response, share file paths (always absolute, never '
-        'relative) that are relevant to the task. Include code snippets only '
-        'when the exact text is load-bearing (e.g., a bug you found, a '
-        'function signature the caller asked for) — do not recap code you '
-        'merely read.\n'
-        '- For clear communication with the user the assistant MUST avoid '
-        'using emojis.\n'
-        '- Do not use a colon before tool calls.',
+    'As an agent:\n'
+        '- Each Bash call starts again in the working directory, so give '
+        'absolute paths.\n'
+        '- Your last message is your report. Name the files that matter by '
+        'absolute path. Quote code only where its exact text is the point (a '
+        'bug you found, a signature you were asked for), not to retell what '
+        'you read.\n'
+        '- No emoji.\n'
+        '- Do not end a sentence with a colon just before a tool call.',
     _environment(model),
   ];
 

@@ -721,7 +721,7 @@ class _PerformanceView extends StatelessWidget {
         if (trace != null) ...[
           const SizedBox(height: 8),
           _TraceLink(
-            label: l10n.browserTraceReveal,
+            label: l10n.browserTraceReveal(l10n.fileManager),
             onTap: () => WindowControls.revealInFileManager(trace),
           ),
         ],

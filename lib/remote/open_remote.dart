@@ -30,7 +30,11 @@ class OpenRemoteFlow {
     this.onConnected,
     this.added = const [],
     String Function(String host)? labelOf,
+    this.addressOf,
     this.iconOf,
+    this.onAdd,
+    this.onEdit,
+    this.onForgetHostKey,
     SshHosts? hosts,
     this.configHosts,
   }) : hosts = hosts ?? SshHosts.instance,
@@ -57,7 +61,19 @@ class OpenRemoteFlow {
   /// the names ([labelOf]) and icons ([iconOf]) given them.
   final List<String> added;
   final String Function(String host) labelOf;
+  final String Function(String host)? addressOf;
   final Widget? Function(String host)? iconOf;
+
+  /// Adds a server (see [RemoteHostPicker.onAdd]).
+  final ValueChanged<String?>? onAdd;
+
+  /// Edits an added host's server (see [RemoteHostPicker.onEdit]); offered
+  /// too when connecting to it failed.
+  final ValueChanged<String>? onEdit;
+
+  /// Asks to forget the host key known for a host whose key changed, and
+  /// does (see [SshHosts.forgetHostKey]): whether it did, to connect again.
+  final Future<bool> Function(String host)? onForgetHostKey;
   final SshHosts hosts;
   final Future<List<String>> Function()? configHosts;
 
@@ -72,7 +88,10 @@ class OpenRemoteFlow {
     onPick: (host) => _connect(host),
     added: added,
     labelOf: labelOf,
+    addressOf: addressOf,
     iconOf: iconOf,
+    onAdd: onAdd,
+    onEdit: onEdit,
     hosts: hosts,
     configHosts: configHosts,
   ).start();
@@ -100,7 +119,20 @@ class OpenRemoteFlow {
       try {
         client = await ssh.reconnect();
       } on Object catch (error) {
-        final (message, detail) = sshErrorText(error);
+        final (message, detail) = sshErrorText(error, l10n);
+        final failure = error is SshConnectException ? error.failure : null;
+        final forget = onForgetHostKey;
+        final edit = onEdit;
+        // Its own server to fix, not one of ~/.ssh/config.
+        final editable =
+            edit != null &&
+            switch (failure) {
+              SshFailure.authentication || SshFailure.unreachable => true,
+              _ => false,
+            } &&
+            !(await (configHosts ?? defaultRemoteConfigHosts)().catchError(
+              (Object _) => const <String>[],
+            )).contains(host);
         _next(
           IdeQuickPick(
             placeholder: l10n.remoteConnectFailed(host),
@@ -111,11 +143,26 @@ class OpenRemoteFlow {
                 detail: detail?.split('\n').last,
                 icon: const Icon(Codicons.error),
               ),
-              IdeQuickPickItem(
-                label: l10n.remoteRetry,
-                icon: const Icon(Codicons.refresh),
-                onAccept: () => _connect(host),
-              ),
+              if (failure == SshFailure.hostKeyChanged && forget != null)
+                IdeQuickPickItem(
+                  label: l10n.remoteForgetHostKey,
+                  icon: const Icon(Codicons.key),
+                  onAccept: () => unawaited(() async {
+                    if (await forget(host)) _connect(host, now: true);
+                  }()),
+                )
+              else
+                IdeQuickPickItem(
+                  label: l10n.remoteRetry,
+                  icon: const Icon(Codicons.refresh),
+                  onAccept: () => _connect(host),
+                ),
+              if (editable)
+                IdeQuickPickItem(
+                  label: l10n.remoteEditServer,
+                  icon: const Icon(Codicons.edit),
+                  onAccept: () => edit(host),
+                ),
             ],
             onDidAccept: (item) => item?.onAccept?.call(),
           ),

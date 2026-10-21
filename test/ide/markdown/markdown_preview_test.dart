@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/theme/app_theme.dart';
+import 'package:baocode/theme/ui_zoom.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -364,5 +365,78 @@ void main() {
     await tester.pumpAndSettle();
     expect(state.topLine, 81);
     expect(tester.getTopLeft(_text('Paragraph 40.')).dy, lessThan(60));
+  });
+
+  testWidgets('zoomed and scrolled far down, a drag selects under the '
+      'pointer', (tester) async {
+    tester.view.physicalSize = const Size(1000, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final model = EditorDocumentModel(
+      '${[for (var i = 0; i < 80; i++) 'Paragraph $i.'].join('\n\n')}\n\n'
+      '- **必要性检查**：\n'
+      '  - 申请人必须在系统中存在且已设置工号\n'
+      '  - 报表必须设置负责人\n'
+      '  - 如果不满足以上条件，申请将直接失败\n',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => UiZoom(scale: 1.25, child: child),
+        home: Scaffold(
+          body: IdeMarkdownPreview(
+            path: _path,
+            model: model,
+            pathContext: p.posix,
+            readBytes: (_) async => _png,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    _state(tester).revealLine(161);
+    await tester.pumpAndSettle();
+
+    Offset at(String text, {bool end = false}) {
+      final paragraph = tester.renderObject<RenderParagraph>(_text(text));
+      final box = paragraph
+          .getBoxesForSelection(
+            TextSelection(baseOffset: 0, extentOffset: text.length),
+          )
+          .first
+          .toRect();
+      return paragraph.localToGlobal(
+        end
+            ? box.centerRight - const Offset(1, 0)
+            : box.centerLeft + const Offset(1, 0),
+      );
+    }
+
+    final gesture = await tester.startGesture(
+      at('必要性检查：'),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveTo(at('报表必须设置负责人'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveTo(at('如果不满足以上条件，申请将直接失败', end: true));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final selected = [
+      for (final paragraph in tester.renderObjectList<RenderParagraph>(
+        find.byType(RichText),
+      ))
+        // ignore: invalid_use_of_visible_for_testing_member
+        for (final selection in paragraph.selections)
+          if (!selection.isCollapsed)
+            selection.textInside(paragraph.text.toPlainText()),
+    ];
+    expect(selected.where((text) => text != '•'), [
+      '必要性检查：',
+      '申请人必须在系统中存在且已设置工号',
+      '报表必须设置负责人',
+      '如果不满足以上条件，申请将直接失败',
+    ]);
   });
 }

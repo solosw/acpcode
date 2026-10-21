@@ -5,24 +5,23 @@ library;
 String compactPrompt([String? instructions]) {
   final extra = instructions == null || instructions.trim().isEmpty
       ? ''
-      : '\n\nAdditional instructions from the user for this summary:\n${instructions.trim()}';
-  return '''Your task is to create a detailed summary of the conversation so far. This summary will replace the conversation: the work goes on from it alone, so it must keep everything needed to continue without losing context.
+      : '\n\nThe user asks this of the summary:\n${instructions.trim()}';
+  return '''The conversation above is about to be cleared, and the work will go on from a summary of it alone. Write that summary now: all that whoever picks the work up needs, so that nothing has to be asked again or found out twice.
 
-Before the summary, think through the conversation in <analysis> tags: go through each message in order and note the user's explicit requests and intents, your approach, key decisions, technical concepts, file names, full code snippets and function signatures, file edits, errors met and how they were fixed, and any feedback from the user (especially where they asked you to do something differently).
+First go through the conversation from start to end in <analysis> tags, as notes for yourself: what the user asked for, word by word where it matters; what was decided and why; the files read and changed; the code that matters; what went wrong and how it was put right; anything the user corrected or asked to be done otherwise.
 
-Then write the summary in <summary> tags, with these sections:
+Then the summary itself, in <summary> tags, under these headings:
 
-1. Primary Request and Intent: all of the user's explicit requests and intents, in detail.
-2. Key Technical Concepts: the technologies, frameworks and concepts discussed.
-3. Files and Code Sections: the files examined, modified or created, with why each matters, a summary of the changes, and the important code snippets in full.
-4. Errors and fixes: the errors met and how they were fixed, and what the user said about them.
-5. Problem Solving: problems solved and troubleshooting under way.
-6. All user messages: every message from the user that is not a tool result, verbatim or nearly so.
-7. Pending Tasks: what you were explicitly asked to do and have not done yet.
-8. Current Work: precisely what was being worked on immediately before this summary, with file names and code.
-9. Optional Next Step: the next step in line with the most recent request, quoting the latest messages to show where the work left off. Only include one if it directly continues what the user asked for.$extra
+- The task: what the user wants, all of it, with the limits and preferences they set.
+- What is known: the technical facts, tools and ideas the work rests on.
+- Files: each file that was read, changed or made, why it matters, what was changed, and the code worth keeping in full.
+- Problems: what failed, how it was fixed, and what the user said of it.
+- The user's words: each thing the user wrote (not tool results), as nearly as it was written.
+- Still to do: what the user asked for and is not done.
+- Where it stopped: exactly what was being done last, with files and code.
+- Next: the one step that comes next, if it follows from what the user asked last; quote the last messages to show where things stood. Leave it out if there is none.$extra
 
-Answer with the <analysis> and <summary> only; do not call any tools.''';
+Write only the <analysis> and the <summary>, and call no tools.''';
 }
 
 /// The message the conversation goes on from after it is compacted.
@@ -35,24 +34,21 @@ String compactedSummary(String summary, {String? transcriptPath}) {
       )
       .trim();
   return [
-    'This session is being continued from a previous conversation that ran '
-        'out of context. The summary below covers the earlier portion of the '
-        'conversation.',
+    'The conversation before this point grew too long and was cleared. '
+        'This is the summary of it that the work goes on from.',
     '',
-    'Summary:',
     cleaned,
     if (transcriptPath != null) ...[
       '',
-      'If you need specific details from before compaction (like exact code '
-          'snippets, error messages, or content you generated), read the full '
-          'transcript at: $transcriptPath',
+      'The whole of it is kept at $transcriptPath: read it there for '
+          'anything the summary leaves out (exact code, error output, what '
+          'you wrote).',
     ],
     '',
-    'Continue the conversation from where it left off without asking the '
-        'user any further questions. Resume directly — do not acknowledge the '
-        'summary, do not recap what was happening, do not preface with "I\'ll '
-        'continue" or similar. Pick up the last task as if the break never '
-        'happened.',
+    'Go on with the work where it stopped, without asking the user anything '
+        'first. Do not mention this summary or retell it, and do not '
+        'announce that you are going on: just take the next step, as though '
+        'nothing had come between.',
   ].join('\n');
 }
 
@@ -111,42 +107,37 @@ String classifierPrompt(String transcript, String action) =>
     '$action\n\nAllow or block?';
 
 /// The command that has the agent write the project's CLAUDE.md.
-const initPrompt = '''Please analyze this codebase and create a CLAUDE.md file, which will be given to future instances of coding agents to operate in this repository.
+const initPrompt = '''Write a CLAUDE.md for this repository: the file coding agents read before they work here, so that they can get going without finding everything out again.
 
-What to add:
-1. Commands that will be commonly used, such as how to build, lint, and run tests. Include the necessary commands to develop in this codebase, such as how to run a single test.
-2. High-level code architecture and structure so that future instances can be productive more quickly. Focus on the "big picture" architecture that requires reading multiple files to understand.
+Look through the codebase first, then put in it:
+1. The commands needed day to day: build, lint, test, and how to run a single test.
+2. How the code is laid out at a high level: the architecture you only see by reading several files, not what one listing shows.
 
-Usage notes:
-- If there's already a CLAUDE.md, suggest improvements to it.
-- When you make the initial CLAUDE.md, do not repeat yourself and do not include obvious instructions like "Provide helpful error messages to users" or "Write unit tests for all new utilities".
-- Avoid listing every component or file structure that can be easily discovered.
-- Don't include generic development practices.
-- If there are Cursor rules (in .cursor/rules/ or .cursorrules) or Copilot rules (in .github/copilot-instructions.md), make sure to include the important parts.
-- If there is a README.md, make sure to include the important parts.
-- Do not make up information such as "Common Development Tasks", "Tips for Development", "Support and Documentation" unless this is expressly included in other files that you read.
-- Be sure to prefix the file with the following text:
+- If there is a CLAUDE.md already, propose what to change in it instead.
+- Bring in what matters from a README.md, and from editor rules for agents if there are any (.cursor/rules/, .cursorrules, .github/copilot-instructions.md).
+- Leave out what any project would say ("write tests", "handle errors"), lists of every file or component that a glance finds, and anything said twice.
+- Do not invent sections such as tips or support that nothing in the repository backs.
+- Start the file with:
 
 ```
 # CLAUDE.md
 
-This file provides guidance to coding agents when working with code in this repository.
+Notes for coding agents working in this repository.
 ```''';
 
 /// The command that has the agent review the changes not committed.
 String reviewPrompt(String args) =>
-    '''You are an expert code reviewer. Review ${args.trim().isEmpty ? 'the current changes in this repository (staged and unstaged; use git status and git diff, and git diff against the main branch if the branch has commits of its own)' : args.trim()}.
+    '''Review ${args.trim().isEmpty ? 'the changes in this repository that are not committed, staged or not (git status, git diff), and those of the branch against the main branch if it has commits of its own' : args.trim()}, as a careful reviewer would.
 
-Follow these steps:
-1. Find the changes to review and read the code around them.
-2. Analyze them for correctness, bugs and edge cases, security, performance, and how well they follow the project's conventions.
-3. Report the issues you found, most severe first, each with the file and line, why it matters and a concrete fix. Say plainly when you found nothing worth changing.
+1. Find the changes, and read the code around them until you understand them.
+2. Look for what is wrong: bugs and cases not handled, security, performance, and where they go against how the project does things.
+3. Report what you found, the most serious first: for each, the file and line, why it matters, and how to fix it. If nothing needs changing, say so plainly.
 
-Keep your review concise but thorough.''';
+Be brief, but miss nothing that matters.''';
 
 /// The command that has the agent review the branch for security issues.
-const securityReviewPrompt = '''Complete a security review of the pending changes on the current branch (git diff against the main branch, and uncommitted changes).
+const securityReviewPrompt = '''Look for security holes in what this branch changes: its diff against the main branch, and what is not committed yet.
 
-Focus on vulnerabilities newly introduced by these changes that have real exploitation potential: injection (SQL, command, path traversal, template), authentication and authorization flaws, unsafe deserialization, secrets in code, cryptography misuse, data exposure, XSS and SSRF. Ignore style, denial of service, and theoretical issues without a plausible exploit path.
+Report only holes these changes open that someone could really exploit, such as injection (SQL, shell, path, template), broken authentication or authorization, unsafe deserialization, secrets in the code, cryptography used wrongly, data exposed, XSS or SSRF. Leave out style, denial of service, and what is only possible in theory.
 
-For each finding give: the file and line, the vulnerability category, the severity (high/medium/low), an exploit scenario, and a recommended fix. If there are none, say so.''';
+For each one: the file and line, what kind of hole it is, how serious (high, medium, low), how it could be exploited, and how to fix it. If there are none, say so.''';

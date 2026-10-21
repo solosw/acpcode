@@ -226,7 +226,26 @@ class ProcessTransport implements ClaudeCodeTransport {
   void close() {
     if (_exitCode != null) return;
     unawaited(_process.stdin.close().catchError((_) {}));
-    _process.kill();
+    if (Platform.isWindows) {
+      unawaited(_endTree());
+    } else {
+      _process.kill();
+    }
+  }
+
+  /// Windows ends a killed process alone, and the MCP servers it started
+  /// go on without it: given a moment to end them itself, its input
+  /// closed, then ended with all it started.
+  Future<void> _endTree() async {
+    final ended = await _process.exitCode
+        .timeout(const Duration(seconds: 1))
+        .then((_) => true, onError: (Object _) => false);
+    if (ended) return;
+    try {
+      await Process.run('taskkill', ['/pid', '${_process.pid}', '/T', '/F']);
+    } on ProcessException {
+      _process.kill();
+    }
   }
 }
 

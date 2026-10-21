@@ -2930,11 +2930,11 @@ abstract class AppLocalizations {
   /// **'{kind, select, click{Clicked} input{Set} key{Pressed} submit{Submitted} navigate{Went to} closed{Closed the tab} other{Did}}'**
   String browserWatchedStep(String kind);
 
-  /// No description provided for @browserTraceReveal.
+  /// {app} is the system's file manager, as the system names it (Finder, File Explorer).
   ///
   /// In en, this message translates to:
-  /// **'Show the trace in Finder (drop it into DevTools\' Performance panel to look closer)'**
-  String get browserTraceReveal;
+  /// **'Show the trace in {app} (drop it into DevTools\' Performance panel to look closer)'**
+  String browserTraceReveal(String app);
 
   /// A browser step's verb once done, by the browser tool it called; what it did it on follows (a URL, an element's name).
   ///
@@ -3866,6 +3866,12 @@ abstract class AppLocalizations {
   /// **'File Explorer'**
   String get workspaceFileExplorer;
 
+  /// The Linux desktop's file manager, which has no one name.
+  ///
+  /// In en, this message translates to:
+  /// **'File Manager'**
+  String get workspaceFileManager;
+
   /// The macOS Terminal app, as macOS names it.
   ///
   /// In en, this message translates to:
@@ -4460,12 +4466,6 @@ abstract class AppLocalizations {
   /// **'Average output speed'**
   String get turnSpeedHint;
 
-  /// The tokens the model has written so far in the turn under way, e.g. "↓ 1.2k tokens".
-  ///
-  /// In en, this message translates to:
-  /// **'↓ {tokens} tokens'**
-  String turnOutputTokens(String tokens);
-
   /// No description provided for @turnOutputTokensHint.
   ///
   /// In en, this message translates to:
@@ -4475,7 +4475,7 @@ abstract class AppLocalizations {
   /// No description provided for @turnSpeedLiveHint.
   ///
   /// In en, this message translates to:
-  /// **'Output speed'**
+  /// **'Output speed, sampled over the last 2 seconds'**
   String get turnSpeedLiveHint;
 
   /// No description provided for @turnDurationHint.
@@ -5342,6 +5342,24 @@ abstract class AppLocalizations {
   /// **'Remove from the queue'**
   String get queuedRemove;
 
+  /// No description provided for @stopConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the agent?'**
+  String get stopConfirmMessage;
+
+  /// No description provided for @stopConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{The task running in the background will stop too.} other{The {count} tasks running in the background will stop too.}}'**
+  String stopConfirmDetail(int count);
+
+  /// No description provided for @stopConfirmStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get stopConfirmStop;
+
   /// No description provided for @tabClose.
   ///
   /// In en, this message translates to:
@@ -5927,13 +5945,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsSectionSsh.
   ///
   /// In en, this message translates to:
-  /// **'SSH'**
+  /// **'SSH Servers'**
   String get settingsSectionSsh;
 
   /// No description provided for @sshSettingsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Hosts saved here are used when you open a remote folder. They are kept in BaoCode, not only in ~/.ssh/config. Passwords stay in the system keychain.'**
+  /// **'The servers remote projects connect to: their address, how they sign in, a jump host, and the core each runs.'**
   String get sshSettingsDescription;
 
   /// No description provided for @sshSettingsHosts.
@@ -5957,7 +5975,7 @@ abstract class AppLocalizations {
   /// No description provided for @sshSettingsAdd.
   ///
   /// In en, this message translates to:
-  /// **'Add host'**
+  /// **'Add Server…'**
   String get sshSettingsAdd;
 
   /// No description provided for @sshSettingsHost.
@@ -6095,13 +6113,13 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsClaudeCoreDescription.
   ///
   /// In en, this message translates to:
-  /// **'What runs Claude Code sessions. The built-in core is BaoCode\'s own, written in Dart: the same tools, settings, CLAUDE.md, skills, subagents, hooks, MCP servers and session files as the CLI, signed in with an API key or a provider. The CLI is Anthropic\'s; pick it to sign in with a Claude subscription. Applies to sessions started after a change, on this machine and on remote hosts.'**
+  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.'**
   String get generalSettingsClaudeCoreDescription;
 
   /// Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app.
   ///
   /// In en, this message translates to:
-  /// **'Built-in (Dart)'**
+  /// **'Built-in'**
   String get generalSettingsClaudeCoreBuiltin;
 
   /// Claude Code core choice: Anthropic's Claude Code command-line program, run as a process.
@@ -8793,6 +8811,12 @@ abstract class AppLocalizations {
   /// **'Reveal in File Explorer'**
   String get dataDirRevealInFileExplorer;
 
+  /// No description provided for @dataDirRevealInFileManager.
+  ///
+  /// In en, this message translates to:
+  /// **'Reveal in File Manager'**
+  String get dataDirRevealInFileManager;
+
   /// No description provided for @dataDirChecking.
   ///
   /// In en, this message translates to:
@@ -9528,7 +9552,7 @@ abstract class AppLocalizations {
   /// No description provided for @claudePathSettingDescription.
   ///
   /// In en, this message translates to:
-  /// **'Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)'**
+  /// **'Empty: the newest Claude Code on this machine, downloaded if there is none. A path: always that one, e.g. one you built. (claudeCode.path)'**
   String get claudePathSettingDescription;
 
   /// No description provided for @claudePathSettingHint.
@@ -11064,8 +11088,14 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRoleSubagentDescription.
   ///
   /// In en, this message translates to:
-  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).'**
+  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: BaoCode\'s local proxy sends its requests there.'**
   String get modelsRoleSubagentDescription;
+
+  /// Under a role that picks another upstream's model, once that upstream or model is gone.
+  ///
+  /// In en, this message translates to:
+  /// **'This model is no longer one of its upstream\'s: subagents\' requests to it will fail.'**
+  String get modelsRoleMissing;
 
   /// No description provided for @modelsAdvanced.
   ///
@@ -12105,6 +12135,36 @@ abstract class AppLocalizations {
   /// **'Your messages: {style}'**
   String appearanceSettingsUserMessageStyleLabel(String style);
 
+  /// No description provided for @appearanceSettingsReplyScroll.
+  ///
+  /// In en, this message translates to:
+  /// **'As a Reply Comes'**
+  String get appearanceSettingsReplyScroll;
+
+  /// No description provided for @appearanceSettingsReplyScrollDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Where the conversation stays as the reply to your message is written: at its end, following it; or at its start, your message at the top, for you to read on from there. Scrolled to the end, it follows again.'**
+  String get appearanceSettingsReplyScrollDescription;
+
+  /// No description provided for @appearanceSettingsReplyScrollFollow.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get appearanceSettingsReplyScrollFollow;
+
+  /// No description provided for @appearanceSettingsReplyScrollStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Stay at its start'**
+  String get appearanceSettingsReplyScrollStart;
+
+  /// No description provided for @appearanceSettingsReplyScrollLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'As a reply comes: {choice}'**
+  String appearanceSettingsReplyScrollLabel(String choice);
+
   /// No description provided for @appearanceSettingsMinimap.
   ///
   /// In en, this message translates to:
@@ -12312,7 +12372,7 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsContextMenuExplorer.
   ///
   /// In en, this message translates to:
-  /// **'Explorer Context Menu'**
+  /// **'File Explorer Context Menu'**
   String get generalSettingsContextMenuExplorer;
 
   /// No description provided for @generalSettingsContextMenuDescription.
@@ -12390,7 +12450,7 @@ abstract class AppLocalizations {
   /// No description provided for @remoteHostPlaceholder.
   ///
   /// In en, this message translates to:
-  /// **'Select a host of ~/.ssh/config, or type user@host[:port]'**
+  /// **'Select a host, add one, or type user@host[:port]'**
   String get remoteHostPlaceholder;
 
   /// No description provided for @remoteConnectTo.
@@ -12402,7 +12462,7 @@ abstract class AppLocalizations {
   /// No description provided for @remoteNoHosts.
   ///
   /// In en, this message translates to:
-  /// **'No hosts in ~/.ssh/config: type one'**
+  /// **'No hosts yet: add one, or type user@host'**
   String get remoteNoHosts;
 
   /// No description provided for @remoteInvalidHost.
@@ -13719,6 +13779,12 @@ abstract class AppLocalizations {
   /// **'Rename Host'**
   String get sidebarRenameHost;
 
+  /// No description provided for @sidebarEditHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Connection...'**
+  String get sidebarEditHost;
+
   /// No description provided for @explorerNoPermission.
   ///
   /// In en, this message translates to:
@@ -14289,6 +14355,42 @@ abstract class AppLocalizations {
   /// **'A button in the message box that has the auxiliary model make what you wrote clearer before you send it'**
   String get generalSettingsComposerPolishDescription;
 
+  /// No description provided for @generalSettingsLiveTurnStats.
+  ///
+  /// In en, this message translates to:
+  /// **'Live Speed and Time'**
+  String get generalSettingsLiveTurnStats;
+
+  /// No description provided for @generalSettingsLiveTurnStatsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'While the agent works, a line under the reply with how long the turn has taken, how fast the model writes and the tokens so far, changing as it goes. The figures under a finished turn always show.'**
+  String get generalSettingsLiveTurnStatsDescription;
+
+  /// No description provided for @usageLimitScheduled.
+  ///
+  /// In en, this message translates to:
+  /// **'Usage limit reached · continues automatically after it resets at {time}'**
+  String usageLimitScheduled(String time);
+
+  /// No description provided for @usageLimitTomorrow.
+  ///
+  /// In en, this message translates to:
+  /// **'tomorrow {time}'**
+  String usageLimitTomorrow(String time);
+
+  /// No description provided for @resumeAfterResetPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'The usage limit has reset. Continue where you left off.'**
+  String get resumeAfterResetPrompt;
+
+  /// No description provided for @resumeAfterLimitToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue After Limit Reset'**
+  String get resumeAfterLimitToggle;
+
   /// No description provided for @stashPolishFailed.
   ///
   /// In en, this message translates to:
@@ -14588,12 +14690,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Dismiss'**
   String get stashDismiss;
-
-  /// No description provided for @stashReveal.
-  ///
-  /// In en, this message translates to:
-  /// **'Show in Finder'**
-  String get stashReveal;
 
   /// No description provided for @stashDelete.
   ///
@@ -15066,7 +15162,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsSectionAccounts.
   ///
   /// In en, this message translates to:
-  /// **'Accounts'**
+  /// **'Git Accounts'**
   String get settingsSectionAccounts;
 
   /// No description provided for @settingsAccountsKeywords.
@@ -15663,11 +15759,11 @@ abstract class AppLocalizations {
   /// **'Let agents use your own browser, signed in as you: open pages, read them, click and type in the tabs you share with them. You can watch every step in the side panel.'**
   String get browserSettingsDescription;
 
-  /// No description provided for @browserSettingsMacOSOnly.
+  /// No description provided for @browserSettingsUnsupported.
   ///
   /// In en, this message translates to:
-  /// **'The browser is available on macOS only for now.'**
-  String get browserSettingsMacOSOnly;
+  /// **'The browser is available on macOS, Windows and Linux only.'**
+  String get browserSettingsUnsupported;
 
   /// No description provided for @browserSettingsEnabled.
   ///
@@ -15710,6 +15806,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open a browser with BaoCode\'s extension: it connects automatically.'**
   String get browserSettingsNotRunningDescription;
+
+  /// No description provided for @browserSettingsSandboxed.
+  ///
+  /// In en, this message translates to:
+  /// **'Snap and Flatpak browsers can\'t connect'**
+  String get browserSettingsSandboxed;
+
+  /// No description provided for @browserSettingsSandboxedDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Their sandbox keeps BaoCode\'s helper from running. Install the browser from its own .deb or .rpm package instead, such as Google Chrome from google.com/chrome.'**
+  String get browserSettingsSandboxedDescription;
 
   /// A browser connected, by its name (Google Chrome, Microsoft Edge…).
   ///
@@ -15956,6 +16064,882 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Meet Stash...'**
   String get cmdStashWelcome;
+
+  /// No description provided for @cmdModelWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Set Up a Model...'**
+  String get cmdModelWelcome;
+
+  /// No description provided for @modelWelcomeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a Model to Start'**
+  String get modelWelcomeTitle;
+
+  /// No description provided for @modelWelcomeLead.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode runs your agents on a model of your choosing. Add an upstream, a service with an API key, and its models are ready to use.'**
+  String get modelWelcomeLead;
+
+  /// No description provided for @modelWelcomeAnyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Any upstream'**
+  String get modelWelcomeAnyTitle;
+
+  /// No description provided for @modelWelcomeAny.
+  ///
+  /// In en, this message translates to:
+  /// **'Anthropic\'s API, OpenAI\'s Chat Completions or Responses, or a service that speaks one of them, such as OpenRouter or DeepSeek.'**
+  String get modelWelcomeAny;
+
+  /// No description provided for @modelWelcomeKeysTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your keys stay with you'**
+  String get modelWelcomeKeysTitle;
+
+  /// No description provided for @modelWelcomeKeys.
+  ///
+  /// In en, this message translates to:
+  /// **'Keys are kept in the system keychain, and requests go from this computer straight to the upstream.'**
+  String get modelWelcomeKeys;
+
+  /// No description provided for @modelWelcomeSwitchTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch any time'**
+  String get modelWelcomeSwitchTitle;
+
+  /// No description provided for @modelWelcomeSwitch.
+  ///
+  /// In en, this message translates to:
+  /// **'Add more upstreams whenever you like, and pick the model for each conversation under its input.'**
+  String get modelWelcomeSwitch;
+
+  /// No description provided for @modelWelcomeStepTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add your first upstream'**
+  String get modelWelcomeStepTitle;
+
+  /// No description provided for @modelWelcomeStep.
+  ///
+  /// In en, this message translates to:
+  /// **'Its address and key, then the models to use. Some services can also add theirs in one click from Settings → Models.'**
+  String get modelWelcomeStep;
+
+  /// No description provided for @modelWelcomeReadyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ready to go'**
+  String get modelWelcomeReadyTitle;
+
+  /// No description provided for @modelWelcomeReady.
+  ///
+  /// In en, this message translates to:
+  /// **'New conversations start on {model}. Pick another under the input any time.'**
+  String modelWelcomeReady(String model);
+
+  /// No description provided for @modelWelcomeLater.
+  ///
+  /// In en, this message translates to:
+  /// **'You can also add one later in Settings → Models.'**
+  String get modelWelcomeLater;
+
+  /// No description provided for @modelWelcomeSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Later'**
+  String get modelWelcomeSkip;
+
+  /// No description provided for @modelWelcomeStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start Chatting'**
+  String get modelWelcomeStart;
+
+  /// No description provided for @healthNoModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a model to start: add an upstream and its models are ready to use.'**
+  String get healthNoModel;
+
+  /// No description provided for @modelSetUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Set Up a Model'**
+  String get modelSetUp;
+
+  /// No description provided for @remoteAddServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Add SSH Server...'**
+  String get remoteAddServer;
+
+  /// No description provided for @remoteEditServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get remoteEditServer;
+
+  /// No description provided for @settingsSshKeywords.
+  ///
+  /// In en, this message translates to:
+  /// **'ssh remote server host jump bastion key password core'**
+  String get settingsSshKeywords;
+
+  /// No description provided for @sshSettingsServers.
+  ///
+  /// In en, this message translates to:
+  /// **'Servers'**
+  String get sshSettingsServers;
+
+  /// No description provided for @sshSettingsServersDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Those added in the app, and the hosts the sidebar has.'**
+  String get sshSettingsServersDescription;
+
+  /// No description provided for @sshSettingsNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No servers yet'**
+  String get sshSettingsNone;
+
+  /// No description provided for @sshSettingsEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit…'**
+  String get sshSettingsEdit;
+
+  /// No description provided for @sshSettingsConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect'**
+  String get sshSettingsConnect;
+
+  /// No description provided for @sshSettingsDisconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect'**
+  String get sshSettingsDisconnect;
+
+  /// No description provided for @sshSettingsDisconnectTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnect from {host}?'**
+  String sshSettingsDisconnectTitle(String host);
+
+  /// No description provided for @sshSettingsDisconnectDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The conversations and terminals running there end.'**
+  String get sshSettingsDisconnectDetail;
+
+  /// No description provided for @sshSettingsCore.
+  ///
+  /// In en, this message translates to:
+  /// **'Core: {core}'**
+  String sshSettingsCore(String core);
+
+  /// No description provided for @sshSettingsVia.
+  ///
+  /// In en, this message translates to:
+  /// **'through {host}'**
+  String sshSettingsVia(String host);
+
+  /// No description provided for @sshSettingsTyped.
+  ///
+  /// In en, this message translates to:
+  /// **'As typed'**
+  String get sshSettingsTyped;
+
+  /// No description provided for @sshSettingsConfigHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'Hosts of ~/.ssh/config'**
+  String get sshSettingsConfigHosts;
+
+  /// No description provided for @sshSettingsConfigHostsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Changed in that file; their core is Automatic.'**
+  String get sshSettingsConfigHostsDescription;
+
+  /// No description provided for @sshSettingsOpenConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'Open File'**
+  String get sshSettingsOpenConfig;
+
+  /// No description provided for @sshServerAddTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add SSH Server'**
+  String get sshServerAddTitle;
+
+  /// No description provided for @sshServerAddSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to the remote list: connect to it in one click.'**
+  String get sshServerAddSubtitle;
+
+  /// No description provided for @sshServerEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit {name}'**
+  String sshServerEditTitle(String name);
+
+  /// No description provided for @sshServerHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Host'**
+  String get sshServerHost;
+
+  /// No description provided for @sshServerHostPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Domain or IP; user@host:port is split up'**
+  String get sshServerHostPlaceholder;
+
+  /// No description provided for @sshServerPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get sshServerPort;
+
+  /// No description provided for @sshServerUser.
+  ///
+  /// In en, this message translates to:
+  /// **'User'**
+  String get sshServerUser;
+
+  /// No description provided for @sshServerName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name (optional)'**
+  String get sshServerName;
+
+  /// No description provided for @sshServerNamePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'e.g. Production'**
+  String get sshServerNamePlaceholder;
+
+  /// No description provided for @sshServerAuth.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with'**
+  String get sshServerAuth;
+
+  /// No description provided for @sshServerAuthPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get sshServerAuthPassword;
+
+  /// No description provided for @sshServerAuthKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Private Key'**
+  String get sshServerAuthKey;
+
+  /// No description provided for @sshServerAuthAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get sshServerAuthAuto;
+
+  /// No description provided for @sshServerAuthAutoHint.
+  ///
+  /// In en, this message translates to:
+  /// **'As ssh does in a terminal: ssh-agent, the keys in ~/.ssh, ~/.ssh/config. A password is asked for if the server wants one.'**
+  String get sshServerAuthAutoHint;
+
+  /// No description provided for @sshServerPasswordHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Kept in the system keychain. Leave it empty to be asked when connecting.'**
+  String get sshServerPasswordHint;
+
+  /// No description provided for @sshServerPasswordKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved: leave empty to keep it'**
+  String get sshServerPasswordKept;
+
+  /// No description provided for @sshServerKeyPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Path of the private key, e.g. ~/.ssh/id_ed25519'**
+  String get sshServerKeyPlaceholder;
+
+  /// No description provided for @sshServerKeyBrowse.
+  ///
+  /// In en, this message translates to:
+  /// **'Browse...'**
+  String get sshServerKeyBrowse;
+
+  /// No description provided for @sshServerKeysFound.
+  ///
+  /// In en, this message translates to:
+  /// **'Keys in ~/.ssh'**
+  String get sshServerKeysFound;
+
+  /// No description provided for @sshServerKeyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'If the key has a passphrase, it is asked for when connecting.'**
+  String get sshServerKeyHint;
+
+  /// No description provided for @sshServerCore.
+  ///
+  /// In en, this message translates to:
+  /// **'Core'**
+  String get sshServerCore;
+
+  /// No description provided for @sshServerCoreAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get sshServerCoreAuto;
+
+  /// No description provided for @sshServerCoreAutoHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s Claude Code CLI if it has one, else the built-in core.'**
+  String get sshServerCoreAutoHint;
+
+  /// No description provided for @sshServerCoreBuiltinHint.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode\'s own core: it runs on the upstreams of Settings → Models.'**
+  String get sshServerCoreBuiltinHint;
+
+  /// No description provided for @sshServerCoreCliHint.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s Claude Code CLI, installed there if it has none.'**
+  String get sshServerCoreCliHint;
+
+  /// No description provided for @sshServerJump.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump Host (optional)'**
+  String get sshServerJump;
+
+  /// No description provided for @sshServerNoJump.
+  ///
+  /// In en, this message translates to:
+  /// **'None: connect directly'**
+  String get sshServerNoJump;
+
+  /// No description provided for @sshServerSaveConnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and Connect'**
+  String get sshServerSaveConnect;
+
+  /// No description provided for @sshServerSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get sshServerSave;
+
+  /// No description provided for @sshServerHostRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the server\'s domain or IP'**
+  String get sshServerHostRequired;
+
+  /// No description provided for @sshServerHostInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'No spaces, and not starting with \'-\''**
+  String get sshServerHostInvalid;
+
+  /// No description provided for @sshServerPortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A port is from 1 to 65535'**
+  String get sshServerPortInvalid;
+
+  /// No description provided for @sshServerKeyRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose the private key file'**
+  String get sshServerKeyRequired;
+
+  /// No description provided for @sshServerKeyMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no such file'**
+  String get sshServerKeyMissing;
+
+  /// No description provided for @remoteForgetHostKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the Old Key and Connect'**
+  String get remoteForgetHostKey;
+
+  /// No description provided for @remoteForgetHostKeyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove the old key of {host}?'**
+  String remoteForgetHostKeyTitle(String host);
+
+  /// No description provided for @remoteForgetHostKeyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Only if you know the server was reinstalled or its key changed: otherwise someone may be between you and it. The key it has now is accepted at the next connection.'**
+  String get remoteForgetHostKeyDetail;
+
+  /// No description provided for @remoteForgetHostKeyButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove and Connect'**
+  String get remoteForgetHostKeyButton;
+
+  /// No description provided for @remoteFailNoSsh.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no ssh on this computer: install the OpenSSH client.'**
+  String get remoteFailNoSsh;
+
+  /// No description provided for @remoteFailAuth.
+  ///
+  /// In en, this message translates to:
+  /// **'The server refused to sign in: check the user, password or key.'**
+  String get remoteFailAuth;
+
+  /// No description provided for @remoteFailCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Signing in was cancelled.'**
+  String get remoteFailCancelled;
+
+  /// No description provided for @remoteFailHostKey.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s key is not known, and your ssh config says not to accept new ones (StrictHostKeyChecking).'**
+  String get remoteFailHostKey;
+
+  /// No description provided for @remoteFailHostKeyChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s key changed since the last connection: it was reinstalled, or someone is in between.'**
+  String get remoteFailHostKeyChanged;
+
+  /// No description provided for @remoteFailUnreachable.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not be reached: check the address, port and network.'**
+  String get remoteFailUnreachable;
+
+  /// No description provided for @channelSetupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to BaoCode'**
+  String get channelSetupTitle;
+
+  /// No description provided for @channelSetupLead.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish your first-time setup on baocode.dev. It takes about 10 seconds.'**
+  String get channelSetupLead;
+
+  /// No description provided for @channelSetupStepTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish setup in your browser'**
+  String get channelSetupStepTitle;
+
+  /// No description provided for @channelSetupStep.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode opens baocode.dev in your browser. Once the page says it\'s done, BaoCode continues on its own.'**
+  String get channelSetupStep;
+
+  /// No description provided for @channelSetupWaitingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your browser…'**
+  String get channelSetupWaitingTitle;
+
+  /// No description provided for @channelSetupWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Once the page says it\'s done, BaoCode continues on its own. Closed the page by mistake? Open it again.'**
+  String get channelSetupWaiting;
+
+  /// No description provided for @channelSetupOpenFailedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Your browser didn\'t open'**
+  String get channelSetupOpenFailedTitle;
+
+  /// No description provided for @channelSetupOpenFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy this address and open it in your browser. Once the page says it\'s done, BaoCode continues on its own.'**
+  String get channelSetupOpenFailed;
+
+  /// No description provided for @channelSetupAddressCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get channelSetupAddressCopied;
+
+  /// No description provided for @channelSetupOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t reach baocode.dev. You need to be online to finish setup.'**
+  String get channelSetupOffline;
+
+  /// No description provided for @channelSetupRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get channelSetupRetry;
+
+  /// No description provided for @channelSetupDoneTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Setup complete'**
+  String get channelSetupDoneTitle;
+
+  /// No description provided for @channelSetupOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Finish Setup in Browser'**
+  String get channelSetupOpen;
+
+  /// No description provided for @channelSetupOpenAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Open the Page Again'**
+  String get channelSetupOpenAgain;
+
+  /// No description provided for @channelSetupNoResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser not responding?'**
+  String get channelSetupNoResponse;
+
+  /// No description provided for @channelSetupPasteLead.
+  ///
+  /// In en, this message translates to:
+  /// **'If the page shows a link, copy it and paste it here:'**
+  String get channelSetupPasteLead;
+
+  /// No description provided for @channelSetupPasteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'OK'**
+  String get channelSetupPasteConfirm;
+
+  /// No description provided for @channelSetupLinkInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'That isn\'t the link from the page. Copy the whole link shown there.'**
+  String get channelSetupLinkInvalid;
+
+  /// No description provided for @channelSetupLinkOther.
+  ///
+  /// In en, this message translates to:
+  /// **'That link is for another BaoCode install. Use the page this BaoCode opened.'**
+  String get channelSetupLinkOther;
+
+  /// No description provided for @channelSetupTrouble.
+  ///
+  /// In en, this message translates to:
+  /// **'Having trouble?'**
+  String get channelSetupTrouble;
+
+  /// No description provided for @channelSetupOnceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Only once'**
+  String get channelSetupOnceTitle;
+
+  /// No description provided for @channelSetupOnce.
+  ///
+  /// In en, this message translates to:
+  /// **'Once it\'s done, this won\'t show again, not even after an update.'**
+  String get channelSetupOnce;
+
+  /// No description provided for @channelSetupPrivateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing personal'**
+  String get channelSetupPrivateTitle;
+
+  /// No description provided for @channelSetupPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'The page only tells BaoCode where you heard of it, like a video or a website.'**
+  String get channelSetupPrivate;
+
+  /// No description provided for @channelSetupFindingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting your channel ready…'**
+  String get channelSetupFindingTitle;
+
+  /// No description provided for @channelSetupFinding.
+  ///
+  /// In en, this message translates to:
+  /// **'Just a moment.'**
+  String get channelSetupFinding;
+
+  /// No description provided for @channelSetupSiteOfflineTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t reach baocode.dev'**
+  String get channelSetupSiteOfflineTitle;
+
+  /// No description provided for @channelSetupSiteOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode needs to be online to read your channel. Check your connection and retry.'**
+  String get channelSetupSiteOffline;
+
+  /// No description provided for @channelSetupUnavailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This channel isn\'t available'**
+  String get channelSetupUnavailableTitle;
+
+  /// No description provided for @channelSetupUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel this installer came from doesn\'t have accounts set up yet. If you downloaded it through another channel, confirm where you came from in your browser; otherwise contact whoever gave you the installer, or download the standard edition from baocode.dev.'**
+  String get channelSetupUnavailable;
+
+  /// No description provided for @channelSetupConfirmAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm in Browser'**
+  String get channelSetupConfirmAgain;
+
+  /// A channel's welcome's title when its channels.json entry has none, by its name.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome to {channel}'**
+  String channelWelcomeTitle(String channel);
+
+  /// A channel's welcome's text when its entry has none.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to your {channel} account to get started.'**
+  String channelWelcomeText(String channel);
+
+  /// No description provided for @channelWelcomeSignIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign In'**
+  String get channelWelcomeSignIn;
+
+  /// No description provided for @channelWelcomeSigningIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in in the window that opened…'**
+  String get channelWelcomeSigningIn;
+
+  /// No description provided for @channelWelcomePreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting ready…'**
+  String get channelWelcomePreparing;
+
+  /// Signing in to the channel's account site failed; the site's or the network's error.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t finish signing in: {error}'**
+  String channelWelcomeFailed(String error);
+
+  /// No description provided for @channelAccountTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get channelAccountTitle;
+
+  /// No description provided for @channelAccountBalance.
+  ///
+  /// In en, this message translates to:
+  /// **'Balance'**
+  String get channelAccountBalance;
+
+  /// No description provided for @channelAccountRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get channelAccountRefresh;
+
+  /// No description provided for @channelAccountSignOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign Out'**
+  String get channelAccountSignOut;
+
+  /// No description provided for @channelAccountSignOutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out?'**
+  String get channelAccountSignOutTitle;
+
+  /// No description provided for @channelAccountSignOutDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ll need to sign in to {channel} again to keep using BaoCode.'**
+  String channelAccountSignOutDetail(String channel);
+
+  /// No description provided for @channelAccountOpenSite.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Website'**
+  String get channelAccountOpenSite;
+
+  /// No description provided for @channelAccountDefaultModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Default model for new chats'**
+  String get channelAccountDefaultModel;
+
+  /// No description provided for @channelAccountNoModels.
+  ///
+  /// In en, this message translates to:
+  /// **'The key in use doesn\'t reach any models.'**
+  String get channelAccountNoModels;
+
+  /// No description provided for @channelAccountKeys.
+  ///
+  /// In en, this message translates to:
+  /// **'My API Keys'**
+  String get channelAccountKeys;
+
+  /// No description provided for @channelAccountCreateKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Create Key'**
+  String get channelAccountCreateKey;
+
+  /// No description provided for @channelAccountKeyName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get channelAccountKeyName;
+
+  /// No description provided for @channelAccountKeyGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get channelAccountKeyGroup;
+
+  /// No description provided for @channelAccountUseKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Use This Key'**
+  String get channelAccountUseKey;
+
+  /// No description provided for @channelAccountInUse.
+  ///
+  /// In en, this message translates to:
+  /// **'In Use'**
+  String get channelAccountInUse;
+
+  /// No description provided for @channelAccountNoKeys.
+  ///
+  /// In en, this message translates to:
+  /// **'No API keys yet.'**
+  String get channelAccountNoKeys;
+
+  /// No description provided for @channelAccountSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re not signed in.'**
+  String get channelAccountSignedOut;
+
+  /// No description provided for @channelAccountUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This channel isn\'t available. Contact whoever gave you the installer.'**
+  String get channelAccountUnavailable;
+
+  /// No description provided for @channelAccountFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong: {error}'**
+  String channelAccountFailed(String error);
+
+  /// The channel's account site's firewall (e.g. Cloudflare) refused the app's requests; not a sign-out.
+  ///
+  /// In en, this message translates to:
+  /// **'{site} refused this computer\'s connection ({request}); its firewall may be blocking the IP of your network or proxy. Try another network, or reach {site} without the proxy.'**
+  String channelAccountBlocked(String site, String request);
+
+  /// No description provided for @settingsSectionAbout.
+  ///
+  /// In en, this message translates to:
+  /// **'About'**
+  String get settingsSectionAbout;
+
+  /// No description provided for @aboutTagline.
+  ///
+  /// In en, this message translates to:
+  /// **'An awesome, easy-to-use desktop UI for Claude Code, with a millisecond-fast IDE built in.'**
+  String get aboutTagline;
+
+  /// No description provided for @aboutVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} ({build})'**
+  String aboutVersion(String version, int build);
+
+  /// No description provided for @aboutRepository.
+  ///
+  /// In en, this message translates to:
+  /// **'{repository} · free and open source, under the GPL-3.0'**
+  String aboutRepository(String repository);
+
+  /// No description provided for @aboutWebsite.
+  ///
+  /// In en, this message translates to:
+  /// **'Website'**
+  String get aboutWebsite;
+
+  /// No description provided for @aboutChangelog.
+  ///
+  /// In en, this message translates to:
+  /// **'Changelog'**
+  String get aboutChangelog;
+
+  /// No description provided for @aboutChangelogDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'What each version changed'**
+  String get aboutChangelogDetail;
+
+  /// No description provided for @aboutFeedback.
+  ///
+  /// In en, this message translates to:
+  /// **'Report an Issue'**
+  String get aboutFeedback;
+
+  /// No description provided for @aboutFeedbackDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Open an issue on GitHub, or see those others opened'**
+  String get aboutFeedbackDetail;
+
+  /// No description provided for @aboutOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open'**
+  String get aboutOpen;
 }
 
 class _AppLocalizationsDelegate

@@ -178,7 +178,7 @@ void main() {
           '--window-size=1000,700',
           'about:blank',
         ],
-        environment: {'TMPDIR': sockets.path},
+        environment: {'TMPDIR': sockets.path, 'XDG_RUNTIME_DIR': sockets.path},
       );
       addTearDown(() {
         browser.kill();

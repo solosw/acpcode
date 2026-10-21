@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../channel/channel_setup.dart' show ChannelSetup;
+import '../kernel/claude_code/claude_core_setting.dart';
 import '../settings/user_settings.dart';
 import 'model_provider.dart';
 import 'secret_store.dart';
@@ -127,10 +129,32 @@ class ModelProviders extends ChangeNotifier {
   /// picker.
   bool get builtinHidden => _read(builtinHiddenKey) == true;
 
+  /// Whether there is Claude Code as set up on this machine (its login,
+  /// its models, its settings') to run on: only for the CLI. BaoCode's own
+  /// core runs on the upstreams here alone, and the channel build on its
+  /// account's (lib/channel/): never on this machine's.
+  bool get builtinAvailable =>
+      !ChannelSetup.channelBuild && ClaudeCore.current() == ClaudeCore.cli;
+
+  /// Whether Claude Code as set up on this machine is in the picker.
+  bool get builtinOffered => builtinAvailable && !builtinHidden;
+
+  /// The model a session on BaoCode's own core starts on when the one
+  /// picked is no upstream's: the first of the first upstream turned on;
+  /// null without one.
+  String? get firstModel => switch (enabled.firstOrNull) {
+    final provider? => modelRef(provider.id, provider.enabledModels.first.id),
+    null => null,
+  };
+
   /// The model new sessions start with (a [modelRef], or a model of the
-  /// built-in provider); null for the last one picked.
+  /// built-in provider while it is [builtinAvailable]); null for the last
+  /// one picked.
   String? get defaultModel => switch (_read(defaultKey)) {
-    final String model when model.isNotEmpty => model,
+    final String model
+        when model.isNotEmpty &&
+            (builtinAvailable || parseModelRef(model) != null) =>
+      model,
     _ => null,
   };
 
@@ -145,12 +169,13 @@ class ModelProviders extends ChangeNotifier {
   /// What a small job is asked of: the auxiliary model, as it is
   /// ([exact]); automatic, [model] (the session's, or new sessions'
   /// default), by its provider's Haiku tier. A null model is Claude
-  /// Code's own Haiku.
+  /// Code's own Haiku; picked while it is not [builtinAvailable], it is
+  /// automatic.
   ({String? model, bool exact}) auxiliary(String? model) =>
       switch (auxiliaryModel) {
-        builtinProviderId => (model: null, exact: true),
+        builtinProviderId when builtinAvailable => (model: null, exact: true),
+        null || builtinProviderId => (model: model, exact: false),
         final String picked => (model: picked, exact: true),
-        null => (model: model, exact: false),
       };
 
   Future<void> setAuxiliaryModel(String? model) => _write(auxiliaryKey, model);
@@ -165,10 +190,11 @@ class ModelProviders extends ChangeNotifier {
   };
 
   /// What an AI action is asked of ([actionsModel], as [auxiliary] gives
-  /// one); the auxiliary model while none is picked.
+  /// one); the auxiliary model while none is picked (or Claude Code's own
+  /// Haiku is, while it is not [builtinAvailable]).
   ({String? model, bool exact}) get actions => switch (actionsModel) {
-    builtinProviderId => (model: null, exact: true),
-    null || followAuxiliary => auxiliary(null),
+    builtinProviderId when builtinAvailable => (model: null, exact: true),
+    null || followAuxiliary || builtinProviderId => auxiliary(null),
     final String picked => (model: picked, exact: true),
   };
 

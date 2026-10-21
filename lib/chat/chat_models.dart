@@ -507,6 +507,7 @@ class LiveStatusItem extends ChatItem {
     this.whimsical = false,
     this.visible = true,
     this.output,
+    this.startedAt,
     this.cue,
   });
 
@@ -522,6 +523,9 @@ class LiveStatusItem extends ChatItem {
   /// What the model has written so far, shown where the turn's footer
   /// will be; null before it has written anything.
   final TurnOutput? output;
+
+  /// When the turn began, for the time it has taken so far.
+  final DateTime? startedAt;
 
   /// What the agent did last, for a [whimsical] row to muse on as well.
   final MusingCue? cue;

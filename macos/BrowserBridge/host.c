@@ -8,6 +8,14 @@
 // machine's order), then that much JSON. The host says what goes on with
 // BaoCode in messages of its own: {"type":"bridge","connected":…}. It
 // quits once the browser lets it go (its input ends).
+//
+// Built for Linux too (linux/BrowserBridge/CMakeLists.txt): there the
+// socket is in $XDG_RUNTIME_DIR, the user's alone, and BaoCode has to be
+// the user's own (SO_PEERCRED), wherever the socket is.
+
+#ifdef __linux__
+#define _GNU_SOURCE  // struct ucred
+#endif
 
 #include <errno.h>
 #include <limits.h>
@@ -84,10 +92,18 @@ static void tell_browser(int connected) {
   to_browser(text, (uint32_t)strlen(text));
 }
 
+// As BrowserBridge.socketPath finds it.
 static int socket_path(char* path, size_t size) {
-  const char* dir = getenv("TMPDIR");
-  char temp[PATH_MAX];
+  const char* dir = NULL;
+#ifdef __linux__
+  // The user's own; /tmp, below, is every user's.
+  dir = getenv("XDG_RUNTIME_DIR");
+  if (!dir || !*dir) dir = getenv("TMPDIR");
+#else
+  dir = getenv("TMPDIR");
+#endif
 #ifdef _CS_DARWIN_USER_TEMP_DIR
+  char temp[PATH_MAX];
   // The browser's environment may not have it: the same folder, asked.
   if (!dir || !*dir) {
     if (confstr(_CS_DARWIN_USER_TEMP_DIR, temp, sizeof temp) > 0) dir = temp;
@@ -112,6 +128,16 @@ static int connect_bao(void) {
     close(fd);
     return -1;
   }
+#ifdef __linux__
+  // Another user's, listening where BaoCode would: not told the browser's.
+  struct ucred peer;
+  socklen_t peer_size = sizeof peer;
+  if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_size) != 0 ||
+      peer.uid != getuid()) {
+    close(fd);
+    return -1;
+  }
+#endif
   return fd;
 }
 

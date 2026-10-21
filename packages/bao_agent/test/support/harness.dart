@@ -30,6 +30,7 @@ class Harness {
     String? model,
     List<String> sdkServers = const [],
     String? effort,
+    String? thinkingDisplay,
     bool strictMcpConfig = false,
   }) async {
     final root =
@@ -62,6 +63,7 @@ class Harness {
         model: model,
         sdkServers: sdkServers,
         effort: effort,
+        thinkingDisplay: thinkingDisplay,
         strictMcpConfig: strictMcpConfig,
         environment: {
           'HOME': root,

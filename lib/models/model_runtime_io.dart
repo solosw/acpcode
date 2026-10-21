@@ -166,7 +166,7 @@ Future<Map<String, String>> providerLaunchEnvironment(
   String model,
 ) async {
   final key = await ModelProviders.current.key(provider.id);
-  final proxy = provider.protocol.proxied
+  final proxy = provider.throughProxy
       ? await _proxy.endpoint(provider.id)
       : null;
   // What the session's own NO_PROXY keeps out of the user's proxy, beside

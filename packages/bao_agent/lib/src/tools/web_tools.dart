@@ -58,23 +58,16 @@ class WebFetchTool extends Tool {
   String get name => 'WebFetch';
 
   @override
-  String get description => '''- Fetches content from a specified URL and processes it using an AI model
-- Takes a URL and a prompt as input
-- Fetches the URL content, converts HTML to markdown
-- Processes the content with the prompt using a small, fast model
-- Returns the model's response about the content
-- Use this tool when you need to retrieve and analyze web content
+  String get description => '''Reads a web page for you: fetches the URL, makes its HTML Markdown, and has a small model answer your prompt from it. What comes back is that answer, not the page.
 
-Usage notes:
-  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.
-  - The URL must be a fully-formed valid URL
-  - HTTP URLs will be automatically upgraded to HTTPS
-  - The prompt should describe what information you want to extract from the page
-  - This tool is read-only and does not modify any files
-  - Results may be summarized if the content is very large
-  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL
-  - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new WebFetch request with the redirect URL to fetch the content.
-  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).''';
+- If an MCP server offers a fetch tool of its own, use that instead: it may reach more.
+- Give a whole URL; http is taken as https.
+- Say in the prompt what you want from the page.
+- A very long page is cut short before it is read.
+- A page fetched in the last 15 minutes is answered from a copy.
+- A redirect to another host is not followed: you are told where it goes, and can fetch that URL in a new call.
+- For GitHub, `gh` through Bash (gh pr view, gh issue view, gh api) usually does better.
+- It only reads: nothing on this machine changes.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -83,11 +76,11 @@ Usage notes:
       'url': {
         'type': 'string',
         'format': 'uri',
-        'description': 'The URL to fetch content from',
+        'description': 'The page to read',
       },
       'prompt': {
         'type': 'string',
-        'description': 'The prompt to run on the fetched content',
+        'description': 'What you want to know from the page',
       },
     },
     'required': ['url', 'prompt'],
@@ -115,7 +108,7 @@ Usage notes:
     if (uri == null ||
         !(uri.scheme == 'http' || uri.scheme == 'https') ||
         uri.host.isEmpty) {
-      return 'Invalid URL: ${input['url']}';
+      return 'Not a URL that can be fetched: ${input['url']}';
     }
     if (uri.userInfo.isNotEmpty) {
       return 'URLs with a username or password are not fetched.';
@@ -193,11 +186,11 @@ Usage notes:
     }
     if (page.code >= 400) {
       return ToolOutput.error(
-        'Request failed with status code ${page.code} ${page.codeText}',
+        'The server answered ${page.code} ${page.codeText}.',
       );
     }
     final content = page.text.length > maxText
-        ? '${page.text.substring(0, maxText)}\n\n[Content truncated]'
+        ? '${page.text.substring(0, maxText)}\n\n[The rest of the page is left out.]'
         : page.text;
     final answer = await context.session.quickQuery(
       system:
@@ -263,12 +256,11 @@ Usage notes:
           // Another host: the model is to fetch it itself, so the user is
           // asked about that host.
           if (_bareHost(next.host) != _bareHost(current.host)) {
-            return 'REDIRECT DETECTED: The URL redirects to a different host.\n\n'
-                'Original URL: $uri\nRedirect URL: $next\n'
-                'Status: ${response.statusCode} ${response.reasonPhrase}\n\n'
-                'To complete your request, I need to fetch content from the '
-                'redirected URL. Please use WebFetch again with these '
-                'parameters:\n- url: "$next"\n- prompt: "<your prompt>"';
+            return '$uri sends you to another host '
+                '(${response.statusCode} ${response.reasonPhrase}), which is '
+                'not followed: $next\n\n'
+                'To read it, call WebFetch again with that URL as url and the '
+                'same prompt.';
           }
           current = next;
           continue;
@@ -296,7 +288,7 @@ Usage notes:
           bytes: bytes.length,
         );
       }
-      throw const ToolFailure('Too many redirects');
+      throw const ToolFailure('The page redirects more than 10 times');
     } on SocketException catch (error) {
       throw ToolFailure('Could not fetch $uri: ${error.message}');
     } on HandshakeException catch (error) {
@@ -323,19 +315,11 @@ class WebSearchTool extends Tool {
   String get name => 'WebSearch';
 
   @override
-  String get description => '''- Allows Claude to search the web and use the results to inform responses
-- Provides up-to-date information for current events and recent data
-- Returns search result information formatted as search result blocks, including links as markdown hyperlinks
-- Use this tool for accessing information beyond Claude's knowledge cutoff
-- Searches are performed automatically within a single API call
+  String get description => '''Searches the web and gives back what it found, with each result's title and link: for news, recent releases, or anything newer than what you know.
 
-CRITICAL REQUIREMENT - You MUST follow this:
-  - After answering the user's question, you MUST include a "Sources:" section at the end of your response
-  - In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)
-
-Usage notes:
-  - Domain filtering is supported to include or block specific websites
-  - IMPORTANT - Use the correct year in search queries: use the current date from your context when searching for recent information, documentation, or current events.''';
+- allowed_domains keeps to some sites, blocked_domains leaves some out (one or the other).
+- For something recent, put the year in the query, the current one from the date you were given.
+- When you answer from a search, end the answer with a "Sources:" list of the links you drew on, as Markdown links: [Title](URL).''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -344,17 +328,17 @@ Usage notes:
       'query': {
         'type': 'string',
         'minLength': 2,
-        'description': 'The search query to use',
+        'description': 'What to search for',
       },
       'allowed_domains': {
         'type': 'array',
         'items': {'type': 'string'},
-        'description': 'Only include search results from these domains',
+        'description': 'Keep to results from these sites',
       },
       'blocked_domains': {
         'type': 'array',
         'items': {'type': 'string'},
-        'description': 'Never include search results from these domains',
+        'description': 'Leave out results from these sites',
       },
     },
     'required': ['query'],
@@ -376,12 +360,11 @@ Usage notes:
     ToolContext context,
   ) async {
     if ('${input['query'] ?? ''}'.trim().length < 2) {
-      return 'query must be at least 2 characters';
+      return 'The query needs at least 2 characters.';
     }
     if (asList(input['allowed_domains']).isNotEmpty &&
         asList(input['blocked_domains']).isNotEmpty) {
-      return 'Cannot specify both allowed_domains and blocked_domains in the '
-          'same request';
+      return 'Give allowed_domains or blocked_domains, not both.';
     }
     return null;
   }
@@ -401,14 +384,13 @@ Usage notes:
       'system': [
         {
           'type': 'text',
-          'text': 'You are an assistant for performing a web search tool use.',
+          'text':
+              'Search the web for what you are asked, then say briefly '
+              'what the results tell.',
         },
       ],
       'messages': [
-        {
-          'role': 'user',
-          'content': 'Perform a web search for the query: $query',
-        },
+        {'role': 'user', 'content': 'Search for: $query'},
       ],
       'tools': [
         {
@@ -473,12 +455,12 @@ Usage notes:
           }
       }
     }
-    final text = StringBuffer('Web search results for query: "$query"\n\n');
-    if (links.isNotEmpty) text.writeln('Links: ${jsonEncode(links)}\n');
+    final text = StringBuffer('What a web search for "$query" found:\n\n');
+    if (links.isNotEmpty) text.writeln('Results: ${jsonEncode(links)}\n');
     text.write(parts.join('\n\n'));
     text.write(
-      '\n\nREMINDER: You MUST include the sources above in your response to '
-      'the user using markdown hyperlinks.',
+      '\n\nEnd your answer with a "Sources:" list of the links you drew '
+      'on, as Markdown links.',
     );
     return ToolOutput(
       text.toString(),

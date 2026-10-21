@@ -10,6 +10,7 @@ import '../../remote/remote_claude.dart';
 import '../../remote/remote_location.dart';
 import '../../remote/ssh_host.dart';
 import 'claude_code_transport.dart' show ClaudeLaunch;
+import 'claude_core_setting.dart';
 import 'claude_haiku_stub.dart'
     if (dart.library.io) 'claude_haiku_io.dart'
     as platform;
@@ -22,6 +23,8 @@ import 'claude_haiku_stub.dart'
 ///
 /// With [model] a provider's ([modelRef]), the provider is asked instead:
 /// its Haiku model, or [model] itself when it sets none (or when [exact]).
+/// BaoCode's own core has no Haiku of its own: on it, without one of a
+/// provider's, the first upstream's is asked as automatic would.
 ///
 /// It runs where [location] is (a project's): on its host for a remote
 /// one, this machine otherwise.
@@ -41,7 +44,13 @@ Future<String> askClaudeHaiku(
   ClaudeHaikuTools? tools,
 }) async {
   final host = location == null ? null : RemoteLocation.hostOf(location);
-  final custom = ModelProviders.current.resolve(model);
+  final providers = ModelProviders.current;
+  var custom = providers.resolve(model);
+  if (custom == null && !providers.builtinAvailable) {
+    custom = providers.resolve(providers.firstModel);
+    if (custom == null) throw const ClaudeHaikuException(ClaudeCore.noModel);
+    exact = false;
+  }
   if (custom == null) {
     if (host != null) {
       return askRemoteHaiku(

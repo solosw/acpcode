@@ -24,10 +24,12 @@ class MemoryFile {
   bool get conditional => globs.isNotEmpty;
 
   String get description => switch (type) {
-    MemoryType.managed => "organization's instructions",
-    MemoryType.user => "user's private global instructions for all projects",
-    MemoryType.project => 'project instructions, checked into the codebase',
-    MemoryType.local => "user's private project instructions, not checked in",
+    MemoryType.managed => 'set by the organization',
+    MemoryType.user => "the user's own, for every project",
+    MemoryType.project => "the project's, kept in its repository",
+    MemoryType.local =>
+      "the user's own for this project, kept out of its "
+          'repository',
   };
 }
 

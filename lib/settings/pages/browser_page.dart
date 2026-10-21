@@ -97,7 +97,7 @@ class BrowserSettingsPage extends StatelessWidget {
       children: [
         if (!bridge.supported)
           SettingsCard(
-            children: [SettingsRow(label: l10n.browserSettingsMacOSOnly)],
+            children: [SettingsRow(label: l10n.browserSettingsUnsupported)],
           )
         else ...[
           SettingsCard(
@@ -138,7 +138,7 @@ class BrowserSettingsPage extends StatelessWidget {
                     children: [
                       if (DataDirectoryPage.canReveal)
                         IdeButton(
-                          label: DataDirectoryPage.revealLabel(l10n),
+                          label: l10n.revealInFileManager,
                           secondary: true,
                           onPressed: () {
                             Directory(kept.folder).createSync(recursive: true);
@@ -209,6 +209,11 @@ class BrowserSettingsPage extends StatelessWidget {
                 l10n.browserSettingsNotInstalled,
                 l10n.browserSettingsNotInstalledDescription,
               ),
+        if (bridge.sandboxedBrowsers)
+          (
+            l10n.browserSettingsSandboxed,
+            l10n.browserSettingsSandboxedDescription,
+          ),
       ];
     }
     return [

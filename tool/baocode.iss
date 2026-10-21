@@ -17,6 +17,12 @@
   #error OutDir is not defined: pass /DOutDir=<folder for the installer>
 #endif
 
+; The channel build's (tool/build_windows.dart --channel): "-channel", after
+; the installer's name. The same app either way, installed over the other.
+#ifndef Edition
+  #define Edition ""
+#endif
+
 ; The part of the version Windows records, without the build number pubspec
 ; adds after "+".
 #define VersionNumber Copy(AppVersion, 1, Pos("+", AppVersion) - 1)
@@ -38,7 +44,7 @@ DefaultDirName={autopf}\BaoCode
 DefaultGroupName=BaoCode
 UninstallDisplayName=BaoCode
 UninstallDisplayIcon={app}\baocode.exe
-OutputBaseFilename=BaoCode-{#VersionNumber}-setup
+OutputBaseFilename=BaoCode-{#VersionNumber}-setup{#Edition}
 OutputDir={#OutDir}
 ; What Explorer shows for the installer itself. Windows wants four numbers,
 ; where pubspec's version has three.
@@ -86,7 +92,8 @@ Name: "contextmenu"; \
 ; AOT app.so and flutter_assets) which sit beside the executable, and
 ; remote\ (VERSION and servers.json: which baocode-server remote projects
 ; run on their host, and where the app downloads it; tool/build_windows.dart
-; puts them there).
+; puts them there), and openssh\ (OpenSSH for Windows, for remote projects
+; where the system's ssh is too old to ask for a password).
 Source: "{#BundleDir}\*"; DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -173,7 +180,8 @@ Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\BaoCodeFastIde\c
   Tasks: contextmenu
 ; The baocode: URL scheme, always: a site's one-click import of an upstream
 ; (baocode.dev/import opens baocode://provider/import?…; see
-; docs/upstream-import.md). The link comes after --baocode-link, which the
+; docs/upstream-import.md), and the channel build's setup (baocode.dev/activate
+; opens baocode://activate?…). The link comes after --baocode-link, which the
 ; runner hands Flutter as a request (windows/runner/open_requests.cpp).
 Root: HKA; Subkey: "Software\Classes\baocode"; ValueType: string; \
   ValueName: ""; ValueData: "URL:BaoCode"; Flags: uninsdeletekey
@@ -184,6 +192,35 @@ Root: HKA; Subkey: "Software\Classes\baocode\DefaultIcon"; ValueType: string; \
 Root: HKA; Subkey: "Software\Classes\baocode\shell\open\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\baocode.exe"" --baocode-link ""%1"""
+; The browsers' native messaging host for BaoCode's extension, always
+; (windows/BrowserBridge): a browser finds dev.baocode.browser.json, beside
+; baocode.exe, by its key, and the manifest names the host beside it.
+; Chrome's key is also the one Brave, Vivaldi and other Chromium browsers
+; read; Edge and Chromium read their own. The keys above go at uninstall
+; too when nothing else is left in them (the browser is not installed).
+Root: HKA; Subkey: "Software\Google"; ValueType: none; \
+  Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Google\Chrome"; ValueType: none; \
+  Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Google\Chrome\NativeMessagingHosts"; \
+  ValueType: none; Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Google\Chrome\NativeMessagingHosts\dev.baocode.browser"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: "{app}\dev.baocode.browser.json"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Microsoft\Edge"; ValueType: none; \
+  Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts"; \
+  ValueType: none; Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\dev.baocode.browser"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: "{app}\dev.baocode.browser.json"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Chromium"; ValueType: none; \
+  Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Chromium\NativeMessagingHosts"; \
+  ValueType: none; Flags: uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Chromium\NativeMessagingHosts\dev.baocode.browser"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: "{app}\dev.baocode.browser.json"; Flags: uninsdeletekey
 ; Unticked: what an earlier install added goes.
 Root: HKA; Subkey: "Software\Classes\*\shell\BaoCode"; ValueType: none; \
   Tasks: not contextmenu; Flags: deletekey

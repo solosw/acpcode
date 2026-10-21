@@ -38,21 +38,17 @@ class ReadTool extends Tool {
 
   @override
   String get description =>
-      '''Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the user provides a path to a file, assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+      '''Gives you the contents of a file on this machine: text, an image, a PDF or a Jupyter notebook. Any path on the machine can be read, and a path the user gives can be taken as it is; one that is not there just comes back as an error.
 
-Usage:
-- The file_path parameter must be an absolute path, not a relative path
-- By default, it reads up to $maxLines lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
-- Any lines longer than $maxLineLength characters will be truncated
-- Results are returned using cat -n format, with line numbers starting at 1
-- This tool can read images (PNG, JPG, GIF, WebP): their contents are presented visually.
-- This tool can read PDF files (.pdf). For large PDFs, provide the pages parameter to read specific page ranges (e.g., "1-5"). Maximum 20 pages per request.
-- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs.
-- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.
-- You can call multiple tools in a single response. It is always better to speculatively read multiple potentially useful files in parallel.
-- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.''';
+- Give an absolute path.
+- Without offset and limit you get the first $maxLines lines, which is usually best. Use them only for a file too long to take at once.
+- Every line comes back after its number and a tab, the first line 1. A line longer than $maxLineLength characters is cut short.
+- An image (PNG, JPG, GIF, WebP) comes back as the picture itself.
+- A PDF comes back as the document; for a long one, ask for some pages, at most 20 at a time (pages: "1-5").
+- A notebook comes back cell by cell, each with what it printed.
+- A folder cannot be read: list it with `ls` through Bash, or with Glob.
+- Several files that may matter can be read at once, in calls side by side in one reply.
+- An empty file comes back as a note saying so.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -60,19 +56,20 @@ Usage:
     'properties': {
       'file_path': {
         'type': 'string',
-        'description': 'The absolute path to the file to read',
+        'description': 'Absolute path of the file',
       },
       'offset': {
         'type': 'integer',
-        'description': 'The line number to start reading from. Only provide if the file is too large to read at once',
+        'description': 'The first line to give, counting from 1: only for a file too long to take whole',
       },
       'limit': {
         'type': 'integer',
-        'description': 'The number of lines to read. Only provide if the file is too large to read at once.',
+        'description':
+            'How many lines to give: only for a file too long to take whole',
       },
       'pages': {
         'type': 'string',
-        'description': 'Page range for PDF files (e.g., "1-5", "3", "10-20"). Only applicable to PDF files. Maximum 20 pages per request.',
+        'description': 'For a PDF only: the pages to give, one ("3") or a range ("1-5"), 20 at most',
       },
     },
     'required': ['file_path'],
@@ -143,18 +140,17 @@ Usage:
     final limit = asInt(input['limit']);
     if (length > maxBytes && offset == null && limit == null) {
       return ToolOutput.error(
-        'File content (${(length / 1024).round()}KB) exceeds maximum allowed '
-        'size (${maxBytes ~/ 1024}KB). Please use offset and limit parameters '
-        'to read specific portions of the file, or use the Grep tool to '
-        'search for specific content.',
+        'The file is ${(length / 1024).round()}KB, over the '
+        '${maxBytes ~/ 1024}KB that can be read at once. Read a part of it '
+        'with offset and limit, or find what you need in it with Grep.',
       );
     }
     final bytes = file.readAsBytesSync();
     if (looksBinary(bytes)) {
       return ToolOutput.error(
-        'This tool cannot read binary files. The file appears to be a binary '
-        '$extension file. Please use appropriate tools for binary file '
-        'analysis.',
+        'The file looks binary (a $extension file), not text, and Read only '
+        'gives text, images, PDFs and notebooks. Look into it some other '
+        'way, with a tool made for its kind.',
       );
     }
     final decoded = decodeText(bytes);
@@ -182,8 +178,7 @@ Usage:
     if (text.isEmpty) {
       return ToolOutput(
         withReminders(
-          '<system-reminder>Warning: the file exists but the contents are '
-          'empty.</system-reminder>',
+          '<system-reminder>The file is there, but empty.</system-reminder>',
         ),
         result: _textResult(path, '', 0, 1, 0),
       );
@@ -191,9 +186,8 @@ Usage:
     if (start >= total) {
       return ToolOutput(
         withReminders(
-          '<system-reminder>Warning: the file exists but is shorter than the '
-          'provided offset (${start + 1}). The file has $total lines.'
-          '</system-reminder>',
+          '<system-reminder>The file has only $total lines, so nothing '
+          'starts at line ${start + 1}.</system-reminder>',
         ),
         result: _textResult(path, '', 0, start + 1, total),
       );
@@ -208,10 +202,9 @@ Usage:
     final body = numberLines(shown, start + 1);
     if (body.length ~/ 4 > maxTokens) {
       return ToolOutput.error(
-        'File content (${body.length ~/ 4} tokens) exceeds maximum allowed '
-        'tokens ($maxTokens). Please use offset and limit parameters to read '
-        'specific portions of the file, or use the Grep tool to search for '
-        'specific content.',
+        'Those lines come to about ${body.length ~/ 4} tokens, over the '
+        '$maxTokens that can be read at once. Read fewer with offset and '
+        'limit, or find what you need with Grep.',
       );
     }
     final note = end < total && limit == null
@@ -250,7 +243,7 @@ Usage:
 
   /// What is said of a file not there: where else it might be.
   static String _notFound(String path, String cwd) {
-    final buffer = StringBuffer('File does not exist.');
+    final buffer = StringBuffer('No file is there.');
     final folder = Directory(p.dirname(path));
     if (folder.existsSync()) {
       final base = p.basenameWithoutExtension(path).toLowerCase();
@@ -266,13 +259,13 @@ Usage:
             .take(3)
             .toList();
         if (similar.isNotEmpty) {
-          buffer.write(' Did you mean ${similar.join(' or ')}?');
+          buffer.write(' Perhaps ${similar.join(' or ')}?');
         }
       } on FileSystemException {
         // Nothing to suggest.
       }
     }
-    buffer.write(' Current working directory: $cwd');
+    buffer.write(' (The working directory is $cwd.)');
     return buffer.toString();
   }
 

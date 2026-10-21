@@ -198,6 +198,22 @@ abstract interface class ReportsUsage {
   Future<void> refreshUsage();
 }
 
+/// Tells when the account's usage limit, hit, resets: the agent stopped
+/// for it, and can go on then.
+abstract interface class ReportsUsageLimit {
+  /// When the limit the last turn hit resets; null while none was hit
+  /// (or a turn went through since), and when it was not said when.
+  DateTime? get usageLimitResetsAt;
+
+  /// Whether the next message is held to that limit: not once switched
+  /// to another provider's model, say, whose limits are its own.
+  bool get usageLimitApplies;
+
+  /// Whether [model] (an option of [SelectsModel.model]) is held to the
+  /// account's limit: not another provider's.
+  bool usageLimitAppliesTo(String model);
+}
+
 /// Runs tasks beside the conversation (see [TasksReported]).
 abstract interface class RunsBackgroundTasks {
   void stopTask(String taskId);

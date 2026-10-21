@@ -6,6 +6,7 @@ import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer_draft.dart';
+import 'package:baocode/chat/reply_scroll.dart';
 import 'package:baocode/theme/app_theme.dart';
 
 /// A conversation held in a list, changed by hand.
@@ -371,6 +372,80 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       final position = _position(tester);
+      expect(position.pixels, position.maxScrollExtent);
+    });
+  });
+
+  group('as the reply to a message sent comes', () {
+    final history = [for (var n = 0; n < 3; n++) ..._turn(n)];
+    tearDown(() => ReplyScroll.current.value = ReplyScroll.follow);
+
+    /// Writes [lines] of the reply, one by one.
+    Future<void> write(WidgetTester tester, _Feed feed, int lines) async {
+      for (var i = 0; i < lines; i++) {
+        feed.update([
+          ...feed.items,
+          AssistantTextItem('Reply line ${feed.items.length}.'),
+        ], streaming: true);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    /// Sends a message, then writes [lines] of its reply one by one.
+    Future<_Feed> reply(WidgetTester tester, int lines) async {
+      final feed = _Feed(history);
+      await _pump(tester, feed);
+      feed.update([
+        ...history,
+        const UserMessageItem(text: 'Next'),
+      ], streaming: true);
+      await tester.pump();
+      await write(tester, feed, lines);
+      return feed;
+    }
+
+    /// The message in the list (not a copy stuck to the top).
+    final message = find.descendant(
+      of: find.byType(Scrollable).first,
+      matching: _text('Next'),
+    );
+
+    /// The message's top, below the list's.
+    double messageTop(WidgetTester tester) =>
+        tester.getTopLeft(message).dy -
+        tester.getTopLeft(find.byType(ChatHistoryView)).dy;
+
+    testWidgets('automatic, the list follows it to its end', (tester) async {
+      await reply(tester, 40);
+      final position = _position(tester);
+      expect(position.pixels, position.maxScrollExtent);
+      expect(message.hitTestable(), findsNothing);
+    });
+
+    testWidgets('at its start, the list stops with the message at the top; '
+        'taken to the end, it follows again', (tester) async {
+      ReplyScroll.current.value = ReplyScroll.start;
+      // Short: followed as it is.
+      final feed = await reply(tester, 3);
+      final position = _position(tester);
+      expect(position.pixels, position.maxScrollExtent);
+
+      await write(tester, feed, 40);
+      final stopped = position.pixels;
+      expect(stopped, lessThan(position.maxScrollExtent - 500));
+      expect(messageTop(tester), inInclusiveRange(0, 40));
+      await write(tester, feed, 5);
+      expect(position.pixels, stopped);
+
+      tester.binding.handlePointerEvent(
+        PointerScrollEvent(
+          position: tester.getCenter(find.byType(ChatHistoryView)),
+          scrollDelta: const Offset(0, 100000),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await write(tester, feed, 5);
       expect(position.pixels, position.maxScrollExtent);
     });
   });

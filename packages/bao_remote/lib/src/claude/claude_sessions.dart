@@ -676,18 +676,22 @@ bool _isPrompt(Map<String, Object?> entry) =>
 
 /// [entry] without what is not shown of it, which may be most of it: a
 /// file read whole (kept twice, in the call's result for the model and in
-/// the CLI's), a picture a call gave the model, a file as it was before
-/// an edit.
+/// the CLI's), the CLI's copy of the pictures a call gave the model (they
+/// are shown from the call's result), a file as it was before an edit.
 Map<String, Object?> _slim(Map<String, Object?> entry) {
   final result = entry['toolUseResult'];
   final read = result is Map && result['file'] is Map;
   final edit = result is Map && result.containsKey('originalFile');
+  // An MCP tool's result, as the call's: its pictures twice.
+  final pictures =
+      result is List &&
+      result.any((block) => block is Map && block['type'] == 'image');
   final message = entry['message'];
   final results =
       message is Map &&
       message['content'] is List &&
       _blocks(entry).any((block) => block['type'] == 'tool_result');
-  if (!read && !edit && !results) return entry;
+  if (!read && !edit && !pictures && !results) return entry;
   final slim = {...entry};
   if (read) {
     final file = {...result['file'] as Map}
@@ -696,6 +700,11 @@ Map<String, Object?> _slim(Map<String, Object?> entry) {
     slim['toolUseResult'] = {...result, 'file': file};
   } else if (edit) {
     slim['toolUseResult'] = {...result}..remove('originalFile');
+  } else if (pictures) {
+    slim['toolUseResult'] = [
+      for (final block in result)
+        if (block is! Map || block['type'] != 'image') block,
+    ];
   }
   if (results) {
     // A file read is shown by its start (a failed call by its end: left
@@ -704,8 +713,7 @@ Map<String, Object?> _slim(Map<String, Object?> entry) {
       final String text when shorten && text.length > _readShown =>
         '${text.substring(0, _readShown)}…',
       final List<Object?> blocks => [
-        for (final block in blocks)
-          if (block is! Map || block['type'] != 'image') cut(block, shorten),
+        for (final block in blocks) cut(block, shorten),
       ],
       {'type': 'text', 'text': final String text} => {
         ...content as Map,

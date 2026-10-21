@@ -1,4 +1,5 @@
-import 'package:bao_remote/client.dart' show SshConnectException;
+import 'package:bao_remote/client.dart'
+    show SshConnectException, SshFailure, SshLauncher;
 import 'package:flutter/material.dart';
 
 import '../chat/panels/health_banner.dart';
@@ -230,7 +231,7 @@ class SshHostBanner extends StatelessWidget {
       listenable: host,
       builder: (context, _) {
         if (host.state != SshHostState.failed) return const SizedBox.shrink();
-        final (message, detail) = sshErrorText(host.error);
+        final (message, detail) = sshErrorText(host.error, context.l10n);
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: HealthBanner(
@@ -251,10 +252,27 @@ class SshHostBanner extends StatelessWidget {
   }
 }
 
-/// What connecting failed with, for the user: its message, and what `ssh`
-/// or the server said.
-(String?, String?) sshErrorText(Object? error) => switch (error) {
-  SshConnectException(:final message, :final detail) => (message, detail),
-  null => (null, null),
-  _ => ('$error', null),
-};
+/// What connecting failed with, for the user: its message (in their
+/// language where it is one of the usual ones), and what `ssh` or the
+/// server said.
+(String?, String?) sshErrorText(Object? error, AppLocalizations l10n) =>
+    switch (error) {
+      SshConnectException(:final failure, :final message, :final detail) => (
+        switch (failure) {
+          SshFailure.noSsh => l10n.remoteFailNoSsh,
+          SshFailure.authentication
+              when message == SshLauncher.cancelledMessage =>
+            l10n.remoteFailCancelled,
+          // Its own says what to do on an ssh too old to ask.
+          SshFailure.authentication when !message.contains('OpenSSH 8.4') =>
+            l10n.remoteFailAuth,
+          SshFailure.hostKey => l10n.remoteFailHostKey,
+          SshFailure.hostKeyChanged => l10n.remoteFailHostKeyChanged,
+          SshFailure.unreachable => l10n.remoteFailUnreachable,
+          _ => message,
+        },
+        detail,
+      ),
+      null => (null, null),
+      _ => ('$error', null),
+    };

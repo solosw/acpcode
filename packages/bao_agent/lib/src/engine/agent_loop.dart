@@ -123,7 +123,15 @@ class AgentLoop {
   /// not sent again.
   static final Set<String> _refusedThinking = {};
   static final Set<String> _refusedEffort = {};
+  static final Set<String> _refusedDisplay = {};
+  static final Set<String> _refusedContextEdits = {};
+  static final Set<String> _refusedBetas = {};
   static final Map<String, int> _maxOutput = {};
+
+  /// The betas asked for along with what they are for.
+  static const _thinkingBeta = 'interleaved-thinking-2025-05-14';
+  static const _contextBeta = 'context-management-2025-06-27';
+  static const _effortBeta = 'effort-2025-11-24';
 
   final Map<String, Object?> _usage = {
     'input_tokens': 0,
@@ -185,7 +193,7 @@ class AgentLoop {
         if (answer.stopReason == 'max_tokens') {
           session.emitSystem('informational', {
             'level': 'warning',
-            'content': 'The response reached the model\'s output limit and was cut off.',
+            'content': 'The answer was cut off at the model\'s output limit.',
           });
         }
         if (answer.stopReason == 'refusal') return _result('end_turn');
@@ -246,7 +254,7 @@ class AgentLoop {
       if (toolList.isNotEmpty) 'tools': toolList,
       ..._thinking(info, maxTokens),
     };
-    return ModelRequest(body, betas: _betas(info));
+    return ModelRequest(body, betas: _betas(info, body));
   }
 
   static bool _truthy(String? value) =>
@@ -254,17 +262,19 @@ class AgentLoop {
 
   int _maxTokens(ModelInfo info) {
     final env = asInt(session.environment['CLAUDE_CODE_MAX_OUTPUT_TOKENS']);
-    final known = info.known ? info.maxOutput.clamp(1, 64000) : 32000;
-    final asked = env ?? known;
+    final asked = env ?? (info.known ? info.defaultMaxTokens : 32000);
     final capped = _maxOutput[model];
     return capped != null && capped < asked ? capped : asked;
   }
 
   Map<String, Object?> _thinking(ModelInfo info, int maxTokens) {
     final out = <String, Object?>{};
-    final effort = run.isMain || run.agentType != 'Explore'
+    final chosen = run.isMain || run.agentType != 'Explore'
         ? session.effectiveEffort
         : null;
+    // None chosen: a known model's own, said (what the API takes for none
+    // is higher than some models are best at).
+    final effort = chosen ?? (info.known ? info.defaultEffort : null);
     final thinkingOn = session.settings.alwaysThinkingEnabled;
     if (!_refusedThinking.contains(model)) {
       switch (info.thinking) {
@@ -276,19 +286,20 @@ class AgentLoop {
             out['thinking'] = {'type': 'adaptive'};
           }
         case ThinkingStyle.budget:
-          if (thinkingOn == true || (effort != null && effort != 'none')) {
+          // On unless turned off: all the output can spare, unless a
+          // lower effort was chosen.
+          if (thinkingOn != false && effort != 'none' && maxTokens > 1024) {
             final budget =
                 asInt(session.environment['MAX_THINKING_TOKENS']) ??
-                switch (effort) {
+                switch (chosen) {
                   'low' => 4000,
                   'medium' => 10000,
-                  'max' || 'xhigh' => 31999,
-                  _ => 16000,
+                  _ => 31999,
                 };
-            final capped = budget.clamp(1024, maxTokens - 1024);
-            if (capped >= 1024) {
-              out['thinking'] = {'type': 'enabled', 'budget_tokens': capped};
-            }
+            out['thinking'] = {
+              'type': 'enabled',
+              'budget_tokens': budget.clamp(1024, maxTokens - 1),
+            };
           }
         case ThinkingStyle.none:
           // A provider's model: only what the user turned on.
@@ -299,6 +310,27 @@ class AgentLoop {
             };
           }
       }
+    }
+    final thinks = switch (out['thinking']) {
+      {'type': final String type} => type != 'disabled',
+      _ => false,
+    };
+    // Its thinking as the host asked to see it (summarized, or left out).
+    if (session.options.thinkingDisplay case final display?
+        when thinks && info.known && !_refusedDisplay.contains(model)) {
+      out['thinking'] = {...asMap(out['thinking']), 'display': display};
+    }
+    // The thinking of earlier turns kept as it was: what was cached still
+    // matches.
+    if (thinks &&
+        info.known &&
+        !_refusedContextEdits.contains(model) &&
+        !_refusedBetas.contains(model)) {
+      out['context_management'] = {
+        'edits': [
+          {'type': 'clear_thinking_20251015', 'keep': 'all'},
+        ],
+      };
     }
     final alwaysEffort = _truthy(
       session.environment['CLAUDE_CODE_ALWAYS_ENABLE_EFFORT'],
@@ -312,13 +344,23 @@ class AgentLoop {
     return out;
   }
 
-  List<String> _betas(ModelInfo info) {
+  List<String> _betas(ModelInfo info, Map<String, Object?> body) {
     final betas = <String>[
       for (final beta in (session.environment['ANTHROPIC_BETAS'] ?? '').split(
         ',',
       ))
         if (beta.trim().isNotEmpty) beta.trim(),
     ];
+    // What the request uses of the API's betas, for a model known (one
+    // not may be on a provider that knows none).
+    if (info.known && !_refusedBetas.contains(model)) {
+      if (body['thinking'] case {'type': final String type}
+          when type != 'disabled') {
+        betas.add(_thinkingBeta);
+      }
+      if (body.containsKey('context_management')) betas.add(_contextBeta);
+      if (body.containsKey('output_config')) betas.add(_effortBeta);
+    }
     // The million-token window of the 4.x models that need asking for it.
     if (session.longContext &&
         isMain &&
@@ -424,6 +466,29 @@ class AgentLoop {
         }
         // What this model or provider does not take: asked again without.
         final message = error.message.toLowerCase();
+        if (message.contains('beta') &&
+            request.betas.any(
+              (beta) => const [
+                _thinkingBeta,
+                _contextBeta,
+                _effortBeta,
+              ].contains(beta),
+            ) &&
+            !_refusedBetas.contains(model)) {
+          _refusedBetas.add(model);
+          continue;
+        }
+        if ((message.contains('context_management') ||
+                message.contains('clear_thinking')) &&
+            request.body.containsKey('context_management')) {
+          _refusedContextEdits.add(model);
+          continue;
+        }
+        if (message.contains('display') &&
+            asMap(request.body['thinking']).containsKey('display')) {
+          _refusedDisplay.add(model);
+          continue;
+        }
         if (message.contains('thinking') && !_refusedThinking.contains(model)) {
           _refusedThinking.add(model);
           continue;
@@ -810,11 +875,11 @@ class AgentLoop {
     try {
       if (tool == null) {
         output = ToolOutput.error(
-          '<tool_use_error>Error: No such tool available: ${call.name}</tool_use_error>',
+          '<tool_use_error>There is no tool named ${call.name}.</tool_use_error>',
         );
       } else if (call.input.containsKey('_unparsed')) {
         output = ToolOutput.error(
-          '<tool_use_error>InputValidationError: the input was not valid JSON</tool_use_error>',
+          '<tool_use_error>The input was not valid JSON.</tool_use_error>',
         );
       } else {
         var input = coerceInput(tool.inputSchema, call.input);
@@ -824,7 +889,7 @@ class AgentLoop {
             await tool.validate(input, context);
         if (invalid != null) {
           output = ToolOutput.error(
-            '<tool_use_error>${invalid.startsWith('The ') ? 'InputValidationError: ' : ''}$invalid</tool_use_error>',
+            '<tool_use_error>$invalid</tool_use_error>',
           );
         } else {
           final verdict = await _authorize(tool, input, context);
@@ -1117,10 +1182,9 @@ class AgentLoop {
     final message = asText(response['message']);
     return PermissionDeny(
       message ??
-          'The user doesn\'t want to proceed with this tool use. The tool use '
-              'was rejected (eg. if it was a file edit, the new_string was NOT '
-              'written to the file). STOP what you are doing and wait for the '
-              'user to tell you how to proceed.',
+          'The user said no to this call, so it was not made (an edit, say, '
+              'was not written). Stop here, and wait for the user to say how '
+              'to go on.',
       reasonType: 'user',
       interrupt: response['interrupt'] == true,
     );

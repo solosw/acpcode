@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -35,6 +36,7 @@ class EngineOptions {
     this.model,
     this.permissionMode,
     this.effort,
+    this.thinkingDisplay,
     this.autocompact,
     this.persist = true,
     this.directories = const [],
@@ -59,6 +61,7 @@ class EngineOptions {
     model: asText(json['model']),
     permissionMode: asText(json['permissionMode']),
     effort: asText(json['effort']),
+    thinkingDisplay: asText(json['thinkingDisplay']),
     autocompact: asInt(json['autocompact']),
     persist: json['persist'] != false,
     directories: [...asList(json['directories']).whereType<String>()],
@@ -91,6 +94,10 @@ class EngineOptions {
   final String? model;
   final String? permissionMode;
   final String? effort;
+
+  /// How the model's thinking comes back (`--thinking-display`):
+  /// `summarized`, or `omitted`; the API's own way when null.
+  final String? thinkingDisplay;
 
   /// The context the conversation may fill before it is compacted.
   final int? autocompact;
@@ -141,6 +148,7 @@ class EngineOptions {
     'model': ?model,
     'permissionMode': ?permissionMode,
     'effort': ?effort,
+    'thinkingDisplay': ?thinkingDisplay,
     'autocompact': ?autocompact,
     'persist': persist,
     'directories': directories,
@@ -369,6 +377,9 @@ class AgentSession {
         milliseconds: asInt(env['API_TIMEOUT_MS']) ?? 300000,
       ),
       userAgent: 'baocode-agent/1.0 (dart)',
+      // As the CLI gives it (JSON with a `session_id`): what our model
+      // proxy and the gateways read the session from.
+      userId: jsonEncode({'session_id': sessionId}),
     );
   }
 
@@ -639,17 +650,13 @@ class AgentSession {
       for (final dir in folders.reversed) {
         for (final file in memoryLoader.nested(dir, given)) {
           given.add(file.path);
-          out.add(
-            'Contents of ${file.path} (${file.description}):\n\n${file.content}',
-          );
+          out.add('${file.path} (${file.description}):\n\n${file.content}');
         }
       }
     }
     for (final rule in MemoryLoader.rulesFor(memory, path, cwd)) {
       if (!given.add(rule.path)) continue;
-      out.add(
-        'Contents of ${rule.path} (${rule.description}):\n\n${rule.content}',
-      );
+      out.add('${rule.path} (${rule.description}):\n\n${rule.content}');
     }
     return out;
   }

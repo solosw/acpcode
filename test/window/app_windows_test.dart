@@ -29,6 +29,7 @@ class _Harness {
     bool quitsWithLastWindow = false,
     this.tray = false,
     this.requestFiles = const {},
+    this.files = const {},
   }) : host = FakeWindowHost(tester.view, available: available),
        store = MemoryPreferenceStore(kept),
        workspace = Workspace.mock(),
@@ -43,6 +44,8 @@ class _Harness {
       updateSetting: (key, value) => written.add((key, value)),
       isDirectory: (path) async => directories.contains(path),
       takeFile: (path) async => requestFiles[path],
+      exists: (path) async =>
+          directories.contains(path) || files.contains(path),
       hasTray: () => tray,
       quit: () async {
         quits++;
@@ -71,6 +74,7 @@ class _Harness {
   late final AppWindows windows;
   final Set<String> directories;
   final Map<String, String> requestFiles;
+  final Set<String> files;
   MainWindow mainWindow;
   WindowSettings settings = const WindowSettings(
     ideWindows: IdeWindows.separate,
@@ -279,6 +283,24 @@ void main() {
       ]);
       expect(harness.order.first, '/w/a');
       expect(harness.workspace.recentFiles.first, '/w/a/lib/main.dart');
+    });
+
+    testWidgets('code <file>:line:col without -g (as launch-editor gives '
+        'it): the file at the line, unless one has that name', (tester) async {
+      final harness = _Harness(
+        tester,
+        files: const {'/w/a/x.vue', '/w/a/y.txt:2'},
+      );
+      await harness.start();
+      await code(harness, ['a']);
+      await code(harness, ['a/x.vue:58:11', 'a/y.txt:2', 'a/z.txt:3']);
+      expect(harness.delegateOf('/w/a').opened, [
+        [
+          const CodeTarget('/w/a/x.vue', line: 58, column: 11),
+          const CodeTarget('/w/a/y.txt:2'),
+          const CodeTarget('/w/a/z.txt:3'),
+        ],
+      ]);
     });
 
     testWidgets('code <file> no window has: the one last in front; with none, '

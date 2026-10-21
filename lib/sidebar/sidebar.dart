@@ -168,6 +168,7 @@ class Sidebar extends StatefulWidget {
     this.onOpenFolder,
     this.onAddSshHost,
     this.onOpenFolderOn,
+    this.editSshHost,
     this.onOpenSettings,
     this.onSearch,
     this.onCustomize,
@@ -229,6 +230,10 @@ class Sidebar extends StatefulWidget {
 
   /// Asks for a folder of an SSH host to open as a project.
   final ValueChanged<String>? onOpenFolderOn;
+
+  /// How to edit an SSH host's connection (the host picker's form): null
+  /// where it cannot be (one of `~/.ssh/config`, edited there).
+  final VoidCallback? Function(String host)? editSshHost;
 
   /// Opens the settings: the gear at the bottom; none without it.
   final VoidCallback? onOpenSettings;
@@ -1070,6 +1075,12 @@ class _SidebarState extends State<Sidebar>
           icon: Icons.edit_outlined,
           onSelected: () => setState(() => _renamingHost = true),
         ),
+        if (widget.editSshHost?.call(current) case final edit?)
+          SidebarMenuItem(
+            l10n.sidebarEditHost,
+            icon: Codicons.gear,
+            onSelected: edit,
+          ),
         SidebarMenuItem(
           l10n.sidebarChangeIcon,
           icon: Icons.emoji_emotions_outlined,
@@ -2356,7 +2367,9 @@ class _GroupHeader extends StatelessWidget {
       listenable: ssh,
       builder: (context, _) {
         final failed = ssh.state == SshHostState.failed;
-        final (message, _) = failed ? sshErrorText(ssh.error) : (null, null);
+        final (message, _) = failed
+            ? sshErrorText(ssh.error, context.l10n)
+            : (null, null);
         Widget? badge;
         if (failed) {
           badge = MouseRegion(

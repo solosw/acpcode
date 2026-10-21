@@ -167,7 +167,7 @@ class _UpdatesSettingsPageState extends State<UpdatesSettingsPage> {
                   children: [
                     if (DataDirectoryPage.canReveal)
                       IdeButton(
-                        label: DataDirectoryPage.revealLabel(l10n),
+                        label: l10n.revealInFileManager,
                         secondary: true,
                         onPressed: () => unawaited(
                           diagnostics.ensureFolder().then(

@@ -110,7 +110,8 @@ class IdeEditor extends StatefulWidget {
 
   /// Opens a go-to target (the workbench records navigation history and
   /// opens other files); without it only targets in the active document
-  /// are revealed.
+  /// are revealed, centered even when already in view (where Go to
+  /// Definition lands is what one reads next).
   final Future<void> Function(IdeLocation location)? onOpenLocation;
 
   /// Lists references (or several definitions) in the workbench's panel.
@@ -398,12 +399,12 @@ class IdeEditorState extends State<IdeEditor> {
         if (_syncing) return;
         if (identical(_nativeController, controller)) {
           _snapshot = doc.model.snapshot;
-          _selectionChanged();
+          _selectionChanged(now: true);
           if (textChanged) _refreshFindResults();
           _updateBlame(navigated: !textChanged);
         }
         if (textChanged) {
-          widget.workspace.notifyDocumentChanged(doc);
+          widget.workspace.notifyDocumentEdited(doc);
           if (identical(_nativeController, controller)) _scheduleSyntax();
         }
       });
@@ -451,6 +452,7 @@ class IdeEditorState extends State<IdeEditor> {
       onApplyWorkspaceEdit: applyWorkspaceEdit,
       onFocusEditor: focus,
       onFormatterMissing: _formatterMissing,
+      paths: widget.workspace.paths,
       semanticTokenStyler: _semanticTokenStyler,
       languageId: _textMateDocuments[doc]?.$2.languageId ?? 'plaintext',
       semanticSource: _semanticSources[doc],
@@ -513,7 +515,9 @@ class IdeEditorState extends State<IdeEditor> {
 
   Future<void> _openLocation(IdeLocation location) async {
     if (widget.onOpenLocation case final open?) return open(location);
-    if (location.path == widget.active.path) revealRange(location.range);
+    if (location.path == widget.active.path) {
+      revealRange(location.range, center: true);
+    }
   }
 
   /// The language session of the active document (tests and the
@@ -538,8 +542,8 @@ class IdeEditorState extends State<IdeEditor> {
 
   /// Selects the protocol [range] (or places the caret at its start unless
   /// [select]) in the active document and scrolls it into view, centered
-  /// when it was outside the viewport.
-  void revealRange(LspRange range, {bool select = false}) {
+  /// when it was outside the viewport, or always when [center].
+  void revealRange(LspRange range, {bool select = false, bool center = false}) {
     final snapshot = widget.active.model.snapshot;
     final (start, end) = lspOffsetsOf(snapshot, range);
     if (widget.nativeEditorEnabled) {
@@ -554,7 +558,7 @@ class IdeEditorState extends State<IdeEditor> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final view = _surfaceKey.currentState;
         if (mounted && view is EditorSurfaceView) {
-          (view as EditorSurfaceView).revealRange(start, end);
+          (view as EditorSurfaceView).revealRange(start, end, center: center);
         }
       });
       WidgetsBinding.instance.scheduleFrame();
@@ -1245,51 +1249,65 @@ class IdeEditorState extends State<IdeEditor> {
     });
   }
 
-  void _selectionChanged() {
+  /// The caret or the selection moved: the position is told once built,
+  /// or [now] for a move made in the editor in front (typing, a click),
+  /// which the status bar then shows in the frame the edit is drawn in.
+  void _selectionChanged({bool now = false}) {
     if (widget.nativeEditorEnabled && _nativeController == null) return;
     if (_snapshot.text != _editingValue.text) {
       _snapshot = DocumentSnapshot(_editingValue.text);
     }
     if (_positionUpdatePending) return;
+    // While another file comes to the front, the workspace has it before
+    // this editor does: the position told then would be the old file's.
+    if (now &&
+        identical(widget.active, widget.workspace.active) &&
+        SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      _reportPosition();
+      return;
+    }
     _positionUpdatePending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _positionUpdatePending = false;
-      if (!mounted ||
-          (widget.nativeEditorEnabled && _nativeController == null)) {
-        return;
-      }
-      final position = editorSelectionOf(
-        _editingValue,
-        snapshot: _snapshot,
-      ).caret;
-      final lineIndex = position.lineNumber - 1;
-      final lineText = _snapshot.text.substring(
-        _snapshot.lineStarts[lineIndex],
-        _snapshot.contentEnds[lineIndex],
-      );
-      final statusColumn = CursorColumns.toStatusbarColumn(
-        lineText,
-        position.column,
-        4,
-      );
-      final selection = _editingValue.selection;
-      final selectionLength = selection.isValid
-          ? (selection.end - selection.start).abs()
-          : 0;
-      if ((_reportedPosition?.equals(position) ?? false) &&
-          _reportedStatusColumn == statusColumn &&
-          _reportedSelectionLength == selectionLength) {
-        return;
-      }
-      _reportedPosition = position;
-      _reportedStatusColumn = statusColumn;
-      _reportedSelectionLength = selectionLength;
-      widget.onPositionChanged((
-        position: position,
-        statusColumn: statusColumn,
-        selectionLength: selectionLength,
-      ));
+      _reportPosition();
     });
+  }
+
+  void _reportPosition() {
+    if (!mounted || (widget.nativeEditorEnabled && _nativeController == null)) {
+      return;
+    }
+    final position = editorSelectionOf(
+      _editingValue,
+      snapshot: _snapshot,
+    ).caret;
+    final lineIndex = position.lineNumber - 1;
+    final lineText = _snapshot.text.substring(
+      _snapshot.lineStarts[lineIndex],
+      _snapshot.contentEnds[lineIndex],
+    );
+    final statusColumn = CursorColumns.toStatusbarColumn(
+      lineText,
+      position.column,
+      4,
+    );
+    final selection = _editingValue.selection;
+    final selectionLength = selection.isValid
+        ? (selection.end - selection.start).abs()
+        : 0;
+    if ((_reportedPosition?.equals(position) ?? false) &&
+        _reportedStatusColumn == statusColumn &&
+        _reportedSelectionLength == selectionLength) {
+      return;
+    }
+    _reportedPosition = position;
+    _reportedStatusColumn = statusColumn;
+    _reportedSelectionLength = selectionLength;
+    widget.onPositionChanged((
+      position: position,
+      statusColumn: statusColumn,
+      selectionLength: selectionLength,
+    ));
   }
 
   @override

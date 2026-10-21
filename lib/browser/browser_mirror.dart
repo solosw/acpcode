@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../ide/ide_button.dart';
+import '../ide/ide_commands.dart' show ideUsesMacKeys;
 import '../ide/ide_hover.dart';
 import '../ide/ide_menu.dart';
 import '../l10n/l10n.dart';
@@ -441,7 +442,15 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
     if (_shown == null) return KeyEventResult.ignored;
     final keys = HardwareKeyboard.instance;
     final down = event is! KeyUpEvent;
-    if (keys.isMetaPressed) {
+    final mac = ideUsesMacKeys;
+    // Ctrl elsewhere, on a key that types: Ctrl and an arrow, Backspace…
+    // are the page's, and Ctrl with Alt is AltGr, which types.
+    final shortcut = mac
+        ? keys.isMetaPressed
+        : keys.isControlPressed &&
+              !keys.isAltPressed &&
+              browserKeyName(event.physicalKey) == null;
+    if (shortcut) {
       if (!down) return KeyEventResult.ignored;
       // The Edit menu's, as macOS's commands: what the page takes alone.
       final command = switch (event.logicalKey) {
@@ -450,9 +459,10 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
         LogicalKeyboardKey.keyV => 'paste',
         LogicalKeyboardKey.keyA => 'selectAll',
         LogicalKeyboardKey.keyZ => keys.isShiftPressed ? 'redo' : 'undo',
+        LogicalKeyboardKey.keyY when !mac => 'redo',
         _ => null,
       };
-      // Any other is the app's (⌘W, ⌘P…).
+      // Any other is the app's (⌘W, ⌘P…; Ctrl+W, Ctrl+P elsewhere).
       if (command == null) return KeyEventResult.ignored;
       _sendKey('rawKeyDown', event, commands: [command]);
       _sendKey('keyUp', event);
@@ -461,7 +471,9 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
     // What the input method composes is its.
     if (_composing) return KeyEventResult.ignored;
     final control = browserKeyName(event.physicalKey) != null;
-    final types = !keys.isControlPressed && _types(event.character);
+    final types =
+        (!keys.isControlPressed || (!mac && keys.isAltPressed)) &&
+        _types(event.character);
     // Text, where the page takes it, comes through the input method.
     if (_input != null && types && !control) return KeyEventResult.ignored;
     if (!down) {

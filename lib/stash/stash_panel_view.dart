@@ -1023,7 +1023,7 @@ class _AllStashesState extends State<_AllStashes> {
         const IdeMenuSeparator(),
         if (!several && WindowControls.canRevealInFileManager)
           IdeMenuAction(
-            l10n.stashReveal,
+            l10n.revealInFileManager,
             onSelected: () => unawaited(
               WindowControls.revealInFileManager(
                 p.join(_controller.store.root, '${note.id}.md'),

@@ -255,6 +255,19 @@ class ComposerPickerState extends State<ComposerPicker> {
     });
   }
 
+  /// The option checked, in the middle of the list as the menu opens: not
+  /// to be scrolled to in a long one. Its group collapsed, the list as it is.
+  void _revealSelected() {
+    final index = _selectedIndex;
+    if (index < 0) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_open || index >= _rowKeys.length) return;
+      final row = _rowKeys[index].currentContext;
+      if (row == null || !row.mounted) return;
+      unawaited(Scrollable.ensureVisible(row, alignment: .5));
+    });
+  }
+
   // --- Stuck headings ------------------------------------------------------
   //
   // The heading of the group scrolled into stays over the list, as long as
@@ -407,6 +420,7 @@ class ComposerPickerState extends State<ComposerPicker> {
       FloatingRegistry.openPopover(this, () {
         if (mounted) _setOpen(false);
       }, onKey: _handleKey);
+      _revealSelected();
     } else {
       FloatingRegistry.closePopover(this);
     }

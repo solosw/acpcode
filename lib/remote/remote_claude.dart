@@ -31,11 +31,16 @@ const remoteClaudeInstallCommand =
     'curl -fsSL https://claude.ai/install.sh | bash';
 
 /// Claude Code where [launch]'s project is: on its host for a remote one.
-Future<ClaudeCodeTransport> startClaude(ClaudeLaunch launch) {
+/// BaoCode's own core only on an upstream's model ([ClaudeLaunch.env]):
+/// never on what the machine's Claude Code setup names.
+Future<ClaudeCodeTransport> startClaude(ClaudeLaunch launch) async {
   final host = RemoteLocation.hostOf(launch.cwd);
   if (host == null) {
     // On this machine: BaoCode's own core, unless the CLI is picked.
     return switch (ClaudeCore.current()) {
+      ClaudeCore.builtin when launch.env == null => throw const ClaudeNoModel(
+        ClaudeCore.noModel,
+      ),
       ClaudeCore.builtin => startDartCore(launch),
       ClaudeCore.cli => startClaudeProcess(launch),
     };
@@ -43,10 +48,49 @@ Future<ClaudeCodeTransport> startClaude(ClaudeLaunch launch) {
   return RemoteClaudeTransport.start(SshHosts.instance[host], launch);
 }
 
-/// The core asked for on a remote host ([RemoteClient.startClaude]'s
-/// `core`); a server of before runs the CLI.
-String? get _remoteCore =>
-    ClaudeCore.current() == ClaudeCore.builtin ? 'builtin' : null;
+/// What runs Claude Code on [host]: as its server saved in the app says;
+/// as ssh reaches it otherwise (one of ~/.ssh/config, one typed), the CLI
+/// where it has one, else BaoCode's own core.
+SshCore remoteCoreOf(String host) =>
+    SshHosts.instance.savedServers()[host]?.core ?? SshCore.auto;
+
+/// Starts Claude Code on [host] with [start], given the core to run
+/// ([RemoteClient.startClaude]'s `core`: `builtin`, or null for the CLI; a
+/// server of before runs the CLI), as [remoteCoreOf] says. [model]: whether
+/// it runs on an upstream's model, which BaoCode's own core needs; without
+/// one, the CLI. Where the CLI is wanted and the host has none, it is
+/// installed there when [install], as VS Code's extension sets itself up.
+Future<RemoteProcess> startRemoteCore(
+  SshHost host, {
+  required bool model,
+  bool install = true,
+  required Future<RemoteProcess> Function(String? core) start,
+}) async {
+  Future<RemoteProcess> cli() async {
+    try {
+      return await start(null);
+    } on ClaudeNotInstalled {
+      if (!install) rethrow;
+      await installRemoteClaude(host);
+      return start(null);
+    }
+  }
+
+  switch (remoteCoreOf(host.host)) {
+    case SshCore.builtin:
+      if (!model) throw const ClaudeNoModel(ClaudeCore.noModel);
+      return start('builtin');
+    case SshCore.cli:
+      return cli();
+    case SshCore.auto:
+      if (!model) return cli();
+      try {
+        return await start(null);
+      } on ClaudeNotInstalled {
+        return start('builtin');
+      }
+  }
+}
 
 /// [executable] refused an option BaoCode starts it with, where [cwd]'s
 /// project is: whether another, newer, may be started instead. On this
@@ -225,12 +269,17 @@ Future<String> askRemoteHaiku(
   try {
     client = await host.ready;
     final remoteEnv = await remoteModelEnvironment(client, env);
-    process = await client.startClaude(
-      cwd: client.hello?.home ?? '/',
-      arguments: claudeHaikuArguments(system, model: model),
-      settings: remoteEnv == null ? null : {'env': remoteEnv},
-      cleared: [if (remoteEnv != null) ...ClaudeModelVariables.inherited],
-      core: _remoteCore,
+    process = await startRemoteCore(
+      host,
+      model: remoteEnv != null,
+      install: false,
+      start: (core) => client.startClaude(
+        cwd: client.hello?.home ?? '/',
+        arguments: claudeHaikuArguments(system, model: model),
+        settings: remoteEnv == null ? null : {'env': remoteEnv},
+        cleared: [if (remoteEnv != null) ...ClaudeModelVariables.inherited],
+        core: core,
+      ),
     );
   } on Object catch (error) {
     throw ClaudeHaikuException('Claude Code on ${host.host}: $error');
@@ -313,26 +362,22 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
     final cwd = RemoteLocation.pathOf(launch.cwd);
     final env = await remoteModelEnvironment(client, launch.env);
     final started = launch.copyWith(cwd: cwd, env: env);
-    Future<RemoteProcess> run() => client.startClaude(
-      cwd: cwd,
-      // A key in its flag settings: written to a file there instead.
-      arguments: started.hasSecrets
-          ? started.argumentsWithoutSettings
-          : started.arguments,
-      settings: started.hasSecrets ? started.settings : null,
-      cleared: [if (env != null) ...ClaudeModelVariables.inherited],
-      environment: ClaudeLaunch.environment,
-      core: _remoteCore,
-    );
     try {
-      RemoteProcess process;
-      try {
-        process = await run();
-      } on ClaudeNotInstalled {
-        // None there: put there, as VS Code's extension sets itself up.
-        await installRemoteClaude(host);
-        process = await run();
-      }
+      final process = await startRemoteCore(
+        host,
+        model: env != null,
+        start: (core) => client.startClaude(
+          cwd: cwd,
+          // A key in its flag settings: written to a file there instead.
+          arguments: started.hasSecrets
+              ? started.argumentsWithoutSettings
+              : started.arguments,
+          settings: started.hasSecrets ? started.settings : null,
+          cleared: [if (env != null) ...ClaudeModelVariables.inherited],
+          environment: ClaudeLaunch.environment,
+          core: core,
+        ),
+      );
       return RemoteClaudeTransport._(process);
     } on ClaudeDownloadFailed catch (error) {
       throw ClaudeUnavailable(
@@ -342,6 +387,9 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
             '\n\nInstall it there, in a terminal of the project:\n'
             '$remoteClaudeInstallCommand',
       );
+    } on ClaudeNoModel {
+      // The app asks for a model to set up: not the host's to say.
+      rethrow;
     } on ClaudeNotInstalled catch (error) {
       throw ClaudeUnavailable(
         'Claude Code is not installed on ${host.host}',

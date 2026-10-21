@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show Random;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -10,9 +11,9 @@ import '../platform/data_dir.dart';
 
 /// The user's own browsers, reached through BaoCode's extension in them
 /// (browser_extension/): each runs the app's native messaging host
-/// (macos/BrowserBridge/host.c), which connects to this socket and passes
-/// the extension's messages. Agents use the tabs shared there through the
-/// tools of browser_tools.dart.
+/// (macos/BrowserBridge/host.c, Linux's too; windows/BrowserBridge/host.cpp),
+/// which connects to this socket and passes the extension's messages.
+/// Agents use the tabs shared there through the tools of browser_tools.dart.
 ///
 /// A message is the browser's way: its length (4 bytes, little-endian),
 /// then that much JSON. The app asks `{id, method, params}` (see
@@ -48,13 +49,39 @@ class BrowserBridge extends ChangeNotifier {
 
   /// Where the host finds the app: the same folder for both, the user's
   /// temporary one ([socketFolder] in a test).
-  static String get socketPath =>
-      p.join(socketFolder ?? Directory.systemTemp.path, 'baocode-browser.sock');
+  static String get socketPath => p.join(_folder, 'baocode-browser.sock');
+
+  /// Over [loopback], what the host finds the app by instead: the port on
+  /// 127.0.0.1 and the token it says first, `<port> <token>`.
+  static String get portPath => p.join(_folder, 'baocode-browser.port');
+
+  /// Over [loopback], held while this BaoCode has the browsers: another
+  /// that cannot have it leaves them to it.
+  static String get _lockPath => p.join(_folder, 'baocode-browser.lock');
+
+  /// The user's own temporary folder. On Linux, `$XDG_RUNTIME_DIR` (the
+  /// user's alone) before `$TMPDIR` or /tmp (shared with every user): as
+  /// host.c finds it.
+  static String get _folder {
+    if (socketFolder case final folder?) return folder;
+    if (Platform.isLinux) {
+      final runtime = Platform.environment['XDG_RUNTIME_DIR'];
+      if (runtime != null && runtime.isNotEmpty) return runtime;
+    }
+    return Directory.systemTemp.path;
+  }
 
   /// A test's own folder for the socket: given as TMPDIR to a browser it
   /// launches, whose host alone finds it there (not the user's browsers').
   @visibleForTesting
   static String? socketFolder;
+
+  /// Whether the hosts connect over TCP, to 127.0.0.1 ([portPath]), rather
+  /// than to [socketPath]: on Windows, where Dart has no Unix sockets. Any
+  /// program may connect there: a host says the token first, which only the
+  /// user can read, or is let go.
+  @visibleForTesting
+  static bool loopback = Platform.isWindows;
 
   /// A test's own home, where the browsers' folders are looked for: the
   /// user's are left alone.
@@ -63,7 +90,8 @@ class BrowserBridge extends ChangeNotifier {
 
   static String? get _home => home ?? Platform.environment['HOME'];
 
-  bool get supported => !kIsWeb && Platform.isMacOS;
+  bool get supported =>
+      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
 
   /// Whether the user lets the agents use the browsers: off, nothing
   /// listens for them, and the browsers find no host to start (it is
@@ -155,6 +183,14 @@ class BrowserBridge extends ChangeNotifier {
     if (_started || !supported || !enabled) return;
     _started = true;
     unawaited(installHost());
+    final server = await (loopback ? _bindLoopback() : _bindSocket());
+    if (server == null) return;
+    _server = server;
+    server.listen(_accept);
+  }
+
+  /// [socketPath]'s, unless another BaoCode answers there.
+  Future<ServerSocket?> _bindSocket() async {
     final path = socketPath;
     if (FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
       try {
@@ -164,9 +200,8 @@ class BrowserBridge extends ChangeNotifier {
           0,
         ).timeout(const Duration(seconds: 1));
         socket.destroy();
-        _otherApp = true;
-        notifyListeners();
-        return;
+        _otherBaoCode();
+        return null;
       } on Object {
         // Left by a run that ended.
         try {
@@ -177,15 +212,67 @@ class BrowserBridge extends ChangeNotifier {
       }
     }
     try {
-      final server = await ServerSocket.bind(
+      return await ServerSocket.bind(
         InternetAddress(path, type: InternetAddressType.unix),
         0,
       );
-      _server = server;
-      server.listen(_accept);
     } on SocketException catch (error) {
       debugPrint('browser bridge: $error');
+      return null;
     }
+  }
+
+  /// 127.0.0.1's, at a port the system picks, which [portPath] says with a
+  /// new token; unless another BaoCode holds [_lockPath]. The file is
+  /// written whole and then put in place: a host never reads half of it.
+  Future<ServerSocket?> _bindLoopback() async {
+    final RandomAccessFile lock;
+    try {
+      // Not truncated: another BaoCode may hold it.
+      lock = await File(_lockPath).open(mode: FileMode.append);
+    } on FileSystemException catch (error) {
+      debugPrint('browser bridge: $error');
+      return null;
+    }
+    try {
+      await lock.lock(FileLock.exclusive);
+    } on FileSystemException {
+      await lock.close();
+      _otherBaoCode();
+      return null;
+    }
+    ServerSocket? server;
+    try {
+      server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final random = Random.secure();
+      final token = [
+        for (var i = 0; i < 32; i++)
+          random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ].join();
+      final written = File('$portPath.${server.port}');
+      await written.writeAsString('${server.port} $token', flush: true);
+      await written.rename(portPath);
+      _lock = lock;
+      _token = token;
+      return server;
+    } on Object catch (error) {
+      debugPrint('browser bridge: $error');
+      await server?.close();
+      await lock.close();
+      return null;
+    }
+  }
+
+  /// Held over [loopback] while listening: [_lockPath]'s, locked.
+  RandomAccessFile? _lock;
+
+  /// What a host says first over [loopback], as [portPath] says it: set
+  /// before its server listens, and cleared once it is closed.
+  String? _token;
+
+  void _otherBaoCode() {
+    _otherApp = true;
+    notifyListeners();
   }
 
   Future<void> _stop() async {
@@ -199,16 +286,22 @@ class BrowserBridge extends ChangeNotifier {
     // Ours alone: another BaoCode's is left to it. Before the close, which
     // ends later: by then a start again may have bound it anew.
     if (server == null) return;
+    final lock = _lock;
     try {
-      File(socketPath).deleteSync();
+      File(lock != null ? portPath : socketPath).deleteSync();
     } on FileSystemException {
       // Gone.
     }
     await server.close();
+    // Over loopback, let go once the port's file is gone: another BaoCode
+    // may write its own then.
+    _lock = null;
+    _token = null;
+    await lock?.close();
   }
 
   void _accept(Socket socket) {
-    final connection = BrowserConnection._(this, socket);
+    final connection = BrowserConnection._(this, socket, token: _token);
     _connections.add(connection);
   }
 
@@ -218,11 +311,19 @@ class BrowserBridge extends ChangeNotifier {
   }
 
   // --- The host, as the browsers find it: a manifest of its in each
-  // browser's folder for them (those the user has), naming the app's.
+  // browser's folder for them (those the user has), naming the app's: on
+  // macOS and Linux, written again each run, the app moved or not. On
+  // Windows, the installer's: the browsers' registry keys point to the
+  // manifest beside baocode.exe (windows/BrowserBridge, tool/baocode.iss),
+  // and stay while BaoCode is installed; turned off, the host finds no
+  // BaoCode to connect to, and the extension says so.
 
   /// The browsers' folders for native messaging hosts' manifests, by the
   /// folder each browser keeps its profile in.
-  static List<String> _hostFolders(String home) => [
+  static List<String> _hostFolders(String home) =>
+      Platform.isLinux ? _linuxHostFolders(home) : _macHostFolders(home);
+
+  static List<String> _macHostFolders(String home) => [
     for (final browser in [
       'Google/Chrome',
       'Google/Chrome Beta',
@@ -241,6 +342,57 @@ class BrowserBridge extends ChangeNotifier {
       p.join(home, 'Library', 'Application Support', browser),
   ];
 
+  /// On Linux, under `$XDG_CONFIG_HOME` (~/.config unset, or in a test's
+  /// [home]). Snap's Chromium and Flatpak's browsers keep theirs in their
+  /// sandbox, and cannot start a host outside it: [sandboxedBrowsers].
+  static List<String> _linuxHostFolders(String home) {
+    final xdg = BrowserBridge.home == null
+        ? Platform.environment['XDG_CONFIG_HOME']
+        : null;
+    final config = xdg != null && xdg.isNotEmpty
+        ? xdg
+        : p.join(home, '.config');
+    return [
+      for (final browser in [
+        'google-chrome',
+        'google-chrome-beta',
+        'google-chrome-unstable',
+        'google-chrome-canary',
+        'chromium',
+        'microsoft-edge',
+        'microsoft-edge-beta',
+        'microsoft-edge-dev',
+        'BraveSoftware/Brave-Browser',
+        'BraveSoftware/Brave-Browser-Beta',
+        'BraveSoftware/Brave-Browser-Nightly',
+        'vivaldi',
+        'vivaldi-snapshot',
+      ])
+        p.join(config, browser),
+    ];
+  }
+
+  /// Whether the user has, on Linux, a browser from Snap or Flatpak, whose
+  /// sandbox keeps BaoCode's host out: said in Settings → Browser while
+  /// none is connected.
+  bool get sandboxedBrowsers {
+    final home = _home;
+    if (!Platform.isLinux || home == null) return false;
+    return [
+      p.join(home, 'snap', 'chromium'),
+      for (final app in [
+        'com.google.Chrome',
+        'com.google.ChromeDev',
+        'org.chromium.Chromium',
+        'io.github.ungoogled_software.ungoogled_chromium',
+        'com.microsoft.Edge',
+        'com.brave.Browser',
+        'com.vivaldi.Vivaldi',
+      ])
+        p.join(home, '.var', 'app', app),
+    ].any((folder) => Directory(folder).existsSync());
+  }
+
   static File _hostManifest(String folder) =>
       File(p.join(folder, 'NativeMessagingHosts', '$hostName.json'));
 
@@ -252,7 +404,11 @@ class BrowserBridge extends ChangeNotifier {
   /// then start it for the extension.
   Future<void> installHost() async {
     final home = _home;
-    if (home == null || !File(hostExecutable).existsSync()) return;
+    if (Platform.isWindows ||
+        home == null ||
+        !File(hostExecutable).existsSync()) {
+      return;
+    }
     final manifest = const JsonEncoder.withIndent('  ').convert({
       'name': hostName,
       'description': 'BaoCode',
@@ -281,7 +437,7 @@ class BrowserBridge extends ChangeNotifier {
   /// no more. Written again by the next [start].
   Future<void> removeHost() async {
     final home = _home;
-    if (home == null || !supported) return;
+    if (Platform.isWindows || home == null || !supported) return;
     for (final folder in _hostFolders(home)) {
       try {
         final file = _hostManifest(folder);
@@ -325,17 +481,27 @@ class BrowserEvent {
 
 /// A browser's extension, through its host.
 class BrowserConnection {
-  BrowserConnection._(this._bridge, this._socket) {
+  BrowserConnection._(this._bridge, this._socket, {String? token})
+    : _token = token {
     _socket.listen(
       _read,
       onDone: _close,
       onError: (Object _) => _close(),
       cancelOnError: true,
     );
+    if (token != null) _unproven = Timer(const Duration(seconds: 5), _close);
   }
 
   final BrowserBridge _bridge;
   final Socket _socket;
+
+  /// Over loopback, the token its host has yet to say, in its hello, before
+  /// anything is taken from it: let go in a while without it ([_unproven]).
+  String? _token;
+  Timer? _unproven;
+
+  /// The most an unproven host's message may be: its hello's.
+  static const _helloLimit = 4096;
 
   /// The extension's origin, as the browser told its host.
   String? origin;
@@ -444,16 +610,26 @@ class BrowserConnection {
         offset,
         offset + 4,
       ).getUint32(0, Endian.little);
+      if (_token != null && length > _helloLimit) {
+        _close();
+        return;
+      }
       if (bytes.length - offset - 4 < length) break;
-      final body = utf8.decode(
-        Uint8List.sublistView(bytes, offset + 4, offset + 4 + length),
+      final body = Uint8List.sublistView(
+        bytes,
+        offset + 4,
+        offset + 4 + length,
       );
       offset += 4 + length;
       try {
-        _received(jsonDecode(body) as Map<String, Object?>);
+        if (jsonDecode(utf8.decode(body))
+            case final Map<String, Object?> message) {
+          _received(message);
+        }
       } on FormatException {
         // Not a message.
       }
+      if (_closed) return;
     }
     if (offset < bytes.length) {
       _buffer.add(Uint8List.sublistView(bytes, offset));
@@ -461,6 +637,15 @@ class BrowserConnection {
   }
 
   void _received(Map<String, Object?> message) {
+    if (_token != null) {
+      // Its host's hello first, with the token: else not a host of ours.
+      if (message['type'] != 'hello' || message['token'] != _token) {
+        _close();
+        return;
+      }
+      _token = null;
+      _unproven?.cancel();
+    }
     if (message['id'] case final int id when message['type'] == null) {
       final completer = _pending.remove(id);
       if (completer == null) return;
@@ -497,6 +682,7 @@ class BrowserConnection {
   void _close() {
     if (_closed) return;
     _closed = true;
+    _unproven?.cancel();
     _socket.destroy();
     for (final completer in _pending.values) {
       completer.completeError(

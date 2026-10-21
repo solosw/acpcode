@@ -1514,8 +1514,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get browserTraceReveal =>
-      'Show the trace in Finder (drop it into DevTools\' Performance panel to look closer)';
+  String browserTraceReveal(String app) {
+    return 'Show the trace in $app (drop it into DevTools\' Performance panel to look closer)';
+  }
 
   @override
   String browserStepDone(String action) {
@@ -2141,6 +2142,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceFileExplorer => 'File Explorer';
 
   @override
+  String get workspaceFileManager => 'File Manager';
+
+  @override
   String get workspaceTerminalApp => 'Terminal';
 
   @override
@@ -2545,15 +2549,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get turnSpeedHint => 'Average output speed';
 
   @override
-  String turnOutputTokens(String tokens) {
-    return '↓ $tokens tokens';
-  }
-
-  @override
   String get turnOutputTokensHint => 'Written so far this turn';
 
   @override
-  String get turnSpeedLiveHint => 'Output speed';
+  String get turnSpeedLiveHint =>
+      'Output speed, sampled over the last 2 seconds';
 
   @override
   String get turnDurationHint => 'Time this turn took';
@@ -3124,6 +3124,23 @@ class AppLocalizationsEn extends AppLocalizations {
   String get queuedRemove => 'Remove from the queue';
 
   @override
+  String get stopConfirmMessage => 'Stop the agent?';
+
+  @override
+  String stopConfirmDetail(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'The $count tasks running in the background will stop too.',
+      one: 'The task running in the background will stop too.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stopConfirmStop => 'Stop';
+
+  @override
   String get tabClose => 'Close';
 
   @override
@@ -3499,11 +3516,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSectionAgents => 'Agents';
 
   @override
-  String get settingsSectionSsh => 'SSH';
+  String get settingsSectionSsh => 'SSH Servers';
 
   @override
   String get sshSettingsDescription =>
-      'Hosts saved here are used when you open a remote folder. They are kept in BaoCode, not only in ~/.ssh/config. Passwords stay in the system keychain.';
+      'The servers remote projects connect to: their address, how they sign in, a jump host, and the core each runs.';
 
   @override
   String get sshSettingsHosts => 'Hosts';
@@ -3516,7 +3533,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sshSettingsEmpty => 'No hosts saved yet';
 
   @override
-  String get sshSettingsAdd => 'Add host';
+  String get sshSettingsAdd => 'Add Server…';
 
   @override
   String get sshSettingsHost => 'Host';
@@ -3589,10 +3606,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'What runs Claude Code sessions. The built-in core is BaoCode\'s own, written in Dart: the same tools, settings, CLAUDE.md, skills, subagents, hooks, MCP servers and session files as the CLI, signed in with an API key or a provider. The CLI is Anthropic\'s; pick it to sign in with a Claude subscription. Applies to sessions started after a change, on this machine and on remote hosts.';
+      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.';
 
   @override
-  String get generalSettingsClaudeCoreBuiltin => 'Built-in (Dart)';
+  String get generalSettingsClaudeCoreBuiltin => 'Built-in';
 
   @override
   String get generalSettingsClaudeCoreCli => 'Claude Code CLI';
@@ -5418,6 +5435,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dataDirRevealInFileExplorer => 'Reveal in File Explorer';
 
   @override
+  String get dataDirRevealInFileManager => 'Reveal in File Manager';
+
+  @override
   String get dataDirChecking => 'Checking the folder…';
 
   @override
@@ -5898,7 +5918,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get claudePathSettingDescription =>
-      'Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)';
+      'Empty: the newest Claude Code on this machine, downloaded if there is none. A path: always that one, e.g. one you built. (claudeCode.path)';
 
   @override
   String get claudePathSettingHint => 'Automatic';
@@ -6810,7 +6830,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).';
+      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: BaoCode\'s local proxy sends its requests there.';
+
+  @override
+  String get modelsRoleMissing =>
+      'This model is no longer one of its upstream\'s: subagents\' requests to it will fail.';
 
   @override
   String get modelsAdvanced => 'Advanced';
@@ -7439,6 +7463,24 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get appearanceSettingsReplyScroll => 'As a Reply Comes';
+
+  @override
+  String get appearanceSettingsReplyScrollDescription =>
+      'Where the conversation stays as the reply to your message is written: at its end, following it; or at its start, your message at the top, for you to read on from there. Scrolled to the end, it follows again.';
+
+  @override
+  String get appearanceSettingsReplyScrollFollow => 'Automatic';
+
+  @override
+  String get appearanceSettingsReplyScrollStart => 'Stay at its start';
+
+  @override
+  String appearanceSettingsReplyScrollLabel(String choice) {
+    return 'As a reply comes: $choice';
+  }
+
+  @override
   String get appearanceSettingsMinimap => 'Conversation Minimap';
 
   @override
@@ -7562,7 +7604,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get generalSettingsContextMenuFinder => 'Finder Context Menu';
 
   @override
-  String get generalSettingsContextMenuExplorer => 'Explorer Context Menu';
+  String get generalSettingsContextMenuExplorer => 'File Explorer Context Menu';
 
   @override
   String get generalSettingsContextMenuDescription =>
@@ -7609,7 +7651,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get remoteHostPlaceholder =>
-      'Select a host of ~/.ssh/config, or type user@host[:port]';
+      'Select a host, add one, or type user@host[:port]';
 
   @override
   String remoteConnectTo(String host) {
@@ -7617,7 +7659,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get remoteNoHosts => 'No hosts in ~/.ssh/config: type one';
+  String get remoteNoHosts => 'No hosts yet: add one, or type user@host';
 
   @override
   String get remoteInvalidHost =>
@@ -8446,6 +8488,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarRenameHost => 'Rename Host';
 
   @override
+  String get sidebarEditHost => 'Edit Connection...';
+
+  @override
   String get explorerNoPermission => 'No permission to read this folder';
 
   @override
@@ -8772,6 +8817,30 @@ class AppLocalizationsEn extends AppLocalizations {
       'A button in the message box that has the auxiliary model make what you wrote clearer before you send it';
 
   @override
+  String get generalSettingsLiveTurnStats => 'Live Speed and Time';
+
+  @override
+  String get generalSettingsLiveTurnStatsDescription =>
+      'While the agent works, a line under the reply with how long the turn has taken, how fast the model writes and the tokens so far, changing as it goes. The figures under a finished turn always show.';
+
+  @override
+  String usageLimitScheduled(String time) {
+    return 'Usage limit reached · continues automatically after it resets at $time';
+  }
+
+  @override
+  String usageLimitTomorrow(String time) {
+    return 'tomorrow $time';
+  }
+
+  @override
+  String get resumeAfterResetPrompt =>
+      'The usage limit has reset. Continue where you left off.';
+
+  @override
+  String get resumeAfterLimitToggle => 'Continue After Limit Reset';
+
+  @override
   String stashPolishFailed(String error) {
     return 'Could not polish: $error';
   }
@@ -8950,9 +9019,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashDismiss => 'Dismiss';
-
-  @override
-  String get stashReveal => 'Show in Finder';
 
   @override
   String get stashDelete => 'Delete';
@@ -9227,7 +9293,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get branchBarWorkspace => 'Branches of the folders';
 
   @override
-  String get settingsSectionAccounts => 'Accounts';
+  String get settingsSectionAccounts => 'Git Accounts';
 
   @override
   String get settingsAccountsKeywords =>
@@ -9588,8 +9654,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'Let agents use your own browser, signed in as you: open pages, read them, click and type in the tabs you share with them. You can watch every step in the side panel.';
 
   @override
-  String get browserSettingsMacOSOnly =>
-      'The browser is available on macOS only for now.';
+  String get browserSettingsUnsupported =>
+      'The browser is available on macOS, Windows and Linux only.';
 
   @override
   String get browserSettingsEnabled => 'Let Agents Use the Browser';
@@ -9614,6 +9680,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get browserSettingsNotRunningDescription =>
       'Open a browser with BaoCode\'s extension: it connects automatically.';
+
+  @override
+  String get browserSettingsSandboxed =>
+      'Snap and Flatpak browsers can\'t connect';
+
+  @override
+  String get browserSettingsSandboxedDescription =>
+      'Their sandbox keeps BaoCode\'s helper from running. Install the browser from its own .deb or .rpm package instead, such as Google Chrome from google.com/chrome.';
 
   @override
   String browserSettingsConnected(String browser) {
@@ -9764,4 +9838,512 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cmdStashWelcome => 'Meet Stash...';
+
+  @override
+  String get cmdModelWelcome => 'Set Up a Model...';
+
+  @override
+  String get modelWelcomeTitle => 'Pick a Model to Start';
+
+  @override
+  String get modelWelcomeLead =>
+      'BaoCode runs your agents on a model of your choosing. Add an upstream, a service with an API key, and its models are ready to use.';
+
+  @override
+  String get modelWelcomeAnyTitle => 'Any upstream';
+
+  @override
+  String get modelWelcomeAny =>
+      'Anthropic\'s API, OpenAI\'s Chat Completions or Responses, or a service that speaks one of them, such as OpenRouter or DeepSeek.';
+
+  @override
+  String get modelWelcomeKeysTitle => 'Your keys stay with you';
+
+  @override
+  String get modelWelcomeKeys =>
+      'Keys are kept in the system keychain, and requests go from this computer straight to the upstream.';
+
+  @override
+  String get modelWelcomeSwitchTitle => 'Switch any time';
+
+  @override
+  String get modelWelcomeSwitch =>
+      'Add more upstreams whenever you like, and pick the model for each conversation under its input.';
+
+  @override
+  String get modelWelcomeStepTitle => 'Add your first upstream';
+
+  @override
+  String get modelWelcomeStep =>
+      'Its address and key, then the models to use. Some services can also add theirs in one click from Settings → Models.';
+
+  @override
+  String get modelWelcomeReadyTitle => 'Ready to go';
+
+  @override
+  String modelWelcomeReady(String model) {
+    return 'New conversations start on $model. Pick another under the input any time.';
+  }
+
+  @override
+  String get modelWelcomeLater =>
+      'You can also add one later in Settings → Models.';
+
+  @override
+  String get modelWelcomeSkip => 'Later';
+
+  @override
+  String get modelWelcomeStart => 'Start Chatting';
+
+  @override
+  String get healthNoModel =>
+      'Pick a model to start: add an upstream and its models are ready to use.';
+
+  @override
+  String get modelSetUp => 'Set Up a Model';
+
+  @override
+  String get remoteAddServer => 'Add SSH Server...';
+
+  @override
+  String get remoteEditServer => 'Edit';
+
+  @override
+  String get settingsSshKeywords =>
+      'ssh remote server host jump bastion key password core';
+
+  @override
+  String get sshSettingsServers => 'Servers';
+
+  @override
+  String get sshSettingsServersDescription =>
+      'Those added in the app, and the hosts the sidebar has.';
+
+  @override
+  String get sshSettingsNone => 'No servers yet';
+
+  @override
+  String get sshSettingsEdit => 'Edit…';
+
+  @override
+  String get sshSettingsConnect => 'Connect';
+
+  @override
+  String get sshSettingsDisconnect => 'Disconnect';
+
+  @override
+  String sshSettingsDisconnectTitle(String host) {
+    return 'Disconnect from $host?';
+  }
+
+  @override
+  String get sshSettingsDisconnectDetail =>
+      'The conversations and terminals running there end.';
+
+  @override
+  String sshSettingsCore(String core) {
+    return 'Core: $core';
+  }
+
+  @override
+  String sshSettingsVia(String host) {
+    return 'through $host';
+  }
+
+  @override
+  String get sshSettingsTyped => 'As typed';
+
+  @override
+  String get sshSettingsConfigHosts => 'Hosts of ~/.ssh/config';
+
+  @override
+  String get sshSettingsConfigHostsDescription =>
+      'Changed in that file; their core is Automatic.';
+
+  @override
+  String get sshSettingsOpenConfig => 'Open File';
+
+  @override
+  String get sshServerAddTitle => 'Add SSH Server';
+
+  @override
+  String get sshServerAddSubtitle =>
+      'Saved to the remote list: connect to it in one click.';
+
+  @override
+  String sshServerEditTitle(String name) {
+    return 'Edit $name';
+  }
+
+  @override
+  String get sshServerHost => 'Host';
+
+  @override
+  String get sshServerHostPlaceholder =>
+      'Domain or IP; user@host:port is split up';
+
+  @override
+  String get sshServerPort => 'Port';
+
+  @override
+  String get sshServerUser => 'User';
+
+  @override
+  String get sshServerName => 'Name (optional)';
+
+  @override
+  String get sshServerNamePlaceholder => 'e.g. Production';
+
+  @override
+  String get sshServerAuth => 'Sign in with';
+
+  @override
+  String get sshServerAuthPassword => 'Password';
+
+  @override
+  String get sshServerAuthKey => 'Private Key';
+
+  @override
+  String get sshServerAuthAuto => 'Automatic';
+
+  @override
+  String get sshServerAuthAutoHint =>
+      'As ssh does in a terminal: ssh-agent, the keys in ~/.ssh, ~/.ssh/config. A password is asked for if the server wants one.';
+
+  @override
+  String get sshServerPasswordHint =>
+      'Kept in the system keychain. Leave it empty to be asked when connecting.';
+
+  @override
+  String get sshServerPasswordKept => 'Saved: leave empty to keep it';
+
+  @override
+  String get sshServerKeyPlaceholder =>
+      'Path of the private key, e.g. ~/.ssh/id_ed25519';
+
+  @override
+  String get sshServerKeyBrowse => 'Browse...';
+
+  @override
+  String get sshServerKeysFound => 'Keys in ~/.ssh';
+
+  @override
+  String get sshServerKeyHint =>
+      'If the key has a passphrase, it is asked for when connecting.';
+
+  @override
+  String get sshServerCore => 'Core';
+
+  @override
+  String get sshServerCoreAuto => 'Automatic';
+
+  @override
+  String get sshServerCoreAutoHint =>
+      'The server\'s Claude Code CLI if it has one, else the built-in core.';
+
+  @override
+  String get sshServerCoreBuiltinHint =>
+      'BaoCode\'s own core: it runs on the upstreams of Settings → Models.';
+
+  @override
+  String get sshServerCoreCliHint =>
+      'The server\'s Claude Code CLI, installed there if it has none.';
+
+  @override
+  String get sshServerJump => 'Jump Host (optional)';
+
+  @override
+  String get sshServerNoJump => 'None: connect directly';
+
+  @override
+  String get sshServerSaveConnect => 'Save and Connect';
+
+  @override
+  String get sshServerSave => 'Save';
+
+  @override
+  String get sshServerHostRequired => 'Enter the server\'s domain or IP';
+
+  @override
+  String get sshServerHostInvalid => 'No spaces, and not starting with \'-\'';
+
+  @override
+  String get sshServerPortInvalid => 'A port is from 1 to 65535';
+
+  @override
+  String get sshServerKeyRequired => 'Choose the private key file';
+
+  @override
+  String get sshServerKeyMissing => 'There is no such file';
+
+  @override
+  String get remoteForgetHostKey => 'Remove the Old Key and Connect';
+
+  @override
+  String remoteForgetHostKeyTitle(String host) {
+    return 'Remove the old key of $host?';
+  }
+
+  @override
+  String get remoteForgetHostKeyDetail =>
+      'Only if you know the server was reinstalled or its key changed: otherwise someone may be between you and it. The key it has now is accepted at the next connection.';
+
+  @override
+  String get remoteForgetHostKeyButton => 'Remove and Connect';
+
+  @override
+  String get remoteFailNoSsh =>
+      'There is no ssh on this computer: install the OpenSSH client.';
+
+  @override
+  String get remoteFailAuth =>
+      'The server refused to sign in: check the user, password or key.';
+
+  @override
+  String get remoteFailCancelled => 'Signing in was cancelled.';
+
+  @override
+  String get remoteFailHostKey =>
+      'The server\'s key is not known, and your ssh config says not to accept new ones (StrictHostKeyChecking).';
+
+  @override
+  String get remoteFailHostKeyChanged =>
+      'The server\'s key changed since the last connection: it was reinstalled, or someone is in between.';
+
+  @override
+  String get remoteFailUnreachable =>
+      'The server could not be reached: check the address, port and network.';
+
+  @override
+  String get channelSetupTitle => 'Welcome to BaoCode';
+
+  @override
+  String get channelSetupLead =>
+      'Finish your first-time setup on baocode.dev. It takes about 10 seconds.';
+
+  @override
+  String get channelSetupStepTitle => 'Finish setup in your browser';
+
+  @override
+  String get channelSetupStep =>
+      'BaoCode opens baocode.dev in your browser. Once the page says it\'s done, BaoCode continues on its own.';
+
+  @override
+  String get channelSetupWaitingTitle => 'Waiting for your browser…';
+
+  @override
+  String get channelSetupWaiting =>
+      'Once the page says it\'s done, BaoCode continues on its own. Closed the page by mistake? Open it again.';
+
+  @override
+  String get channelSetupOpenFailedTitle => 'Your browser didn\'t open';
+
+  @override
+  String get channelSetupOpenFailed =>
+      'Copy this address and open it in your browser. Once the page says it\'s done, BaoCode continues on its own.';
+
+  @override
+  String get channelSetupAddressCopied => 'Copied';
+
+  @override
+  String get channelSetupOffline =>
+      'Can\'t reach baocode.dev. You need to be online to finish setup.';
+
+  @override
+  String get channelSetupRetry => 'Retry';
+
+  @override
+  String get channelSetupDoneTitle => 'Setup complete';
+
+  @override
+  String get channelSetupOpen => 'Finish Setup in Browser';
+
+  @override
+  String get channelSetupOpenAgain => 'Open the Page Again';
+
+  @override
+  String get channelSetupNoResponse => 'Browser not responding?';
+
+  @override
+  String get channelSetupPasteLead =>
+      'If the page shows a link, copy it and paste it here:';
+
+  @override
+  String get channelSetupPasteConfirm => 'OK';
+
+  @override
+  String get channelSetupLinkInvalid =>
+      'That isn\'t the link from the page. Copy the whole link shown there.';
+
+  @override
+  String get channelSetupLinkOther =>
+      'That link is for another BaoCode install. Use the page this BaoCode opened.';
+
+  @override
+  String get channelSetupTrouble => 'Having trouble?';
+
+  @override
+  String get channelSetupOnceTitle => 'Only once';
+
+  @override
+  String get channelSetupOnce =>
+      'Once it\'s done, this won\'t show again, not even after an update.';
+
+  @override
+  String get channelSetupPrivateTitle => 'Nothing personal';
+
+  @override
+  String get channelSetupPrivate =>
+      'The page only tells BaoCode where you heard of it, like a video or a website.';
+
+  @override
+  String get channelSetupFindingTitle => 'Getting your channel ready…';
+
+  @override
+  String get channelSetupFinding => 'Just a moment.';
+
+  @override
+  String get channelSetupSiteOfflineTitle => 'Can\'t reach baocode.dev';
+
+  @override
+  String get channelSetupSiteOffline =>
+      'BaoCode needs to be online to read your channel. Check your connection and retry.';
+
+  @override
+  String get channelSetupUnavailableTitle => 'This channel isn\'t available';
+
+  @override
+  String get channelSetupUnavailable =>
+      'The channel this installer came from doesn\'t have accounts set up yet. If you downloaded it through another channel, confirm where you came from in your browser; otherwise contact whoever gave you the installer, or download the standard edition from baocode.dev.';
+
+  @override
+  String get channelSetupConfirmAgain => 'Confirm in Browser';
+
+  @override
+  String channelWelcomeTitle(String channel) {
+    return 'Welcome to $channel';
+  }
+
+  @override
+  String channelWelcomeText(String channel) {
+    return 'Sign in to your $channel account to get started.';
+  }
+
+  @override
+  String get channelWelcomeSignIn => 'Sign In';
+
+  @override
+  String get channelWelcomeSigningIn => 'Sign in in the window that opened…';
+
+  @override
+  String get channelWelcomePreparing => 'Getting ready…';
+
+  @override
+  String channelWelcomeFailed(String error) {
+    return 'Couldn\'t finish signing in: $error';
+  }
+
+  @override
+  String get channelAccountTitle => 'Account';
+
+  @override
+  String get channelAccountBalance => 'Balance';
+
+  @override
+  String get channelAccountRefresh => 'Refresh';
+
+  @override
+  String get channelAccountSignOut => 'Sign Out';
+
+  @override
+  String get channelAccountSignOutTitle => 'Sign out?';
+
+  @override
+  String channelAccountSignOutDetail(String channel) {
+    return 'You\'ll need to sign in to $channel again to keep using BaoCode.';
+  }
+
+  @override
+  String get channelAccountOpenSite => 'Open Website';
+
+  @override
+  String get channelAccountDefaultModel => 'Default model for new chats';
+
+  @override
+  String get channelAccountNoModels =>
+      'The key in use doesn\'t reach any models.';
+
+  @override
+  String get channelAccountKeys => 'My API Keys';
+
+  @override
+  String get channelAccountCreateKey => 'Create Key';
+
+  @override
+  String get channelAccountKeyName => 'Name';
+
+  @override
+  String get channelAccountKeyGroup => 'Group';
+
+  @override
+  String get channelAccountUseKey => 'Use This Key';
+
+  @override
+  String get channelAccountInUse => 'In Use';
+
+  @override
+  String get channelAccountNoKeys => 'No API keys yet.';
+
+  @override
+  String get channelAccountSignedOut => 'You\'re not signed in.';
+
+  @override
+  String get channelAccountUnavailable =>
+      'This channel isn\'t available. Contact whoever gave you the installer.';
+
+  @override
+  String channelAccountFailed(String error) {
+    return 'Something went wrong: $error';
+  }
+
+  @override
+  String channelAccountBlocked(String site, String request) {
+    return '$site refused this computer\'s connection ($request); its firewall may be blocking the IP of your network or proxy. Try another network, or reach $site without the proxy.';
+  }
+
+  @override
+  String get settingsSectionAbout => 'About';
+
+  @override
+  String get aboutTagline =>
+      'An awesome, easy-to-use desktop UI for Claude Code, with a millisecond-fast IDE built in.';
+
+  @override
+  String aboutVersion(String version, int build) {
+    return 'Version $version ($build)';
+  }
+
+  @override
+  String aboutRepository(String repository) {
+    return '$repository · free and open source, under the GPL-3.0';
+  }
+
+  @override
+  String get aboutWebsite => 'Website';
+
+  @override
+  String get aboutChangelog => 'Changelog';
+
+  @override
+  String get aboutChangelogDetail => 'What each version changed';
+
+  @override
+  String get aboutFeedback => 'Report an Issue';
+
+  @override
+  String get aboutFeedbackDetail =>
+      'Open an issue on GitHub, or see those others opened';
+
+  @override
+  String get aboutOpen => 'Open';
 }

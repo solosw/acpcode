@@ -114,6 +114,12 @@ final _imageModel = RegExp(
   r'sdxl|sd3|kolors|hunyuan-image|hunyuanimage|ideogram|recraft|midjourney|mj_)',
 );
 
+/// How models are listed: alphabetically, case aside.
+int compareModelNames(String a, String b) {
+  final byName = a.toLowerCase().compareTo(b.toLowerCase());
+  return byName != 0 ? byName : a.compareTo(b);
+}
+
 /// One model of an upstream.
 class ProviderModel {
   const ProviderModel({
@@ -370,7 +376,9 @@ class ProviderRoles {
   /// the app's (agents' titles).
   final String? haiku;
 
-  /// `CLAUDE_CODE_SUBAGENT_MODEL`.
+  /// `CLAUDE_CODE_SUBAGENT_MODEL`: a model of the upstream, or another
+  /// upstream's as a [modelRef] (`@<id>/<model>`), which the proxy sends
+  /// there.
   final String? subagent;
 
   static const _keys = ['main', 'opus', 'sonnet', 'haiku', 'subagent'];
@@ -625,20 +633,39 @@ class ModelProvider {
   ProviderAccount? account(String id) =>
       accounts.where((account) => account.id == id).firstOrNull;
 
+  /// [models] by name ([compareModelNames]): as they are listed.
+  List<ProviderModel> get sortedModels => [...models]
+    ..sort((a, b) {
+      final byName = compareModelNames(a.displayName, b.displayName);
+      return byName != 0 ? byName : a.id.compareTo(b.id);
+    });
+
   /// The conversation models offered in the picker.
   List<ProviderModel> get enabledModels => [
-    for (final model in models)
+    for (final model in sortedModels)
       if (model.enabled && !model.kind.generatesImages) model,
   ];
 
   /// The image models turned on: the agents' `generate_image`'s.
   List<ProviderModel> get imageModels => [
-    for (final model in models)
+    for (final model in sortedModels)
       if (model.enabled && model.kind.generatesImages) model,
   ];
 
   ProviderModel? model(String id) =>
       models.where((model) => model.id == id).firstOrNull;
+
+  /// The other upstream its subagents' role picks a model of, if it does
+  /// (`@<id>/<model>`).
+  String? get subagentUpstream => switch (parseModelRef(roles.subagent)) {
+    (:final provider, model: _) when provider != id => provider,
+    _ => null,
+  };
+
+  /// Whether its sessions go through the local proxy ([ModelProxy]): it
+  /// is spoken to there, or its subagents run on another upstream, which
+  /// the proxy alone can send a request to.
+  bool get throughProxy => protocol.proxied || subagentUpstream != null;
 
   ModelProvider copyWith({
     String? name,

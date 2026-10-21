@@ -29,9 +29,11 @@ const openRemoteFileCommandId = 'baocode.remote.openFile';
 Future<List<String>> Function() defaultRemoteConfigHosts = sshConfigHosts;
 
 /// The SSH hosts to pick one from, in the quick input: the user's added
-/// hosts first (by the names [labelOf] and icons [iconOf] given them), then
-/// Settings → SSH's and `~/.ssh/config`'s, without duplicates, with a typed
-/// `user@host[:port]` accepted. Each host picked is given to [onPick].
+/// hosts first (by the names [labelOf] and icons [iconOf] given them, at
+/// the addresses [addressOf] says), then `~/.ssh/config`'s, with a typed
+/// `user@host[:port]` accepted. Each host picked is given to [onPick]; a
+/// server is added with [onAdd] (what was typed, if anything), and an added
+/// host not of `~/.ssh/config` edited with [onEdit] (its row's button).
 class RemoteHostPicker {
   RemoteHostPicker({
     required this.show,
@@ -40,7 +42,10 @@ class RemoteHostPicker {
     required this.placeholder,
     this.added = const [],
     this.labelOf,
+    this.addressOf,
     this.iconOf,
+    this.onAdd,
+    this.onEdit,
     SshHosts? hosts,
     Future<List<String>> Function()? configHosts,
   }) : hosts = hosts ?? SshHosts.instance,
@@ -58,7 +63,10 @@ class RemoteHostPicker {
   /// The hosts the user added (see `Workspace.sshHosts`), listed first.
   final List<String> added;
   final String Function(String host)? labelOf;
+  final String Function(String host)? addressOf;
   final Widget? Function(String host)? iconOf;
+  final ValueChanged<String?>? onAdd;
+  final ValueChanged<String>? onEdit;
   final SshHosts hosts;
   final Future<List<String>> Function() _configHosts;
 
@@ -82,10 +90,12 @@ class RemoteHostPicker {
       for (final host in known)
         if (!added.contains(host)) host,
     ];
+    final onEdit = this.onEdit;
     IdeQuickPickItem hostItem(String host) {
       final label = labelOf?.call(host) ?? host;
+      final address = addressOf?.call(host) ?? host;
       final description = [
-        if (label != host) host,
+        if (label != address) address,
         if (connected.contains(host)) l10n.sidebarHostConnected,
       ].join(' · ');
       return IdeQuickPickItem(
@@ -93,6 +103,15 @@ class RemoteHostPicker {
         icon: iconOf?.call(host) ?? const Icon(Codicons.remote),
         description: description.isEmpty ? null : description,
         onAccept: () => onPick(host),
+        buttons: [
+          // Those of ~/.ssh/config are edited there.
+          if (onEdit != null && !known.contains(host))
+            IdeQuickPickItemButton(
+              icon: Codicons.edit,
+              tooltip: l10n.remoteEditServer,
+              onPressed: () => onEdit(host),
+            ),
+        ],
       );
     }
 
@@ -118,6 +137,13 @@ class RemoteHostPicker {
                       label: l10n.remoteInvalidHost,
                       alwaysShow: true,
                     ),
+            if (onAdd case final onAdd?)
+              IdeQuickPickItem(
+                label: l10n.remoteAddServer,
+                icon: const Icon(Codicons.add),
+                alwaysShow: true,
+                onAccept: () => onAdd(typed.isEmpty ? null : typed),
+              ),
             if (known.isEmpty && added.isEmpty && typed.isEmpty)
               IdeQuickPickItem(label: l10n.remoteNoHosts),
             if (added.isNotEmpty) ...[
@@ -197,7 +223,7 @@ class OpenRemoteFileFlow {
     try {
       client = await ssh.reconnect();
     } on Object catch (error) {
-      final (message, detail) = sshErrorText(error);
+      final (message, detail) = sshErrorText(error, l10n);
       _next(
         IdeQuickPick(
           placeholder: l10n.remoteConnectFailed(host),
@@ -299,8 +325,9 @@ class OpenRemoteFileFlow {
               IdeQuickPickItem(
                 label: name,
                 icon: const Icon(Codicons.folder),
-                onAccept: () =>
-                    unawaited(browse(host, client, paths.join(directory, name))),
+                onAccept: () => unawaited(
+                  browse(host, client, paths.join(directory, name)),
+                ),
               ),
             for (final name in files)
               IdeQuickPickItem(

@@ -75,8 +75,8 @@ void main() {
         '2100\tline 2100',
       ]);
       expect(longLine, contains('[line truncated]'));
-      expect(empty, contains('contents are empty'));
-      expect(beyond, contains('shorter than the provided offset'));
+      expect(empty, contains('but empty'));
+      expect(beyond, contains('nothing starts at line'));
       expect(crlf.split('\n').map((l) => l.trimLeft()), ['1\ta', '2\tb']);
       expect(relative.trimLeft(), '1\tline 1');
       final file = (h.toolResults[1]['tool_use_result'] as Map)['file'] as Map;
@@ -120,8 +120,8 @@ void main() {
       );
       expect('${binary['content']}', contains('binary'));
       expect('${folder['content']}', contains('EISDIR'));
-      expect('${missing['content']}', contains('Did you mean'));
-      expect('${huge['content']}', contains('exceeds maximum allowed size'));
+      expect('${missing['content']}', contains('Perhaps'));
+      expect('${huge['content']}', contains('can be read at once'));
       expect(invalid['is_error'], isTrue);
     });
 
@@ -188,9 +188,9 @@ void main() {
         ]);
         await h.turn('edit');
         final results = h.toolResults.map((r) => '${r['content']}').toList();
-        expect(results[1], contains('Found 2 matches'));
-        expect(results[2], contains('No changes to make'));
-        expect(results[3], contains('String to replace not found'));
+        expect(results[1], contains('in the file 2 times'));
+        expect(results[2], contains('Nothing would change'));
+        expect(results[3], contains('old_string is not in the file'));
         expect(h.file('a.txt'), 'bar bar\nsay “bye”\n');
       },
     );
@@ -341,7 +341,7 @@ void main() {
           paged.split('\n').where((l) => l.contains('const')),
           hasLength(1),
         );
-        expect(paged, contains('offset: 1'));
+        expect(paged, contains('offset 2 gives the next 1'));
         expect(multi, contains('docs/c.md'));
         expect(none, 'No files found');
         expect(h.toolResults.last['is_error'], isTrue);

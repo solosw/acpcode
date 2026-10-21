@@ -24,8 +24,7 @@ class BashTool extends Tool {
   String get name => 'Bash';
 
   @override
-  String get description =>
-      'Executes a given shell command and returns its output.';
+  String get description => 'Runs a shell command and returns what it printed.';
 
   /// What the model is told of it, with the session's commit trailer.
   @override
@@ -35,111 +34,73 @@ class BashTool extends Tool {
         ? ''
         : '\n\n   ${attribution.commit}';
     final prLine = attribution.pr.isEmpty ? '' : '\n\n${attribution.pr}';
-    return '''Executes a given shell command and returns its output.
+    return '''Runs a command in a shell and gives back what it printed.
 
-The working directory persists between commands, but shell state (variables, functions) does not. The shell environment is initialized from the user's login environment.
+Each call gets a fresh shell, in the directory the one before it ended in: variables, aliases and functions do not carry over. The environment is the user's login shell's.
 
-IMPORTANT: This tool is for terminal operations like git, npm, docker, builds and tests. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+Use it for what needs a shell: builds, tests, package managers, git, docker, scripts. Files have tools of their own, which do it better and which the user can follow: Read to look at a file (not cat, head or tail), Edit and Write to change one (not sed, awk, echo or heredocs), Glob and Grep to find and search files (not find, ls -R, grep or rg). Tell the user things in your reply, not with echo.
 
-Before executing the command, please follow these steps:
+- Give a short description of what the command does, in about 5 to 10 words: the user sees it in place of the command.
+- A command is stopped after ${defaultTimeout.inMinutes} minutes, or after `timeout` milliseconds (at most ${maxTimeout.inMinutes} minutes).
+- Output beyond $defaultMaxOutput characters is cut.
+- Quote paths with spaces in them ("my dir/file.txt"). Before creating a file or a folder, make sure its parent exists and is the one you mean.
+- Prefer absolute paths to `cd`, so the directory stays where it is; change it only when the user asks.
+- Commands that do not depend on each other can be separate calls in one response, run side by side. Chain those that do in one call with `&&` (with `;` when a failure should not stop the rest); never separate them with newlines.
+- `run_in_background` starts a command you need not wait for (a server, a long build): you are told when it ends, and read what it printed with TaskOutput or from its output file. It needs no `&`.
+- Nothing interactive works: no `git rebase -i` or `git add -i`, no editor waiting for input.
 
-1. Directory Verification:
-   - If the command will create new directories or files, first use `ls` to verify the parent directory exists and is the correct location
+# Git commits
 
-2. Command Execution:
-   - Always quote file paths that contain spaces with double quotes (e.g., cd "path with spaces/file.txt")
-   - After ensuring proper quoting, execute the command.
-   - Capture the output of the command.
+Commit only when the user asks you to; if you are not sure they did, ask. Then:
+1. Look at the state first, in parallel: `git status` (untracked files too), `git diff` (staged and not), and `git log`, for how this repository words its messages.
+2. Leave out files that may hold secrets (.env, credentials, keys), and say so if the user asked for them.
+3. Write a message in the repository's style, a sentence or two on why the change was made rather than only what it is. Stage the files that belong to it, commit, and check with `git status` that it worked.
+4. If a pre-commit hook fails, fix what it found and commit again, anew: the failed commit never happened, so amending would change the one before it.
 
-Usage notes:
-  - The command argument is required.
-  - You can specify an optional timeout in milliseconds (up to ${maxTimeout.inMilliseconds}ms / ${maxTimeout.inMinutes} minutes). If not specified, commands will timeout after ${defaultTimeout.inMilliseconds}ms (${defaultTimeout.inMinutes} minutes).
-  - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.
-  - If the output exceeds $defaultMaxOutput characters, output will be truncated before being returned to you.
-  - You can use the `run_in_background` parameter to run the command in the background. Only use this if you don't need the result immediately and are OK being notified when the command completes later. You do not need to check the output right away - you'll be notified when it finishes. You can read its output with the TaskOutput tool or by reading its output file. You do not need to use '&' at the end of the command when using this parameter.
-  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
-    - File search: Use Glob (NOT find or ls)
-    - Content search: Use Grep (NOT grep or rg)
-    - Read files: Use Read (NOT cat/head/tail)
-    - Edit files: Use Edit (NOT sed/awk)
-    - Write files: Use Write (NOT echo >/cat <<EOF)
-    - Communication: Output text directly (NOT echo/printf)
-  - When issuing multiple commands:
-    - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message.
-    - If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together.
-    - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail.
-    - DO NOT use newlines to separate commands (newlines are ok in quoted strings).
-  - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of `cd`. You may use `cd` if the User explicitly requests it.
+Never change the git config, never skip hooks (--no-verify) or signing, and run nothing that cannot be undone (push --force, reset --hard, deleting a branch) unless the user asks; warn them before a force-push to main or master. Amend only when asked. With nothing to commit, make no empty commit.
 
-# Committing changes with git
-
-Only create commits when requested by the user. If unclear, ask first. When the user asks you to create a new git commit, follow these steps carefully:
-
-Git Safety Protocol:
-- NEVER update the git config
-- NEVER run destructive/irreversible git commands (like push --force, hard reset, etc) unless the user explicitly requests them
-- NEVER skip hooks (--no-verify, --no-gpg-sign, etc) unless the user explicitly requests it
-- NEVER run force push to main/master, warn the user if they request it
-- Avoid git commit --amend. ONLY use --amend when the user explicitly requested it, or when adding edits from a pre-commit hook to the commit you just made
-- NEVER commit changes unless the user explicitly asks you to.
-
-1. Run these in parallel: `git status` to see all untracked files, `git diff` to see both staged and unstaged changes that will be committed, and `git log` to see recent commit messages so that you can follow this repository's commit message style.
-2. Analyze all staged changes (both previously staged and newly added) and draft a commit message:
-  - Summarize the nature of the changes (eg. new feature, enhancement to an existing feature, bug fix, refactoring, test, docs, etc.).
-  - Do not commit files that likely contain secrets (.env, credentials.json, etc). Warn the user if they specifically request to commit those files
-  - Draft a concise (1-2 sentences) commit message that focuses on the "why" rather than the "what"
-3. Add relevant untracked files to the staging area, create the commit, then run git status to make sure the commit succeeded.
-4. If the commit fails due to a pre-commit hook, fix the issue and create a NEW commit.
-
-Important notes:
-- NEVER use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
-- If there are no changes to commit (i.e., no untracked files and no modifications), do not create an empty commit
-- In order to ensure good formatting, ALWAYS pass the commit message via a HEREDOC, a la this example:
+Pass the message through a heredoc, so that it keeps its lines:
 <example>
-git commit -m "\$(cat <<'EOF'
-   Commit message here.$trailer
-   EOF
-   )"
+git commit -F - <<'MSG'
+The message.$trailer
+MSG
 </example>
 
-# Creating pull requests
-Use the gh command via the Bash tool for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the gh command to get the information needed.
+# Pull requests
 
-When the user asks you to create a pull request, first understand the current state of the branch (git status, git diff, whether it tracks a remote and is up to date, git log and `git diff [base-branch]...HEAD` for the full commit history since it diverged), then draft a title and summary covering all the commits that will be included, push the branch if needed, and create the PR with `gh pr create` passing the body via a HEREDOC:
+Use `gh` for everything on GitHub: issues, pull requests, checks, releases, and links to any of them. To open a pull request, first see what the branch holds: `git status`, `git diff`, whether it tracks a remote and is pushed, and `git log` with `git diff <base>...HEAD` for every commit since it left its base. Write a title and a summary that cover all of those commits, push the branch if it needs it, and create the pull request with its body in a heredoc:
 <example>
-gh pr create --title "the pr title" --body "\$(cat <<'EOF'
-## Summary
-<1-3 bullet points>
+gh pr create --title "The title" --body-file - <<'BODY'
+## What changed
+<one to three points>
 
-## Test plan
-[Bulleted markdown checklist of TODOs for testing the pull request...]$prLine
-EOF
-)"
+## How it was checked
+<the tests run, by hand or not>$prLine
+BODY
 </example>
-
-Return the PR URL when you're done, so the user can see it.''';
+End with the pull request's URL, for the user to open.''';
   }
 
   @override
   Map<String, Object?> get inputSchema => const {
     'type': 'object',
     'properties': {
-      'command': {'type': 'string', 'description': 'The command to execute'},
+      'command': {'type': 'string', 'description': 'The command to run'},
       'timeout': {
         'type': 'number',
-        'description': 'Optional timeout in milliseconds (max 600000)',
+        'description': 'How long it may run, in milliseconds (at most 600000)',
       },
       'description': {
         'type': 'string',
-        'description': 'Clear, concise description of what this command does in 5-10 words, in active voice.',
+        'description': 'What the command does, in 5 to 10 words: the user sees it in place of the command',
       },
       'run_in_background': {
         'type': 'boolean',
-        'description': 'Set to true to run this command in the background. Use TaskOutput to read the output later.',
+        'description': 'Start it and go on without waiting; read its output later with TaskOutput',
       },
       'dangerouslyDisableSandbox': {
         'type': 'boolean',
-        'description': 'Set this to true to dangerously override sandbox mode and run commands without sandboxing.',
+        'description': 'Run it outside the sandbox, where there is one',
       },
     },
     'required': ['command'],
@@ -449,37 +410,30 @@ class TaskOutputTool extends Tool {
   List<String> get aliases => const ['BashOutput', 'AgentOutputTool'];
 
   @override
-  String get description => '''- Retrieves output from a running or completed background task (a background shell or a background agent)
-- Takes a task_id parameter identifying the task
-- Returns the task's output and its status; for a shell, only the output written since the last check
-- Use block=true (the default) to wait for the task to finish, up to timeout milliseconds
-- Use block=false to check on it without waiting''';
+  String get description => '''Reads what a background task has produced (a shell started with run_in_background, or an agent sent to the background), and whether it is still running. For a shell, only what it printed since the last read comes back.
+
+By default it waits for the task to end, for up to `timeout` milliseconds; with block set to false it looks without waiting.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
     'type': 'object',
     'properties': {
-      'task_id': {
-        'type': 'string',
-        'description': 'The task ID to get output from',
-      },
-      'bash_id': {
-        'type': 'string',
-        'description': 'The ID of the background shell (older name of task_id)',
-      },
+      'task_id': {'type': 'string', 'description': 'The task\'s ID'},
+      'bash_id': {'type': 'string', 'description': 'Older name of task_id'},
       'block': {
         'type': 'boolean',
-        'description': 'Whether to wait for completion',
+        'description': 'Wait for the task to end',
         'default': true,
       },
       'timeout': {
         'type': 'number',
-        'description': 'Max wait time in ms',
+        'description': 'The longest to wait, in milliseconds',
         'default': 30000,
       },
       'filter': {
         'type': 'string',
-        'description': 'Optional regular expression: only output lines matching it are shown.',
+        'description':
+            'A regular expression: only the lines that match it come back',
       },
     },
     'additionalProperties': false,
@@ -575,10 +529,8 @@ class TaskStopTool extends Tool {
 
   @override
   String get description =>
-      '''- Stops a running background task (a shell or an agent) by its ID
-- Takes a task_id parameter identifying the task to stop
-- Returns a success or failure status
-- Use this tool when you need to terminate a long-running task''';
+      'Stops a background task, a shell or an agent, by its ID: one that runs '
+      'too long or is no longer needed. Says whether it was stopped.';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -586,12 +538,9 @@ class TaskStopTool extends Tool {
     'properties': {
       'task_id': {
         'type': 'string',
-        'description': 'The ID of the background task to stop',
+        'description': 'The ID of the task to stop',
       },
-      'shell_id': {
-        'type': 'string',
-        'description': 'The ID of the background shell (older name of task_id)',
-      },
+      'shell_id': {'type': 'string', 'description': 'Older name of task_id'},
     },
     'additionalProperties': false,
   };

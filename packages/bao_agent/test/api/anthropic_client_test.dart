@@ -62,6 +62,15 @@ void main() {
     expect(sent['anthropic-beta'], 'a-beta,b-beta');
     expect(sent['x-custom'], 'yes');
     expect(api.model.requests.single.body['stream'], isTrue);
+    expect(api.model.requests.single.body.containsKey('metadata'), isFalse);
+  });
+
+  test('the session goes with every request as metadata.user_id', () async {
+    api.model.script.add(Reply.text('ok'));
+    await AnthropicClient(
+      ApiConfig(baseUrl: api.baseUrl, apiKey: 'sk-test', userId: 'u-1'),
+    ).stream(request).drain<void>();
+    expect(api.model.requests.single.body['metadata'], {'user_id': 'u-1'});
   });
 
   test(

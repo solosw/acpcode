@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' hide ColorScheme;
 
 import '../../chat/chat_keys.dart';
 import '../../chat/chat_width.dart';
+import '../../chat/reply_scroll.dart';
 import '../../chat/user_message_style.dart';
 import '../../chat/widgets/chat_minimap.dart';
 import '../../chat/widgets/pixel_loader.dart';
@@ -162,6 +163,17 @@ class AppearanceSettingsPage extends StatelessWidget {
   void _selectStyle(UserMessageStyle style) {
     UserMessageStyle.current.value = style;
     _keep(UserMessageStyle.settingKey, style.setting);
+  }
+
+  static String _replyScrollName(BuildContext context, ReplyScroll choice) =>
+      switch (choice) {
+        ReplyScroll.follow => context.l10n.appearanceSettingsReplyScrollFollow,
+        ReplyScroll.start => context.l10n.appearanceSettingsReplyScrollStart,
+      };
+
+  void _selectReplyScroll(ReplyScroll choice) {
+    ReplyScroll.current.value = choice;
+    _keep(ReplyScroll.settingKey, choice.setting);
   }
 
   void _selectMinimap(bool on) {
@@ -345,6 +357,7 @@ class AppearanceSettingsPage extends StatelessWidget {
         changes,
         ChatWidth.current,
         UserMessageStyle.current,
+        ReplyScroll.current,
         ChatMinimap.enabled,
         ChatMinimap.glass,
         ChatMinimap.elasticity,
@@ -360,6 +373,10 @@ class AppearanceSettingsPage extends StatelessWidget {
         final widthStep = ChatWidth.stepOf(ChatWidth.current.value);
         final widthShown = widthName(context, ChatWidth.steps[widthStep]);
         final styleShown = _styleName(context, UserMessageStyle.current.value);
+        final replyScrollShown = _replyScrollName(
+          context,
+          ReplyScroll.current.value,
+        );
         final glass = ChatMinimap.glass.value;
         final glassShown = '${(glass * 100).round()}%';
         final elasticityShown = elasticityName(
@@ -445,6 +462,27 @@ class AppearanceSettingsPage extends StatelessWidget {
                             _styleName(context, style),
                             checked: style == UserMessageStyle.current.value,
                             onSelected: () => _selectStyle(style),
+                          ),
+                      ],
+                    ]),
+                  ),
+                ),
+                SettingsRow(
+                  label: l10n.appearanceSettingsReplyScroll,
+                  description: l10n.appearanceSettingsReplyScrollDescription,
+                  trailing: SettingsDropdown(
+                    current: replyScrollShown,
+                    width: 220,
+                    semanticLabel: l10n.appearanceSettingsReplyScrollLabel(
+                      replyScrollShown,
+                    ),
+                    entries: () => ideMenuGroups([
+                      [
+                        for (final choice in ReplyScroll.values)
+                          IdeMenuAction(
+                            _replyScrollName(context, choice),
+                            checked: choice == ReplyScroll.current.value,
+                            onSelected: () => _selectReplyScroll(choice),
                           ),
                       ],
                     ]),

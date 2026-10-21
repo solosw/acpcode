@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../ide/ide_spinning.dart';
 import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
@@ -38,13 +39,15 @@ Future<void> showWelcomeDialog(
 /// A welcome's card: its [picture] on the left, beside what it says, which
 /// scrolls in a short window, and its [footer] under that, which stays; on
 /// a narrow window the picture at the top instead. Escape and Enter close
-/// it.
+/// it, unless it is not [closable].
 class WelcomeFrame extends StatelessWidget {
   const WelcomeFrame({
     super.key,
     required this.picture,
     required this.body,
     required this.footer,
+    this.closable = true,
+    this.stacked = false,
   });
 
   /// [pictureHeight] high, as wide as it is given.
@@ -52,17 +55,25 @@ class WelcomeFrame extends StatelessWidget {
   final List<Widget> body;
   final Widget footer;
 
+  /// False: only its [footer]'s button closes it.
+  final bool closable;
+
+  /// The picture at the top on a wide window too: a card narrower and
+  /// taller, for a welcome with less to say.
+  final bool stacked;
+
   static const pictureHeight = 180.0;
 
   /// The picture's side and the text's, side by side.
   static const _pictureWidth = 400.0;
   static const _textWidth = 440.0;
+  static const _stackedWidth = 500.0;
 
   @override
   Widget build(BuildContext context) {
     final border = themeColors.get('widget.border') ?? AppColors.border;
     final size = MediaQuery.sizeOf(context);
-    final wide = size.width >= _pictureWidth + _textWidth + 48;
+    final wide = !stacked && size.width >= _pictureWidth + _textWidth + 48;
     final glow = AppColors.accent.withValues(alpha: .10);
     final edge = BorderSide(color: AppColors.border);
     final backdrop = BoxDecoration(
@@ -94,10 +105,12 @@ class WelcomeFrame extends StatelessWidget {
     final framed = SizedBox(height: pictureHeight, child: picture);
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            Navigator.pop(context),
-        const SingleActivator(LogicalKeyboardKey.enter): () =>
-            Navigator.pop(context),
+        if (closable) ...{
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              Navigator.pop(context),
+          const SingleActivator(LogicalKeyboardKey.enter): () =>
+              Navigator.pop(context),
+        },
       },
       child: FocusScope(
         autofocus: true,
@@ -105,7 +118,11 @@ class WelcomeFrame extends StatelessWidget {
           child: Material(
             type: MaterialType.transparency,
             child: Container(
-              width: wide ? _pictureWidth + _textWidth : 480,
+              width: wide
+                  ? _pictureWidth + _textWidth
+                  : stacked
+                  ? _stackedWidth
+                  : 480,
               constraints: BoxConstraints(maxHeight: size.height * .9),
               decoration: BoxDecoration(
                 color: themeColors['editorWidget.background'],
@@ -164,10 +181,18 @@ class WelcomeFrame extends StatelessWidget {
 
 /// A welcome's title and the line under it.
 class WelcomeHeading extends StatelessWidget {
-  const WelcomeHeading({super.key, required this.title, required this.lead});
+  const WelcomeHeading({
+    super.key,
+    required this.title,
+    required this.lead,
+    this.above,
+  });
 
   final String title;
   final String lead;
+
+  /// Over the title, a little apart (a tag).
+  final Widget? above;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -175,6 +200,7 @@ class WelcomeHeading extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (above case final above?) ...[above, const SizedBox(height: 12)],
         Text(
           title,
           style: TextStyle(
@@ -289,12 +315,14 @@ class WelcomeStep extends StatelessWidget {
     required this.title,
     required this.text,
     this.below = const [],
+    this.spinning = false,
   });
 
   final bool done;
 
-  /// Shown till [done].
+  /// Shown till [done]; turning while [spinning].
   final IconData icon;
+  final bool spinning;
   final String title;
   final String text;
   final List<Widget> below;
@@ -336,12 +364,17 @@ class WelcomeStep extends StatelessWidget {
                 ),
                 child: FadeTransition(opacity: animation, child: child),
               ),
-              child: Icon(
-                done ? Codicons.check : icon,
-                key: ValueKey(done),
-                size: 15,
-                color: done ? green : AppColors.text,
-              ),
+              child: done || !spinning
+                  ? Icon(
+                      done ? Codicons.check : icon,
+                      key: ValueKey(done),
+                      size: 15,
+                      color: done ? green : AppColors.text,
+                    )
+                  : IdeSpinning(
+                      key: const ValueKey('spinning'),
+                      Icon(icon, size: 15, color: AppColors.text),
+                    ),
             ),
           ),
           const SizedBox(width: 12),

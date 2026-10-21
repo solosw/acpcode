@@ -669,7 +669,11 @@
     "description": "A step the user took while watched, by its kind; what it was on follows (an element, a URL).",
     "placeholders": {"kind": {"type": "String"}}
   },
-  "browserTraceReveal": "Show the trace in Finder (drop it into DevTools' Performance panel to look closer)",
+  "browserTraceReveal": "Show the trace in {app} (drop it into DevTools' Performance panel to look closer)",
+  "@browserTraceReveal": {
+    "description": "{app} is the system's file manager, as the system names it (Finder, File Explorer).",
+    "placeholders": {"app": {"type": "String", "example": "Finder"}}
+  },
   "browserStepDone": "{action, select, tabs{Listed tabs} open{Opened} navigate{Went to} back{Went back} forward{Went forward} reload{Reloaded} snapshot{Read the page} screenshot{Took a screenshot} click{Clicked} type{Typed} press{Pressed} scroll{Scrolled} evaluate{Ran} close{Closed the tab} console{Read the console} network{Listed requests} request{Read the request} performance{Profiled} recordStart{Started profiling} recordStop{Profiled} emulate{Emulated} watch{Watched you} act{Acted} inspect{Inspected} sources{Read the sources} breakpoints{Set breakpoints} debugger{Debugged} intercept{Intercepted requests} storage{Read site data} dialog{Answered the dialog} coverage{Measured coverage} memory{Measured memory} history{Read the debugging history} other{Used the browser}}",
   "@browserStepDone": {
     "description": "A browser step's verb once done, by the browser tool it called; what it did it on follows (a URL, an element's name).",
@@ -1154,6 +1158,10 @@
   "@workspaceFileExplorer": {
     "description": "The Windows file manager, as Windows names it."
   },
+  "workspaceFileManager": "File Manager",
+  "@workspaceFileManager": {
+    "description": "The Linux desktop's file manager, which has no one name."
+  },
   "workspaceTerminalApp": "Terminal",
   "@workspaceTerminalApp": {
     "description": "The macOS Terminal app, as macOS names it."
@@ -1494,17 +1502,8 @@
     }
   },
   "turnSpeedHint": "Average output speed",
-  "turnOutputTokens": "↓ {tokens} tokens",
-  "@turnOutputTokens": {
-    "description": "The tokens the model has written so far in the turn under way, e.g. \"↓ 1.2k tokens\".",
-    "placeholders": {
-      "tokens": {
-        "type": "String"
-      }
-    }
-  },
   "turnOutputTokensHint": "Written so far this turn",
-  "turnSpeedLiveHint": "Output speed",
+  "turnSpeedLiveHint": "Output speed, sampled over the last 2 seconds",
   "turnDurationHint": "Time this turn took",
   "turnCostHint": "Cost of this turn",
   "turnWorked": "Worked for {duration}",
@@ -2030,6 +2029,16 @@
   "queuedEdit": "Take back to edit",
   "queuedSendNow": "Stop the agent and send this now",
   "queuedRemove": "Remove from the queue",
+  "stopConfirmMessage": "Stop the agent?",
+  "stopConfirmDetail": "{count, plural, =1{The task running in the background will stop too.} other{The {count} tasks running in the background will stop too.}}",
+  "@stopConfirmDetail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "stopConfirmStop": "Stop",
   "tabClose": "Close",
   "tabCloseOthers": "Close Others",
   "tabCloseToTheRight": "Close to the Right",
@@ -2398,8 +2407,8 @@
   "@generalSettingsClaudeCore": {
     "description": "Settings → General → Claude Code row: what runs Claude Code sessions, BaoCode's built-in core (written in Dart) or the Claude Code CLI."
   },
-  "generalSettingsClaudeCoreDescription": "What runs Claude Code sessions. The built-in core is BaoCode's own, written in Dart: the same tools, settings, CLAUDE.md, skills, subagents, hooks, MCP servers and session files as the CLI, signed in with an API key or a provider. The CLI is Anthropic's; pick it to sign in with a Claude subscription. Applies to sessions started after a change, on this machine and on remote hosts.",
-  "generalSettingsClaudeCoreBuiltin": "Built-in (Dart)",
+  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.",
+  "generalSettingsClaudeCoreBuiltin": "Built-in",
   "@generalSettingsClaudeCoreBuiltin": {
     "description": "Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app."
   },
@@ -3840,6 +3849,7 @@
     }
   },
   "dataDirRevealInFileExplorer": "Reveal in File Explorer",
+  "dataDirRevealInFileManager": "Reveal in File Manager",
   "dataDirChecking": "Checking the folder…",
   "dataDirAlreadyHolds": "The folder already holds BaoCode data",
   "dataDirMoveBack": "Move BaoCode's data back to the default folder?",
@@ -4264,7 +4274,7 @@
   "explorerExcludeSettingDescription": "Files and folders the explorer does not show, comma separated: a name (`node_modules`, `*.log`) matches anywhere, a path (`build/**`, `src/generated`) matches within the folder.",
   "explorerExcludeSettingPlaceholder": "e.g. .git, node_modules, *.log",
   "claudePathSetting": "Path",
-  "claudePathSettingDescription": "Empty: the newest of the Claude Code installed on this machine and the one BaoCode downloaded (downloaded the first time there is none). A path: that one, always, e.g. one you built. (claudeCode.path)",
+  "claudePathSettingDescription": "Empty: the newest Claude Code on this machine, downloaded if there is none. A path: always that one, e.g. one you built. (claudeCode.path)",
   "claudePathSettingHint": "Automatic",
   "claudePathChecking": "Checking…",
   "claudePathInUse": "In use: {path} ({version})",
@@ -4814,7 +4824,11 @@
   "modelsRoleHaikuDescription": "ANTHROPIC_DEFAULT_HAIKU_MODEL: Claude Code's background work, and agents' titles.",
   "modelsRoleHaikuWarning": "Unset, background work runs on the model picked, which may be slower and cost more. Pick a small, fast model.",
   "modelsRoleSubagent": "Subagents",
-  "modelsRoleSubagentDescription": "CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent's call names (but inherit).",
+  "modelsRoleSubagentDescription": "CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent's call names (but inherit). It may be another upstream's: BaoCode's local proxy sends its requests there.",
+  "modelsRoleMissing": "This model is no longer one of its upstream's: subagents' requests to it will fail.",
+  "@modelsRoleMissing": {
+    "description": "Under a role that picks another upstream's model, once that upstream or model is gone."
+  },
   "modelsAdvanced": "Advanced",
   "modelsAuth": "Authentication",
   "modelsAuthDescription": "How the key is sent. Automatic: x-api-key to api.anthropic.com, a bearer token elsewhere.",
@@ -5236,6 +5250,18 @@
       }
     }
   },
+  "appearanceSettingsReplyScroll": "As a Reply Comes",
+  "appearanceSettingsReplyScrollDescription": "Where the conversation stays as the reply to your message is written: at its end, following it; or at its start, your message at the top, for you to read on from there. Scrolled to the end, it follows again.",
+  "appearanceSettingsReplyScrollFollow": "Automatic",
+  "appearanceSettingsReplyScrollStart": "Stay at its start",
+  "appearanceSettingsReplyScrollLabel": "As a reply comes: {choice}",
+  "@appearanceSettingsReplyScrollLabel": {
+    "placeholders": {
+      "choice": {
+        "type": "String"
+      }
+    }
+  },
   "appearanceSettingsMinimap": "Conversation Minimap",
   "appearanceSettingsMinimapDescription": "A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.",
   "appearanceSettingsSidebarTimes": "Times in the Sidebar",
@@ -5312,7 +5338,7 @@
     }
   },
   "generalSettingsContextMenuFinder": "Finder Context Menu",
-  "generalSettingsContextMenuExplorer": "Explorer Context Menu",
+  "generalSettingsContextMenuExplorer": "File Explorer Context Menu",
   "generalSettingsContextMenuDescription": "Adds \"Open with BaoCode\" (a new agent) and \"Open with Fast Ide\" (a new IDE window) to the context menu of files, folders and a folder's background.",
   "generalSettingsContextMenuMacNote": "Finder's own setting is in System Settings' extensions, where the BaoCode extension can also be turned on and off.",
   "generalSettingsContextMenuOn": "On",
@@ -5339,7 +5365,7 @@
   },
   "cmdOpenRemoteFolder": "Open Remote Project...",
   "cmdOpenRemoteFile": "Open Remote File...",
-  "remoteHostPlaceholder": "Select a host of ~/.ssh/config, or type user@host[:port]",
+  "remoteHostPlaceholder": "Select a host, add one, or type user@host[:port]",
   "remoteConnectTo": "Connect to {host}",
   "@remoteConnectTo": {
     "placeholders": {
@@ -5348,7 +5374,7 @@
       }
     }
   },
-  "remoteNoHosts": "No hosts in ~/.ssh/config: type one",
+  "remoteNoHosts": "No hosts yet: add one, or type user@host",
   "remoteInvalidHost": "Not a host: no spaces, and not starting with '-'",
   "remoteConnecting": "Connecting to {host}...",
   "@remoteConnecting": {
@@ -6092,6 +6118,7 @@
     }
   },
   "sidebarRenameHost": "Rename Host",
+  "sidebarEditHost": "Edit Connection...",
   "explorerNoPermission": "No permission to read this folder",
   "fileErrorAccessDenied": "Permission denied: {path}",
   "@fileErrorAccessDenied": {
@@ -6274,6 +6301,14 @@
   },
   "generalSettingsComposerPolish": "Polish button",
   "generalSettingsComposerPolishDescription": "A button in the message box that has the auxiliary model make what you wrote clearer before you send it",
+  "generalSettingsLiveTurnStats": "Live Speed and Time",
+  "generalSettingsLiveTurnStatsDescription": "While the agent works, a line under the reply with how long the turn has taken, how fast the model writes and the tokens so far, changing as it goes. The figures under a finished turn always show.",
+  "usageLimitScheduled": "Usage limit reached · continues automatically after it resets at {time}",
+  "@usageLimitScheduled": {"placeholders": {"time": {"type": "String"}}},
+  "usageLimitTomorrow": "tomorrow {time}",
+  "@usageLimitTomorrow": {"placeholders": {"time": {"type": "String"}}},
+  "resumeAfterResetPrompt": "The usage limit has reset. Continue where you left off.",
+  "resumeAfterLimitToggle": "Continue After Limit Reset",
   "stashPolishFailed": "Could not polish: {error}",
   "@stashPolishFailed": {
     "placeholders": {
@@ -6387,7 +6422,6 @@
     }
   },
   "stashDismiss": "Dismiss",
-  "stashReveal": "Show in Finder",
   "stashDelete": "Delete",
   "stashDeleteOne": "Delete {stash}?",
   "@stashDeleteOne": {
@@ -6617,7 +6651,7 @@
   "@branchBarWorkspace": {
     "description": "Tooltip and menu title of the branch picker under the chat input of a multi-folder workspace."
   },
-  "settingsSectionAccounts": "Accounts",
+  "settingsSectionAccounts": "Git Accounts",
   "settingsAccountsKeywords": "GitHub GitLab sign in login token issue pull request merge request",
   "accountsDescription": "Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
   "accountsSignedIn": "Signed in",
@@ -6870,7 +6904,7 @@
   "settingsSectionBrowser": "Browser",
   "settingsBrowserKeywords": "chrome extension edge brave arc web page tab agent",
   "browserSettingsDescription": "Let agents use your own browser, signed in as you: open pages, read them, click and type in the tabs you share with them. You can watch every step in the side panel.",
-  "browserSettingsMacOSOnly": "The browser is available on macOS only for now.",
+  "browserSettingsUnsupported": "The browser is available on macOS, Windows and Linux only.",
   "browserSettingsEnabled": "Let Agents Use the Browser",
   "browserSettingsEnabledDescription": "When off, agents have no browser tools and the extension disconnects.",
   "browserSettingsStatus": "Status",
@@ -6878,6 +6912,8 @@
   "browserSettingsNotInstalledDescription": "Install the extension either way below, then open the browser: it connects automatically.",
   "browserSettingsNotRunning": "No browser connected",
   "browserSettingsNotRunningDescription": "Open a browser with BaoCode's extension: it connects automatically.",
+  "browserSettingsSandboxed": "Snap and Flatpak browsers can't connect",
+  "browserSettingsSandboxedDescription": "Their sandbox keeps BaoCode's helper from running. Install the browser from its own .deb or .rpm package instead, such as Google Chrome from google.com/chrome.",
   "browserSettingsConnected": "{browser} connected",
   "@browserSettingsConnected": {"description": "A browser connected, by its name (Google Chrome, Microsoft Edge…).", "placeholders": {"browser": {"type": "String"}}},
   "browserSettingsIncompatible": "{browser}: extension version doesn't match",
@@ -6924,5 +6960,186 @@
   "browserWelcomeUnpacked": "Developer Mode Zip",
   "browserWelcomeDone": "Got It",
   "cmdBrowserWelcome": "Connect Your Browser...",
-  "cmdStashWelcome": "Meet Stash..."
+  "cmdStashWelcome": "Meet Stash...",
+  "cmdModelWelcome": "Set Up a Model...",
+  "modelWelcomeTitle": "Pick a Model to Start",
+  "modelWelcomeLead": "BaoCode runs your agents on a model of your choosing. Add an upstream, a service with an API key, and its models are ready to use.",
+  "modelWelcomeAnyTitle": "Any upstream",
+  "modelWelcomeAny": "Anthropic's API, OpenAI's Chat Completions or Responses, or a service that speaks one of them, such as OpenRouter or DeepSeek.",
+  "modelWelcomeKeysTitle": "Your keys stay with you",
+  "modelWelcomeKeys": "Keys are kept in the system keychain, and requests go from this computer straight to the upstream.",
+  "modelWelcomeSwitchTitle": "Switch any time",
+  "modelWelcomeSwitch": "Add more upstreams whenever you like, and pick the model for each conversation under its input.",
+  "modelWelcomeStepTitle": "Add your first upstream",
+  "modelWelcomeStep": "Its address and key, then the models to use. Some services can also add theirs in one click from Settings → Models.",
+  "modelWelcomeReadyTitle": "Ready to go",
+  "modelWelcomeReady": "New conversations start on {model}. Pick another under the input any time.",
+  "@modelWelcomeReady": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "modelWelcomeLater": "You can also add one later in Settings → Models.",
+  "modelWelcomeSkip": "Later",
+  "modelWelcomeStart": "Start Chatting",
+  "healthNoModel": "Pick a model to start: add an upstream and its models are ready to use.",
+  "modelSetUp": "Set Up a Model",
+  "remoteAddServer": "Add SSH Server...",
+  "remoteEditServer": "Edit",
+  "settingsSectionSsh": "SSH Servers",
+  "settingsSshKeywords": "ssh remote server host jump bastion key password core",
+  "sshSettingsDescription": "The servers remote projects connect to: their address, how they sign in, a jump host, and the core each runs.",
+  "sshSettingsServers": "Servers",
+  "sshSettingsServersDescription": "Those added in the app, and the hosts the sidebar has.",
+  "sshSettingsNone": "No servers yet",
+  "sshSettingsAdd": "Add Server…",
+  "sshSettingsEdit": "Edit…",
+  "sshSettingsConnect": "Connect",
+  "sshSettingsDisconnect": "Disconnect",
+  "sshSettingsDisconnectTitle": "Disconnect from {host}?",
+  "@sshSettingsDisconnectTitle": {"placeholders": {"host": {"type": "String"}}},
+  "sshSettingsDisconnectDetail": "The conversations and terminals running there end.",
+  "sshSettingsCore": "Core: {core}",
+  "@sshSettingsCore": {"placeholders": {"core": {"type": "String"}}},
+  "sshSettingsVia": "through {host}",
+  "@sshSettingsVia": {"placeholders": {"host": {"type": "String"}}},
+  "sshSettingsTyped": "As typed",
+  "sshSettingsConfigHosts": "Hosts of ~/.ssh/config",
+  "sshSettingsConfigHostsDescription": "Changed in that file; their core is Automatic.",
+  "sshSettingsOpenConfig": "Open File",
+  "sshServerAddTitle": "Add SSH Server",
+  "sshServerAddSubtitle": "Saved to the remote list: connect to it in one click.",
+  "sshServerEditTitle": "Edit {name}",
+  "@sshServerEditTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "sshServerHost": "Host",
+  "sshServerHostPlaceholder": "Domain or IP; user@host:port is split up",
+  "sshServerPort": "Port",
+  "sshServerUser": "User",
+  "sshServerName": "Name (optional)",
+  "sshServerNamePlaceholder": "e.g. Production",
+  "sshServerAuth": "Sign in with",
+  "sshServerAuthPassword": "Password",
+  "sshServerAuthKey": "Private Key",
+  "sshServerAuthAuto": "Automatic",
+  "sshServerAuthAutoHint": "As ssh does in a terminal: ssh-agent, the keys in ~/.ssh, ~/.ssh/config. A password is asked for if the server wants one.",
+  "sshServerPasswordHint": "Kept in the system keychain. Leave it empty to be asked when connecting.",
+  "sshServerPasswordKept": "Saved: leave empty to keep it",
+  "sshServerKeyPlaceholder": "Path of the private key, e.g. ~/.ssh/id_ed25519",
+  "sshServerKeyBrowse": "Browse...",
+  "sshServerKeysFound": "Keys in ~/.ssh",
+  "sshServerKeyHint": "If the key has a passphrase, it is asked for when connecting.",
+  "sshServerCore": "Core",
+  "sshServerCoreAuto": "Automatic",
+  "sshServerCoreAutoHint": "The server's Claude Code CLI if it has one, else the built-in core.",
+  "sshServerCoreBuiltinHint": "BaoCode's own core: it runs on the upstreams of Settings → Models.",
+  "sshServerCoreCliHint": "The server's Claude Code CLI, installed there if it has none.",
+  "sshServerJump": "Jump Host (optional)",
+  "sshServerNoJump": "None: connect directly",
+  "sshServerSaveConnect": "Save and Connect",
+  "sshServerSave": "Save",
+  "sshServerHostRequired": "Enter the server's domain or IP",
+  "sshServerHostInvalid": "No spaces, and not starting with '-'",
+  "sshServerPortInvalid": "A port is from 1 to 65535",
+  "sshServerKeyRequired": "Choose the private key file",
+  "sshServerKeyMissing": "There is no such file",
+  "remoteForgetHostKey": "Remove the Old Key and Connect",
+  "remoteForgetHostKeyTitle": "Remove the old key of {host}?",
+  "@remoteForgetHostKeyTitle": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteForgetHostKeyDetail": "Only if you know the server was reinstalled or its key changed: otherwise someone may be between you and it. The key it has now is accepted at the next connection.",
+  "remoteForgetHostKeyButton": "Remove and Connect",
+  "remoteFailNoSsh": "There is no ssh on this computer: install the OpenSSH client.",
+  "remoteFailAuth": "The server refused to sign in: check the user, password or key.",
+  "remoteFailCancelled": "Signing in was cancelled.",
+  "remoteFailHostKey": "The server's key is not known, and your ssh config says not to accept new ones (StrictHostKeyChecking).",
+  "remoteFailHostKeyChanged": "The server's key changed since the last connection: it was reinstalled, or someone is in between.",
+  "remoteFailUnreachable": "The server could not be reached: check the address, port and network.",
+  "channelSetupTitle": "Welcome to BaoCode",
+  "channelSetupLead": "Finish your first-time setup on baocode.dev. It takes about 10 seconds.",
+  "channelSetupStepTitle": "Finish setup in your browser",
+  "channelSetupStep": "BaoCode opens baocode.dev in your browser. Once the page says it's done, BaoCode continues on its own.",
+  "channelSetupWaitingTitle": "Waiting for your browser…",
+  "channelSetupWaiting": "Once the page says it's done, BaoCode continues on its own. Closed the page by mistake? Open it again.",
+  "channelSetupOpenFailedTitle": "Your browser didn't open",
+  "channelSetupOpenFailed": "Copy this address and open it in your browser. Once the page says it's done, BaoCode continues on its own.",
+  "channelSetupAddressCopied": "Copied",
+  "channelSetupOffline": "Can't reach baocode.dev. You need to be online to finish setup.",
+  "channelSetupRetry": "Retry",
+  "channelSetupDoneTitle": "Setup complete",
+  "channelSetupOpen": "Finish Setup in Browser",
+  "channelSetupOpenAgain": "Open the Page Again",
+  "channelSetupNoResponse": "Browser not responding?",
+  "channelSetupPasteLead": "If the page shows a link, copy it and paste it here:",
+  "channelSetupPasteConfirm": "OK",
+  "channelSetupLinkInvalid": "That isn't the link from the page. Copy the whole link shown there.",
+  "channelSetupLinkOther": "That link is for another BaoCode install. Use the page this BaoCode opened.",
+  "channelSetupTrouble": "Having trouble?",
+  "channelSetupOnceTitle": "Only once",
+  "channelSetupOnce": "Once it's done, this won't show again, not even after an update.",
+  "channelSetupPrivateTitle": "Nothing personal",
+  "channelSetupPrivate": "The page only tells BaoCode where you heard of it, like a video or a website.",
+  "channelSetupFindingTitle": "Getting your channel ready…",
+  "channelSetupFinding": "Just a moment.",
+  "channelSetupSiteOfflineTitle": "Can't reach baocode.dev",
+  "channelSetupSiteOffline": "BaoCode needs to be online to read your channel. Check your connection and retry.",
+  "channelSetupUnavailableTitle": "This channel isn't available",
+  "channelSetupUnavailable": "The channel this installer came from doesn't have accounts set up yet. If you downloaded it through another channel, confirm where you came from in your browser; otherwise contact whoever gave you the installer, or download the standard edition from baocode.dev.",
+  "channelSetupConfirmAgain": "Confirm in Browser",
+  "channelWelcomeTitle": "Welcome to {channel}",
+  "@channelWelcomeTitle": {"description": "A channel's welcome's title when its channels.json entry has none, by its name.", "placeholders": {"channel": {"type": "String"}}},
+  "channelWelcomeText": "Sign in to your {channel} account to get started.",
+  "@channelWelcomeText": {"description": "A channel's welcome's text when its entry has none.", "placeholders": {"channel": {"type": "String"}}},
+  "channelWelcomeSignIn": "Sign In",
+  "channelWelcomeSigningIn": "Sign in in the window that opened…",
+  "channelWelcomePreparing": "Getting ready…",
+  "channelWelcomeFailed": "Couldn't finish signing in: {error}",
+  "@channelWelcomeFailed": {"description": "Signing in to the channel's account site failed; the site's or the network's error.", "placeholders": {"error": {"type": "String"}}},
+  "channelAccountTitle": "Account",
+  "channelAccountBalance": "Balance",
+  "channelAccountRefresh": "Refresh",
+  "channelAccountSignOut": "Sign Out",
+  "channelAccountSignOutTitle": "Sign out?",
+  "channelAccountSignOutDetail": "You'll need to sign in to {channel} again to keep using BaoCode.",
+  "@channelAccountSignOutDetail": {"placeholders": {"channel": {"type": "String"}}},
+  "channelAccountOpenSite": "Open Website",
+  "channelAccountDefaultModel": "Default model for new chats",
+  "channelAccountNoModels": "The key in use doesn't reach any models.",
+  "channelAccountKeys": "My API Keys",
+  "channelAccountCreateKey": "Create Key",
+  "channelAccountKeyName": "Name",
+  "channelAccountKeyGroup": "Group",
+  "channelAccountUseKey": "Use This Key",
+  "channelAccountInUse": "In Use",
+  "channelAccountNoKeys": "No API keys yet.",
+  "channelAccountSignedOut": "You're not signed in.",
+  "channelAccountUnavailable": "This channel isn't available. Contact whoever gave you the installer.",
+  "channelAccountFailed": "Something went wrong: {error}",
+  "@channelAccountFailed": {"placeholders": {"error": {"type": "String"}}},
+  "channelAccountBlocked": "{site} refused this computer's connection ({request}); its firewall may be blocking the IP of your network or proxy. Try another network, or reach {site} without the proxy.",
+  "@channelAccountBlocked": {"description": "The channel's account site's firewall (e.g. Cloudflare) refused the app's requests; not a sign-out.", "placeholders": {"site": {"type": "String"}, "request": {"type": "String", "example": "POST /api/v1/auth/refresh"}}},
+  "settingsSectionAbout": "About",
+  "aboutTagline": "An awesome, easy-to-use desktop UI for Claude Code, with a millisecond-fast IDE built in.",
+  "aboutVersion": "Version {version} ({build})",
+  "@aboutVersion": {"placeholders": {"version": {"type": "String"}, "build": {"type": "int"}}},
+  "aboutRepository": "{repository} · free and open source, under the GPL-3.0",
+  "@aboutRepository": {"placeholders": {"repository": {"type": "String"}}},
+  "aboutWebsite": "Website",
+  "aboutChangelog": "Changelog",
+  "aboutChangelogDetail": "What each version changed",
+  "aboutFeedback": "Report an Issue",
+  "aboutFeedbackDetail": "Open an issue on GitHub, or see those others opened",
+  "aboutOpen": "Open"
 }

@@ -2,9 +2,41 @@ import 'dart:async';
 
 import 'package:bao_editor/monaco/flutter/wheel_glide.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/widgets.dart';
+
+/// The app's scrolling: Material's, but on macOS with no bounce at the
+/// ends ([EdgeStopScrollPhysics]). The editors, which keep their own
+/// offsets, fling by the same physics (`TrackpadFling`).
+class BaoScrollBehavior extends MaterialScrollBehavior {
+  const BaoScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) =>
+      switch (getPlatform(context)) {
+        TargetPlatform.macOS => const EdgeStopScrollPhysics(
+          parent: RangeMaintainingScrollPhysics(),
+        ),
+        _ => super.getScrollPhysics(context),
+      };
+}
+
+/// macOS's scrolling (a trackpad's fling slowing as it does there,
+/// [BouncingScrollPhysics] at `fast`), stopping at an end as VS Code's
+/// lists and editors do, not going past it and springing back.
+class EdgeStopScrollPhysics extends BouncingScrollPhysics {
+  const EdgeStopScrollPhysics({super.parent})
+    : super(decelerationRate: ScrollDecelerationRate.fast);
+
+  @override
+  EdgeStopScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      EdgeStopScrollPhysics(parent: buildParent(ancestor));
+
+  @override
+  double applyBoundaryConditions(ScrollMetrics position, double value) =>
+      const ClampingScrollPhysics().applyBoundaryConditions(position, value);
+}
 
 /// A [ScrollController] for lists a mouse wheel scrolls smoothly
 /// ([WheelGliding]); a trackpad's scrolling is as it comes.

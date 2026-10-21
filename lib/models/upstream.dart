@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 
 import 'codex/codex_api.dart';
 import 'model_provider.dart';
@@ -173,18 +176,54 @@ Map<String, String> upstreamHeaders(ModelProvider provider, String? key) => {
 /// that may not be set left out ([sanitizeHeaders]), so a key never goes
 /// from here and no auth header is overwritten, and only whitelisted
 /// variables are replaced ([substituteVariables]).
+///
+/// OpenCode's gateway is told the conversation too ([openCodeSession]),
+/// unless the user's own headers already name it.
 Map<String, String> customUpstreamHeaders(
   ModelProvider provider, {
   String? session,
   String? model,
   Map<String, String> request = const {},
-}) => {
-  for (final MapEntry(:key, :value) in sanitizeHeaders(
-    provider.headers,
-    provider.protocol,
-  ).entries)
-    key: substituteVariables(value, request, session: session, model: model),
-};
+}) {
+  final custom = {
+    for (final MapEntry(:key, :value) in sanitizeHeaders(
+      provider.headers,
+      provider.protocol,
+    ).entries)
+      key: substituteVariables(value, request, session: session, model: model),
+  };
+  if (isOpenCode(provider) &&
+      !custom.keys.any((name) => name.toLowerCase() == openCodeSessionHeader)) {
+    custom[openCodeSessionHeader] = openCodeSession(session);
+  }
+  return custom;
+}
+
+/// OpenCode's session header: one stable id a conversation, by which its
+/// gateway (Zen, Go, Console) sends a conversation's requests where its
+/// prompt is cached. Go refuses a request without it.
+const openCodeSessionHeader = 'x-opencode-session';
+
+/// Whether [provider] is OpenCode's gateway (`opencode.ai/zen`,
+/// `opencode.ai/inference`, with Go's under them).
+bool isOpenCode(ModelProvider provider) {
+  final host = provider.host.toLowerCase();
+  return host == 'opencode.ai' || host.endsWith('.opencode.ai');
+}
+
+/// The [openCodeSessionHeader] of Claude Code's [session]: `ses_` and a
+/// hash of it, the same for every request of the conversation (the
+/// upstream is not told the id itself). A request of none (a model list,
+/// an image) gets one of its own.
+String openCodeSession(String? session) {
+  if (session == null || session.isEmpty) {
+    final random = Random.secure();
+    final bytes = [for (var i = 0; i < 16; i++) random.nextInt(256)];
+    return 'ses_${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+  }
+  final digest = sha256.convert(utf8.encode('baocode:opencode:$session'));
+  return 'ses_${'$digest'.substring(0, 32)}';
+}
 
 /// The models in a `/v1/models` answer: OpenAI's `data` (or a bare list),
 /// Anthropic's `data` with `display_name`; a context window where the

@@ -60,9 +60,11 @@ class MemoryTelemetryStore implements TelemetryStore {
 
 /// The app's usage data, as little as tells how many use it, how many come
 /// back, and on which versions: once a UTC day the app is in front, the
-/// day is reported with a random install id, the app's version and the
-/// system and processor it runs on. Nothing about the user, their machine,
-/// their projects or what they do in the app.
+/// day is reported with a random install id, the app's version, the
+/// system and processor it runs on, and its edition: the channel build's
+/// or not, and where its user came to baocode.dev from, as its setup was
+/// told (lib/channel/). Nothing about the user, their machine, their
+/// projects or what they do in the app.
 ///
 /// A day not reported (offline) is kept and sent later, the latest
 /// [maxPendingDays] of them. Nothing is kept or sent while
@@ -81,6 +83,8 @@ class TelemetryService {
     DateTime Function()? now,
     bool Function()? inFront,
     String Function()? newId,
+    this.edition,
+    this.attribution,
     this.firstDelay = const Duration(seconds: 10),
     this.interval = const Duration(hours: 1),
   }) : url = url ?? Uri.parse(defaultUrl),
@@ -111,6 +115,14 @@ class TelemetryService {
 
   /// settings.json: turned off, what waited is dropped.
   final Listenable? settingsChanges;
+
+  /// `channel` or `standard` (ChannelSetup.editionOf); not sent without.
+  final String Function()? edition;
+
+  /// `{source, value}`, once the channel build's setup was told; sent
+  /// again each time, the server keeping the first it hears of (the page
+  /// may have told it already).
+  final Map<String, Object?>? Function()? attribution;
 
   /// After [start], the first look; then one every [interval], for a day
   /// that begins while the app stays open.
@@ -191,6 +203,8 @@ class TelemetryService {
         'version': '$current',
         'os': os,
         'arch': arch,
+        'edition': ?edition?.call(),
+        'attribution': ?attribution?.call(),
       });
     } on Object catch (error) {
       debugPrint('telemetry: not sent: $error');

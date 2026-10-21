@@ -600,6 +600,52 @@ void main() {
     });
   });
 
+  group('on Windows', () {
+    MasonServerProvider windows() => MasonServerProvider(
+      registry: registry,
+      installRoot: root,
+      downloader: FakeDownloader(const {}),
+      runner: FakeRunner(),
+      environment: () async => environment,
+      platform: const MasonPlatform('win', 'x64'),
+    );
+
+    test('runs npm-cli.js with node, not npm.cmd through cmd.exe', () async {
+      final npm = p.join(toolsDir, 'npm.cmd');
+      final node = p.join(toolsDir, 'node.exe');
+      Future<List<String>> command(MasonServerProvider mason) async {
+        final (executable, arguments) = await mason.npmCommand(npm, node);
+        return [executable, ...arguments];
+      }
+
+      expect(await command(windows()), [npm]);
+      final script = p.join(
+        toolsDir,
+        'node_modules',
+        'npm',
+        'bin',
+        'npm-cli.js',
+      );
+      await File(script).create(recursive: true);
+      expect(await command(windows()), [node, script]);
+      expect(await command(provider()), [npm]);
+    });
+
+    test('which skips the extensionless script beside npm.cmd', () async {
+      await tool('npm');
+      await tool('npm.cmd');
+      final mason = windows();
+      expect(
+        await mason.which('npm', {...environment, 'PATHEXT': '.exe;.cmd'}),
+        p.join(toolsDir, 'npm.cmd'),
+      );
+      expect(
+        await mason.which('npm.cmd', environment),
+        p.join(toolsDir, 'npm.cmd'),
+      );
+    });
+  });
+
   group('locate', () {
     test('PATH first, then installed servers', () async {
       final mason = provider();

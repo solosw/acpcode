@@ -78,7 +78,7 @@ class FakeModel implements ModelClient {
   static bool isErrand(ModelRequest request) {
     final system = jsonEncode(request.body['system']);
     return request.body['tools'] == null &&
-        !system.contains('summarizing conversations') &&
+        !system.contains('summary of a conversation') &&
         !system.contains('interactive agent') &&
         !system.contains('You are an agent');
   }

@@ -48,6 +48,9 @@ class Transcript {
 
   String? activeTurn;
 
+  /// When the turn under way began, as it was told.
+  DateTime? turnStartedAt;
+
   /// What the agent is busy with out of sight, while a turn runs.
   KernelActivity? activity;
 
@@ -124,6 +127,7 @@ class Transcript {
       case TurnStarted(:final turnId, :final unprompted):
         if (_endedTurns.contains(turnId)) return false;
         activeTurn = turnId;
+        turnStartedAt = DateTime.now();
         _activeUnprompted = unprompted;
         output = null;
       case TurnEnded(
@@ -134,7 +138,10 @@ class Transcript {
       ):
         if (!_endedTurns.add(turnId)) return false;
         lastTurnUnprompted = activeTurn == turnId && _activeUnprompted;
-        if (activeTurn == turnId) activeTurn = null;
+        if (activeTurn == turnId) {
+          activeTurn = null;
+          turnStartedAt = null;
+        }
         activity = null;
         output = null;
         lastTurnEndSeq = event.seq;

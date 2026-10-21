@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:bao_remote/client.dart' show SshServer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextSelection;
 import 'package:flutter_quill/quill_delta.dart';
@@ -10,6 +11,7 @@ import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 import '../chat/composer/composer_draft.dart';
 import '../chat/mock_conversation.dart';
+import '../chat/resume_after_reset.dart';
 import '../icons/emoji_sheet.dart';
 import '../icons/icon_library.dart';
 import '../icons/project_icon.dart';
@@ -234,7 +236,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     this.titler,
     AppLocalizations Function()? l10n,
     this.workspaceDirectories = const ProjectWorkspaceDirectories(),
+    ResumeAfterReset? resumes,
   }) : _projects = [...projects],
+       resumes = resumes ?? ResumeAfterReset.current,
        icons = icons ?? IconLibrary(),
        l10n = l10n ?? (() => englishLocalizations),
        _kernels = [...(kernels ?? KernelRegistry.all)],
@@ -264,6 +268,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// after their file, see [agentImageTitle]); without it, the first
   /// message's first line stays its title.
   final AgentTitler? titler;
+
+  /// The agents stopped at the usage limit, to go on once it resets: this
+  /// continues them, once the agents are listed.
+  final ResumeAfterReset resumes;
 
   /// The strings of the app's language, for the titles given here: they
   /// are kept with the session, so are in the language of when given.
@@ -341,6 +349,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _ensureIdeChat(folder);
     }
     _restoreChatView();
+    if (!_disposed) resumes.resume = _resumeAfterReset;
     if (_selected == null && _projects.isNotEmpty) {
       create();
     } else {
@@ -1317,9 +1326,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// Takes [host] off, its projects off the sidebar ([hideProject]):
-  /// nothing of them is deleted.
+  /// nothing of them is deleted. What the form saved of it goes.
   void removeSshHost(String host) {
     _sshHosts.remove(host);
+    _sshServers.remove(host);
     final now = DateTime.now();
     for (final project in _projects) {
       if (project.host == host) _hiddenProjects[project.path] = now;
@@ -1364,6 +1374,26 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The projects the sidebar lists where it is: on its host, or all.
   List<Project> get sidebarProjectsHere =>
       sidebarAllHosts ? sidebarProjects : sidebarProjectsOn(sidebarHost);
+
+  /// The servers the user saved with the app's form, by host (see
+  /// [SshServer]): reached as saved rather than as the host's text says.
+  final Map<String, SshServer> _sshServers = {};
+  Map<String, SshServer> get sshServers => Map.unmodifiable(_sshServers);
+
+  /// Saves [server] as [host]'s, kept among [sshHosts] and called [name]
+  /// (by itself for none).
+  void saveSshServer(String host, SshServer server, {String? name}) {
+    _sshServers[host] = server;
+    if (!_sshHosts.contains(host)) _sshHosts.add(host);
+    name = name?.trim();
+    if (name == null || name.isEmpty || name == host) {
+      _hostNames.remove(host);
+    } else {
+      _hostNames[host] = name;
+    }
+    _save();
+    notifyListeners();
+  }
 
   /// Names the user gave SSH hosts, by host.
   final Map<String, String> _hostNames = {};
@@ -1948,6 +1978,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _projectOrder.addAll(list('projectOrder'));
       _sshHosts.addAll(list('sshHosts'));
       _hostNames.addAll(strings(sidebar['hostNames']));
+      if (sidebar['sshServers'] case final Map<Object?, Object?> servers) {
+        for (final MapEntry(:key, :value) in servers.entries) {
+          final server = SshServer.fromJson(value);
+          if (key is String && server != null) _sshServers[key] = server;
+        }
+      }
       if (sidebar['host'] case final String host) _sidebarHost = host;
       _sidebarAll = sidebar['allHosts'] == true;
       for (final MapEntry(:key, :value) in strings(
@@ -2051,6 +2087,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         'projectOrder': [..._projectOrder],
         'sshHosts': [..._sshHosts],
         'hostNames': {..._hostNames},
+        'sshServers': {
+          for (final MapEntry(:key, :value) in _sshServers.entries)
+            key: value.toJson(),
+        },
         'host': ?_sidebarHost,
         if (_sidebarAll) 'allHosts': true,
         'hiddenProjects': {
@@ -2179,6 +2219,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void _sync(AgentThread thread) {
     if (!_threads.contains(thread)) return;
     final session = thread.session;
+    _noteLimit(thread);
     if (thread._title.isEmpty && session.itemCount > 0) {
       if (session.itemAt(0) case UserMessageItem(:final text)) {
         thread._title = text.trim().split('\n').first;
@@ -2591,6 +2632,70 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
+  /// The agents with a turn under way since last seen: one that ends
+  /// without the usage limit has gone on, nothing to continue then.
+  final Set<AgentThread> _turnsRun = {};
+
+  /// Lists [thread] to go on once the usage limit it hit resets; one
+  /// gone on since, or switched to another provider (whose limits are its
+  /// own), is no longer to be.
+  void _noteLimit(AgentThread thread) {
+    final session = thread.session;
+    final id = thread.id;
+    if (id == null) return;
+    if (!session.usageLimitApplies) {
+      _turnsRun.remove(thread);
+      resumes.remove(id);
+      return;
+    }
+    if (session.isStreaming) {
+      _turnsRun.add(thread);
+      return;
+    }
+    final ran = _turnsRun.remove(thread);
+    if (session.usageLimitResetsAt case final at?) {
+      resumes.hit(sessionId: id, resetsAt: at);
+    } else if (ran) {
+      resumes.remove(id);
+    }
+  }
+
+  /// Sends the agent [sessionId] its message to continue, the usage limit
+  /// it stopped at reset; whether it is no longer to be (sent, gone on, or
+  /// gone).
+  Future<bool> _resumeAfterReset(String sessionId) async {
+    final thread = _threads
+        .where((thread) => thread.id == sessionId)
+        .firstOrNull;
+    if (thread == null || _disposed) return true;
+    // Not opened since the app started, say: its conversation read first.
+    final session = thread.session;
+    if (session.loadingHistory) await _historyRead(session);
+    if (_disposed || !_threads.contains(thread)) return true;
+    // On another provider now: nothing waited for the reset.
+    if (session.isStreaming || !session.usageLimitApplies) return true;
+    if (session.loadingHistory || !session.canSend) return false;
+    session.send(ComposerMessage(text: l10n().resumeAfterResetPrompt));
+    return true;
+  }
+
+  /// Completes once [session]'s conversation is read, or a while on.
+  Future<void> _historyRead(ChatSession session) {
+    final read = Completer<void>();
+    void listener() {
+      if (!session.loadingHistory && !read.isCompleted) read.complete();
+    }
+
+    session.addListener(listener);
+    final timeout = Timer(const Duration(seconds: 30), () {
+      if (!read.isCompleted) read.complete();
+    });
+    return read.future.whenComplete(() {
+      timeout.cancel();
+      session.removeListener(listener);
+    });
+  }
+
   /// Titles [thread] after its first message: images alone after their
   /// file; anything else by [titler], if its kernel keeps the title
   /// (Claude Code's: the message goes to Claude).
@@ -2707,6 +2812,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (id != null) {
       _removed.add(id);
       _forgetDraft(id);
+      resumes.remove(id);
       final kept = [_pinned.remove(id), _archived.remove(id)];
       final named = _names.remove(id) != null;
       if (save && (named || kept.contains(true))) _save();
@@ -2715,6 +2821,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final listener = _listeners.remove(thread);
     if (listener != null) thread.session.removeListener(listener);
     _snapshots.remove(thread);
+    _turnsRun.remove(thread);
     if (_draftKeys.remove(thread) case final key?) _forgetDraft(key);
     _threads.remove(thread);
     if (leave) _leave(thread);
@@ -2785,6 +2892,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   @override
   void dispose() {
     _disposed = true;
+    if (resumes.resume == _resumeAfterReset) resumes.resume = null;
     icons.removeListener(notifyListeners);
     for (final MapEntry(key: path, value: listener) in _unreached.entries) {
       SshHosts.instance[RemoteLocation.hostOf(path)!].removeListener(listener);

@@ -30,12 +30,12 @@ class GlobTool extends Tool {
 
   @override
   String get description =>
-      '''- Fast file pattern matching tool that works with any codebase size
-- Supports glob patterns like "**/*.js" or "src/**/*.ts"
-- Returns matching file paths sorted by modification time
-- Use this tool when you need to find files by name patterns
-- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead
-- You can call multiple tools in a single response. It is always better to speculatively perform multiple searches in parallel if they are potentially useful.''';
+      '''Finds files by name, with a glob pattern such as "**/*.dart" or "lib/**/test_*.py", in a project of any size.
+
+- The paths found come back newest first (by when they were last changed), at most $maxResults.
+- For finding files by what is in them, use Grep.
+- A search that may take many rounds of looking is better handed to an agent (Agent).
+- Several searches that may help can run at once, in calls side by side in one reply.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -43,11 +43,11 @@ class GlobTool extends Tool {
     'properties': {
       'pattern': {
         'type': 'string',
-        'description': 'The glob pattern to match files against',
+        'description': 'The glob the paths must match',
       },
       'path': {
         'type': 'string',
-        'description': 'The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.',
+        'description': 'The folder to look in. Leave it out for the working directory (rather than "null" or "undefined")',
       },
     },
     'required': ['pattern'],
@@ -76,7 +76,7 @@ class GlobTool extends Tool {
   ) async {
     final root = _searchRoot(input, context);
     if (!Directory(root).existsSync()) {
-      return 'Directory does not exist: $root';
+      return 'No folder is there: $root';
     }
     return null;
   }
@@ -123,7 +123,8 @@ class GlobTool extends Tool {
         ? 'No files found'
         : [
             ...shown,
-            if (truncated) '(Results are truncated. Consider using a more specific path or pattern.)',
+            if (truncated)
+              '(Only the first $maxResults are shown: narrow the path or the pattern to see the rest.)',
           ].join('\n');
     return ToolOutput(
       text,
@@ -146,16 +147,14 @@ class GrepTool extends Tool {
   String get name => 'Grep';
 
   @override
-  String get description => '''A powerful search tool built on ripgrep
+  String get description => '''Searches what files contain, with a regular expression, as ripgrep does.
 
-  Usage:
-  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
-  - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
-  - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
-  - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts
-  - Use Agent tool for open-ended searches requiring multiple rounds
-  - Pattern syntax: Uses ripgrep (not grep) - literal braces need escaping (use `interface\\{\\}` to find `interface{}` in Go code)
-  - Multiline matching: By default patterns match within single lines only. For cross-line patterns like `struct \\{[\\s\\S]*?field`, use `multiline: true`''';
+- Search with this, not with `grep` or `rg` through Bash: it keeps to the folders you may read.
+- The pattern is ripgrep's syntax (Rust regex): "fn\\s+\\w+", "TODO|FIXME". A brace to be found as itself is escaped: `map\\{\\}` finds `map{}`.
+- Narrow the files with glob ("*.ts", "src/**/*.rs") or type ("py", "go").
+- output_mode: files_with_matches (the default) gives the paths of the files with a match; content gives the lines that match, with line numbers and any lines around them asked for (-A, -B, -C); count gives how many matches each file has.
+- A pattern matches within a line. For one that runs across lines, such as `class \\w+[\\s\\S]*?init`, set multiline.
+- A search that may take many rounds of looking is better handed to an agent (Agent).''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -163,58 +162,61 @@ class GrepTool extends Tool {
     'properties': {
       'pattern': {
         'type': 'string',
-        'description':
-            'The regular expression pattern to search for in file contents',
+        'description': 'The regular expression to look for',
       },
       'path': {
         'type': 'string',
-        'description': 'File or directory to search in (rg PATH). Defaults to current working directory.',
+        'description':
+            'The file or folder to search (the working directory if left out)',
       },
       'glob': {
         'type': 'string',
-        'description': 'Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob',
+        'description': 'Only the files whose paths match this glob ("*.kt", "*.{c,h}"), as rg --glob',
       },
       'output_mode': {
         'type': 'string',
         'enum': ['content', 'files_with_matches', 'count'],
-        'description': 'Output mode: "content" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), "files_with_matches" shows file paths (supports head_limit), "count" shows match counts (supports head_limit). Defaults to "files_with_matches".',
+        'description': 'What comes back: "files_with_matches" (the default) the paths of the files with a match, "content" the lines that match, "count" how many matches in each file',
       },
       '-B': {
         'type': 'number',
-        'description': 'Number of lines to show before each match (rg -B). Requires output_mode: "content", ignored otherwise.',
+        'description':
+            'With content: this many lines before each match too (rg -B)',
       },
       '-A': {
         'type': 'number',
-        'description': 'Number of lines to show after each match (rg -A). Requires output_mode: "content", ignored otherwise.',
+        'description':
+            'With content: this many lines after each match too (rg -A)',
       },
       '-C': {
         'type': 'number',
-        'description': 'Number of lines to show before and after each match (rg -C). Requires output_mode: "content", ignored otherwise.',
+        'description':
+            'With content: this many lines on both sides of each match (rg -C)',
       },
-      'context': {'type': 'number', 'description': 'Alias for -C.'},
+      'context': {'type': 'number', 'description': 'Another name for -C'},
       '-n': {
         'type': 'boolean',
-        'description': 'Show line numbers in output (rg -n). Requires output_mode: "content", ignored otherwise. Defaults to true.',
+        'description': 'With content: each line\'s number before it (rg -n); on unless set false',
       },
       '-i': {
         'type': 'boolean',
-        'description': 'Case insensitive search (rg -i)',
+        'description': 'Match upper and lower case alike (rg -i)',
       },
       'type': {
         'type': 'string',
-        'description': 'File type to search (rg --type). Common types: js, py, rust, go, java, etc. More efficient than include for standard file types.',
+        'description': 'Only files of this ripgrep type (rg --type): py, js, rust, go, java and so on; quicker than a glob for a common kind',
       },
       'head_limit': {
         'type': 'number',
-        'description': 'Limit output to first N lines/entries, equivalent to "| head -N". Works across all output modes. Defaults to 250 (0 for no limit).',
+        'description': 'Give at most this many lines or paths, whatever the output_mode: 250 unless set, 0 for all',
       },
       'offset': {
         'type': 'number',
-        'description': 'Skip first N lines/entries before applying head_limit, equivalent to "| tail -n +N | head -N". Works across all output modes. Defaults to 0.',
+        'description': 'Leave out this many lines or paths from the start, before head_limit: for the next page',
       },
       'multiline': {
         'type': 'boolean',
-        'description': 'Enable multiline mode where . matches newlines and patterns can span lines (rg -U --multiline-dotall). Default: false.',
+        'description': 'Let a match run across lines, . matching a line break too (rg -U --multiline-dotall)',
       },
     },
     'required': ['pattern'],
@@ -245,7 +247,7 @@ class GrepTool extends Tool {
   ) async {
     final root = _searchRoot(input, context);
     if (FileSystemEntity.typeSync(root) == FileSystemEntityType.notFound) {
-      return 'Path does not exist: $root';
+      return 'Nothing is there: $root';
     }
     try {
       RegExp('${input['pattern']}');
@@ -307,7 +309,7 @@ class GrepTool extends Tool {
             : [
                 ...pageLines,
                 if (limit > 0 && lines.length > offset + limit)
-                  '\n[Showing results with pagination = limit: $limit, offset: $offset]',
+                  '\n[There is more: offset ${offset + limit} gives the next $limit.]',
               ].join('\n');
         return ToolOutput(
           text,

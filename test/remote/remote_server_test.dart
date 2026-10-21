@@ -654,8 +654,8 @@ printf '%s\n' "$line"
       },
     );
 
-    test('a page leaves out what is not shown: a file read whole, a '
-        'picture, a file before an edit', () async {
+    test('a page leaves out what is not shown: a file read whole, the '
+        "CLI's copy of a picture, a file before an edit", () async {
       final sessions = Directory(p.join(home.path, '.claude', 'projects', '-x'))
         ..createSync(recursive: true);
       final lines = [
@@ -704,6 +704,13 @@ printf '%s\n' "$line"
               },
             ],
           },
+          'toolUseResult': [
+            {'type': 'text', 'text': 'shot'},
+            {
+              'type': 'image',
+              'source': {'type': 'base64', 'data': 'b' * 10000},
+            },
+          ],
         },
         {
           'uuid': 'r3',
@@ -736,7 +743,15 @@ printf '%s\n' "$line"
         'type': 'text',
         'file': {'filePath': '/x/a.txt'},
       });
+      // The picture is shown, from the call's result.
       expect(content(shot), [
+        {'type': 'text', 'text': 'shot'},
+        {
+          'type': 'image',
+          'source': {'type': 'base64', 'data': 'b' * 10000},
+        },
+      ]);
+      expect(shot['toolUseResult'], [
         {'type': 'text', 'text': 'shot'},
       ]);
       expect(edit['toolUseResult'], {

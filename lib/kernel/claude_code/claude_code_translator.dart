@@ -7,6 +7,7 @@ import '../kernel_types.dart';
 import '../output_meter.dart';
 import 'claude_goal.dart';
 import 'claude_sdk_tools.dart';
+import 'turn_stats.dart';
 
 /// Translates Claude Code's conversation messages (stream-json output, or
 /// the lines of a kept session) into [KernelEvent]s: text, thoughts, tool
@@ -56,6 +57,10 @@ class ClaudeTranslator {
 
   /// Replaying a kept session: nothing is pending or running any more.
   bool replaying = false;
+
+  /// What the kept session's turns took and spent, as their footers showed
+  /// it, by prompt: given to a turn replayed instead of its time guessed.
+  Map<String, TurnRecord> keptTurns = const {};
 
   // Streamed blocks of the current message.
   String? _messageId;
@@ -325,7 +330,7 @@ class ClaudeTranslator {
   // to the last thing it showed before the next one (or the end).
 
   /// The prompt whose turn is being replayed, and when it was sent.
-  ({String id, UserMessageItem item, DateTime at})? _replayed;
+  ({String id, UserMessageItem item, DateTime? at})? _replayed;
 
   /// When the replayed turn last showed anything.
   DateTime? _replayedUntil;
@@ -360,9 +365,11 @@ class ClaudeTranslator {
     Map<String, Object?> message,
   ) {
     _timeReplayed();
-    if (DateTime.tryParse('${message['timestamp']}') case final at?) {
-      _replayed = (id: id, item: item, at: at);
-    }
+    _replayed = (
+      id: id,
+      item: item,
+      at: DateTime.tryParse('${message['timestamp']}'),
+    );
   }
 
   void _timeReplayed() {
@@ -372,8 +379,15 @@ class ClaudeTranslator {
     _replayed = null;
     _replayedUntil = null;
     _replayedStopped = false;
-    if (turn == null || until == null || stopped) return;
-    final worked = until.difference(turn.at);
+    if (turn == null || stopped) return;
+    // As its footer showed it when it ended, where that was kept.
+    if (keptTurns[turn.id] case (:final worked, :final usage)) {
+      _put(turn.id, turn.item.copyWith(worked: worked, usage: usage));
+      return;
+    }
+    final at = turn.at;
+    if (until == null || at == null) return;
+    final worked = until.difference(at);
     if (worked > Duration.zero) {
       _put(turn.id, turn.item.copyWith(worked: worked));
     }
@@ -482,11 +496,14 @@ class ClaudeTranslator {
               streaming: true,
             );
           case 'text':
+            if (!replaying) _meter.startBlock();
             _streamed[index] = id;
             (_unclaimed['$_messageId:text'] ??= []).add(id);
             _textLength[id] = 0;
             _put(id, const AssistantTextItem(''), streaming: true);
           case 'tool_use':
+            // Its input may come all at once as it ends: timed from here.
+            if (!replaying) _meter.startBlock();
             final toolId = block['id'] as String;
             final name = block['name'] as String;
             if (!_tools.containsKey(toolId)) {

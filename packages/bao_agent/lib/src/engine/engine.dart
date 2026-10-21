@@ -43,13 +43,13 @@ class BuiltInCommand {
 const builtInCommands = [
   BuiltInCommand(
     'compact',
-    'Clear conversation history but keep a summary in context',
-    argumentHint: '<optional custom summarization instructions>',
+    'Replace the conversation so far with a summary of it',
+    argumentHint: '<what the summary should keep>',
   ),
-  BuiltInCommand('context', 'Show current context usage'),
+  BuiltInCommand('context', 'How full the context window is, and with what'),
   BuiltInCommand(
     'cost',
-    'Show the total cost and duration of the current session',
+    'What this session has cost so far, and how long it has run',
   ),
   BuiltInCommand(
     'goal',
@@ -58,7 +58,7 @@ const builtInCommands = [
   ),
   BuiltInCommand(
     'init',
-    'Initialize a new CLAUDE.md file with codebase documentation',
+    'Write a CLAUDE.md that tells agents how this codebase works',
   ),
   BuiltInCommand(
     'review',
@@ -67,9 +67,9 @@ const builtInCommands = [
   ),
   BuiltInCommand(
     'security-review',
-    'Complete a security review of the pending changes on the current branch',
+    'Look for security holes in the changes on this branch',
   ),
-  BuiltInCommand('todos', 'List current todo items'),
+  BuiltInCommand('todos', 'Show the agent\'s to-do list'),
 ];
 
 /// A message of the user's, sent and not yet taken up.
@@ -737,7 +737,7 @@ class AgentEngine {
               ? hook.blockReason
               : (hook.stopReason ?? '');
           _localReply(
-            'UserPromptSubmit operation blocked by hook:\n$reason'.trim(),
+            'A UserPromptSubmit hook held this prompt back:\n$reason'.trim(),
             store: false,
           );
           _emitResult(
@@ -780,7 +780,7 @@ class AgentEngine {
     final context = [
       session.context.userContext(),
       if (_startContext case final start?)
-        '<system-reminder>\nSessionStart hook additional context: $start\n</system-reminder>',
+        '<system-reminder>\nA SessionStart hook adds: $start\n</system-reminder>',
       if (session.goal case final goal?) goalInstruction(goal),
     ].join('\n');
     final loop = AgentLoop(
@@ -942,9 +942,8 @@ class AgentEngine {
     } on FileSystemException {
       // Listed as empty.
     }
-    return 'Called the Bash tool with the following input: '
-        '{"command":"ls ${_quote(path)}","description":"Lists files in $path"}\n'
-        'Result of calling the Bash tool: \n${entries.map((e) => '- $e').join('\n')}';
+    return 'The user mentioned the folder $path, which holds '
+        '(`ls ${_quote(path)}`):\n${entries.map((e) => '- $e').join('\n')}';
   }
 
   String? _fileMention(String path, int? from, int? to) {
@@ -972,9 +971,8 @@ class AgentEngine {
         if (from != null) 'offset': start,
         if (from != null) 'limit': end - start + 1,
       };
-      return 'Called the Read tool with the following input: '
-          '${_json(input)}\nResult of calling the Read tool:\n'
-          '${numberLines(shown, start)}';
+      return 'The user mentioned $path, which Read gives as follows '
+          '(${_json(input)}):\n${numberLines(shown, start)}';
     } on FileSystemException {
       return null;
     }
@@ -1084,7 +1082,7 @@ class AgentEngine {
         final todos = session.mainTodos;
         reply(
           todos.isEmpty
-              ? 'No todos currently tracked'
+              ? 'The to-do list is empty.'
               : [
                   '${todos.length} todo${todos.length == 1 ? '' : 's'}:',
                   for (final todo in todos)

@@ -297,7 +297,7 @@ class _FetchModelsDialogState extends State<FetchModelsDialog> {
     try {
       final listed = [
         ...await widget.list(widget.provider, await widget.keyOf()),
-      ]..sort((a, b) => a.id.compareTo(b.id));
+      ]..sort((a, b) => compareModelNames(a.id, b.id));
       await shown;
       if (mounted) setState(() => _listed = listed);
     } on Object catch (error) {

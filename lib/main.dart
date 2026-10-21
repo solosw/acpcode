@@ -11,13 +11,17 @@ import 'package:bao_editor/textmate/textmate_syntax.dart';
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
+import 'base/smooth_scroll.dart' show BaoScrollBehavior;
 import 'browser/browser_bridge.dart';
 import 'browser/browser_tools.dart' show BrowserHistory;
 import 'chat/composer/composer_files.dart' show ComposerFile, pastedAsPicture;
 import 'chat/chat_width.dart';
+import 'chat/reply_scroll.dart';
 import 'chat/user_message_style.dart';
 import 'chat/widgets/chat_minimap.dart';
 import 'chat/widgets/pixel_loader.dart';
+import 'chat/resume_after_reset.dart';
+import 'chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import 'customize/customization_store.dart';
 import 'diagnostics/app_event_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
@@ -41,6 +45,9 @@ import 'kernel/claude_code/claude_core_setting.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
 import 'kernel/claude_code/claude_path_setting.dart';
 import 'kernel/claude_code/process_transport.dart';
+import 'kernel/claude_code/turn_stats_stub.dart'
+    if (dart.library.io) 'kernel/claude_code/turn_stats_io.dart'
+    show turnStatsIn;
 import 'kernel/commit_attribution.dart';
 import 'kernel/kernel_registry.dart';
 import 'kernel/prompt_suggestions.dart';
@@ -57,6 +64,7 @@ import 'models/featured_upstreams.dart';
 import 'models/model_icons.dart';
 import 'models/model_providers.dart';
 import 'models/model_runtime.dart';
+import 'models/model_welcome.dart';
 import 'network/network_proxy.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_settings.dart';
@@ -72,6 +80,11 @@ import 'remote/ssh_host.dart';
 import 'remote/ssh_host_settings.dart';
 import 'search/claude_conversation_search.dart';
 import 'search/conversation_search.dart';
+import 'channel/account/account_send.dart';
+import 'channel/account/channel_account.dart';
+import 'channel/channel_gate.dart';
+import 'channel/channel_setup.dart';
+import 'channel/channel_setup_platform.dart';
 import 'settings/app_locale.dart';
 import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
@@ -180,12 +193,40 @@ Future<void> main(List<String> arguments) async {
       files.settings[ComposerPolishSetting.settingKey],
     );
     ComposerPolishSetting.changes = files.settings;
+    // The turn under way's line of figures, shown or not as it changes.
+    LiveTurnStatsSetting.current = () => LiveTurnStatsSetting.enabled(
+      files.settings[LiveTurnStatsSetting.settingKey],
+    );
+    LiveTurnStatsSetting.changes = files.settings;
+    // An agent stopped at the usage limit: whether it goes on once it
+    // resets, set in the model picker.
+    ResumeAfterResetSetting.current = () => ResumeAfterResetSetting.enabled(
+      files.settings[ResumeAfterResetSetting.settingKey],
+    );
+    ResumeAfterResetSetting.changes = files.settings;
+    ResumeAfterResetSetting.write = (on) => unawaited(
+      files.settings
+          .update(
+            ResumeAfterResetSetting.settingKey,
+            on ? ResumeAfterResetSetting.on : null,
+          )
+          .catchError((Object error) {
+            // A settings file that does not parse is left as it is; its
+            // error is shown.
+            debugPrint(
+              '${ResumeAfterResetSetting.settingKey} not kept: $error',
+            );
+          }),
+    );
     // Settings → General → Claude Code: the build to run, read as each
     // agent starts.
     ClaudePathSetting.current = () =>
         ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
     // Settings → General → Claude Code: the core sessions run on (BaoCode's
-    // own, or the CLI), read as each agent starts.
+    // own, or the CLI), read as each agent starts. Unset, the CLI where it
+    // is installed: looked for on the app's PATH, then the shell's.
+    ClaudeCore.cliInstalled = localClaudeInstalled;
+    unawaited(lookForLocalClaude());
     ClaudeCore.current = () =>
         ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
     // Settings → Models: the upstreams, kept in settings.json.
@@ -193,6 +234,16 @@ Future<void> main(List<String> arguments) async {
     // Claude Code's own models as it last listed them: in the picker
     // before a session on them starts.
     ClaudeCodeKernel.modelCache = files.storage;
+    // Whether the welcome to setting a model up has shown by itself.
+    ModelWelcome.storage = files.storage;
+    // The channel build's first start: set up before anything else shows.
+    await _beginChannelSetup(files);
+    _openChannelGate(files);
+    // What each turn took and spent, for its footer when the session is
+    // opened again: in the data folder, a file per session.
+    ClaudeCodeKernel.turnStats = turnStatsIn(
+      p.join(DataDirectory.current.path, 'turn-stats'),
+    );
     // The upstreams' sites' icons, for those that show no other: in the
     // cache, fetched as soon as one is added.
     SiteIcons.current = SiteIcons(
@@ -215,6 +266,11 @@ Future<void> main(List<String> arguments) async {
     UserMessageStyle.follow(
       files.settings,
       () => files.settings[UserMessageStyle.settingKey],
+    );
+    // Settings → Appearance: where a conversation stays as a reply comes.
+    ReplyScroll.keep(
+      files.settings,
+      () => files.settings[ReplyScroll.settingKey],
     );
     // Settings → Appearance: whether the conversation has a minimap, how
     // opaque its glass is and how much it stretches.
@@ -254,6 +310,16 @@ Future<void> main(List<String> arguments) async {
       KernelRegistry.claudeCode,
       for (final agent in acpAgents.agents) KernelRegistry.acp(agent),
     ]);
+  }
+  // The agents to go on once the usage limit resets, kept beside
+  // state.json: one due while the app was closed goes on as it opens.
+  if (!kIsWeb) {
+    ResumeAfterReset.current = ResumeAfterReset(
+      store: PreferenceStore.file(
+        p.join(DataDirectory.current.stateDir, ResumeAfterReset.fileName),
+      ),
+    );
+    unawaited(ResumeAfterReset.current.load());
   }
   final workspace = Workspace(
     preferences: PreferenceStore.file(),
@@ -494,12 +560,75 @@ UpdateController? _startUpdates(SettingsFiles files) {
   );
 }
 
+/// The channel build's first start (lib/channel/): to set up while it is
+/// pending, for the windows to show. The install's id made now, to give
+/// the page, and kept before the telemetry would make its own.
+Future<void> _beginChannelSetup(SettingsFiles files) async {
+  if (kIsWeb) return;
+  final store = GlobalChannelSetupStore(files.storage);
+  if (!ChannelSetup.begin(store)) return;
+  var id = GlobalTelemetryStore(files.storage).installId;
+  if (id == null) {
+    id = TelemetryService.randomInstallId();
+    await files.storage
+        .set(GlobalTelemetryStore.installIdKey, id)
+        .catchError(
+          (Object error) => debugPrint('install id not kept: $error'),
+        );
+  }
+  ChannelSetup.current = _channelSetup(store, id);
+}
+
+ChannelSetup _channelSetup(
+  ChannelSetupStore store,
+  String installId, {
+  String? again,
+}) => ChannelSetup(
+  store: store,
+  installId: installId,
+  again: again,
+  lookUp: lookUpChannel,
+  open: (url) => openExternal('$url'),
+);
+
+/// The channel build's way in (lib/channel/): set up, then signed in to
+/// its channel's account site, whose key is its only upstream.
+void _openChannelGate(SettingsFiles files) {
+  if (kIsWeb || !ChannelSetup.channelBuild) return;
+  final accounts = GlobalChannelAccountStore(files.storage);
+  final setupStore =
+      ChannelSetup.current?.store ?? GlobalChannelSetupStore(files.storage);
+  ChannelGate.current = ChannelGate(
+    setup: ChannelSetup.current,
+    setupStore: setupStore,
+    accountStore: accounts,
+    fetch: channelEntry,
+    // Its link opened, the setup asking takes it (workbench.dart).
+    makeSetupAgain: () => ChannelSetup.current = _channelSetup(
+      setupStore,
+      GlobalTelemetryStore(files.storage).installId ??
+          TelemetryService.randomInstallId(),
+      again: TelemetryService.randomInstallId(),
+    ),
+    makeAccount: (channel) => ChannelAccount(
+      site: channel.info.account!,
+      channelName: channel.info.name,
+      store: accounts,
+      send: sendToAccountSite,
+      listModels: listUpstreamModels,
+    ),
+  );
+}
+
 /// The app's usage data (lib/telemetry/): once a UTC day it is in front,
 /// as settings.json's `telemetry.telemetryLevel` allows. None in a debug
 /// build, or with `DO_NOT_TRACK` set.
 void _startTelemetry(SettingsFiles files) {
   final platform = platformTelemetry();
   if (platform == null) return;
+  // The setup's, read back as it was set.
+  final channel =
+      ChannelSetup.current?.store ?? GlobalChannelSetupStore(files.storage);
   bool inFront() => switch (WidgetsBinding.instance.lifecycleState) {
     null || AppLifecycleState.resumed => true,
     _ => false,
@@ -515,6 +644,8 @@ void _startTelemetry(SettingsFiles files) {
     settingsChanges: files.settings,
     store: GlobalTelemetryStore(files.storage),
     inFront: inFront,
+    edition: () => ChannelSetup.editionOf(channel),
+    attribution: () => channel.attribution?.toJson(),
   )..start();
   // Back in front: a new day, if it is one. For the app's whole run.
   AppLifecycleListener(onResume: telemetry.markActive);
@@ -729,6 +860,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
     title: 'BaoCode',
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme(),
+    scrollBehavior: const BaoScrollBehavior(),
     builder: (context, child) => ValueListenableBuilder<int>(
       valueListenable: CodeFont.uiScale,
       builder: (context, percent, scaled) {

@@ -11,9 +11,13 @@
 //                                                remote server already in
 //                                                build/remote/ (CI builds
 //                                                it once, for both apps)
+//   dart run tool/build_macos.dart --channel      the channel build
+//                                                (BAOCODE_CHANNEL; lib/channel/),
+//                                                its files named -channel
 //
 // They land in build/installers/: BaoCode-<version>-<arch>.dmg and
-// BaoCode-<version>-mac-<arch>.zip, arch arm64 or x64; beside them,
+// BaoCode-<version>-mac-<arch>.zip, arch arm64 or x64 (the channel
+// build's ending in -channel: BaoCode-<version>-<arch>-channel.dmg…); beside them,
 // remote/<VERSION>/, the remote server's gzipped builds, which the app
 // downloads instead of carrying them (tool/build_remote_server.dart), to
 // upload with the release.
@@ -92,6 +96,8 @@ Future<void> main(List<String> arguments) async {
     );
   }
   final skipBuild = arguments.contains('--skip-build');
+  final channel = arguments.contains('--channel');
+  final edition = channel ? '-channel' : '';
   final remoteBuilt = skipBuild || arguments.contains('--remote-built');
 
   // The script lives in tool/, so the repository is one level above it.
@@ -102,8 +108,13 @@ Future<void> main(List<String> arguments) async {
   final version = _readVersion(File('${root.path}/pubspec.yaml'));
 
   if (!skipBuild) {
-    _step('Building the Release app');
-    await _run('flutter', ['build', 'macos', '--release'], root.path);
+    _step('Building the Release app${channel ? ' (the channel build)' : ''}');
+    await _run('flutter', [
+      'build',
+      'macos',
+      '--release',
+      if (channel) '--dart-define=BAOCODE_CHANNEL=true',
+    ], root.path);
   } else {
     _step('Using the app already built');
   }
@@ -174,7 +185,7 @@ Future<void> main(List<String> arguments) async {
 
     _step('Making the $arch disk image');
     final dmg = File(
-      '${installers.path}/BaoCode-${version.marketing}-$arch.dmg',
+      '${installers.path}/BaoCode-${version.marketing}-$arch$edition.dmg',
     );
     // A window with the app, an arrow and an Applications shortcut to drag
     // it onto, on the background tool/dmg_background.swift draws (the
@@ -227,7 +238,7 @@ Future<void> main(List<String> arguments) async {
     // permissions and extended attributes, which a framework's signature
     // depends on).
     final zip = File(
-      '${installers.path}/BaoCode-${version.marketing}-mac-$arch.zip',
+      '${installers.path}/BaoCode-${version.marketing}-mac-$arch$edition.zip',
     );
     if (zip.existsSync()) zip.deleteSync();
     await _run('ditto', [
@@ -267,9 +278,13 @@ Future<void> main(List<String> arguments) async {
     ..writeln('To publish it as an update, sign the zips into the manifest:')
     ..writeln('  dart run tool/release_manifest.dart \\')
     ..writeln(
-      '    --macos-arm64 $base-mac-arm64.zip --dmg-arm64 $base-arm64.dmg \\',
+      '    --macos-arm64$edition $base-mac-arm64$edition.zip '
+      '--dmg-arm64$edition $base-arm64$edition.dmg \\',
     )
-    ..writeln('    --macos-x64 $base-mac-x64.zip --dmg-x64 $base-x64.dmg');
+    ..writeln(
+      '    --macos-x64$edition $base-mac-x64$edition.zip '
+      '--dmg-x64$edition $base-x64$edition.dmg',
+    );
 }
 
 /// Signing with a Developer ID, and notarising, as the environment says

@@ -559,6 +559,9 @@ class MainFlutterWindow: BaoWindow {
     // lib/notifications/).
     attention = Attention(messenger: messenger, window: self)
 
+    // The channel build's login window (see lib/channel/account/).
+    loginWindow = LoginWindowChannel(messenger: messenger)
+
     // Paths the system asks the app to open (see AppDelegate.swift).
     OpenRequests.shared.attach(to: messenger)
 
@@ -623,6 +626,7 @@ class MainFlutterWindow: BaoWindow {
   private var fileMenu: FileMenu?
 
   private var attention: Attention?
+  private var loginWindow: LoginWindowChannel?
 
   /// Kept out of sight while the nib shows it at launch, until the app
   /// has finished launching (see awakeFromNib).

@@ -122,9 +122,10 @@ void main() {
         {'id': 'painter', 'kind': 'image'},
         {'id': 'dall-e-3', 'kind': 'chat'},
       ]);
+      // By name.
       expect(read.enabledModels.map((model) => model.id), [
-        'gpt-5.4',
         'dall-e-3',
+        'gpt-5.4',
       ]);
       expect(read.imageModels.map((model) => model.id), [
         'gpt-image-2',

@@ -17,12 +17,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
-  test('the core: built-in unless the CLI is picked', () {
+  test('the core: as picked; unset, the CLI where Claude Code is '
+      'installed, else built-in', () {
     expect(ClaudeCore.parse(null), ClaudeCore.builtin);
     expect(ClaudeCore.parse('builtin'), ClaudeCore.builtin);
     expect(ClaudeCore.parse('cli'), ClaudeCore.cli);
     expect(ClaudeCore.parse('nonsense'), ClaudeCore.builtin);
     expect(ClaudeCore.parse(true), ClaudeCore.builtin);
+
+    ClaudeCore.cliInstalled = () => true;
+    addTearDown(() => ClaudeCore.cliInstalled = () => false);
+    expect(ClaudeCore.parse(null), ClaudeCore.cli);
+    expect(ClaudeCore.parse('nonsense'), ClaudeCore.cli);
+    expect(ClaudeCore.parse('builtin'), ClaudeCore.builtin);
+    expect(ClaudeCore.parse('cli'), ClaudeCore.cli);
   });
 
   group('what runs a session here', () {
@@ -74,28 +82,32 @@ void main() {
       return transport;
     }
 
-    test('the built-in core, with a key', () async {
-      environment(key: 'sk-user');
-      expect(await start(), isA<DartCoreTransport>());
-      expect(args.existsSync(), isFalse);
-    });
-
-    test('the built-in core, with a provider\'s key', () async {
+    test('the built-in core, on a provider\'s model', () async {
       environment();
+      ClaudeCore.current = () => ClaudeCore.builtin;
       expect(
         await start(env: {'ANTHROPIC_AUTH_TOKEN': 'token'}),
         isA<DartCoreTransport>(),
       );
+      expect(args.existsSync(), isFalse);
     });
 
-    test(
-      'no key: still the built-in core (it says how to set one up)',
-      () async {
-        environment();
-        expect(await start(), isA<DartCoreTransport>());
-        expect(args.existsSync(), isFalse);
-      },
-    );
+    test('the built-in core on none: not started on the machine\'s own '
+        'setup, key or not; told where to add one', () async {
+      environment(key: 'sk-user');
+      ClaudeCore.current = () => ClaudeCore.builtin;
+      await expectLater(
+        startClaude(ClaudeLaunch(cwd: cwd)),
+        throwsA(
+          isA<ClaudeUnavailable>().having(
+            (error) => error.message,
+            'message',
+            allOf(contains('Settings → Models'), contains('CLI')),
+          ),
+        ),
+      );
+      expect(args.existsSync(), isFalse);
+    });
 
     test('the CLI picked: the CLI, key or not', () async {
       environment(key: 'sk-user');

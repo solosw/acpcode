@@ -120,6 +120,16 @@ abstract final class ClaudeSdkTools {
     if (_tools.remove(name) != null) _changed();
   }
 
+  /// What each feature tells the agent of its tools, by feature: the
+  /// server's instructions, in the agent's system prompt.
+  static final Map<String, String> _instructions = {};
+
+  /// Has the server tell the agent [text] for [feature]; null takes it
+  /// back.
+  static void instruct(String feature, String? text) => text == null
+      ? _instructions.remove(feature)
+      : _instructions[feature] = text;
+
   /// The tool an agent calls [name] (`mcp__baocode__<name>`), if one of
   /// this server's.
   static ClaudeSdkTool? called(String name) {
@@ -155,6 +165,8 @@ abstract final class ClaudeSdkTools {
           'protocolVersion': params['protocolVersion'] ?? '2024-11-05',
           'capabilities': {'tools': {'listChanged': true}},
           'serverInfo': {'name': server, 'version': '1.0.0'},
+          if (_instructions.isNotEmpty)
+            'instructions': _instructions.values.join('\n\n'),
         });
       case 'tools/list':
         return result({

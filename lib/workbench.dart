@@ -14,6 +14,9 @@ import 'browser/browser_bridge.dart';
 import 'browser/browser_tools.dart';
 import 'browser/browser_welcome.dart';
 import 'images/image_tools.dart';
+import 'channel/channel_setup.dart';
+import 'channel/channel_gate.dart';
+import 'channel/channel_setup_welcome.dart';
 import 'chat/chat_column.dart';
 import 'chat/chat_keys.dart';
 import 'chat/chat_models.dart' show FileChange, FileChangeKind;
@@ -52,6 +55,7 @@ import 'ide/ide_color_theme_picker.dart';
 import 'ide/ide_commands.dart';
 import 'ide/ide_dialog.dart';
 import 'ide/ide_menu.dart';
+import 'models/model_welcome.dart';
 import 'models/upstream_import.dart';
 import 'ide/ide_modern_ui.dart';
 import 'ide/ide_notifications.dart';
@@ -88,6 +92,7 @@ import 'search/search_palette.dart';
 import 'settings/app_settings.dart';
 import 'settings/data_dir_startup.dart';
 import 'settings/jsonc_file.dart';
+import 'settings/pages/diagnostics_dialog.dart';
 import 'settings/pages/models_page.dart';
 import 'settings/pages/upstream_import_dialog.dart';
 import 'settings/settings_dialog.dart';
@@ -122,6 +127,7 @@ import 'workspace/chat_drag.dart';
 import 'workspace/chat_grid_view.dart';
 import 'workspace/chat_terminal.dart';
 import 'workspace/editor_launcher.dart' show openExternal;
+import 'workspace/ssh_server_edit.dart';
 import 'workspace/new_chat_folder_bar.dart';
 import 'workspace/open_in_editor_button.dart';
 import 'workspace/pin_window_button.dart';
@@ -496,6 +502,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     WindowControls.handleWindowEvents(_viewId);
     // What signing in to a host asks, asked here.
     SshHosts.instance.passwords.ask = _askSshPassword;
+    // The servers saved with the host picker's form.
+    SshHosts.instance.savedServers = () => _workspace.sshServers;
+    unawaited(_loadSshConfigHosts());
     FileDrops.listen(_viewId);
     if (_windows?.started ?? false) {
       FileDrops.setUnhandledDrop(_viewId, _dropped);
@@ -526,7 +535,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         _notifications,
         () => context.l10n,
       );
+    } else if (ChannelGate.current case final gate? when !gate.ready) {
+      // Opened before the main window's was done: here as well.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _setUpChannel());
     }
+    // Signed out (Settings → Account, or by the site): the welcome again.
+    ChannelGate.current?.addListener(_channelGateChanged);
     widget.settings?.files?.changes.addListener(_settingsFilesChanged);
     _settingsFilesChanged();
     _sidePanelShown = _sidePanel.shown;
@@ -640,9 +654,71 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Future<void> _afterFirstFrame() async {
     final settings = widget.settings;
     if (settings?.files == null || !mounted) return;
+    await _setUpChannel();
+    if (!mounted) return;
     await offerOldDataDirRemoval(context);
     if (!mounted) return;
     await _startTips();
+  }
+
+  bool _channelWelcomeShown = false;
+
+  void _channelGateChanged() {
+    final gate = ChannelGate.current;
+    if (gate == null || gate.ready || _channelWelcomeShown) return;
+    // Its account read meanwhile: signed in, likely.
+    if (gate.stage == ChannelStage.finding) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _setUpChannel());
+  }
+
+  /// The channel build's way in (lib/channel/): its welcome, which stays
+  /// till it is set up and the user signed in to the channel's account
+  /// site, before anything else; in each window open meanwhile, done in
+  /// any; and again once signed out.
+  Future<void> _setUpChannel() async {
+    final gate = ChannelGate.current;
+    if (gate == null || _channelWelcomeShown || !mounted) return;
+    _channelWelcomeShown = true;
+    try {
+      if (gate.stage != ChannelStage.setup && gate.channel == null) {
+        final language = Localizations.localeOf(context).languageCode;
+        await gate.find(language == 'zh' ? 'zh' : 'en');
+      }
+      if (gate.ready || !mounted) return;
+      final diagnostics = widget.settings?.diagnostics;
+      await showChannelSetupWelcome(
+        context,
+        gate: gate,
+        trouble: diagnostics == null
+            ? null
+            : (context) =>
+                  unawaited(showDiagnosticsDialog(context, diagnostics)),
+      );
+    } finally {
+      _channelWelcomeShown = false;
+    }
+  }
+
+  /// The setup page's `baocode://activate` link, opened: what it says,
+  /// unless it was set up already; one not this install's, said so.
+  Future<void> _acceptChannelLink(String link) async {
+    final setup = ChannelSetup.current;
+    if (setup == null || setup.done) return;
+    _windows?.showChat();
+    final l10n = context.l10n;
+    final message = switch (setup.acceptLink(link)) {
+      ChannelLinkResult.accepted => null,
+      ChannelLinkResult.invalid => l10n.channelSetupLinkInvalid,
+      ChannelLinkResult.otherInstall => l10n.channelSetupLinkOther,
+    };
+    if (message == null) return;
+    await showIdeDialog(
+      context,
+      message: message,
+      buttons: [l10n.commonOk],
+      cancel: null,
+      type: IdeDialogType.error,
+    );
   }
 
   Future<SshPasswordAnswer?> _askSshPassword(
@@ -654,6 +730,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    ChannelGate.current?.removeListener(_channelGateChanged);
     for (final edits in _ideAgentEdits.values) {
       edits.dispose();
     }
@@ -794,6 +871,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         starOnGitHubCommandId: _starOnGitHub,
         if (BrowserBridge.instance.supported)
           browserWelcomeCommandId: _showBrowserWelcome,
+        modelWelcomeCommandId: _showModelWelcome,
         ChatCommandIds.search: () => unawaited(_openPalette()),
         ..._sidePanelCommands(),
         ..._terminalCommands(),
@@ -818,6 +896,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         browserWelcomeCommandId: _showBrowserWelcome,
       if (StashController.current != null)
         stashWelcomeCommandId: _showStashWelcome,
+      modelWelcomeCommandId: _showModelWelcome,
       // As the sidebar's New Agent button: a folder first, without one.
       if (_workspace.sidebarProjects.isNotEmpty)
         ChatCommandIds.newChat: _newAgent
@@ -1202,6 +1281,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ?action(starOnGitHubCommandId, Codicons.star),
       ?action(browserWelcomeCommandId, Codicons.globe),
       ?action(stashWelcomeCommandId, Codicons.note),
+      ?action(modelWelcomeCommandId, Codicons.sparkle),
       ?action(
         'workbench.action.toggleSidebarVisibility',
         Codicons.layoutSidebarLeft,
@@ -1319,6 +1399,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         label: commandCatalog[stashWelcomeCommandId]!.title,
         run: _showStashWelcome,
       ),
+    IdeCommand(
+      id: modelWelcomeCommandId,
+      category: 'Help',
+      label: commandCatalog[modelWelcomeCommandId]!.title,
+      run: _showModelWelcome,
+    ),
   ];
 
   // --- Feature tips ----------------------------------------------------------
@@ -1429,6 +1515,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (!mounted || stash == null) return;
     stash.welcomed = true;
     unawaited(showStashWelcome(context, controller: stash));
+  }
+
+  /// Set Up a Model…, the command: what an upstream is, and adding one.
+  void _showModelWelcome() {
+    if (!mounted) return;
+    unawaited(
+      showModelWelcome(
+        context,
+        openSettings: (section) => unawaited(openSettings(section)),
+      ),
+    );
   }
 
   // --- Asking for a star -----------------------------------------------------
@@ -1901,7 +1998,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Future<void> _openPaths(List<String> paths) async {
     if (paths.firstOrNull == CodeArgs.importRequestMarker) {
       for (final link in paths.skip(1)) {
-        await _importUpstream(link);
+        if (ChannelSetup.isLink(link)) {
+          await _acceptChannelLink(link);
+        } else {
+          await _importUpstream(link);
+        }
       }
       return;
     }
@@ -2240,12 +2341,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
               if (current == null)
                 const SizedBox.shrink()
               else
-                _buildChat(
-                  showToggle: false,
-                  embedded: true,
-                  pane: current,
-                  openEditor: openEditor,
-                ),
+                for (final thread in _keepIdeChats(folder, current))
+                  _keptIdeChat(
+                    thread,
+                    shown: identical(thread, current),
+                    openEditor: openEditor,
+                  ),
               // Over the chat, which keeps what it was at underneath.
               ValueListenableBuilder(
                 valueListenable: _ideHistory,
@@ -2278,10 +2379,61 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     );
   }
 
+  /// The IDE chat tabs shown last in each folder, the one shown first,
+  /// kept built ([_keptIdeChat]): a long conversation takes a while to
+  /// build, which a tab shown again went through each time.
+  final Map<String, List<AgentThread>> _ideChatsKept = {};
+
+  /// Each kept chat as last built while shown.
+  final Map<AgentThread, Widget> _ideChatWidgets = {};
+
+  static const _ideChatsKeptCount = 5;
+
+  /// [folder]'s kept chats, [current] first, those whose tabs are open.
+  List<AgentThread> _keepIdeChats(String folder, AgentThread current) {
+    final open = _workspace.ideChats(folder);
+    final kept = _ideChatsKept[folder] = [
+      current,
+      for (final thread in _ideChatsKept[folder] ?? const <AgentThread>[])
+        if (!identical(thread, current) && open.contains(thread)) thread,
+    ].take(_ideChatsKeptCount).toList();
+    final all = {for (final chats in _ideChatsKept.values) ...chats};
+    _ideChatWidgets.removeWhere((thread, _) => !all.contains(thread));
+    return kept;
+  }
+
+  /// [thread]'s chat in the IDE, kept built while another tab shows: as it
+  /// was last built then, rebuilt as the window is only while shown.
+  Widget _keptIdeChat(
+    AgentThread thread, {
+    required bool shown,
+    required OpenEditor? Function() openEditor,
+  }) {
+    Widget build() => _buildChat(
+      showToggle: false,
+      embedded: true,
+      pane: thread,
+      openEditor: openEditor,
+    );
+    final chat = shown
+        ? _ideChatWidgets[thread] = build()
+        : _ideChatWidgets[thread] ??= build();
+    return Offstage(
+      key: ObjectKey(thread),
+      offstage: !shown,
+      child: TickerMode(
+        enabled: shown,
+        child: ExcludeFocus(excluding: !shown, child: chat),
+      ),
+    );
+  }
+
   /// A site's one-click import of an upstream ([UpstreamImport]): asked
   /// about in this window, brought in front; once added, its page in
   /// Settings → Models.
   Future<void> _importUpstream(String link) async {
+    // The channel build's only upstream is its account's.
+    if (ChannelSetup.channelBuild) return;
     _windows?.showChat();
     final l10n = context.l10n;
     final import = UpstreamImport.parse(link);
@@ -2734,6 +2886,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       onOpenFolderOn: WindowControls.canPickDirectory
           ? (host) => _openRemoteProject(host: host)
           : null,
+      editSshHost: (host) => _sshConfigHosts.contains(host)
+          ? null
+          : () => unawaited(_editSshServer(host: host)),
       onOpenSettings: () => unawaited(openSettings()),
       updates: widget.settings?.updates?.service,
       onUpdate: _restartToUpdate,
@@ -3015,12 +3170,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     bool switchTo = false,
   }) {
     final held = _newWindowHeld;
-    final flow = OpenRemoteFlow(
+    late final OpenRemoteFlow flow;
+    flow = OpenRemoteFlow(
       show: showQuickPick,
       l10n: context.l10n,
       added: _workspace.sshHosts,
       labelOf: _workspace.hostLabel,
+      addressOf: (host) => _workspace.sshServers[host]?.address ?? host,
       iconOf: _hostIcon,
+      onAdd: (address) =>
+          unawaited(_editSshServer(flow: flow, address: address)),
+      onEdit: (host) => unawaited(_editSshServer(flow: flow, host: host)),
+      onForgetHostKey: _forgetHostKey,
       onConnected: (host) {
         if (!mounted) return;
         _workspace.addSshHost(host);
@@ -3042,6 +3203,80 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     } else {
       unawaited(flow.start());
     }
+  }
+
+  /// The hosts of `~/.ssh/config`, as last read: edited there, not with
+  /// the form (see the sidebar's host menu).
+  List<String> _sshConfigHosts = const [];
+
+  Future<List<String>> _loadSshConfigHosts() async {
+    final hosts = await defaultRemoteConfigHosts().catchError(
+      (Object _) => const <String>[],
+    );
+    return _sshConfigHosts = hosts;
+  }
+
+  /// The form of a server: adding one (at [address], when typed), or
+  /// editing [host], from [flow]'s host picker or the sidebar's host menu
+  /// (no [flow]). Saved, it is connected to when asked; from the picker,
+  /// else the picker shows again, as it does when cancelled.
+  Future<void> _editSshServer({
+    OpenRemoteFlow? flow,
+    String? host,
+    String? address,
+  }) async {
+    final config = await _loadSshConfigHosts();
+    if (!mounted) return;
+    final result = await editSshServer(
+      context,
+      _workspace,
+      host: host,
+      address: address,
+      configHosts: config,
+      onWarning: (message) =>
+          _notifications.notify(IdeSeverity.warning, message),
+    );
+    if (!mounted) return;
+    if (result == null) {
+      if (flow != null) unawaited(flow.start());
+      return;
+    }
+    if (flow == null) {
+      // Connected already: the new settings are for the next connection.
+      final ssh = SshHosts.instance[result.host];
+      if (result.connect && ssh.state != SshHostState.connected) {
+        ssh.reconnect().ignore();
+      }
+    } else if (result.connect) {
+      flow.startAt(result.host);
+    } else {
+      unawaited(flow.start());
+    }
+  }
+
+  /// Asks whether to forget the host key known for [host], changed, and
+  /// does: whether it did.
+  Future<bool> _forgetHostKey(String host) async {
+    final l10n = context.l10n;
+    final choice = await showIdeDialog(
+      context,
+      message: l10n.remoteForgetHostKeyTitle(_workspace.hostLabel(host)),
+      detail: l10n.remoteForgetHostKeyDetail,
+      buttons: [l10n.remoteForgetHostKeyButton],
+    );
+    if (choice != 0 || !mounted) return false;
+    try {
+      await SshHosts.instance.forgetHostKey(host);
+    } on Object catch (error) {
+      if (mounted) {
+        _notifications.notify(
+          IdeSeverity.error,
+          sshErrorText(error, l10n).$1 ?? '$error',
+        );
+      }
+      return false;
+    }
+    return true;
   }
 
   /// A host's icon, as the workspace kept it (the host switcher's).

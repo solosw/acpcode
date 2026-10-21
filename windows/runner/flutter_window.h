@@ -12,6 +12,7 @@
 #include "app_windows.h"
 #include "attention.h"
 #include "log_folder.h"
+#include "login_window.h"
 #include "open_requests.h"
 #include "stash_channel.h"
 #include "view_window.h"
@@ -63,6 +64,9 @@ class FlutterWindow : public ViewWindow {
 
   // The stash's shortcut, from any app (see stash_channel.h).
   std::unique_ptr<StashChannel> stash_;
+
+  // The channel build's login window (see login_window.h).
+  std::unique_ptr<LoginWindow> login_window_;
 
   // Where Flutter says the logs go (see log_folder.h).
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> logs_;

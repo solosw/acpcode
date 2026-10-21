@@ -21,6 +21,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path/path.dart' as p;
 import 'package:super_sliver_list/super_sliver_list.dart';
 
+import '../../base/list_selection.dart';
 import '../../base/smooth_scroll.dart';
 import '../../chat/widgets/code_citation.dart' show MarkdownCodeBlock;
 import '../../chat/widgets/markdown_view.dart';
@@ -472,13 +473,19 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
           onPointerDown: _pointerDown,
           child: SelectionArea(
             focusNode: _focus,
-            child: SuperListView.builder(
-              listController: _list,
+            child: ListSelection(
               controller: _scroll,
-              // Room after the last block, to bring any to the top.
-              padding: const EdgeInsets.only(top: 24, bottom: 160),
-              itemCount: _source.blocks.length,
-              itemBuilder: _item,
+              child: SuperListView.builder(
+                listController: _list,
+                controller: _scroll,
+                // Room after the last block, to bring any to the top.
+                padding: const EdgeInsets.only(top: 24, bottom: 160),
+                itemCount: _source.blocks.length,
+                itemBuilder: (context, index) => ListSelectionItem(
+                  index: index,
+                  child: _item(context, index),
+                ),
+              ),
             ),
           ),
         ),

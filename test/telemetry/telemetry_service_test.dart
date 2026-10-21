@@ -70,6 +70,31 @@ void main() {
       settings = ValueNotifier(0);
     });
 
+    test('says its edition, and where its user came from once told', () async {
+      Map<String, Object?>? told;
+      final service = TelemetryService(
+        current: AppVersion.parse('1.2.0+12'),
+        os: 'macos',
+        arch: 'arm64',
+        sender: sender,
+        url: Uri.parse('https://example.test/v1/ping'),
+        store: store,
+        now: () => now,
+        newId: () => 'id-1',
+        edition: () => 'channel',
+        attribution: () => told,
+      );
+      service.markActive();
+      await pumpEventQueue();
+      expect(sender.sent.last['edition'], 'channel');
+      expect(sender.sent.last.containsKey('attribution'), isFalse);
+      told = {'source': 'channel', 'value': 'youtube'};
+      now = now.add(const Duration(days: 1));
+      service.markActive();
+      await pumpEventQueue();
+      expect(sender.sent.last['attribution'], told);
+    });
+
     test('reports a day once, with as little as it needs', () async {
       final service = serviceOf();
       service.markActive();

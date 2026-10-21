@@ -4,9 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import '../channel/channel_setup.dart';
 import '../kernel/kernel_types.dart';
 import '../keybindings/chat_keybindings.dart';
 import '../l10n/l10n.dart';
+import '../models/model_welcome.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
@@ -21,6 +23,7 @@ import 'chat_keys.dart';
 import 'chat_models.dart';
 import 'chat_session.dart';
 import 'open_editor.dart';
+import 'resume_after_reset.dart';
 import 'chat_width.dart';
 import 'composer/composer.dart';
 import 'composer/composer_embeds.dart';
@@ -29,12 +32,14 @@ import 'composer/file_mentions.dart';
 import 'panels/activity_strip.dart';
 import 'panels/health_banner.dart';
 import 'panels/interaction_panel.dart';
+import 'panels/limit_reset_panel.dart';
 import 'panels/context_usage_panel.dart';
 import 'panels/goal_panel.dart';
 import 'panels/queue_panel.dart';
 import 'panels/todo_panel.dart';
 import 'side_panel/file_link.dart';
 import 'side_panel/file_open.dart';
+import 'stop_confirmation.dart';
 import 'widgets/agent_step.dart';
 import 'widgets/chat_minimap.dart';
 import 'widgets/code_citation.dart';
@@ -309,6 +314,7 @@ class _ChatScreenState extends State<ChatScreen>
     _session.addListener(_checkStarting);
     _planShown = _session.plan?.seq;
     _session.addListener(_followPlan);
+    _session.addListener(_welcomeToModels);
     _restoreAgents();
     ChatWidth.current.addListener(_widthChanged);
     ChatMinimap.enabled.addListener(_widthChanged);
@@ -329,6 +335,7 @@ class _ChatScreenState extends State<ChatScreen>
   void dispose() {
     _session.removeListener(_checkStarting);
     _session.removeListener(_followPlan);
+    _session.removeListener(_welcomeToModels);
     ChatWidth.current.removeListener(_widthChanged);
     ChatMinimap.enabled.removeListener(_widthChanged);
     _existence?.dispose();
@@ -361,6 +368,33 @@ class _ChatScreenState extends State<ChatScreen>
       _planShown = plan.seq;
       _openFile(FileOpenRequest(plan.path, plan: true));
     }
+  }
+
+  /// Whether the welcome to models waits for the channel build's setup.
+  bool _awaitingSetup = false;
+
+  /// No model to run on, the first time for the app: what setting one up
+  /// is, by itself; after that, from the banner and the model's pill. The
+  /// channel build's setup first (lib/channel/).
+  void _welcomeToModels() {
+    // The channel build's model is its account's: no setting one up.
+    if (ChannelSetup.channelBuild) return;
+    if (!_session.health.noModel || ModelWelcome.welcomed) return;
+    if (ChannelSetup.current case final setup? when !setup.done) {
+      if (_awaitingSetup) return;
+      _awaitingSetup = true;
+      // Once its welcome closed, with Get Started.
+      unawaited(
+        setup.started.then((_) {
+          if (mounted) _welcomeToModels();
+        }),
+      );
+      return;
+    }
+    ModelWelcome.welcomed = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(showModelWelcome(context));
+    });
   }
 
   // --- Keys ------------------------------------------------------------------
@@ -401,7 +435,8 @@ class _ChatScreenState extends State<ChatScreen>
     ChatCommandIds.focusInput: _focusInput,
     ChatCommandIds.focusList: _focusList,
     ChatCommandIds.find: _findIn,
-    if (_session.isStreaming) ChatCommandIds.cancel: _session.stop,
+    if (_session.isStreaming)
+      ChatCommandIds.cancel: () => stopTurn(context, _session),
     if (_session.pendingInteraction is ApprovalRequest) ...{
       ChatCommandIds.acceptTool: () =>
           _answer(const ApprovalAnswer(ApprovalDecision.allowOnce)),
@@ -760,6 +795,8 @@ class _ChatScreenState extends State<ChatScreen>
                             health: _session.health,
                             kernelName: _session.kernel.label,
                             onRetry: _session.restart,
+                            onSetUpModel: () =>
+                                unawaited(showModelWelcome(context)),
                           )
                         : null,
                   ),
@@ -835,6 +872,16 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  /// The usage limit the agent stopped at, while it holds and the agent is
+  /// to go on once it resets: when. Nothing with the setting off.
+  Widget? _buildLimitPanel() {
+    final (at, id) = (_session.usageLimitResetsAt, _session.sessionId);
+    if (at == null || id == null) return null;
+    final resumes = ResumeAfterReset.current;
+    if (!resumes.enabled || resumes[id] == null) return null;
+    return LimitResetPanel(key: ValueKey(('limit', id)), resetsAt: at);
+  }
+
   /// Under the session's own conversation: its panels and the composer.
   Widget _buildDock() {
     return Column(
@@ -842,6 +889,11 @@ class _ChatScreenState extends State<ChatScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Before all: the agent stopped, till the usage limit resets.
+        ListenableBuilder(
+          listenable: ResumeAfterReset.current,
+          builder: (context, _) => _PanelSlot(child: _buildLimitPanel()),
+        ),
         // First: what all the rest works toward.
         _PanelSlot(
           child: switch (_session.goal) {

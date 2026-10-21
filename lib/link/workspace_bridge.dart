@@ -296,6 +296,19 @@ class WorkspaceBridge {
         }
         session.answer(answer);
         return null;
+      case LinkMethods.startPlan:
+        final session = _thread(params['session']).session;
+        if (session.awaitingPlan == null) {
+          throw const LinkRemoteException(
+            LinkErrors.notFound,
+            'No plan awaits',
+          );
+        }
+        if (!session.canStartPlan) {
+          throw const LinkRemoteException('busy', 'The agent is at work');
+        }
+        session.startPlan(workspace.l10n().planStartMessage);
+        return null;
       case LinkMethods.choose:
         _choose(
           _thread(params['session']).session,
@@ -650,7 +663,7 @@ class WorkspaceBridge {
     final model = session.models?.selected.id;
     if (model == null) return;
     for (final setting in session.modelSettings(model)) {
-      if (setting.kind.name != kind) continue;
+      if (setting.kind?.name != kind) continue;
       final option = setting.options.where((o) => o.id == id).firstOrNull;
       if (option != null) setting.onSelected(option);
     }
@@ -877,11 +890,12 @@ class _Follow {
       ?of('permission', session.permissions),
       if (model != null)
         for (final setting in session.modelSettings(model.selected.id))
-          LinkChoice(
-            kind: setting.kind.name,
-            selected: setting.selected?.id,
-            options: [for (final option in setting.options) _option(option)],
-          ),
+          if (setting.kind case final kind?)
+            LinkChoice(
+              kind: kind.name,
+              selected: setting.selected?.id,
+              options: [for (final option in setting.options) _option(option)],
+            ),
     ];
   }
 

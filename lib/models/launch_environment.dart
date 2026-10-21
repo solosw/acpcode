@@ -11,6 +11,10 @@ typedef ProxyEndpoint = ({String baseUrl, String token});
 ///
 /// Both auth variables are always set, the one unused empty: a key of the
 /// user's own (for Anthropic) must not go to another upstream.
+///
+/// Subagents on another upstream's model ([ModelProvider.subagentUpstream])
+/// take the session through the proxy whatever [provider] speaks, that
+/// model named as its [modelRef]: the proxy sends it there.
 Map<String, String> launchEnvironment({
   required ModelProvider provider,
   required String model,
@@ -21,7 +25,8 @@ Map<String, String> launchEnvironment({
   final String baseUrl;
   final String token;
   var apiKey = '';
-  if (provider.protocol.proxied) {
+  final proxied = provider.throughProxy;
+  if (proxied) {
     if (proxy == null) {
       throw StateError('${provider.name} needs the model proxy');
     }
@@ -37,6 +42,11 @@ Map<String, String> launchEnvironment({
     }
   }
   final roles = provider.roles;
+  // This upstream's own model by its id; another's as it is picked.
+  String? role(String? value) => switch (parseModelRef(value)) {
+    (provider: final id, :final model) when id == provider.id => model,
+    _ => value,
+  };
   return {
     // Whatever the user's own setup says: this session is this upstream's.
     for (final name in ClaudeModelVariables.cleared) name: '',
@@ -48,18 +58,19 @@ Map<String, String> launchEnvironment({
     ClaudeModelVariables.sonnet: roles.sonnet ?? model,
     // The background work: the model picked, unless one is set for it.
     ClaudeModelVariables.haiku: roles.haiku ?? model,
-    ClaudeModelVariables.subagent: ?roles.subagent,
+    // Empty for none: not one the user's own settings name.
+    ClaudeModelVariables.subagent: role(roles.subagent) ?? '',
     // Over the model a subagent's definition names, or the agent asks for
     // ("sonnet", "haiku": the model picked, here): else the one set for
     // subagents is used only where neither says.
-    if (roles.subagent != null) ClaudeModelVariables.subagentForce: '1',
+    ClaudeModelVariables.subagentForce: roles.subagent != null ? '1' : '',
     // Unknown Anthropic-compatible models can still accept output_config.effort.
     if (!provider.protocol.proxied)
       ClaudeModelVariables.alwaysEnableEffort: '1',
     if (provider.disableNonessentialTraffic)
       ClaudeModelVariables.nonessentialTraffic: '1',
     // The proxy is on this machine: never through the user's HTTP proxy.
-    if (provider.protocol.proxied)
+    if (proxied)
       'NO_PROXY': [
         if (noProxy case final list? when list.trim().isNotEmpty) list.trim(),
         '127.0.0.1',
@@ -70,7 +81,7 @@ Map<String, String> launchEnvironment({
     // them itself): `Name: Value` a line, only the names that may be set.
     // A `{{…}}` variable is not filled here (the CLI cannot): it stands
     // as written.
-    if (!provider.protocol.proxied)
+    if (!proxied)
       if (customHeadersEnvironment(provider.headers) case final custom
           when custom.isNotEmpty)
         ClaudeModelVariables.customHeadersVariable: custom,

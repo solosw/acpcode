@@ -14,7 +14,8 @@ class SkillTool extends Tool {
   String get name => 'Skill';
 
   @override
-  String get description => 'Execute a skill within the main conversation.';
+  String get description =>
+      'Loads a skill\'s instructions into this conversation.';
 
   /// The skills and commands the model may use.
   static List<PromptCommand> available(AgentSession session) => [
@@ -34,27 +35,16 @@ class SkillTool extends Tool {
         '- ${command.name}: ${command.description}'
             '${command.whenToUse == null ? '' : ' - ${command.whenToUse}'}',
     ].join('\n');
-    return '''Execute a skill within the main conversation
+    return '''Loads a skill into this conversation: its instructions come in, and you follow them here.
 
-When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
+A skill brings know-how or a way of working for some kind of task. Before taking on a task, see whether one of those below fits it. A "slash command", "/<name>" ("/commit", "/review-pr"), is a skill too, called this way.
 
-When users reference a "slash command" or "/<something>" (e.g., "/commit", "/review-pr"), they are referring to a skill. Use this tool to invoke it.
+- Call it with the skill's name, and args for what the user said after it: `skill: "pdf"`, `skill: "commit", args: "-m 'Fix bug'"`. A plugin's skill can be named with its plugin: `skill: "office:pdf"`.
+- When one fits what the user asks, load it first, before saying or doing anything else about the task.
+- Do not speak of a skill as used without calling this tool.
+- One already loaded is not loaded again: a <command-name> tag in this turn means it is here already, so follow its instructions.
 
-How to invoke:
-- Use this tool with the skill name and optional arguments
-- Examples:
-  - `skill: "pdf"` - invoke the pdf skill
-  - `skill: "commit", args: "-m 'Fix bug'"` - invoke with arguments
-  - `skill: "ms-office-suite:pdf"` - invoke using fully qualified name
-
-Important:
-- Available skills are listed below
-- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task
-- NEVER mention a skill without actually calling this tool
-- Do not invoke a skill that is already running
-- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again
-
-Available skills:
+The skills there are:
 $listing''';
   }
 
@@ -64,12 +54,9 @@ $listing''';
     'properties': {
       'skill': {
         'type': 'string',
-        'description': 'The skill name. E.g., "commit", "review-pr", or "pdf"',
+        'description': 'The skill, by name: "commit", "review-pr", "pdf"',
       },
-      'args': {
-        'type': 'string',
-        'description': 'Optional arguments for the skill',
-      },
+      'args': {'type': 'string', 'description': 'What to pass it, if anything'},
     },
     'required': ['skill'],
     'additionalProperties': false,
@@ -99,7 +86,7 @@ $listing''';
     ToolContext context,
   ) async {
     final name = '${input['skill'] ?? ''}'.trim();
-    if (name.isEmpty) return 'Invalid skill format: $name';
+    if (name.isEmpty) return 'Give the name of a skill.';
     if (find(context.session, name) == null) return 'Unknown skill: $name';
     return null;
   }
@@ -134,7 +121,7 @@ $listing''';
         ? 'Base directory for this skill: ${command.baseDir}\n\n$body'
         : body;
     return ToolOutput(
-      'Launching skill: ${command.name}',
+      'Loaded the skill ${command.name}.',
       result: {
         'success': true,
         'commandName': command.name,

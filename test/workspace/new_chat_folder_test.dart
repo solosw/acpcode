@@ -249,7 +249,7 @@ void main() {
           .widget<IdeQuickInput>(find.byType(IdeQuickInput))
           .pick
           ?.placeholder,
-      'Select a host of ~/.ssh/config, or type user@host[:port]',
+      'Select a host, add one, or type user@host[:port]',
     );
   }, variant: _mac);
 }

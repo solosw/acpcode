@@ -21,6 +21,11 @@ class ClaudeDownloadFailed extends ClaudeUnavailable {
   const ClaudeDownloadFailed(super.message, {super.detail});
 }
 
+/// BaoCode's own core has no model to run on: no upstream turned on.
+class ClaudeNoModel extends ClaudeUnavailable {
+  const ClaudeNoModel(super.message);
+}
+
 /// The project folder Claude Code was to work in is not there (moved,
 /// deleted, an unplugged drive).
 class ClaudeFolderGone extends ClaudeUnavailable {

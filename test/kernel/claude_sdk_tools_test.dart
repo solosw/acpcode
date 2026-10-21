@@ -31,6 +31,23 @@ void main() {
     expect(tools.single, containsPair('_meta', {'anthropic/alwaysLoad': true}));
   });
 
+  test('says its features\' instructions as it is initialized', () async {
+    Future<Map> init() async =>
+        (await ClaudeSdkTools.handle({
+              'id': 0,
+              'method': 'initialize',
+            }, call))['result']
+            as Map;
+
+    expect((await init()).containsKey('instructions'), isFalse);
+    ClaudeSdkTools.instruct('a', 'Do A.');
+    ClaudeSdkTools.instruct('b', 'Do B.');
+    expect((await init())['instructions'], 'Do A.\n\nDo B.');
+    ClaudeSdkTools.instruct('a', null);
+    ClaudeSdkTools.instruct('b', null);
+    expect((await init()).containsKey('instructions'), isFalse);
+  });
+
   test('lists and calls its tools, failures as errors', () async {
     ClaudeSdkTools.register(
       ClaudeSdkTool(

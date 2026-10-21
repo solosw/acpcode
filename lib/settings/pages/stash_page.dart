@@ -73,7 +73,7 @@ class _StashSettingsPageState extends State<StashSettingsPage> {
                 children: [
                   if (root != null)
                     IdeButton(
-                      label: l10n.stashReveal,
+                      label: l10n.revealInFileManager,
                       secondary: true,
                       onPressed: () => unawaited(openExternal(root)),
                     ),

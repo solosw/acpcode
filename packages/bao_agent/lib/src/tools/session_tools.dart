@@ -13,52 +13,15 @@ class TodoWriteTool extends Tool {
   String get name => 'TodoWrite';
 
   @override
-  String get description => '''Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
-It also helps the user understand the progress of the task and progress of their requests.
+  String get description => '''Keeps your to-do list for this session, which the user sees as a checklist beside the conversation. Each call replaces the whole list: send every item each time, with its status (pending, in_progress or completed).
 
-## When to Use This Tool
-Use this tool proactively in these scenarios:
+Keep one when the work takes several steps (three or more), when the user hands you a list of things to do, or when it helps them see where you are. Skip it for a single quick change, or for a question you can simply answer.
 
-1. Complex multi-step tasks - When a task requires 3 or more distinct steps or actions
-2. Non-trivial and complex tasks - Tasks that require careful planning or multiple operations
-3. User explicitly requests todo list - When the user directly asks you to use the todo list
-4. User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)
-5. After receiving new instructions - Immediately capture user requirements as todos
-6. When you start working on a task - Mark it as in_progress BEFORE beginning work. Ideally you should only have one todo as in_progress at a time
-7. After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation
-
-## When NOT to Use This Tool
-
-Skip using this tool when:
-1. There is only a single, straightforward task
-2. The task is trivial and tracking it provides no organizational benefit
-3. The task can be completed in less than 3 trivial steps
-4. The task is purely conversational or informational
-
-## Task States and Management
-
-1. **Task States**: Use these states to track progress:
-   - pending: Task not yet started
-   - in_progress: Currently working on (limit to ONE task at a time)
-   - completed: Task finished successfully
-
-   **IMPORTANT**: Task descriptions must have two forms:
-   - content: The imperative form describing what needs to be done (e.g., "Run tests", "Build the project")
-   - activeForm: The present continuous form shown during execution (e.g., "Running tests", "Building the project")
-
-2. **Task Management**:
-   - Update task status in real-time as you work
-   - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
-   - Exactly ONE task must be in_progress at any time (not less, not more)
-   - Complete current tasks before starting new ones
-   - Remove tasks that are no longer relevant from the list entirely
-
-3. **Task Completion Requirements**:
-   - ONLY mark a task as completed when you have FULLY accomplished it
-   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
-   - Never mark a task as completed if tests are failing, implementation is partial, or you encountered unresolved errors
-
-When in doubt, use this tool. Being proactive with task management demonstrates attentiveness and ensures you complete all requirements successfully.''';
+As you go:
+- Write the steps down when you start; add the ones you discover, and drop those that stop mattering.
+- Keep exactly one item in_progress: mark it before you begin, and complete it the moment it is done, not later together with others.
+- Complete an item only when it is really done. With tests failing, an error unresolved or the work half finished it stays in_progress, and a new item says what is in the way.
+- Word each item twice: content says what to do ("Run the tests"), activeForm what is going on while you do it ("Running the tests").''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -66,7 +29,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
     'properties': {
       'todos': {
         'type': 'array',
-        'description': 'The updated todo list',
+        'description': 'The whole list, as it is now',
         'items': {
           'type': 'object',
           'properties': {
@@ -117,9 +80,8 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
         : todos;
     context.session.todos[key] = kept;
     return ToolOutput(
-      'Todos have been modified successfully. Ensure that you continue to use '
-      'the todo list to track your progress. Please proceed with the current '
-      'tasks if applicable',
+      'The to-do list is updated. Keep it current as you work, and go on with '
+      'the item in progress.',
       result: {'oldTodos': old, 'newTodos': todos},
     );
   }
@@ -133,18 +95,12 @@ class AskUserQuestionTool extends Tool {
   String get name => 'AskUserQuestion';
 
   @override
-  String get description => '''Use this tool when you need to ask the user questions during execution. This allows you to:
-1. Gather user preferences or requirements
-2. Clarify ambiguous instructions
-3. Get decisions on implementation choices as you work
-4. Offer choices to the user about what direction to take.
+  String get description => '''Puts one to four multiple-choice questions to the user and waits for the answers: for a preference, a requirement left open, or a choice between ways of doing the work that is theirs to make. Do not ask what you can find out yourself, from the code or by running something.
 
-Usage notes:
-- Users will always be able to select "Other" to provide custom text input
-- Use multiSelect: true to allow multiple answers to be selected for a question
-- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
-
-Plan mode note: In plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask "Is my plan ready?" or "Should I proceed?" - use ExitPlanMode for plan approval.''';
+- Give each question two to four options: a short label, and a line on what picking it means. The user can always answer in their own words instead, so leave out an "Other" option.
+- With multiSelect, more than one option may be picked.
+- If you would pick one of them, put it first and end its label with "(Recommended)".
+- In plan mode, ask while the plan is still open. To have the plan approved, call ExitPlanMode; never ask whether it is ready.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -154,38 +110,39 @@ Plan mode note: In plan mode, use this tool to clarify requirements or choose be
         'type': 'array',
         'minItems': 1,
         'maxItems': 4,
-        'description': 'Questions to ask the user (1-4 questions)',
+        'description': 'One to four questions',
         'items': {
           'type': 'object',
           'properties': {
             'question': {
               'type': 'string',
-              'description': 'The complete question to ask the user. Should be clear, specific, and end with a question mark.',
+              'description':
+                  'The question in full, ending with a question mark',
             },
             'header': {
               'type': 'string',
-              'description': 'Very short label displayed as a chip/tag (max 12 chars). Examples: "Auth method", "Library", "Approach".',
+              'description': 'A tag of at most 12 characters naming the question, such as "Database" or "Scope"',
             },
             'options': {
               'type': 'array',
               'minItems': 2,
               'maxItems': 4,
-              'description': 'The available choices for this question. Must have 2-4 options. There should be no "Other" option, that will be provided automatically.',
+              'description': 'Two to four choices; the user may always write an answer of their own',
               'items': {
                 'type': 'object',
                 'properties': {
                   'label': {
                     'type': 'string',
-                    'description':
-                        'The display text for this option (1-5 words).',
+                    'description': 'The choice, in one to five words',
                   },
                   'description': {
                     'type': 'string',
-                    'description': 'Explanation of what this option means or what will happen if chosen.',
+                    'description':
+                        'What picking it means, or what happens then',
                   },
                   'preview': {
                     'type': 'string',
-                    'description': 'Optional preview content (a mockup, code snippet) shown when this option is focused.',
+                    'description': 'Shown beside the option while it is focused: a sketch of a layout, a code sample',
                   },
                 },
                 'required': ['label', 'description'],
@@ -194,7 +151,7 @@ Plan mode note: In plan mode, use this tool to clarify requirements or choose be
             'multiSelect': {
               'type': 'boolean',
               'default': false,
-              'description': 'Set to true to allow the user to select multiple options instead of just one.',
+              'description': 'Whether more than one option may be picked',
             },
           },
           'required': ['question', 'header', 'options', 'multiSelect'],
@@ -202,16 +159,14 @@ Plan mode note: In plan mode, use this tool to clarify requirements or choose be
       },
       'answers': {
         'type': 'object',
-        'description': 'User answers collected by the permission component',
+        'description': 'The user\'s answers, filled in by the host',
       },
       'annotations': {
         'type': 'object',
-        'description': 'Optional per-question annotations from the user',
+        'description':
+            'The user\'s notes on the questions, filled in by the host',
       },
-      'metadata': {
-        'type': 'object',
-        'description': 'Optional metadata for tracking and analytics purposes.',
-      },
+      'metadata': {'type': 'object', 'description': 'For the host\'s own use'},
     },
     'required': ['questions'],
     'additionalProperties': false,
@@ -269,8 +224,7 @@ Plan mode note: In plan mode, use this tool to clarify requirements or choose be
       for (final MapEntry(:key, :value) in answers.entries) '"$key"="$value"',
     ].join(', ');
     return ToolOutput(
-      'User has answered your questions: $said. You can now continue with '
-      "the user's answers in mind.",
+      'The user answered: $said. Carry on with these answers.',
       result: {'questions': input['questions'], 'answers': answers},
     );
   }
@@ -285,31 +239,11 @@ class EnterPlanModeTool extends Tool {
   String get name => 'EnterPlanMode';
 
   @override
-  String get description => '''Use this tool proactively when you're about to start a non-trivial implementation task. Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment. This tool transitions you into plan mode where you can explore the codebase and design an implementation approach for user approval.
+  String get description => '''Switches the session to plan mode, once the user agrees: you explore and write a plan, and change nothing else until they approve it (ExitPlanMode).
 
-## When to Use This Tool
+Worth it before work whose shape is not settled: a feature that needs design decisions, a change across several files or to how existing code behaves, a task with more than one sensible approach, or one you must look into before you can say what it involves. Not for a small, clear fix, for instructions that already say exactly what to do, or for questions that only need reading.
 
-Prefer using EnterPlanMode for implementation tasks unless they're simple. Use it when ANY of these conditions apply:
-1. New feature implementation that needs architectural decisions
-2. Multiple valid approaches exist and the choice matters
-3. Code modifications that affect existing behavior or structure
-4. Changes that touch more than 2-3 files
-5. Unclear requirements where you need to explore before understanding the full scope
-
-## When NOT to Use This Tool
-
-Skip EnterPlanMode for simple tasks: single-line or few-line fixes, adding a single function with clear requirements, tasks where the user has given very specific detailed instructions, or pure research/exploration tasks.
-
-## What Happens in Plan Mode
-
-In plan mode, you'll:
-1. Thoroughly explore the codebase using Glob, Grep, and Read tools
-2. Understand existing patterns and architecture
-3. Design an implementation approach
-4. Write the plan to the plan file, then use ExitPlanMode to present it to the user for approval
-5. Use AskUserQuestion if you need to clarify approaches
-
-This tool REQUIRES user approval - they must consent to entering plan mode.''';
+In plan mode, read the code to see how things are done now, decide on an approach, ask with AskUserQuestion where the choice is the user's, write the plan to the plan file, and call ExitPlanMode.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -339,24 +273,14 @@ This tool REQUIRES user approval - they must consent to entering plan mode.''';
     ToolContext context,
   ) async {
     if (!context.run.isMain) {
-      return ToolOutput.error(
-        'EnterPlanMode tool cannot be used in agent contexts',
-      );
+      return ToolOutput.error('Only the main agent can enter plan mode.');
     }
     context.session.setPermissionMode('plan', byModel: true);
     return ToolOutput(
-      'Entered plan mode. You should now focus on exploring the codebase and '
-      'designing an implementation approach.\n\n'
-      'In plan mode, you should:\n'
-      '1. Thoroughly explore the codebase to understand existing patterns\n'
-      '2. Identify similar features and architectural approaches\n'
-      '3. Consider multiple approaches and their trade-offs\n'
-      '4. Use AskUserQuestion if you need to clarify the approach\n'
-      '5. Design a concrete implementation strategy\n'
-      '6. When ready, write the plan to the plan file and use ExitPlanMode '
-      'to present it for approval\n\n'
-      'Remember: DO NOT write or edit any files yet, except the plan file. '
-      'This is a read-only exploration and planning phase.',
+      'Plan mode is on. Explore and design, changing nothing but the plan '
+      'file: read the code, see how similar things are done here, weigh the '
+      'approaches, ask the user where a choice is theirs (AskUserQuestion), '
+      'then write the plan to the plan file and call ExitPlanMode.',
       result: {'message': 'Entered plan mode'},
     );
   }
@@ -370,23 +294,9 @@ class ExitPlanModeTool extends Tool {
   String get name => 'ExitPlanMode';
 
   @override
-  String get description => '''Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.
+  String get description => '''Asks the user to approve the plan you wrote to the plan file (named in the plan mode reminder); once they do, plan mode ends. The plan is read from that file, so write it there first: the file is what the user sees.
 
-## How This Tool Works
-- You should have already written your plan to the plan file specified in the plan mode system message
-- This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote
-- This tool simply signals that you're done planning and ready for the user to review and approve
-- The user will see the contents of your plan file when they review it
-
-## When to Use This Tool
-IMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.
-
-## Before Using This Tool
-Ensure your plan is complete and unambiguous:
-- If you have unresolved questions about requirements or approach, use AskUserQuestion first (in earlier phases)
-- Once your plan is finalized, use THIS tool to request approval
-
-**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that's exactly what THIS tool does.''';
+Call it only when the plan is finished, and only for work that will change code, not to report what you found while researching. Settle open questions with AskUserQuestion beforehand, and never ask whether the plan is ready: calling this tool is how you ask.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -394,7 +304,7 @@ Ensure your plan is complete and unambiguous:
     'properties': {
       'plan': {
         'type': 'string',
-        'description': 'The plan, if not written to the plan file (it is read from the file otherwise)',
+        'description': 'The plan, when it was not written to the plan file (else it is read from there)',
       },
     },
     'additionalProperties': true,
@@ -455,12 +365,11 @@ Ensure your plan is complete and unambiguous:
     }
     return ToolOutput(
       plan == null
-          ? 'User has approved exiting plan mode. You can now proceed.'
-          : 'User has approved your plan. You can now start coding. Start '
-                'with updating your todo list if applicable\n\n'
-                'Your plan has been saved to: $path\n'
-                'You can refer back to it if needed during implementation.\n\n'
-                '## Approved Plan:\n$plan',
+          ? 'Plan mode is over: go ahead.'
+          : 'The user approved your plan. Carry it out, starting with your '
+                'to-do list if you keep one.\n\n'
+                'The plan is kept at $path for reference.\n\n'
+                '## The approved plan\n$plan',
       result: {'plan': plan, 'isAgent': !context.run.isMain, 'filePath': path},
     );
   }

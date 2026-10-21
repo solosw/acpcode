@@ -1,4 +1,4 @@
-# Builds BaoCode for macOS and Windows and uploads the packages to a GitHub
+# Builds BaoCode for macOS, Windows and Linux and uploads the packages to a GitHub
 # Release. docs/release.md has versions and how a tag starts this.
 #
 #   git tag v1.2.0 && git push origin v1.2.0   build and upload 1.2.0
@@ -263,9 +263,116 @@ jobs:
           if-no-files-found: error
           path: build/installers/BaoCode-*-setup.exe
 
+  linux:
+    name: Build for Linux (${{ matrix.arch }}, ${{ matrix.edition }})
+    needs: [check, remote]
+    # The oldest Ubuntu built on: its glibc and GTK are what the package
+    # runs on from there up.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One edition failing leaves the other building, to be re-run alone.
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        edition: [standard]
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    env:
+      SUFFIX: ${{ matrix.edition == 'channel' && '-channel' || '' }}
+      # The channel build's login window is WebKitGTK's
+      # (linux/runner/CMakeLists.txt).
+      BAOCODE_CHANNEL: ${{ matrix.edition == 'channel' && 'true' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        if: matrix.arch == 'x64'
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      # Flutter publishes no SDK archive for Linux on arm64, so there it is
+      # cloned at the release's tag; the engine it downloads has arm64 builds.
+      - name: Clone Flutter
+        if: matrix.arch == 'arm64'
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
+      - name: Install GTK's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+            liblzma-dev libstdc++-12-dev xvfb dbus-x11
+          if [ "$BAOCODE_CHANNEL" = true ]; then
+            sudo apt-get install -y libwebkit2gtk-4.1-dev
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: remote
+          path: build/remote
+      - name: Build
+        run: flutter build linux --release ${{ matrix.edition == 'channel' && '--dart-define=BAOCODE_CHANNEL=true' || '' }}
+      - name: Package the .deb and the tarball
+        run: |
+          sh tool/package_linux_deb.sh ${{ matrix.edition == 'channel' && '--channel' || '' }}
+          dpkg-deb --info build/installers/BaoCode-*.deb
+      - name: Install the package and launch it
+        run: |
+          sudo apt-get install -y ./build/installers/BaoCode-*.deb
+          log="$RUNNER_TEMP/launch.log"
+          # A browser's folder, for the host's manifest to be written in; the
+          # socket in a runtime folder of the user's alone, as on a desktop.
+          mkdir -p "$HOME/.config/google-chrome"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime"
+          mkdir -m 700 "$XDG_RUNTIME_DIR"
+          # One that does not exist is asked about, and the app waits there.
+          mkdir "$RUNNER_TEMP/launch-data"
+          BAOCODE_DATA_DIR="$RUNNER_TEMP/launch-data" \
+            dbus-run-session -- xvfb-run -a /opt/baocode/baocode > "$log" 2>&1 &
+          sleep 15
+          if ! pgrep -x baocode > /dev/null; then
+            cat "$log"
+            echo "::error::BaoCode exited within 15 seconds of launch"
+            exit 1
+          fi
+          echo "BaoCode is running after 15 seconds"
+          # The browser extension's host: where the manifest says, and
+          # reaching the BaoCode running.
+          manifest="$HOME/.config/google-chrome/NativeMessagingHosts/dev.baocode.browser.json"
+          cat "$manifest"
+          grep -q '"path": "/opt/baocode/baocode-browser-host"' "$manifest"
+          python3 - << 'EOF'
+          import json, signal, struct, subprocess
+          signal.alarm(10)
+          host = subprocess.Popen(
+              ["/opt/baocode/baocode-browser-host",
+               "chrome-extension://jfjagocghaaheooicmdnhcholmgdkngk/"],
+              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+          while True:
+              n = struct.unpack("<I", host.stdout.read(4))[0]
+              said = json.loads(host.stdout.read(n))
+              print("host said", said)
+              if said == {"type": "bridge", "connected": True}:
+                  break
+          host.stdin.close()
+          host.wait()
+          EOF
+          pkill -x baocode || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}${{ env.SUFFIX }}
+          if-no-files-found: error
+          path: |
+            build/installers/BaoCode-*.deb
+            build/installers/BaoCode-*.tar.gz
+
   publish:
     name: Upload the packages to GitHub
-    needs: [check, remote, remote-linux, macos, windows]
+    needs: [check, remote, remote-linux, macos, windows, linux]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -290,6 +397,7 @@ jobs:
             cp dist/macos/BaoCode-$MARKETING-$arch.dmg dist/macos/BaoCode-$MARKETING-mac-$arch.zip out/
           done
           cp dist/windows/BaoCode-$MARKETING-setup.exe out/
+          cp dist/linux-*/*.deb dist/linux-*/*.tar.gz out/
           # The remote server builds the app downloads the first time a
           # host of that platform connects.
           cp dist/remote/*.gz out/
@@ -311,6 +419,8 @@ jobs:
             --macos-x64 out/BaoCode-$MARKETING-mac-x64.zip \
             --dmg-arm64 out/BaoCode-$MARKETING-arm64.dmg \
             --dmg-x64 out/BaoCode-$MARKETING-x64.dmg \
+            --linux-x64 out/BaoCode-$MARKETING-linux-amd64.deb \
+            --linux-arm64 out/BaoCode-$MARKETING-linux-arm64.deb \
             --manifest out/latest.json \
             "${notes[@]}"
       - name: Make the GitHub release
@@ -330,6 +440,8 @@ jobs:
             out/BaoCode-$MARKETING-mac-arm64.zip \
             out/BaoCode-$MARKETING-mac-x64.zip \
             out/BaoCode-$MARKETING-setup.exe \
+            out/BaoCode-$MARKETING-linux-*.deb \
+            out/BaoCode-$MARKETING-linux-*.tar.gz \
             out/baocode-server-linux-x64.gz \
             out/baocode-server-linux-arm64.gz \
             out/baocode-server-darwin-x64.gz \

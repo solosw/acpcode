@@ -152,7 +152,7 @@ void main() {
         final summarizing = h.model.requests.firstWhere(
           (r) =>
               jsonEncode(r.body['system'])
-                  .contains('summarizing conversations'),
+                  .contains('summary of a conversation'),
         );
         expect(sentIn(summarizing), contains('keep the fruit'));
         final boundary = h.of('system', 'compact_boundary').single;
@@ -515,7 +515,7 @@ void main() {
       await h.turn('forbidden');
       expect(
         said().last,
-        contains('UserPromptSubmit operation blocked by hook:\nnot that'),
+        contains('A UserPromptSubmit hook held this prompt back:\nnot that'),
       );
       expect(h.lastResult['is_error'], isTrue);
       expect(h.model.turns, hasLength(1));

@@ -137,6 +137,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('an icon given bare is the label\'s size and color', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      size: size,
+      anchor: const Rect.fromLTWH(20, 20, 100, 26),
+      entries: const [
+        IdeMenuAction('Disconnect', icon: Icon(Codicons.debugDisconnect)),
+      ],
+    );
+    final glyph = tester.getRect(
+      find.descendant(
+        of: find.byIcon(Codicons.debugDisconnect),
+        matching: find.byType(RichText),
+      ),
+    );
+    expect(glyph.size, const Size(16, 16));
+    expect(glyph.right, lessThan(tester.getRect(find.text('Disconnect')).left));
+    final label = tester.widget<Text>(find.text('Disconnect')).style!.color;
+    final icon = tester.element(find.byIcon(Codicons.debugDisconnect));
+    expect(IconTheme.of(icon).color, label);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('an action kept open toggles in place, its check read anew; '
       'another closes it', (tester) async {
     final picked = <String>{};

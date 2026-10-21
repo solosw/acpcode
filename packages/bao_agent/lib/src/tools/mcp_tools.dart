@@ -149,18 +149,15 @@ class ListMcpResourcesTool extends Tool {
 
   @override
   String get description =>
-      'Lists available resources from configured MCP servers. Each resource '
-      'object includes a \'server\' field indicating which server it\'s '
-      'from. Give server to list only that server\'s resources.';
+      'Lists what resources the connected MCP servers offer, each with the '
+      'server it is on (its server field). Give server for one server\'s '
+      'alone.';
 
   @override
   Map<String, Object?> get inputSchema => const {
     'type': 'object',
     'properties': {
-      'server': {
-        'type': 'string',
-        'description': 'Optional server name to filter resources by',
-      },
+      'server': {'type': 'string', 'description': 'Only this server\'s'},
     },
     'additionalProperties': false,
   };
@@ -189,7 +186,7 @@ class ListMcpResourcesTool extends Tool {
       (s) => s.connected && (only == null || s.name == only),
     );
     if (only != null && servers.isEmpty) {
-      return ToolOutput.error('Server "$only" not found or not connected.');
+      return ToolOutput.error('No server "$only" is connected.');
     }
     final resources = [
       for (final server in servers)
@@ -198,7 +195,7 @@ class ListMcpResourcesTool extends Tool {
     ];
     return ToolOutput(
       resources.isEmpty
-          ? 'No resources found. MCP servers may still provide tools even if they have no resources.'
+          ? 'No server has resources (a server may still have tools).'
           : jsonEncode(resources),
       result: resources,
     );
@@ -214,15 +211,15 @@ class ReadMcpResourceTool extends Tool {
 
   @override
   String get description =>
-      'Reads a specific resource from an MCP server, identified by server '
-      'name and resource URI.';
+      'Reads one resource of an MCP server, by the server\'s name and the '
+      'resource\'s URI.';
 
   @override
   Map<String, Object?> get inputSchema => const {
     'type': 'object',
     'properties': {
-      'server': {'type': 'string', 'description': 'The MCP server name'},
-      'uri': {'type': 'string', 'description': 'The resource URI to read'},
+      'server': {'type': 'string', 'description': 'The server, by name'},
+      'uri': {'type': 'string', 'description': 'The resource, by URI'},
     },
     'required': ['server', 'uri'],
     'additionalProperties': false,
@@ -250,7 +247,7 @@ class ReadMcpResourceTool extends Tool {
     final name = '${input['server']}';
     final server = context.session.mcp.servers[name];
     if (server == null || !server.connected) {
-      return ToolOutput.error('Server "$name" not found or not connected.');
+      return ToolOutput.error('No server "$name" is connected.');
     }
     try {
       final result = await context.session.mcp.readResource(

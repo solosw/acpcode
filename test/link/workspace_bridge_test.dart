@@ -274,4 +274,18 @@ void main() {
       );
     });
   });
+
+  test('a plan is not started while none awaits', () async {
+    await open();
+    expect(
+      bridge.handle(LinkMethods.startPlan, {'session': id}),
+      throwsA(
+        isA<LinkRemoteException>().having(
+          (e) => e.code,
+          'code',
+          LinkErrors.notFound,
+        ),
+      ),
+    );
+  });
 }

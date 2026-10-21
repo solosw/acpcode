@@ -54,8 +54,9 @@ abstract final class WindowControls {
   static bool _tracking = false;
 
   /// Whether the app runs in a window to command: the desktop app, not a
-  /// browser tab.
-  static bool get isDesktop => AppPlatform.isMacOS || AppPlatform.isWindows;
+  /// browser tab. Linux included (linux/runner); its file dialogs are the
+  /// GTK ones on `baocode/window`.
+  static bool get isDesktop => AppPlatform.isDesktop;
 
   /// Whether the window is the app's own to draw: Windows, where the header
   /// carries the menus, the session's tools and the window buttons (see
@@ -443,8 +444,9 @@ abstract final class WindowControls {
     }
   }
 
-  /// Whether menus can be the system's own: the desktop app.
-  static bool get hasNativeMenus => isDesktop;
+  /// Whether menus can be the system's own. Linux has a GTK menu; its Paste
+  /// reads the clipboard in the item's activation, which Wayland allows.
+  static bool get hasNativeMenus => AppPlatform.isDesktop;
 
   /// Shows a context menu of [items] at [position] (in the window, from
   /// its top left); the id of the item chosen, null for none (or no such
@@ -467,13 +469,34 @@ abstract final class WindowControls {
   }
 
   /// Whether the clipboard holds anything to paste: text, files or images.
+  ///
+  /// Linux (Wayland) cannot be asked from here: a read is only allowed inside
+  /// the paste itself. The menu offers Paste, and an empty clipboard pastes
+  /// nothing.
   static Future<bool> canPaste() async {
+    if (AppPlatform.isLinux) return true;
     if (!hasNativeMenus) return false;
     try {
       return await _channel.invokeMethod<bool>('canPaste') ?? false;
     } on MissingPluginException {
       return false;
     }
+  }
+
+  /// Plain text on the clipboard. On Linux this is the snapshot taken when
+  /// Ctrl+V or the menu's Paste happened; the engine's own clipboard read
+  /// comes back empty there (Wayland). Elsewhere it is that read.
+  static Future<String?> readPasteboardText() async {
+    if (AppPlatform.isLinux) {
+      try {
+        // Null is an answer (a picture, or nothing): don't ask the engine,
+        // which on Wayland blocks or comes back empty and would skip the image.
+        return await _channel.invokeMethod<String>('readPasteboardText');
+      } on MissingPluginException {
+        // A host without the channel (tests).
+      }
+    }
+    return (await Clipboard.getData(Clipboard.kTextPlain))?.text;
   }
 
   /// Images on the clipboard, when what it holds is images rather than

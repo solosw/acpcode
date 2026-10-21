@@ -11,7 +11,7 @@ class ShellCommand {
   );
 
   /// Splits [source] at `&&`, `||`, `;`, `|`, `&` and new lines outside
-  /// quotes.
+  /// quotes. A heredoc's lines are its command's input, not commands.
   factory ShellCommand.parse(String source) {
     final commands = <String>[];
     final redirects = <String>[];
@@ -19,6 +19,8 @@ class ShellCommand {
     final current = StringBuffer();
     String? quote;
     var i = 0;
+    // The heredocs begun on this line, their lines to come after it.
+    final heredocs = <({String end, bool tabs, bool literal})>[];
 
     void cut() {
       final text = current.toString().trim();
@@ -74,9 +76,48 @@ class ShellCommand {
           while (i < source.length && source[i] != '\n') {
             i++;
           }
-        case ';' || '\n':
+        case '<' when next == '<' && source.startsWith('<<<', i):
+          // A here-string: a word, not lines.
+          current.write('<<<');
+          i += 3;
+        case '<' when next == '<':
+          final tabs = source.startsWith('<<-', i);
+          var at = i + (tabs ? 3 : 2);
+          while (at < source.length && ' \t'.contains(source[at])) {
+            at++;
+          }
+          final (end, after) = _redirectTarget(source, at);
+          final word = source.substring(at, after);
+          heredocs.add((
+            end: end,
+            tabs: tabs,
+            // A quoted delimiter: the lines as they are, nothing expanded.
+            literal:
+                word.contains("'") || word.contains('"') || word.contains(r'\'),
+          ));
+          current.write(source.substring(i, after));
+          i = after;
+        case ';':
           cut();
           i++;
+        case '\n':
+          cut();
+          i++;
+          for (final heredoc in heredocs) {
+            while (i < source.length) {
+              var lineEnd = source.indexOf('\n', i);
+              if (lineEnd < 0) lineEnd = source.length;
+              var line = source.substring(i, lineEnd);
+              i = lineEnd + 1;
+              if (heredoc.tabs) line = line.replaceFirst(RegExp('^\t+'), '');
+              if (line == heredoc.end) break;
+              if (!heredoc.literal &&
+                  (line.contains(r'$(') || line.contains('`'))) {
+                substitution = true;
+              }
+            }
+          }
+          heredocs.clear();
         case '&' when next == '&':
           cut();
           i += 2;

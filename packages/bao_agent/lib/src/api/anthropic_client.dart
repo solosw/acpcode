@@ -18,6 +18,7 @@ class ApiConfig {
     this.maxRetries = 10,
     this.idleTimeout = const Duration(minutes: 5),
     this.userAgent = 'baocode-agent',
+    this.userId,
   });
 
   static const defaultBaseUrl = 'https://api.anthropic.com';
@@ -42,6 +43,11 @@ class ApiConfig {
   /// asked for again.
   final Duration idleTimeout;
   final String userAgent;
+
+  /// Sent as every request's `metadata.user_id`: the session, by which a
+  /// proxy or gateway keeps a conversation on the upstream (and the
+  /// account) that has it cached.
+  final String? userId;
 
   bool get hasCredentials =>
       (apiKey?.isNotEmpty ?? false) || (authToken?.isNotEmpty ?? false);
@@ -179,7 +185,15 @@ class AnthropicClient implements ModelClient {
       try {
         http = await client.postUrl(config.endpoint('/v1/messages'));
         _headers(betas: request.betas).forEach(http.headers.set);
-        http.add(utf8.encode(jsonEncode({...request.body, 'stream': true})));
+        http.add(
+          utf8.encode(
+            jsonEncode({
+              if (config.userId case final id?) 'metadata': {'user_id': id},
+              ...request.body,
+              'stream': true,
+            }),
+          ),
+        );
         response = await http.close();
       } on Cancelled {
         rethrow;

@@ -458,8 +458,8 @@ void main() {
         expect(errs, contains('bad input'));
         expect(h.toolResults[3]['is_error'], isTrue);
         expect(blob, contains('[binary content, 6 bytes]'));
-        expect(noServer, contains('not found or not connected'));
-        expect(noList, contains('not found or not connected'));
+        expect(noServer, contains('is connected'));
+        expect(noList, contains('is connected'));
       },
     );
 

@@ -15,7 +15,8 @@ void main() {
 
   setUp(() {
     // Short: a socket's path has a hundred bytes or so.
-    final temp = Directory('/tmp').createTempSync('bao-');
+    final temp = (Platform.isWindows ? Directory.systemTemp : Directory('/tmp'))
+        .createTempSync('bao-');
     addTearDown(() => temp.deleteSync(recursive: true));
     BrowserBridge.socketFolder = temp.path;
     home = Directory(p.join(temp.path, 'home'));
@@ -23,7 +24,9 @@ void main() {
     manifest = File(
       p.join(
         home.path,
-        'Library/Application Support/Google/Chrome/NativeMessagingHosts',
+        Platform.isLinux
+            ? '.config/google-chrome/NativeMessagingHosts'
+            : 'Library/Application Support/Google/Chrome/NativeMessagingHosts',
         '${BrowserBridge.hostName}.json',
       ),
     )..createSync(recursive: true);
@@ -35,29 +38,48 @@ void main() {
     });
   });
 
-  /// A host of the browser's, as host.c is: its hello with the extension's
-  /// origin, then the extension's.
-  Future<Socket> connect(Map<String, Object?> hello) async {
-    final socket = await Socket.connect(
-      InternetAddress(BrowserBridge.socketPath, type: InternetAddressType.unix),
-      0,
-    );
-    void send(Map<String, Object?> message) {
-      final body = utf8.encode(jsonEncode(message));
-      socket
-        ..add(
-          (ByteData(
-            4,
-          )..setUint32(0, body.length, Endian.little)).buffer.asUint8List(),
-        )
-        ..add(body);
-    }
+  void send(Socket socket, Map<String, Object?> message) {
+    final body = utf8.encode(jsonEncode(message));
+    socket
+      ..add(
+        (ByteData(
+          4,
+        )..setUint32(0, body.length, Endian.little)).buffer.asUint8List(),
+      )
+      ..add(body);
+  }
 
-    send({
+  /// A host of the browser's, as host.c is: its hello with the extension's
+  /// origin, then the extension's. Over loopback, as host.cpp is: at the
+  /// port the bridge's file says, the token in its hello ([token] instead,
+  /// when given).
+  Future<Socket> connect(Map<String, Object?> hello, {String? token}) async {
+    final Socket socket;
+    String? said;
+    if (BrowserBridge.loopback) {
+      final [port, written] = File(BrowserBridge.portPath)
+          .readAsStringSync()
+          .split(' ');
+      socket = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        int.parse(port),
+      );
+      said = token ?? written;
+    } else {
+      socket = await Socket.connect(
+        InternetAddress(
+          BrowserBridge.socketPath,
+          type: InternetAddressType.unix,
+        ),
+        0,
+      );
+    }
+    send(socket, {
       'type': 'hello',
       'origin': 'chrome-extension://${BrowserBridge.extensionIds.first}/',
+      'token': ?said,
     });
-    send({'type': 'hello', ...hello});
+    send(socket, {'type': 'hello', ...hello});
     await socket.flush();
     return socket;
   }
@@ -101,7 +123,25 @@ void main() {
         l10n.browserSettingsAppOld,
       ),
     ]);
-  }, skip: !Platform.isMacOS);
+  }, skip: Platform.isWindows);
+
+  test('on Linux, a browser from Snap or Flatpak is said to be kept out', () {
+    final l10n = AppLocalizationsEn();
+    final sandboxed = (
+      l10n.browserSettingsSandboxed,
+      l10n.browserSettingsSandboxedDescription,
+    );
+    expect(bridge.sandboxedBrowsers, isFalse);
+    expect(
+      BrowserSettingsPage.status(l10n, bridge),
+      isNot(contains(sandboxed)),
+    );
+
+    Directory(p.join(home.path, 'snap', 'chromium'))
+        .createSync(recursive: true);
+    expect(bridge.sandboxedBrowsers, isTrue);
+    expect(BrowserSettingsPage.status(l10n, bridge), contains(sandboxed));
+  }, skip: !Platform.isLinux);
 
   test('turned off, it lets the browsers go and takes the host away; on, it '
       'listens again', () async {
@@ -134,5 +174,67 @@ void main() {
     addTearDown(again.destroy);
     await until(() => bridge.browsers.isNotEmpty);
     expect(bridge.used, isTrue);
-  }, skip: !Platform.isMacOS);
+  }, skip: Platform.isWindows);
+
+  group('over loopback (Windows)', () {
+    setUp(() {
+      final was = BrowserBridge.loopback;
+      BrowserBridge.loopback = true;
+      addTearDown(() => BrowserBridge.loopback = was);
+    });
+
+    test('a host saying the token is let in; the port\'s file goes with '
+        'the bridge', () async {
+      await bridge.start();
+      expect(
+        File(BrowserBridge.portPath).readAsStringSync(),
+        matches(RegExp(r'^\d+ [0-9a-f]{64}$')),
+      );
+      final socket = await connect({'browser': 'Microsoft Edge'});
+      addTearDown(socket.destroy);
+      await until(() => bridge.browsers.isNotEmpty);
+      expect(bridge.browsers.single.browser, 'Microsoft Edge');
+
+      await bridge.stop();
+      expect(File(BrowserBridge.portPath).existsSync(), isFalse);
+      expect(bridge.browsers, isEmpty);
+    });
+
+    test('a connection without the token is let go, never listed', () async {
+      await bridge.start();
+      final wrong = await connect({'browser': 'Google Chrome'}, token: 'abc');
+      addTearDown(wrong.destroy);
+      final none = await Socket.connect(
+        InternetAddress.loopbackIPv4,
+        int.parse(
+          File(BrowserBridge.portPath).readAsStringSync().split(' ').first,
+        ),
+      );
+      addTearDown(none.destroy);
+      send(none, {'type': 'hello', 'browser': 'Google Chrome'});
+      await none.flush();
+
+      // Each ends as the bridge lets it go.
+      await wrong.drain<void>().timeout(const Duration(seconds: 5));
+      await none.drain<void>().timeout(const Duration(seconds: 5));
+      expect(bridge.browsers, isEmpty);
+      expect(bridge.mismatched, isEmpty);
+    });
+  });
+
+  test('the Windows manifest names the host beside it, for the extension '
+      'alone', () {
+    final manifest = jsonDecode(
+      File('windows/BrowserBridge/dev.baocode.browser.json').readAsStringSync(),
+    ) as Map<String, Object?>;
+    expect(manifest, {
+      'name': BrowserBridge.hostName,
+      'description': 'BaoCode',
+      'path': 'baocode-browser-host.exe',
+      'type': 'stdio',
+      'allowed_origins': [
+        for (final id in BrowserBridge.extensionIds) 'chrome-extension://$id/',
+      ],
+    });
+  });
 }

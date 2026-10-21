@@ -23,6 +23,12 @@ import 'translate/thinking.dart';
 /// (`ANTHROPIC_BASE_URL`), and each request is translated for the
 /// upstream, and its answer back, as it streams (see translate/).
 ///
+/// A request goes to the provider its path names, unless its model is
+/// another's ([modelRef], `@<id>/<model>`: subagents on another upstream
+/// than the session's), as that one's model. One of Anthropic's API is
+/// passed its request as it came, only the key and its headers set here:
+/// a session on it comes here when its subagents run elsewhere.
+///
 /// Listens on 127.0.0.1 only, on a port of the system's choosing, and
 /// answers only a request with its [token] (Claude Code's
 /// `ANTHROPIC_AUTH_TOKEN`), made anew each run. The providers' keys stay
@@ -144,21 +150,41 @@ class ModelProxy {
       if (body is! Map<String, Object?>) {
         return await _fail(response, 400, 'The request is not a JSON object');
       }
-      if (segments.length == 5 && segments[4] == 'count_tokens') {
-        return await _json(response, 200, {
-          'input_tokens': estimateInputTokens(body),
-        });
-      }
-      if (segments.length != 4) {
+      final countTokens = segments.length == 5 && segments[4] == 'count_tokens';
+      if (segments.length != 4 && !countTokens) {
         return await _fail(
           response,
           404,
           'No such endpoint: ${request.uri.path}',
         );
       }
-      final provider = _provider(providerId);
-      if (provider == null || !provider.protocol.proxied) {
-        return await _fail(response, 404, 'No such provider: $providerId');
+      // A model of another upstream (a subagent's, `@<id>/<model>`): to
+      // that one, by its own name.
+      var wanted = providerId;
+      if (parseModelRef('${body['model'] ?? ''}') case (
+        provider: final id,
+        :final model,
+      )) {
+        wanted = id;
+        body['model'] = model;
+      }
+      final provider = wanted == builtinProviderId ? null : _provider(wanted);
+      if (provider == null) {
+        return await _fail(response, 404, 'No such provider: $wanted');
+      }
+      if (provider.protocol == ProviderProtocol.anthropic) {
+        return await _passThrough(
+          provider,
+          body,
+          request,
+          response,
+          countTokens: countTokens,
+        );
+      }
+      if (countTokens) {
+        return await _json(response, 200, {
+          'input_tokens': estimateInputTokens(body),
+        });
       }
       await _forward(provider, body, response);
     } on FormatException catch (error) {
@@ -334,6 +360,103 @@ class ModelProxy {
       await response.flush();
     }
     return response.close();
+  }
+
+  /// What is not passed on between Claude Code and an upstream of
+  /// Anthropic's API: what goes from one connection only, what is set here
+  /// (the key), and the encoding, which the client here undoes.
+  static const _notPassed = {
+    'host',
+    'authorization',
+    'x-api-key',
+    'proxy-authorization',
+    'proxy-connection',
+    'connection',
+    'keep-alive',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+    'content-length',
+    'accept-encoding',
+    'content-encoding',
+  };
+
+  /// [body] to [provider], one of Anthropic's API, as Claude Code asked it
+  /// (its headers too: its version, its betas), with the key and the
+  /// provider's own headers set here; its answer back as it comes.
+  ///
+  /// A count of tokens the upstream refuses (many have none) is estimated.
+  Future<void> _passThrough(
+    ModelProvider provider,
+    Map<String, Object?> body,
+    HttpRequest request,
+    HttpResponse response, {
+    required bool countTokens,
+  }) async {
+    final base = UpstreamUrls.anthropicBase(provider.baseUrl);
+    if (base == null) {
+      return _fail(response, 400, '${provider.name} has no valid base URL');
+    }
+    final path = Uri.parse(
+      '$base/v1/messages${countTokens ? '/count_tokens' : ''}',
+    );
+    final url = request.uri.hasQuery
+        ? path.replace(query: request.uri.query)
+        : path;
+    final client = await _upstream();
+    final upstreamRequest = await client.postUrl(url);
+    final key = await _key(provider.id);
+    upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
+    request.headers.forEach((name, values) {
+      if (!_notPassed.contains(name)) upstreamRequest.headers.set(name, values);
+    });
+    customUpstreamHeaders(
+      provider,
+      session: sessionId(body),
+      model: '${body['model'] ?? ''}',
+    ).forEach(upstreamRequest.headers.set);
+    upstreamRequest.headers.contentType = ContentType.json;
+    upstreamRequest.add(utf8.encode(jsonEncode(body)));
+    unawaited(
+      response.done.then<void>((_) {}, onError: (_) => upstreamRequest.abort()),
+    );
+    final answer = await upstreamRequest.close();
+    if (answer.statusCode >= 400) {
+      final text = await utf8.decodeStream(answer);
+      if (countTokens) {
+        return _json(response, 200, {
+          'input_tokens': estimateInputTokens(body),
+        });
+      }
+      _onError?.call(
+        provider.id,
+        upstreamErrorMessage(answer.statusCode, text),
+      );
+      _answerAs(response, answer);
+      response.write(text);
+      return response.close();
+    }
+    if (!countTokens) _onError?.call(provider.id, null);
+    _answerAs(response, answer);
+    response.bufferOutput = false;
+    await for (final chunk in answer) {
+      response.add(chunk);
+      await response.flush();
+    }
+    return response.close();
+  }
+
+  /// [response] with [upstream]'s status and headers, but those
+  /// [_notPassed].
+  static void _answerAs(HttpResponse response, HttpClientResponse upstream) {
+    response.statusCode = upstream.statusCode;
+    upstream.headers.forEach((name, values) {
+      if (_notPassed.contains(name)) return;
+      for (final value in values) {
+        response.headers.add(name, value);
+      }
+    });
   }
 
   /// Sends a Codex provider's request ([outgoing], as Responses) as one of

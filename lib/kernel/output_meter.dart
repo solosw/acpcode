@@ -1,18 +1,25 @@
 import '../chat/chat_models.dart';
 
 /// Meters what a turn's model writes as it streams: how much so far, how
-/// fast it writes now, and how fast it wrote on average.
+/// fast it writes now (as last sampled), and how fast it wrote on average.
 ///
 /// Its tokens are known as each message ends; until then they are guessed
 /// from the text, and the guess is kept in line with the counts of the
 /// messages before.
 ///
-/// The speed is the tokens of the last [window] over the time they took,
-/// within a message. Not the first of its deltas: the upstream holds back
-/// what the model writes until it sends anything (a tool call's input, a
-/// thought), and those tokens came out of no time we see. Nor before it
-/// has written for [warmUp]: a message as short as that says nothing of the
-/// pace. Thoughts do not count, their text being but a summary, if any.
+/// The speed is the tokens of the last [window] of writing over the time
+/// they took, on a clock that runs only while a message writes: from the
+/// start of its first block of text or tool call ([startBlock]; else its
+/// first delta) to its last delta, the turn's messages one after another,
+/// the waits between them (a tool running, a request) left out. A turn of
+/// short messages, a line and a tool call each, is timed all the same; so
+/// is a tool call whose input comes all at once as it ends, as BaoCode's
+/// proxy sends an OpenAI upstream's. Not the deltas that came with that
+/// start: the upstream holds back what the model writes until it sends
+/// anything (a tool call's input, a thought), and those tokens came out of
+/// no time we see. Nor before it has written for
+/// [warmUp] in all: as short as that says nothing of the pace. Thoughts do
+/// not count, their text being but a summary, if any.
 class OutputMeter {
   OutputMeter({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
 
@@ -48,18 +55,24 @@ class OutputMeter {
   double _countedTimed = 0;
   double _guessedTimed = 0;
 
-  /// When the message's timed tokens came, and how many by then; the
-  /// first is the latest before [window], or the message's first.
-  final List<(DateTime, double)> _samples = [];
+  /// The time written, on the clock that runs only while a message writes:
+  /// of the messages ended.
+  Duration _written = Duration.zero;
 
-  /// The speed now, and since when, while there is one.
+  /// When the message under way began to write, and its last delta,
+  /// while it has.
+  DateTime? _first;
+  DateTime? _last;
+
+  /// The tokens timed, the turn so far, the bursts left out.
+  double _sampled = 0;
+
+  /// When, on that clock, the timed tokens came, and how many by then; the
+  /// first is the latest before [window], or the turn's first.
+  final List<(Duration, double)> _samples = [];
+
+  /// The speed as last sampled; none before [warmUp].
   double? _speed;
-  DateTime? _speedSince;
-
-  /// The speeds shown, each by how long, for the average.
-  double _speedSum = 0;
-  Duration _speedTime = Duration.zero;
-  double? _lastSpeed;
 
   /// The guess's correction: counted over guessed, within reason.
   double get _ratio => _guessedTimed < 50
@@ -69,20 +82,31 @@ class OutputMeter {
   /// A turn begins: nothing written yet.
   void begin() {
     _startMessage();
+    _samples.clear();
+    _written = Duration.zero;
+    _sampled = 0;
     _counted = 0;
     _countedTimed = _guessedTimed = 0;
-    _speedSum = 0;
-    _speedTime = Duration.zero;
-    _lastSpeed = null;
+    _speed = null;
   }
 
   /// A message begins (any it did not end gave way).
   void startMessage() => _startMessage();
 
+  /// A block of text or a tool call begins: the message writes from here,
+  /// whenever its deltas come.
+  void startBlock() {
+    if (_first != null) return;
+    _first = _last = _clock();
+    _sample(_written);
+  }
+
   void _startMessage() {
-    _stopSpeed();
+    if ((_first, _last) case (final first?, final last?)) {
+      _written += last.difference(first);
+    }
+    _first = _last = null;
     _guessed = _timed = 0;
-    _samples.clear();
   }
 
   /// [text] came, of the text or a tool call's input; or, not [timed], of a
@@ -93,44 +117,32 @@ class OutputMeter {
     if (!timed || tokens == 0) return;
     _timed += tokens;
     final now = _clock();
-    // Within [_burst] of the message's first: of what was held back. Only
-    // of the first: deltas as close all along are the model writing fast.
-    if (_samples case [(final at, _)] when now.difference(at) < _burst) {
-      _samples.first = (at, _timed);
-    } else {
-      _samples.add((now, _timed));
-    }
-    while (_samples.length > 1 && now.difference(_samples[1].$1) >= window) {
+    final first = _first ??= now;
+    _last = now;
+    final at = _written + now.difference(first);
+    // Within [_burst] of its start: of what was held back. Only there:
+    // deltas as close all along are the model writing fast.
+    if (now.difference(first) >= _burst) _sampled += tokens;
+    _sample(at);
+    while (_samples.length > 1 && at - _samples[1].$1 >= window) {
       _samples.removeAt(0);
     }
     final (from, before) = _samples.first;
     final (to, after) = _samples.last;
-    final span = to.difference(from);
-    _setSpeed(
-      span < warmUp
-          ? null
-          : (after - before) * _ratio / (span.inMicroseconds / 1e6),
-      now,
-    );
+    final span = to - from;
+    if (span >= warmUp) _speed = (after - before) * _ratio / _seconds(span);
   }
 
-  void _setSpeed(double? speed, DateTime now) {
-    if ((_speed, _speedSince) case (final shown?, final since?)
-        when now.isAfter(since)) {
-      final time = now.difference(since);
-      _speedSum += shown * (time.inMicroseconds / 1e6);
-      _speedTime += time;
+  /// The tokens timed by [at], on the clock that runs while it writes.
+  void _sample(Duration at) {
+    if (_samples.lastOrNull case (final last, _) when last == at) {
+      _samples.last = (at, _sampled);
+    } else {
+      _samples.add((at, _sampled));
     }
-    _speed = speed;
-    _speedSince = speed == null ? null : now;
-    if (speed != null) _lastSpeed = speed;
   }
 
-  /// No speed from here: the last held until the last delta, not since.
-  void _stopSpeed() {
-    if (_speed == null) return;
-    _setSpeed(null, _samples.lastOrNull?.$1 ?? _clock());
-  }
+  static double _seconds(Duration time) => time.inMicroseconds / 1e6;
 
   /// The message ended, having written [tokens] in all as counted (null:
   /// not counted), [written] of them its text and tool calls (null: not
@@ -144,16 +156,20 @@ class OutputMeter {
     _startMessage();
   }
 
-  /// What is written so far, and how fast: now, while it writes; else on
-  /// average so far, rather than none between its messages.
+  /// What is written so far, and how fast, as last sampled: between its
+  /// messages too.
   TurnOutput get output => TurnOutput(
     tokens: _counted + (_guessed * _ratio).round(),
-    tokensPerSecond: _speed ?? averageSpeed,
+    tokensPerSecond: _speed,
   );
 
-  /// The speed shown, on average over the time it was; null if it never
-  /// was.
-  double? get averageSpeed => _speedTime > Duration.zero
-      ? _speedSum / (_speedTime.inMicroseconds / 1e6)
-      : _lastSpeed;
+  /// The tokens timed over all the time written, the turn so far; null
+  /// before [warmUp] of it.
+  double? get averageSpeed {
+    var time = _written;
+    if ((_first, _last) case (final first?, final last?)) {
+      time += last.difference(first);
+    }
+    return time < warmUp ? null : _sampled * _ratio / _seconds(time);
+  }
 }

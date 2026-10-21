@@ -67,7 +67,10 @@ void main() {
         Reply.text('ok'),
       ]);
       await h.turn('go');
-      expect('${h.toolResults.last['content']}', contains('modified'));
+      expect(
+        '${h.toolResults.last['content']}',
+        contains('changed since it was read'),
+      );
       expect(h.file('a.txt'), 'changed\n');
     });
 
@@ -280,7 +283,7 @@ void main() {
       expect(fetched, 2);
       expect(
         '${away['content']}',
-        allOf(contains('REDIRECT DETECTED'), contains('localhost')),
+        allOf(contains('sends you to another host'), contains('localhost')),
       );
       expect(bad['is_error'], isTrue);
     });
@@ -350,7 +353,7 @@ void main() {
       await h.turn('search');
       final [refused, invalid] = h.toolResults;
       expect('${refused['content']}', contains('Web search is not available'));
-      expect('${invalid['content']}', contains('Cannot specify both'));
+      expect('${invalid['content']}', contains('not both'));
     });
   });
 

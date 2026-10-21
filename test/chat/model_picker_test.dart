@@ -34,6 +34,7 @@ void main() {
     WidgetTester tester,
     List<KernelOption> options, {
     bool footer = true,
+    KernelOption? selected,
     List<ModelSettingChoice> Function(KernelOption option)? settingsOf,
   }) async {
     picked.clear();
@@ -53,7 +54,7 @@ void main() {
                   FloatingRegistry.handleKey(event) ?? KeyEventResult.ignored,
               child: ComposerPicker(
                 options: options,
-                selected: options.first,
+                selected: selected ?? options.first,
                 focusNode: focus,
                 searchPlaceholder: 'Search models',
                 settingsOf: settingsOf,
@@ -425,6 +426,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Model 23'), findsOneWidget);
     expect(tester.getTopLeft(footer).dy, footerTop);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the menu opens scrolled to the option checked', (
+    tester,
+  ) async {
+    tester.view
+      ..devicePixelRatio = 1
+      ..physicalSize = const Size(800, 900);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final options = [
+      _option('default', 'Default', _builtin),
+      for (var i = 0; i < 24; i++) _option('@gw/m$i', 'Model $i', _gateway),
+    ];
+    await pump(tester, options, selected: options.last);
+    await open(tester, 'Model 23');
+
+    final list = find.byType(SingleChildScrollView);
+    final row = find.descendant(of: list, matching: find.text('Model 23'));
+    expect(row, findsOneWidget);
+    final view = tester.getRect(list);
+    final at = tester.getRect(row);
+    expect(at.top, greaterThanOrEqualTo(view.top));
+    expect(at.bottom, lessThanOrEqualTo(view.bottom));
     expect(tester.takeException(), isNull);
   });
 

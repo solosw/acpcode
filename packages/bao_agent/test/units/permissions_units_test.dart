@@ -43,6 +43,34 @@ void main() {
       expect(ShellCommand.parse('echo a\\\nb').commands, ['echo ab']);
     });
 
+    test('a heredoc is input: its lines are not commands', () {
+      final commit = ShellCommand.parse(
+        "git commit -F - <<'MSG'\nFix it; rm -rf /\n\n"
+        'Co-Authored-By: A <a@b.c>\nMSG\ngit status',
+      );
+      expect(commit.commands, ["git commit -F - <<'MSG'", 'git status']);
+      expect(commit.redirects, isEmpty);
+      expect(commit.hasSubstitution, isFalse);
+      // Unquoted, it is expanded: a substitution in it runs.
+      expect(
+        ShellCommand.parse('cat <<END\n\$(whoami)\nEND').hasSubstitution,
+        isTrue,
+      );
+      expect(
+        ShellCommand.parse("cat <<'END'\n\$(whoami)\nEND").hasSubstitution,
+        isFalse,
+      );
+      final written = ShellCommand.parse(
+        'cat <<-END > out.txt\n\tx\n\tEND\nls',
+      );
+      expect(written.commands, ['cat <<-END > out.txt', 'ls']);
+      expect(written.redirects, ['out.txt']);
+      expect(ShellCommand.parse("cat <<< 'a b'\nls").commands, [
+        "cat <<< 'a b'",
+        'ls',
+      ]);
+    });
+
     test(
       'words: quotes taken off, assignments before the program left out',
       () {

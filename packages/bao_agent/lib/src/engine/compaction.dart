@@ -20,7 +20,8 @@ class Compaction {
   final AgentSession session;
 
   static const _system =
-      'You are a helpful AI assistant tasked with summarizing conversations.';
+      'You write the summary of a conversation between a user and a coding '
+      'agent, for the work to go on from.';
 
   /// Whether the conversation is compacted when full.
   bool get autoEnabled {

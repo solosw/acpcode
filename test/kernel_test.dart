@@ -19,6 +19,7 @@ import 'package:baocode/kernel/claude_code/claude_goal.dart';
 import 'package:baocode/kernel/claude_code/claude_storage_io.dart';
 import 'package:baocode/kernel/claude_code/cli_locator.dart';
 import 'package:baocode/kernel/claude_code/control_channel.dart';
+import 'package:baocode/kernel/claude_code/turn_stats.dart';
 import 'package:baocode/kernel/codex/codex_kernel.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
 import 'package:baocode/kernel/commit_attribution.dart';
@@ -161,6 +162,25 @@ class _UsageCli extends FakeCli {
         'response': replies[(_asked++).clamp(0, replies.length - 1)],
       },
     });
+  }
+}
+
+/// A CLI that answers `initialize` only once [initialized] is called.
+class _SlowStartCli extends FakeCli {
+  Map<String, Object?>? _initialize;
+
+  void initialized() {
+    if (_initialize case final message?) super.write(message);
+  }
+
+  @override
+  void write(Map<String, Object?> message) {
+    final request = message['request'];
+    if (request is Map && request['subtype'] == 'initialize') {
+      _initialize = message;
+      return;
+    }
+    super.write(message);
   }
 }
 
@@ -964,6 +984,36 @@ void main() {
       kernel.dispose();
     });
 
+    test('a turn done is kept by its session and prompt, for its footer '
+        'later; one stopped is not', () async {
+      final kept = _KeptTurns();
+      ClaudeCodeKernel.turnStats = kept;
+      addTearDown(() => ClaudeCodeKernel.turnStats = null);
+      final cli = FakeCli();
+      final (:kernel, transcript: _, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      cli.push({'type': 'system', 'subtype': 'init', 'session_id': 's1'});
+      cli.push({
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': false,
+        'duration_ms': 65400,
+        'total_cost_usd': 0.5,
+      });
+      await pumpEventQueue();
+      final record = kept.sessions['s1']!['u1']!;
+      expect(record.worked, const Duration(milliseconds: 65400));
+      expect(record.usage?.costUsd, closeTo(0.5, 1e-9));
+
+      kernel.send(const KernelTurn(id: 'u2', text: 'again'));
+      await pumpEventQueue();
+      kernel.cancel();
+      await pumpEventQueue();
+      expect(kept.sessions['s1']!.keys, ['u1']);
+      kernel.dispose();
+    });
+
     test(
       "a turn keeps its own tokens and cost, what it wrote shown live",
       () async {
@@ -1016,6 +1066,8 @@ void main() {
         await pumpEventQueue();
         kernel.send(const KernelTurn(id: 'u2', text: 'again'));
         await pumpEventQueue();
+        // Timed from its start as it goes.
+        expect(transcript.turnStartedAt, isNotNull);
         await request(40);
         expect(transcript.output?.tokens, 40);
         await request(60);
@@ -1036,6 +1088,7 @@ void main() {
         // Its messages too short to time.
         expect(usage.tokensPerSecond, isNull);
         expect(transcript.output, isNull);
+        expect(transcript.turnStartedAt, isNull);
         kernel.dispose();
       },
     );
@@ -1703,6 +1756,47 @@ void main() {
       kernel.dispose();
     });
 
+    test('a queued message sent now with a task in the background does not '
+        'interrupt, which would end the task too: the CLI takes it up '
+        'next', () async {
+      final cli = FakeCli(
+        answers: {
+          'cancel_async_message': {'cancelled': true},
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'first'));
+      await pumpEventQueue();
+      cli.push({
+        'type': 'system',
+        'subtype': 'task_started',
+        'task_id': 'a1',
+        'task_type': 'local_agent',
+        'description': 'Watch',
+        'is_backgrounded': true,
+      });
+      kernel.send(const KernelTurn(id: 'u2', text: 'second'));
+      await pumpEventQueue();
+
+      kernel.sendQueuedNow('u2');
+      await pumpEventQueue();
+      expect(cli.requests('interrupt'), isEmpty);
+      expect(
+        cli.requests('cancel_async_message').map((r) => r['message_uuid']),
+        ['u2'],
+      );
+      final resent = cli.users.last;
+      expect(resent['priority'], 'now');
+      expect((resent['message'] as Map)['content'], [
+        {'type': 'text', 'text': 'second'},
+      ]);
+      expect(
+        [for (final (_, item) in transcript.queued) item.text],
+        ['second'],
+      );
+      kernel.dispose();
+    });
+
     test('a turn stopped as soon as sent stays stopped; the CLI\'s notes of '
         'the interruption do not show', () async {
       final cli = FakeCli();
@@ -2018,6 +2112,92 @@ void main() {
         ..prepare();
       await push(state('idle'));
       expect(cli.closed, isFalse);
+      kernel.dispose();
+    });
+
+    test('out of view while it starts, the process is freed once started; '
+        'a title waiting is taken first, a message sent meanwhile answered '
+        'first', () async {
+      const result = {
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': false,
+      };
+      ({ClaudeCodeKernel kernel, _SlowStartCli cli, Completer<void> spawned})
+      starting() {
+        final cli = _SlowStartCli();
+        final spawned = Completer<void>();
+        final kernel = ClaudeCodeKernel(
+          MockKernels.claudeCode,
+          const KernelContext(cwd: '/p'),
+          start: (_) async {
+            await spawned.future;
+            return cli;
+          },
+        );
+        return (kernel: kernel, cli: cli, spawned: spawned);
+      }
+
+      // Out of view before the process is there.
+      var (:kernel, :cli, :spawned) = starting();
+      kernel
+        ..rename('Named')
+        ..prepare()
+        ..release();
+      spawned.complete();
+      await pumpEventQueue();
+      expect(cli.closed, isFalse, reason: 'not yet initialized');
+      cli.initialized();
+      await pumpEventQueue();
+      expect(cli.requests('rename_session').single['title'], 'Named');
+      expect(cli.closed, isTrue);
+      kernel.dispose();
+
+      // Out of view while it initializes.
+      (:kernel, :cli, :spawned) = starting();
+      spawned.complete();
+      kernel.prepare();
+      await pumpEventQueue();
+      kernel.release();
+      expect(cli.closed, isFalse);
+      cli.initialized();
+      await pumpEventQueue();
+      expect(cli.closed, isTrue);
+      kernel.dispose();
+
+      // Back in view before it is ready: it stays.
+      (:kernel, :cli, :spawned) = starting();
+      spawned.complete();
+      kernel
+        ..prepare()
+        ..release()
+        ..prepare();
+      await pumpEventQueue();
+      cli.initialized();
+      await pumpEventQueue();
+      expect(cli.closed, isFalse);
+      kernel.dispose();
+
+      // A message sent as it started: freed once it is answered.
+      (:kernel, :cli, :spawned) = starting();
+      spawned.complete();
+      kernel
+        ..send(const KernelTurn(id: 'u1', text: 'hi'))
+        ..release();
+      await pumpEventQueue();
+      cli.initialized();
+      await pumpEventQueue();
+      expect(cli.users, hasLength(1));
+      expect(cli.closed, isFalse);
+      cli.push(result);
+      await pumpEventQueue();
+      cli.push({
+        'type': 'system',
+        'subtype': 'session_state_changed',
+        'state': 'idle',
+      });
+      await pumpEventQueue();
+      expect(cli.closed, isTrue);
       kernel.dispose();
     });
 
@@ -2343,6 +2523,51 @@ void main() {
           kernel.dispose();
         },
       );
+
+      test('turns kept show as their footers did, on every page; those '
+          'not kept as before', () async {
+        const usage = TurnUsage(
+          inputTokens: 1200,
+          outputTokens: 300,
+          tokensPerSecond: 61.25,
+          costUsd: 0.04,
+        );
+        final kept = _KeptTurns()
+          ..sessions['s'] = {
+            'u1': (worked: const Duration(seconds: 5), usage: null),
+            'u3': (worked: const Duration(seconds: 9), usage: usage),
+          };
+        ClaudeCodeKernel.turnStats = kept;
+        addTearDown(() => ClaudeCodeKernel.turnStats = null);
+        final kernel = open(
+          (session, {required turns, before}) async => before == null
+              ? ClaudeHistoryPage([
+                  prompt('u3'),
+                  answer('u3', 1),
+                  prompt('u4'),
+                  answer('u4', 1),
+                ], earlier: 'u3')
+              : ClaudeHistoryPage([prompt('u1'), answer('u1', 1)]),
+        );
+        final transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        await pumpEventQueue();
+        UserMessageItem message(String id) =>
+            transcript.itemAt(transcript.indexOf(id)!) as UserMessageItem;
+        expect(message('u3').worked, const Duration(seconds: 9));
+        expect(message('u3').usage?.tokensPerSecond, 61.25);
+        expect(message('u3').usage?.totalTokens, 1500);
+        expect(message('u4').usage, isNull);
+
+        await kernel.loadEarlier();
+        await pumpEventQueue();
+        expect(transcript.itemAt(0), isA<UserMessageItem>());
+        expect(
+          (transcript.itemAt(0) as UserMessageItem).worked,
+          const Duration(seconds: 5),
+        );
+        kernel.dispose();
+      });
 
       test('asked again while it is read, it is the same reading', () async {
         final read = Completer<ClaudeHistoryPage>();
@@ -4972,4 +5197,17 @@ class _FakeServer implements CodexTransport {
 
   @override
   void close() => _out.close();
+}
+
+/// Turns kept in memory, by session and prompt.
+class _KeptTurns implements TurnStats {
+  final Map<String, Map<String, TurnRecord>> sessions = {};
+
+  @override
+  void write(String sessionId, String turnId, TurnRecord record) =>
+      (sessions[sessionId] ??= {})[turnId] = record;
+
+  @override
+  Future<Map<String, TurnRecord>> read(String sessionId) async =>
+      sessions[sessionId] ?? const {};
 }

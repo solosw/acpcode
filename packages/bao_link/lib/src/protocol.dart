@@ -52,6 +52,11 @@ abstract final class LinkMethods {
   /// [LinkSessionUpdate.interaction]).
   static const answer = 'answer';
 
+  /// `{"session"}`: starts the plan the agent put to the user (its
+  /// history's plan item awaiting), as the desktop's Start: `notFound`
+  /// when none awaits, `busy` while the turn that put it runs.
+  static const startPlan = 'startPlan';
+
   /// `{"session", "kind", "option"}`: picks a model, a mode, a permission
   /// mode, an effort or a context size (see [LinkChoice]).
   static const choose = 'choose';

@@ -23,7 +23,7 @@ void main() {
     h = await Harness.start(permissionMode: 'plan');
     h.model.script.add(Reply.text('looking'));
     await h.turn('plan');
-    final plan = RegExp(r'create your plan at ([^ ]+\.md)')
+    final plan = RegExp(r'write it to ([^ ]+\.md)')
         .firstMatch(sentIn(h.model.turns.first))![1]!;
     h.model.script.addAll([
       Reply.tool('Write', {
@@ -49,7 +49,7 @@ void main() {
     final exit = h.toolResults[1];
     expect(
       '${exit['content']}',
-      allOf(contains('User has approved your plan'), contains('Step one.')),
+      allOf(contains('The user approved your plan'), contains('Step one.')),
     );
     expect((exit['tool_use_result'] as Map)['filePath'], plan);
     expect(
@@ -145,12 +145,9 @@ void main() {
       final [unknown, missing, cased] = h.toolResults;
       expect(
         '${unknown['content']}',
-        allOf(contains("Agent type 'nope' not found"), contains('Explore')),
+        allOf(contains("no agent of the kind 'nope'"), contains('Explore')),
       );
-      expect(
-        '${missing['content']}',
-        contains('No agent found with ID: a-missing'),
-      );
+      expect('${missing['content']}', contains('with the ID a-missing'));
       expect((cased['tool_use_result'] as Map)['status'], 'completed');
     });
 
@@ -258,7 +255,7 @@ void main() {
       );
       h.model.script.add(Reply.text('looking'));
       await h.turn('plan');
-      final plan = RegExp(r'create your plan at ([^ ]+\.md)')
+      final plan = RegExp(r'write it to ([^ ]+\.md)')
           .firstMatch(sentIn(h.model.turns.first))![1]!;
       h.model.script.addAll([
         Reply.tools([
@@ -283,7 +280,7 @@ void main() {
       await h.turn('/compact');
       final summarizing = h.model.requests.lastWhere(
         (r) =>
-            jsonEncode(r.body['system']).contains('summarizing conversations'),
+            jsonEncode(r.body['system']).contains('summary of a conversation'),
       );
       expect(sentIn(summarizing), contains('Keep the API notes.'));
       final summary = h
@@ -314,7 +311,7 @@ void main() {
             .where(
               (r) =>
                   jsonEncode(r.body['system'])
-                      .contains('summarizing conversations'),
+                      .contains('summary of a conversation'),
             )
             .toList();
         expect(attempts, hasLength(2));

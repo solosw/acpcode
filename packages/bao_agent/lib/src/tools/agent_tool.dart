@@ -32,7 +32,7 @@ class AgentTool extends Tool {
 
   @override
   String get description =>
-      'Launch a new agent to handle complex, multi-step tasks autonomously.';
+      'Hands a task to an agent of its own, which does it and reports back.';
 
   @override
   String promptFor(AgentSession session) {
@@ -40,30 +40,27 @@ class AgentTool extends Tool {
       for (final agent in session.agentDefinitions)
         '- ${agent.name}: ${agent.description} (Tools: ${_toolsOf(agent)})',
     ].join('\n');
-    return '''Launch a new agent to handle complex, multi-step tasks autonomously.
+    return '''Hands a task to an agent of its own: it works on it alone, with a context and tools of its own, and gives you back one report when done.
 
-The Agent tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
-
-Available agent types and the tools they have access to:
+The kinds of agent there are, and the tools each has:
 $agents
 
-When using the Agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.
+Pick one with subagent_type; without it, general-purpose does the work.
 
-When NOT to use the Agent tool:
-- If you want to read a specific file path, use the Read or Glob tool instead of the Agent tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
-- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Agent tool, to find the match more quickly
-- Other tasks that are not related to the agent descriptions above
+An agent is worth it for a task that takes many steps, or a search that may take many rounds; not for what one call does sooner:
+- a file whose path you know: Read it;
+- a definition you can name ("class Foo"): Glob or Grep for it;
+- code in two or three files you know: Read them.
+Nor for work that fits none of the kinds above.
 
-Usage notes:
-- Always include a short description (3-5 words) summarizing what the agent will do
-- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, you will be notified automatically when it completes — do NOT sleep, poll, or proactively check on its progress. Continue with other work or respond to the user instead.
-- Agents can be resumed using the `resume` parameter by passing the agent ID from a previous invocation. When resumed, the agent continues with its full previous context preserved. When NOT resuming, each invocation starts fresh and you should provide a detailed task description with all necessary context.
-- The agent's outputs should generally be trusted
-- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
-- If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.''';
+- Give it a short description (3 to 5 words) of what it is to do.
+- It knows nothing of this conversation: say in the prompt all it needs, what to look into or change, and whether it is to write code or only to find things out.
+- Agents whose work does not overlap can run at once, in calls side by side in one reply.
+- Its report comes to you, not to the user: tell the user what matters in it, briefly.
+- What an agent reports can generally be trusted.
+- With run_in_background it works while you go on, and you are told when it is done: do not wait for it, sleep or look in on it meanwhile.
+- With resume and an agent's ID, an agent from before goes on with all it had; without, each starts afresh.
+- A kind whose description says to use it unasked should be used when it fits, without waiting to be asked.''';
   }
 
   static String _toolsOf(AgentDefinition agent) {
@@ -82,28 +79,31 @@ Usage notes:
     'properties': {
       'description': {
         'type': 'string',
-        'description': 'A short (3-5 word) description of the task',
+        'description': 'What it is to do, in 3 to 5 words',
       },
       'prompt': {
         'type': 'string',
-        'description': 'The task for the agent to perform',
+        'description': 'The task, with all the agent needs to know for it',
       },
       'subagent_type': {
         'type': 'string',
-        'description': 'The type of specialized agent to use for this task',
+        'description':
+            'The kind of agent to do it (general-purpose if left out)',
       },
       'model': {
         'type': 'string',
         'enum': ['sonnet', 'opus', 'haiku'],
-        'description': "Optional model to use for this agent. If not specified, inherits from parent. Prefer haiku for quick, straightforward tasks to minimize cost and latency.",
+        'description': 'The model it runs on, if not the one you run on: haiku is cheaper and quicker for a simple task',
       },
       'run_in_background': {
         'type': 'boolean',
-        'description': 'Set to true to run this agent in the background. You will be notified when it completes.',
+        'description':
+            'Let it work while you go on: you are told when it is done',
       },
       'resume': {
         'type': 'string',
-        'description': 'Optional agent ID to resume from. If provided, the agent will continue from the previous execution transcript.',
+        'description':
+            'The ID of an agent from before, to go on with all it had',
       },
     },
     'required': ['description', 'prompt'],
@@ -133,12 +133,13 @@ Usage notes:
     final type = asText(input['subagent_type']);
     if (type != null && _definition(context.session, type) == null) {
       final names = [for (final a in context.session.agentDefinitions) a.name];
-      return "Agent type '$type' not found. Available agents: ${names.join(', ')}";
+      return "There is no agent of the kind '$type'. The kinds there are: "
+          "${names.join(', ')}";
     }
     if (asText(input['resume']) case final id?) {
       final file = _sidechainFile(context.session, id);
       if (file == null || !File(file).existsSync()) {
-        return 'No agent found with ID: $id';
+        return 'There is no agent from before with the ID $id.';
       }
     }
     return null;
@@ -186,7 +187,7 @@ Usage notes:
   ) async {
     final session = context.session;
     if (!context.run.isMain) {
-      return ToolOutput.error('Agents cannot launch agents of their own.');
+      return ToolOutput.error('An agent cannot start agents of its own.');
     }
     final resumeId = asText(input['resume']);
     final meta = resumeId == null ? null : _readMeta(session, resumeId);
@@ -255,17 +256,16 @@ Usage notes:
   );
 
   ToolOutput _launched(_Job job, BackgroundTask task) => ToolOutput(
-    'Async agent launched successfully.\n'
-    'agentId: ${job.agentId} (internal ID - do not mention to user. Use the '
-    "Agent tool's resume parameter with this ID to continue this agent later.)\n"
-    'The agent is now working in the background. You will be notified '
-    'automatically when it completes.\n'
-    "Do not duplicate this agent's work — avoid working with the same files "
-    'or topics it is using. Work on non-overlapping tasks, or briefly tell '
-    'the user what you launched and end your response.\n'
+    'The agent has started in the background, and you will be told when it '
+    'is done.\n'
+    'agentId: ${job.agentId} (for you, not the user: give it to resume to '
+    'have this agent go on later)\n'
+    'Leave its work to it: keep off the files and questions it is on. Do '
+    'something else, or tell the user briefly what you started and stop '
+    'there.\n'
     'output_file: ${task.outputFile}\n'
-    'If asked, you can check progress before completion by using TaskOutput '
-    'with task_id ${job.agentId}.',
+    'To see how far it is before then, if asked, call TaskOutput with '
+    'task_id ${job.agentId}.',
     result: {
       'status': 'async_launched',
       'agentId': job.agentId,
@@ -319,7 +319,7 @@ class _Outcome {
       {
         'type': 'text',
         'text':
-            "agentId: ${job.agentId} (for resuming to continue this agent's work if needed)\n"
+            'agentId: ${job.agentId} (give it to resume to have this agent go on)\n'
             '<usage>total_tokens: $tokens\ntool_uses: $calls\n'
             'duration_ms: ${duration.inMilliseconds}</usage>',
       },

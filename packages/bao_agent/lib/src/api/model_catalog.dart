@@ -6,6 +6,7 @@ class ModelInfo {
     this.family = '',
     this.contextWindow = 200000,
     this.maxOutput = 32000,
+    this.defaultMaxTokens = 32000,
     this.thinking = ThinkingStyle.none,
     this.effortLevels = const [],
     this.defaultEffort,
@@ -27,6 +28,11 @@ class ModelInfo {
   final String family;
   final int contextWindow;
   final int maxOutput;
+
+  /// The `max_tokens` asked for unless the environment says
+  /// (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`): [maxOutput] for the newest, less
+  /// for those that would spend it slowly.
+  final int defaultMaxTokens;
   final ThinkingStyle thinking;
 
   /// The `output_config.effort` levels it takes; none when it takes none.
@@ -101,6 +107,7 @@ class ModelCatalog {
       family: 'fable',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'high',
@@ -115,6 +122,7 @@ class ModelCatalog {
       family: 'opus',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 128000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'medium',
@@ -129,9 +137,10 @@ class ModelCatalog {
       family: 'sonnet',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 128000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
-      defaultEffort: 'high',
+      defaultEffort: 'medium',
       canDisableThinking: false,
       inputPrice: 2,
       outputPrice: 10,
@@ -143,6 +152,7 @@ class ModelCatalog {
       family: 'haiku',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 128000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'medium',
@@ -155,6 +165,7 @@ class ModelCatalog {
       family: 'fable',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'high',
@@ -168,6 +179,7 @@ class ModelCatalog {
       family: 'opus',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'high',
@@ -180,6 +192,7 @@ class ModelCatalog {
       family: 'sonnet',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'high',
@@ -192,6 +205,7 @@ class ModelCatalog {
       family: 'opus',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
       defaultEffort: 'high',
@@ -204,9 +218,10 @@ class ModelCatalog {
       family: 'opus',
       contextWindow: 1000000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: _all5,
-      defaultEffort: 'high',
+      defaultEffort: 'xhigh',
       inputPrice: 5,
       outputPrice: 25,
     ),
@@ -216,6 +231,7 @@ class ModelCatalog {
       family: 'opus',
       contextWindow: 200000,
       maxOutput: 128000,
+      defaultMaxTokens: 64000,
       thinking: ThinkingStyle.adaptive,
       effortLevels: ['low', 'medium', 'high', 'max'],
       defaultEffort: 'high',

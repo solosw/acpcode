@@ -131,7 +131,7 @@ void main() {
           '--force-device-scale-factor=2',
           'about:blank',
         ],
-        environment: {'TMPDIR': sockets.path},
+        environment: {'TMPDIR': sockets.path, 'XDG_RUNTIME_DIR': sockets.path},
       );
       addTearDown(() {
         browser.kill();

@@ -9,7 +9,8 @@ import 'model_providers.dart';
 
 /// The choices of an auxiliary model, as Settings → Models gives them:
 /// [autoLabel] first (automatic: [auto], the value it stands for), Claude
-/// Code's own Haiku, then each provider's models; [current] checked.
+/// Code's own Haiku (for the CLI alone: BaoCode's own core has none), then
+/// each provider's models; [current] checked.
 List<IdeMenuEntry> auxiliaryModelEntries(
   AppLocalizations l10n,
   ModelProviders providers, {
@@ -20,15 +21,18 @@ List<IdeMenuEntry> auxiliaryModelEntries(
 }) => [
   IdeMenuAction(
     autoLabel ?? l10n.modelsAuxiliaryAuto,
-    checked: current == auto,
+    checked:
+        current == auto ||
+        (current == builtinProviderId && !providers.builtinAvailable),
     onSelected: () => onPick(auto),
   ),
   const IdeMenuSeparator(),
-  IdeMenuAction(
-    l10n.modelsAuxiliaryBuiltin,
-    checked: current == builtinProviderId,
-    onSelected: () => onPick(builtinProviderId),
-  ),
+  if (providers.builtinAvailable)
+    IdeMenuAction(
+      l10n.modelsAuxiliaryBuiltin,
+      checked: current == builtinProviderId,
+      onSelected: () => onPick(builtinProviderId),
+    ),
   for (final provider in providers.enabled)
     IdeMenuAction(
       provider.name,
@@ -51,7 +55,9 @@ String? actionsModelName(AppLocalizations l10n, ModelProviders providers) {
   return switch (value) {
     null => null,
     ModelProviders.followAuxiliary => l10n.aiModelAuxiliary,
-    builtinProviderId => l10n.modelsAuxiliaryBuiltin,
+    builtinProviderId when providers.builtinAvailable =>
+      l10n.modelsAuxiliaryBuiltin,
+    builtinProviderId => l10n.aiModelAuxiliary,
     _ => switch (providers.resolve(value)) {
       (final provider, final model) =>
         '${provider.name} · ${model.displayName}',

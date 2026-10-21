@@ -76,6 +76,9 @@ bool FlutterWindow::OnCreate() {
   // The stash's shortcut (see lib/stash/), a hot key of this window's.
   stash_ = std::make_unique<StashChannel>(messenger, GetHandle());
 
+  // The channel build's login window (see lib/channel/account/).
+  login_window_ = std::make_unique<LoginWindow>(messenger, GetHandle());
+
   // Shown with its first frame — unless the app starts in the IDE's windows
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
@@ -108,6 +111,7 @@ void FlutterWindow::OnDestroy() {
     attention_->DetachWindows();
   }
   stash_ = nullptr;
+  login_window_ = nullptr;
   app_windows_ = nullptr;
   ReleaseView();
 

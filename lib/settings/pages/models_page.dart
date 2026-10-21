@@ -92,6 +92,18 @@ class ModelsSettingsPage extends StatefulWidget {
   /// it does): one just imported. Taken as it is opened.
   static final ValueNotifier<String?> reveal = ValueNotifier(null);
 
+  /// Adds an upstream named [name], to be filled in: its id.
+  static Future<String> addUpstream(
+    ModelProviders providers,
+    String name,
+  ) async {
+    final id = providers.newId(name);
+    await providers.save(
+      ModelProvider(id: id, name: name, disableNonessentialTraffic: true),
+    );
+    return id;
+  }
+
   /// The protocol's name, as the list and the detail show it.
   static String protocolName(BuildContext context, ProviderProtocol value) {
     final l10n = context.l10n;
@@ -167,10 +179,9 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
   }
 
   Future<void> _add() async {
-    final name = context.l10n.modelsNewProviderName;
-    final id = _providers.newId(name);
-    await _providers.save(
-      ModelProvider(id: id, name: name, disableNonessentialTraffic: true),
+    final id = await ModelsSettingsPage.addUpstream(
+      _providers,
+      context.l10n.modelsNewProviderName,
     );
     if (mounted) setState(() => _open = id);
   }
@@ -209,7 +220,12 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
   String _auxiliaryName(BuildContext context, String? value) {
     final l10n = context.l10n;
     if (value == null) return l10n.modelsAuxiliaryAuto;
-    if (value == builtinProviderId) return l10n.modelsAuxiliaryBuiltin;
+    if (value == builtinProviderId) {
+      // Not there on BaoCode's own core: automatic in its place.
+      return _providers.builtinAvailable
+          ? l10n.modelsAuxiliaryBuiltin
+          : l10n.modelsAuxiliaryAuto;
+    }
     return _defaultName(context, value);
   }
 
@@ -322,7 +338,7 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
                         unawaited(_providers.setDefaultModel(null)),
                   ),
                   const IdeMenuSeparator(),
-                  if (!_providers.builtinHidden)
+                  if (_providers.builtinOffered)
                     IdeMenuAction(
                       l10n.modelsBuiltinDefault,
                       checked: current == 'default',
@@ -356,17 +372,20 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
         SettingsGroup(
           title: l10n.modelsProviders,
           children: [
-            _ProviderRow(
-              icon: const ProviderIcon(builtinProviderId, size: 16),
-              name: l10n.modelsBuiltinName,
-              badge: l10n.modelsBuiltinBadge,
-              detail: l10n.modelsBuiltinDescription,
-              status: _providers.builtinHidden ? _Status.off : _Status.ready,
-              enabled: !_providers.builtinHidden,
-              switchLabel: l10n.modelsEnableProvider(l10n.modelsBuiltinName),
-              onEnabled: (value) =>
-                  unawaited(_providers.setBuiltinHidden(!value)),
-            ),
+            // Claude Code as set up on this machine: the CLI's alone, not
+            // BaoCode's own core's.
+            if (_providers.builtinAvailable)
+              _ProviderRow(
+                icon: const ProviderIcon(builtinProviderId, size: 16),
+                name: l10n.modelsBuiltinName,
+                badge: l10n.modelsBuiltinBadge,
+                detail: l10n.modelsBuiltinDescription,
+                status: _providers.builtinHidden ? _Status.off : _Status.ready,
+                enabled: !_providers.builtinHidden,
+                switchLabel: l10n.modelsEnableProvider(l10n.modelsBuiltinName),
+                onEnabled: (value) =>
+                    unawaited(_providers.setBuiltinHidden(!value)),
+              ),
             // The newest at a site BaoCode lists first (one imported later
             // takes the place of one before); the rest in their order.
             for (final provider in [
@@ -1165,7 +1184,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     // Those checked, unless all are shown, or searched.
     final all = _showAll || query.isNotEmpty;
     final shown = [
-      for (final model in provider.models)
+      for (final model in provider.sortedModels)
         if ((all || model.enabled) &&
             (query.isEmpty ||
                 model.id.toLowerCase().contains(query) ||
@@ -1256,43 +1275,70 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
   List<Widget> _roles(BuildContext context) {
     final l10n = context.l10n;
     final provider = _provider;
+    // The other upstreams whose models subagents may run on: through the
+    // proxy, any that can be reached (not Claude Code's own, whose key is
+    // not the app's).
+    final others = [
+      for (final other in _providers.enabled)
+        if (other.id != provider.id && other.connected) other,
+    ];
     Widget role(
       String role,
       String label,
       String description, {
       String? warning,
+      bool elsewhere = false,
     }) {
       final current = provider.roles[role];
+      final picked = parseModelRef(current);
+      final pickedProvider = picked == null
+          ? null
+          : _providers.provider(picked.provider);
+      final pickedModel = picked == null
+          ? null
+          : pickedProvider?.model(picked.model);
+      final missing = picked != null && pickedModel == null;
       final shown = switch (current) {
+        _ when pickedModel != null =>
+          '${pickedProvider!.name} · ${pickedModel.displayName}',
+        _ when picked != null => picked.model,
         final id? => provider.model(id)?.displayName ?? id,
         null => l10n.modelsRoleUnset,
       };
+      Widget caution(String text) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2, right: 4),
+            child: Icon(Codicons.warning, size: 13, color: AppColors.caution),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: SettingsText.description.copyWith(
+                color: AppColors.caution,
+              ),
+            ),
+          ),
+        ],
+      );
+      IdeMenuAction pick(String label, String value) => IdeMenuAction(
+        label,
+        checked: current == value,
+        onSelected: () => unawaited(
+          _save(
+            _providerNow.copyWith(
+              roles: _providerNow.roles.copyWith(role, value),
+            ),
+          ),
+        ),
+      );
       return SettingsRow(
         label: label,
         description: description,
         below: [
-          if (warning != null && current == null)
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, right: 4),
-                  child: Icon(
-                    Codicons.warning,
-                    size: 13,
-                    color: AppColors.caution,
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    warning,
-                    style: SettingsText.description.copyWith(
-                      color: AppColors.caution,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          if (warning != null && current == null) caution(warning),
+          if (missing) caution(l10n.modelsRoleMissing),
         ],
         trailing: SettingsDropdown(
           current: shown,
@@ -1311,17 +1357,19 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
             ),
             const IdeMenuSeparator(),
             for (final model in provider.enabledModels)
-              IdeMenuAction(
-                model.displayName,
-                checked: current == model.id,
-                onSelected: () => unawaited(
-                  _save(
-                    _providerNow.copyWith(
-                      roles: _providerNow.roles.copyWith(role, model.id),
-                    ),
-                  ),
+              pick(model.displayName, model.id),
+            if (elsewhere && others.isNotEmpty) ...[
+              const IdeMenuSeparator(),
+              for (final other in others)
+                IdeMenuAction(
+                  other.name,
+                  checked: picked?.provider == other.id,
+                  submenu: [
+                    for (final model in other.enabledModels)
+                      pick(model.displayName, modelRef(other.id, model.id)),
+                  ],
                 ),
-              ),
+            ],
           ],
         ),
       );
@@ -1341,6 +1389,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         'subagent',
         l10n.modelsRoleSubagent,
         l10n.modelsRoleSubagentDescription,
+        elsewhere: true,
       ),
     ];
   }

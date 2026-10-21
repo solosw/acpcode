@@ -66,6 +66,7 @@ class DartCoreTransport implements ClaudeCodeTransport {
       model: launch.model,
       permissionMode: launch.permissionMode,
       effort: launch.effort,
+      thinkingDisplay: ClaudeLaunch.thinkingDisplay,
       autocompact: launch.autocompact,
       persist: launch.persist,
       directories: launch.directories,

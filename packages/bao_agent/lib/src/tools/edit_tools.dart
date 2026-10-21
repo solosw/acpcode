@@ -64,14 +64,12 @@ class WriteTool extends Tool with _Editing {
   String get name => 'Write';
 
   @override
-  String get description => '''Writes a file to the local filesystem.
+  String get description => '''Puts a whole file on disk: makes it, or puts the content given in place of all it had.
 
-Usage:
-- This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.''';
+- A file that is already there must have been read with Read first in this conversation, or the write is refused.
+- To change part of a file, use Edit: it sends only the change. Write is for new files, or for rewriting one whole.
+- Make a new file only when the task needs one. Documentation (README, *.md) only when the user asks for it.
+- No emoji in files unless the user wants them.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -79,11 +77,11 @@ Usage:
     'properties': {
       'file_path': {
         'type': 'string',
-        'description': 'The absolute path to the file to write (must be absolute, not relative)',
+        'description': 'Absolute path of the file',
       },
       'content': {
         'type': 'string',
-        'description': 'The content to write to the file',
+        'description': 'All that the file is to hold',
       },
     },
     'required': ['file_path', 'content'],
@@ -97,7 +95,7 @@ Usage:
   ) async {
     final path = pathOf(input, context);
     if (FileSystemEntity.isDirectorySync(path)) {
-      return '$path is a directory.';
+      return '$path is a folder, not a file.';
     }
     if (!File(path).existsSync()) return null;
     return context.run.readFiles.staleness(path);
@@ -116,7 +114,7 @@ Usage:
     await writeFile(path, content, context, like: before);
     if (before == null) {
       return ToolOutput(
-        'File created successfully at: $path',
+        'Made the file $path.',
         result: {
           'type': 'create',
           'filePath': path,
@@ -128,8 +126,7 @@ Usage:
     }
     final hunks = diffLines(before.text, content);
     return ToolOutput(
-      'The file $path has been updated. Here\'s the result of running '
-      '`cat -n` on a snippet of the edited file:\n'
+      'Wrote $path. The changed part, as Read numbers it:\n'
       '${_changedSnippet(content, hunks)}',
       result: {
         'type': 'update',
@@ -171,7 +168,7 @@ class _Replacement {
   if (edit.oldString == edit.newString) {
     return (
       null,
-      'No changes to make: old_string and new_string are exactly the same.',
+      'Nothing would change: old_string and new_string are the same.',
     );
   }
   var old = edit.oldString;
@@ -190,16 +187,16 @@ class _Replacement {
   if (count == 0) {
     return (
       null,
-      'String to replace not found in file.\nString: ${edit.oldString}',
+      'old_string is not in the file. Read it again to see its text as it is now.\n'
+          'old_string: ${edit.oldString}',
     );
   }
   if (count > 1 && !edit.replaceAll) {
     return (
       null,
-      'Found $count matches of the string to replace, but replace_all is '
-          'false. To replace all occurrences, set replace_all to true. To '
-          'replace only one occurrence, please provide more context to '
-          'uniquely identify the instance.\nString: ${edit.oldString}',
+      'old_string is in the file $count times. To change one of them, take '
+          'in more of the lines around it until it is found once; to change '
+          'them all, set replace_all.\nold_string: ${edit.oldString}',
     );
   }
   if (edit.replaceAll) {
@@ -270,15 +267,14 @@ class EditTool extends Tool with _Editing {
   String get name => 'Edit';
 
   @override
-  String get description => '''Performs exact string replacements in files.
+  String get description =>
+      '''Changes a file by swapping one exact piece of its text for another.
 
-Usage:
-- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.
-- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.''';
+- Read the file first in this conversation: an edit of a file not read is refused.
+- old_string must match the file exactly, its indentation included. A line from Read comes after its number and a tab: what follows the tab is the file's text, and none of the number goes in old_string or new_string.
+- old_string must be found once in the file, or the edit fails: take in more of the lines around it until it is, or set replace_all to change every place it is found (to rename something throughout the file, say).
+- Change the files that are there rather than making new ones, unless the task needs one.
+- No emoji in files unless the user wants them.''';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -286,18 +282,21 @@ Usage:
     'properties': {
       'file_path': {
         'type': 'string',
-        'description': 'The absolute path to the file to modify',
+        'description': 'Absolute path of the file',
       },
-      'old_string': {'type': 'string', 'description': 'The text to replace'},
+      'old_string': {
+        'type': 'string',
+        'description': 'The text there now, exactly',
+      },
       'new_string': {
         'type': 'string',
         'description':
-            'The text to replace it with (must be different from old_string)',
+            'The text to put in its place (not the same as old_string)',
       },
       'replace_all': {
         'type': 'boolean',
         'default': false,
-        'description': 'Replace all occurences of old_string (default false)',
+        'description': 'Change every place old_string is found, not just one',
       },
     },
     'required': ['file_path', 'old_string', 'new_string'],
@@ -313,17 +312,17 @@ Usage:
     final old = '${input['old_string'] ?? ''}';
     final file = File(path);
     if (p.extension(path) == '.ipynb') {
-      return 'File is a Jupyter Notebook. Use the NotebookEdit tool to edit '
-          'this file.';
+      return 'This is a Jupyter notebook: change it with NotebookEdit.';
     }
     if (!file.existsSync()) {
       // An empty old_string makes the file.
       if (old.isEmpty) return null;
-      return 'File does not exist.';
+      return 'No file is there. To make one, give an empty old_string.';
     }
     if (old.isEmpty) {
       if (readText(file).text.trim().isEmpty) return null;
-      return 'Cannot create new file - file already exists.';
+      return 'The file is already there, and not empty: an empty old_string '
+          'only makes a new file.';
     }
     return context.run.readFiles.staleness(path);
   }
@@ -354,8 +353,7 @@ Usage:
     await writeFile(path, updated, context, like: before);
     final hunks = diffLines(original, updated);
     return ToolOutput(
-      'The file $path has been updated. Here\'s the result of running '
-      '`cat -n` on a snippet of the edited file:\n'
+      'Changed $path. The part around the change, as Read numbers it:\n'
       '${replaceAll ? _changedSnippet(updated, hunks) : snippetAround(updated, replacement)}',
       result: {
         'filePath': path,
@@ -381,15 +379,11 @@ class NotebookEditTool extends Tool with _Editing {
 
   @override
   String get description =>
-      'Completely replaces the contents of a specific cell in a Jupyter '
-      'notebook (.ipynb file) with new source. Jupyter notebooks are '
-      'interactive documents that combine code, text, and visualizations, '
-      'commonly used for data analysis and scientific computing. The '
-      'notebook_path parameter must be an absolute path, not a relative '
-      'path. The cell_id is the ID of the cell to edit (as the Read tool '
-      'shows it). Use edit_mode=insert to add a new cell after the cell '
-      'with cell_id (or at the start without one). Use edit_mode=delete to '
-      'delete the cell.';
+      'Changes one cell of a Jupyter notebook (.ipynb): gives it new '
+      'source, adds a cell after it, or takes it out. Give the notebook by '
+      'its absolute path and the cell by the ID Read shows for it. With '
+      'edit_mode insert, the new cell goes after cell_id, or first when no '
+      'cell_id is given; with delete, the cell is taken out.';
 
   @override
   Map<String, Object?> get inputSchema => const {
@@ -397,25 +391,27 @@ class NotebookEditTool extends Tool with _Editing {
     'properties': {
       'notebook_path': {
         'type': 'string',
-        'description': 'The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)',
+        'description': 'Absolute path of the notebook',
       },
       'cell_id': {
         'type': 'string',
-        'description': 'The ID of the cell to edit. When inserting a new cell, the new cell will be inserted after the cell with this ID, or at the beginning if not specified.',
+        'description': 'The cell, by the ID Read shows; for insert, the cell the new one follows (none: it goes first)',
       },
       'new_source': {
         'type': 'string',
-        'description': 'The new source for the cell',
+        'description': 'The cell\'s source from now on',
       },
       'cell_type': {
         'type': 'string',
         'enum': ['code', 'markdown'],
-        'description': 'The type of the cell (code or markdown). If not specified, it defaults to the current cell type. If using edit_mode=insert, this is required.',
+        'description':
+            'code or markdown: needed for insert, else the cell keeps its own',
       },
       'edit_mode': {
         'type': 'string',
         'enum': ['replace', 'insert', 'delete'],
-        'description': 'The type of edit to make (replace, insert, delete). Defaults to replace.',
+        'description':
+            'replace (the default) its source, insert a new cell, or delete it',
       },
     },
     'required': ['notebook_path', 'new_source'],
@@ -429,13 +425,13 @@ class NotebookEditTool extends Tool with _Editing {
   ) async {
     final path = pathOf(input, context);
     if (p.extension(path) != '.ipynb') {
-      return 'File must be a Jupyter notebook (.ipynb file). For editing '
-          'other file types, use the Edit tool.';
+      return 'NotebookEdit changes only Jupyter notebooks (.ipynb): change '
+          'other files with Edit.';
     }
-    if (!File(path).existsSync()) return 'Notebook file does not exist.';
+    if (!File(path).existsSync()) return 'No notebook is there.';
     final mode = asString(input['edit_mode']) ?? 'replace';
     if (mode == 'insert' && input['cell_type'] == null) {
-      return 'Cell type is required when using edit_mode=insert.';
+      return 'Give cell_type for a cell to insert.';
     }
     return context.run.readFiles.staleness(path);
   }
@@ -452,7 +448,7 @@ class NotebookEditTool extends Tool with _Editing {
     try {
       notebook = {...asMap(jsonDecode(before.text))};
     } on FormatException {
-      return ToolOutput.error('Notebook is not valid JSON.');
+      return ToolOutput.error('The notebook is not valid JSON.');
     }
     final cells = [
       for (final cell in asList(notebook['cells'])) {...asMap(cell)},
@@ -470,7 +466,7 @@ class NotebookEditTool extends Tool with _Editing {
       if (index >= cells.length) index = -1;
     }
     if (index < 0 && (mode != 'insert' || cellId != null)) {
-      return ToolOutput.error('Cell with ID "$cellId" not found in notebook.');
+      return ToolOutput.error('The notebook has no cell "$cellId".');
     }
     final language =
         asString(asMap(asMap(notebook['metadata'])['language_info'])['name']) ??

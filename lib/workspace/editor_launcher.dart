@@ -82,8 +82,7 @@ enum Editor {
   /// [platformLabel] in [l10n]'s language: the system's own apps are named
   /// as the system names them there.
   String localizedPlatformLabel(AppLocalizations l10n) => switch (this) {
-    folder when AppPlatform.isWindows => l10n.workspaceFileExplorer,
-    folder => l10n.workspaceFinder,
+    folder => l10n.fileManager,
     terminal when AppPlatform.isWindows => l10n.workspaceWindowsTerminal,
     terminal => l10n.workspaceTerminalApp,
     _ => platformLabel,

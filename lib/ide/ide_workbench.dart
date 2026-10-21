@@ -432,9 +432,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// Servers whose install was recommended in this session.
   final Set<String> _recommended = {};
-  Position _caretPosition = const Position(1, 1);
-  int _statusColumn = 1;
-  int _selectionLength = 0;
+
+  /// Where the caret is (its column as the status bar counts it) and how
+  /// much is selected: the status bar alone is built again as it moves.
+  final _caret = ValueNotifier<({Position position, int column, int selected})>(
+    (position: const Position(1, 1), column: 1, selected: 0),
+  );
+  Position get _caretPosition => _caret.value.position;
+  int get _statusColumn => _caret.value.column;
+  int get _selectionLength => _caret.value.selected;
   bool _busy = false;
   String? _branch;
   String? _activeKey;
@@ -821,9 +827,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     }
   }
 
-  void _revealRange(LspRange range, {bool select = false}) {
+  void _revealRange(
+    LspRange range, {
+    bool select = false,
+    bool center = false,
+  }) {
     if (_editor case final editor?) {
-      editor.revealRange(range, select: select);
+      editor.revealRange(range, select: select, center: center);
     } else {
       _preview?.revealLine(range.start.line + 1);
     }
@@ -1144,6 +1154,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _referencesList.clear();
     _lastEdit = null;
     workspace.addListener(_workspaceChanged);
+    workspace.edits.addListener(_documentEdited);
     workspace.layout.addListener(_layoutChanged);
     _shownPanel = workspace.layout.panel;
     _activeKey = null;
@@ -1251,6 +1262,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     workspace.notifications.removeListener(_notificationsChanged);
     _detachDebug(workspace);
     workspace.removeListener(_workspaceChanged);
+    workspace.edits.removeListener(_documentEdited);
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
     _autoSaveFailed.clear();
@@ -1459,6 +1471,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _quickModel?.onDidHide?.call();
     _detach(widget.workspace);
     _extensions?.dispose();
+    _caret.dispose();
     _workbenchFocus.dispose();
     _explorerFocus.dispose();
     _timeline.dispose();
@@ -1487,6 +1500,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         }
       }),
     );
+  }
+
+  /// An edit typed in the editor, which the workspace's own listeners
+  /// hear of only when it makes the document dirty or clean again.
+  void _documentEdited() {
+    _symbols?.update(widget.workspace.active);
+    _scheduleAutoSave();
   }
 
   /// Follows the active editor: remembers it for Quick Open and reveals it
@@ -1596,6 +1616,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     int? column,
     LspRange? range,
     bool select = false,
+    bool center = false,
     bool focusEditor = false,
     VoidCallback? afterReveal,
   }) async {
@@ -1614,7 +1635,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           if (range != null) {
-            _revealRange(range, select: select);
+            _revealRange(range, select: select, center: center);
             afterReveal?.call();
           } else if (line != null) {
             _revealLine(line, column ?? 1);
@@ -2057,12 +2078,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   Future<void> _openLocation(
     IdeLocation location, {
     bool select = false,
+    bool center = false,
     bool record = true,
     VoidCallback? afterReveal,
   }) async {
     if (record) _recordNavigation(_here());
     if (widget.workspace.active?.path == location.path) {
-      _revealRange(location.range, select: select);
+      _revealRange(location.range, select: select, center: center);
       afterReveal?.call();
       if (mounted) setState(() {});
       return;
@@ -2071,6 +2093,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       location.path,
       range: location.range,
       select: select,
+      center: center,
       focusEditor: true,
       afterReveal: afterReveal,
     );
@@ -3804,11 +3827,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                 IdePane(
                   id: 'outline',
                   title: context.l10n.wbOutline,
-                  body: IdeOutlineView(
-                    symbols: _symbols,
-                    caret: workspace.active == null ? null : _caretLsp,
-                    onReveal: _revealSymbol,
-                    showHeader: false,
+                  body: ListenableBuilder(
+                    listenable: _caret,
+                    builder: (context, _) => IdeOutlineView(
+                      symbols: _symbols,
+                      caret: workspace.active == null ? null : _caretLsp,
+                      onReveal: _revealSymbol,
+                      showHeader: false,
+                    ),
                   ),
                 ),
                 IdePane(
@@ -3898,12 +3924,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
               },
             ),
             if (!pageShown && active != null && !active.isUntitled)
-              IdeBreadcrumbs(
-                root: widget.workspace.root,
-                path: active.path,
-                onReveal: _revealInExplorer,
-                symbols: _symbolPath,
-                onSymbol: _revealSymbol,
+              ListenableBuilder(
+                listenable: _caret,
+                builder: (context, _) => IdeBreadcrumbs(
+                  root: widget.workspace.root,
+                  path: active.path,
+                  onReveal: _revealInExplorer,
+                  symbols: _symbolPath,
+                  onSymbol: _revealSymbol,
+                ),
               ),
           ],
           Expanded(
@@ -4011,7 +4040,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                 onError: _report,
                                 onLspStatus: (_) {},
                                 onPositionChanged: _positionChanged,
-                                onOpenLocation: _openLocation,
+                                // Go to Definition's target (F12),
+                                // centered even when already in view.
+                                onOpenLocation: (location) =>
+                                    _openLocation(location, center: true),
                                 onShowReferences: _showReferences,
                                 onShowCommands: () => _showQuickInput('>'),
                                 gitBlame: _gitBlame,
@@ -4043,11 +4075,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         (!_caretPosition.equals(selection.position) ||
             _statusColumn != selection.statusColumn ||
             _selectionLength != selection.selectionLength)) {
-      setState(() {
-        _caretPosition = selection.position;
-        _statusColumn = selection.statusColumn;
-        _selectionLength = selection.selectionLength;
-      });
+      _caret.value = (
+        position: selection.position,
+        column: selection.statusColumn,
+        selected: selection.selectionLength,
+      );
     }
   }
 
@@ -4699,7 +4731,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                               _split(constraints.biggest, commands),
                         ),
                       ),
-                      _statusBar(),
+                      // Typing moves the caret and edits the document, and
+                      // the status bar is all that shows either.
+                      ListenableBuilder(
+                        listenable: Listenable.merge([
+                          _caret,
+                          widget.workspace.edits,
+                        ]),
+                        builder: (context, _) => _statusBar(),
+                      ),
                     ],
                   ),
                   // VS Code's toasts and center: 8px from the right, 36px

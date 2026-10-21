@@ -698,17 +698,7 @@ class TextMateDocument extends ChangeNotifier {
     // The edit as one replacement, as a model content change describes it.
     final a = old.text;
     final b = next.text;
-    final shortest = a.length < b.length ? a.length : b.length;
-    var prefix = 0;
-    while (prefix < shortest && a.codeUnitAt(prefix) == b.codeUnitAt(prefix)) {
-      prefix++;
-    }
-    var suffix = 0;
-    while (suffix < shortest - prefix &&
-        a.codeUnitAt(a.length - 1 - suffix) ==
-            b.codeUnitAt(b.length - 1 - suffix)) {
-      suffix++;
-    }
+    var (prefix, suffix) = DocumentSnapshot.sharedEnds(old, next);
     // Never between the CR and LF of a line break.
     if (prefix > 0 && a.codeUnitAt(prefix - 1) == 0x0D) prefix--;
     if (suffix > 0 && a.codeUnitAt(a.length - suffix) == 0x0A) suffix--;

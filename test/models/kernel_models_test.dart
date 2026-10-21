@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/kernel/claude_code/claude_code_translator.dart';
+import 'package:baocode/kernel/claude_code/claude_core_setting.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/transcript.dart';
@@ -169,6 +171,39 @@ void main() {
       kernel.model.options.map((o) => o.group?.id),
       isNot(contains(builtinProviderId)),
     );
+    kernel.dispose();
+  });
+
+  test('on BaoCode\'s own core, the machine\'s Claude Code is not offered: '
+      'a model of none (one of its own, picked on the CLI) is the first '
+      'upstream\'s', () async {
+    ClaudeCore.current = () => ClaudeCore.builtin;
+    final (:kernel, :launches, clis: _, :environments) = start(providers, {
+      'model': 'opus',
+    });
+    kernel.prepare();
+    await pumpEventQueue();
+    expect(kernel.model.options.map((o) => o.group?.id).toSet(), {
+      'gw',
+      'other',
+    });
+    expect(kernel.model.selected, '@gw/gpt-5');
+    // Started on it, as on any upstream: its environment over the user's.
+    expect(launches.single.env, isNotNull);
+    expect(environments.single.$1, 'gw');
+    kernel.model.select('@other/m');
+    expect(kernel.model.selected, '@other/m');
+    kernel.dispose();
+  });
+
+  test('on BaoCode\'s own core with no upstream, nothing is picked', () async {
+    ClaudeCore.current = () => ClaudeCore.builtin;
+    final (:kernel, launches: _, clis: _, environments: _) = start(
+      ModelProviders.memory(),
+      const {'model': 'opus'},
+    );
+    expect(kernel.model.options, isEmpty);
+    expect(kernel.model.selected, isNull);
     kernel.dispose();
   });
 
@@ -587,6 +622,171 @@ void main() {
     kernel.dispose();
   });
 
+  test('Claude Code\'s own model picked mid-conversation, the provider\'s '
+      'model removed meanwhile, resumes on it with the next message, not on '
+      'the CLI started on the provider (#164)', () async {
+    final (:kernel, :launches, :clis, environments: _) = start(providers, {
+      'model': '@gw/gpt-5',
+    });
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    clis.last
+      ..push({
+        'type': 'system',
+        'subtype': 'init',
+        'session_id': 's1',
+        'model': 'gpt-5',
+      })
+      ..push({'type': 'result', 'subtype': 'success', 'is_error': false});
+    await pumpEventQueue();
+
+    await providers.save(
+      _gateway.copyWith(
+        models: [
+          for (final model in _gateway.models)
+            if (model.id != 'gpt-5') model,
+        ],
+      ),
+    );
+    await pumpEventQueue();
+    // Its CLI resolves "opus" to the provider's model: let go, not told it.
+    expect(clis.first.closed, isTrue);
+    kernel.model.select('opus');
+    await pumpEventQueue();
+    expect(clis.first.requests('set_model'), isEmpty);
+    expect(kernel.model.selected, 'opus');
+
+    kernel.send(const KernelTurn(id: 'u2', text: 'go on'));
+    await pumpEventQueue();
+    expect(launches, hasLength(2));
+    expect(launches.last.resume, 's1');
+    expect(launches.last.model, 'opus');
+    expect(launches.last.env, isNull);
+    expect(clis.last.users.single['uuid'], 'u2');
+    kernel.dispose();
+  });
+
+  test('Claude Code\'s own model picked by its effort or context, on a CLI '
+      'started on a provider, is not told that CLI: it resumes on Claude '
+      'Code with the next message (#164)', () async {
+    for (final pick in <void Function(ClaudeCodeKernel)>[
+      (kernel) => (kernel as SelectsEffort).effort.select('opus', 'high'),
+      (kernel) =>
+          (kernel as SelectsContextSize).contextSize.select('opus', '1m'),
+    ]) {
+      final (:kernel, :launches, :clis, environments: _) = start(providers, {
+        'model': '@gw/gpt-5',
+      });
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      clis.last
+        ..push({'type': 'system', 'subtype': 'init', 'session_id': 's1'})
+        ..push({'type': 'result', 'subtype': 'success', 'is_error': false});
+      await pumpEventQueue();
+
+      pick(kernel);
+      await pumpEventQueue();
+      // That CLI would take "opus" for the provider's model.
+      expect(clis.first.requests('set_model'), isEmpty);
+      expect(clis.first.requests('apply_flag_settings'), isEmpty);
+      expect(kernel.model.selected, 'opus');
+
+      kernel.send(const KernelTurn(id: 'u2', text: 'go on'));
+      await pumpEventQueue();
+      expect(clis.first.closed, isTrue);
+      expect(launches, hasLength(2));
+      expect(launches.last.resume, 's1');
+      expect(launches.last.env, isNull);
+      expect(clis.last.users.single['uuid'], 'u2');
+      kernel.dispose();
+    }
+  });
+
+  test('another provider is taken up with the next message while the CLI '
+      'still says it is at work after its turn', () async {
+    final (:kernel, :launches, :clis, environments: _) = start(providers, {
+      'model': '@gw/gpt-5',
+    });
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    final first = clis.last
+      ..push({'type': 'system', 'subtype': 'init', 'session_id': 's1'})
+      ..push({
+        'type': 'system',
+        'subtype': 'session_state_changed',
+        'state': 'running',
+      })
+      ..push({'type': 'result', 'subtype': 'success', 'is_error': true});
+    await pumpEventQueue();
+
+    kernel.model.select('opus');
+    await pumpEventQueue();
+    kernel.send(const KernelTurn(id: 'u2', text: 'go on'));
+    await pumpEventQueue();
+    expect(first.closed, isTrue);
+    expect(first.users.map((u) => u['uuid']), ['u1']);
+    expect(launches, hasLength(2));
+    expect(launches.last.resume, 's1');
+    expect(launches.last.model, 'opus');
+    expect(launches.last.env, isNull);
+    expect(clis.last.users.single['uuid'], 'u2');
+    kernel.dispose();
+  });
+
+  test('another provider picked while the CLI starts again (back in view) '
+      'is taken up with the next message, not by the CLI starting', () async {
+    final launches = <ClaudeLaunch>[];
+    final clis = <FakeCli>[];
+    final ready = <Completer<void>>[];
+    final kernel = ClaudeCodeKernel(
+      MockKernels.claudeCode,
+      const KernelContext(cwd: '/p', settings: {'model': '@gw/gpt-5'}),
+      start: (launch) async {
+        launches.add(launch);
+        final cli = FakeCli();
+        clis.add(cli);
+        final started = Completer<void>();
+        ready.add(started);
+        await started.future;
+        return cli;
+      },
+      providers: providers,
+      providerEnvironment: (provider, model) async => {
+        'ANTHROPIC_BASE_URL': 'http://proxy/${provider.id}',
+      },
+    );
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    ready.last.complete();
+    await pumpEventQueue();
+    clis.last
+      ..push({'type': 'system', 'subtype': 'init', 'session_id': 's1'})
+      ..push({'type': 'result', 'subtype': 'success', 'is_error': false});
+    await pumpEventQueue();
+    kernel.release();
+    expect(clis.last.closed, isTrue);
+
+    // Back in view: it starts again, on the provider still.
+    kernel.prepare();
+    await pumpEventQueue();
+    expect(launches, hasLength(2));
+    kernel.model.select('opus');
+    kernel.send(const KernelTurn(id: 'u2', text: 'go on'));
+    await pumpEventQueue();
+    ready[1].complete();
+    await pumpEventQueue();
+    expect(launches, hasLength(3));
+    ready[2].complete();
+    await pumpEventQueue();
+    expect(clis[1].users, isEmpty);
+    expect(clis[1].closed, isTrue);
+    expect(launches.last.resume, 's1');
+    expect(launches.last.model, 'opus');
+    expect(launches.last.env, isNull);
+    expect(clis.last.users.single['uuid'], 'u2');
+    kernel.dispose();
+  });
+
   test('another provider is taken up with the next message even while a '
       'task works in the background, which ends with the CLI', () async {
     final (:kernel, :launches, :clis, environments: _) = start(providers, {
@@ -720,6 +920,57 @@ void main() {
     expect(launches.single.model, isNull);
     expect(launches.single.env, isNull);
     expect(environments, isEmpty);
+    kernel.dispose();
+  });
+
+  test('a provider gone since, Claude Code\'s own left out of the picker, '
+      'falls back to the first upstream\'s model, as the picker shows', () async {
+    await providers.setBuiltinHidden(true);
+    final (:kernel, :launches, clis: _, :environments) = start(providers, {
+      'model': '@removed/x',
+    });
+    kernel.prepare();
+    await pumpEventQueue();
+    expect(kernel.model.selected, '@gw/gpt-5');
+    expect(launches.single.model, startsWith('gpt-5'));
+    expect(environments.single.$1, 'gw');
+    kernel.dispose();
+  });
+
+  test('the model in use removed mid-conversation: the CLI started on it '
+      'is let go, and the next message resumes on the model the picker '
+      'shows, not on Claude Code\'s own left out of it (#164)', () async {
+    await providers.setBuiltinHidden(true);
+    final (:kernel, :launches, :clis, environments: _) = start(providers, {
+      'model': '@gw/gpt-5',
+    });
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    clis.last
+      ..push({'type': 'system', 'subtype': 'init', 'session_id': 's1'})
+      ..push({'type': 'result', 'subtype': 'success', 'is_error': false});
+    await pumpEventQueue();
+
+    await providers.save(
+      _gateway.copyWith(
+        models: [
+          for (final model in _gateway.models)
+            if (model.id != 'gpt-5') model,
+        ],
+      ),
+    );
+    await pumpEventQueue();
+    // Its environment names the model removed for each of Claude Code's.
+    expect(clis.first.closed, isTrue);
+    expect(kernel.model.selected, '@gw/plain');
+
+    kernel.send(const KernelTurn(id: 'u2', text: 'go on'));
+    await pumpEventQueue();
+    expect(launches, hasLength(2));
+    expect(launches.last.resume, 's1');
+    expect(launches.last.model, startsWith('plain'));
+    expect(launches.last.env, isNotNull);
+    expect(clis.last.users.single['uuid'], 'u2');
     kernel.dispose();
   });
 }

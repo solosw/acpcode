@@ -35,6 +35,7 @@ class AgentCommandLine {
     String? model;
     String? permissionMode;
     String? effort;
+    String? thinkingDisplay;
     int? autocompact;
     var persist = true;
     final directories = <String>[];
@@ -56,8 +57,10 @@ class AgentCommandLine {
         case '-p' || '--print' || '--verbose' || '--include-partial-messages':
         case '--replay-user-messages' || '--allow-dangerously-skip-permissions':
           break;
-        case '--permission-prompt-tool' || '--thinking-display':
+        case '--permission-prompt-tool':
           value(flag);
+        case '--thinking-display':
+          thinkingDisplay = value(flag);
         case '--input-format':
           inputFormat = value(flag)!;
         case '--output-format':
@@ -133,6 +136,7 @@ class AgentCommandLine {
         model: model,
         permissionMode: permissionMode,
         effort: effort,
+        thinkingDisplay: thinkingDisplay,
         autocompact: autocompact,
         persist: persist,
         directories: directories,

@@ -2,18 +2,25 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../channel/channel_setup.dart' show ChannelSetup;
 import '../../ide/ide_dialog.dart';
 import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../l10n/l10n.dart';
+import '../../models/model_welcome.dart';
 import '../../settings/settings_dialog.dart'
     show SettingsOpener, SettingsSection;
+import '../../theme/app_theme.dart';
+import '../../theme/codicons.dart';
 import '../chat_session.dart';
+import '../resume_after_reset.dart';
+import '../widgets/hover_builder.dart';
 import 'composer_picker.dart';
 
 /// The pill that picks [session]'s model, each model's settings (its
 /// effort, its context) beside it: the composer's, and the one a plan is
-/// started with. Nothing where the kernel picks no model.
+/// started with. With no model to run on, one that sets a model up
+/// ([showModelWelcome]); nothing where the kernel picks no model.
 class SessionModelPicker extends StatelessWidget {
   const SessionModelPicker({
     super.key,
@@ -71,11 +78,49 @@ class SessionModelPicker extends StatelessWidget {
     if (choice == 0 && context.mounted) pick();
   }
 
+  /// Beside a model of the account's plan, last: whether an agent stopped
+  /// at its usage limit goes on by itself once it resets. Not where it
+  /// cannot be set.
+  ModelSettingChoice? _resumeAfterLimit(BuildContext context, String model) {
+    final write = ResumeAfterResetSetting.write;
+    if (write == null || !session.continuesAfterLimit(model)) return null;
+    final on = KernelOption(
+      'on',
+      context.l10n.resumeAfterLimitToggle,
+      Icons.schedule_send_rounded,
+      '',
+    );
+    final enabled = ResumeAfterResetSetting.current();
+    return ModelSettingChoice(
+      kind: null,
+      options: [on],
+      selected: enabled ? on : null,
+      toggle: true,
+      onSelected: (_) => write(!enabled),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      switch (ResumeAfterResetSetting.changes) {
+        // Its switch turned, as settings.json says.
+        final changes? => ListenableBuilder(
+          listenable: changes,
+          builder: (context, _) => _build(context),
+        ),
+        null => _build(context),
+      };
+
+  Widget _build(BuildContext context) {
     final model = session.models;
-    if (model == null) return const SizedBox.shrink();
     final l10n = context.l10n;
+    if (model == null) {
+      if (!session.health.noModel) return const SizedBox.shrink();
+      return _SetUpPill(
+        label: l10n.modelSetUp,
+        onTap: () => unawaited(showModelWelcome(context)),
+      );
+    }
     return ComposerPicker(
       key: pickerKey,
       options: model.options,
@@ -95,13 +140,16 @@ class SessionModelPicker extends StatelessWidget {
               _switch(context, option, () => setting.onSelected(choice)),
             ),
           ),
+        ?_resumeAfterLimit(context, option.id),
       ],
       tooltip: tooltip,
       menuWidth: 260,
       searchPlaceholder: l10n.modelsSearch,
       footer: switch (SettingsOpener.maybeOf(context)) {
         final open? => (
-          label: l10n.modelsManage,
+          label: ChannelSetup.channelBuild
+              ? l10n.channelAccountTitle
+              : l10n.modelsManage,
           icon: Icons.tune_rounded,
           onTap: () => open(SettingsSection.models),
         ),
@@ -111,6 +159,44 @@ class SessionModelPicker extends StatelessWidget {
       focusNode: focusNode,
       onSelected: (option) =>
           unawaited(_switch(context, option, () => model.onSelected(option))),
+    );
+  }
+}
+
+/// In the model's place while there is none: as its pill, in the accent,
+/// a click away from setting one up.
+class _SetUpPill extends StatelessWidget {
+  const _SetUpPill({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = AppColors.accent;
+    return HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          height: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: hovered ? .2 : .12),
+            border: Border.all(color: accent.withValues(alpha: .4)),
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Codicons.sparkle, size: 13, color: accent),
+              const SizedBox(width: 4),
+              Text(label, style: TextStyle(color: accent, fontSize: 12)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -111,4 +111,59 @@ void main() {
     );
     expect(other.position.pixels, 200);
   });
+
+  testWidgets(
+    'on macOS a trackpad flings a list as there, stopping at its ends '
+    'rather than going past them and springing back',
+    (tester) async {
+      late ScrollController controller;
+      await tester.pumpWidget(
+        MaterialApp(
+          scrollBehavior: const BaoScrollBehavior(),
+          home: SmoothScrolling(
+            builder: (context, shown) => ListView.builder(
+              controller: controller = shown,
+              itemCount: 30,
+              itemExtent: 40,
+              itemBuilder: (context, index) => Text('Row $index'),
+            ),
+          ),
+        ),
+      );
+      final at = tester.getCenter(find.byType(ListView));
+      final max = controller.position.maxScrollExtent;
+      var time = Duration.zero;
+      Future<void> flick(double step) async {
+        final pointer = TestPointer(40, PointerDeviceKind.trackpad);
+        await tester.sendEventToBinding(
+          pointer.panZoomStart(at, timeStamp: time),
+        );
+        for (var i = 1; i <= 6; i++) {
+          time += const Duration(milliseconds: 8);
+          await tester.sendEventToBinding(
+            pointer.panZoomUpdate(
+              at,
+              pan: Offset(0, step * i),
+              timeStamp: time,
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 8));
+          expect(controller.offset, inInclusiveRange(0, max));
+        }
+        time += const Duration(milliseconds: 8);
+        await tester.sendEventToBinding(pointer.panZoomEnd(timeStamp: time));
+        for (var i = 0; i < 120; i++) {
+          await tester.pump(_frame);
+          expect(controller.offset, inInclusiveRange(0, max));
+        }
+      }
+
+      expect(controller.position.physics, isA<EdgeStopScrollPhysics>());
+      await flick(-100);
+      expect(controller.offset, max);
+      await flick(100);
+      expect(controller.offset, 0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
 }

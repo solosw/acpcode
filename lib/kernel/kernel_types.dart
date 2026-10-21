@@ -271,6 +271,7 @@ class KernelHealth {
     this.message,
     this.detail,
     this.missingFolder,
+    this.noModel = false,
   });
 
   static const idle = KernelHealth(KernelHealthStatus.idle);
@@ -287,6 +288,10 @@ class KernelHealth {
   /// The project folder it was to work in, when that is what is not there:
   /// said in the user's language rather than [message].
   final String? missingFolder;
+
+  /// Whether what it lacks is a model to run on (BaoCode's own core with
+  /// no upstream turned on): offered setting one up rather than a retry.
+  final bool noModel;
 }
 
 /// A task the kernel runs beside the conversation: a background command, a

@@ -898,6 +898,37 @@ class IdeWorkspace extends ChangeNotifier
     notifyListeners();
   }
 
+  /// Publishes an edit typed into an open document's editor: [edits]
+  /// hears of every one, this workspace's own listeners (the whole
+  /// workbench rebuilds for them) only of those that change what they show
+  /// of it, i.e. the document going dirty or clean again.
+  void notifyDocumentEdited(IdeDocument doc) {
+    if (_disposed || !_documents.contains(doc)) return;
+    final dirty = doc.dirty;
+    if (_dirtyShown[doc] != dirty) {
+      notifyListeners();
+      _dirtyShown[doc] = dirty;
+    }
+    _edits.notifyListeners();
+  }
+
+  /// Every edit [notifyDocumentEdited] publishes, whether or not this
+  /// workspace notifies its own listeners of it.
+  Listenable get edits => _edits;
+  final _EditsNotifier _edits = _EditsNotifier();
+
+  /// Whether each document was dirty when last edited, since this
+  /// workspace last notified: an edit that leaves it so changes nothing
+  /// its listeners show.
+  final Map<IdeDocument, bool> _dirtyShown = {};
+
+  @override
+  void notifyListeners() {
+    // Whatever changed (a save, a revert), the next edit is told again.
+    _dirtyShown.clear();
+    super.notifyListeners();
+  }
+
   void applyEdits(String path, List<EditorDocumentEdit> edits) {
     if (_disposed) return;
     final doc = _fileDocument(path);
@@ -1223,8 +1254,14 @@ class IdeWorkspace extends ChangeNotifier
     }
     layout.dispose();
     notifications.dispose();
+    _edits.dispose();
     super.dispose();
   }
+}
+
+class _EditsNotifier extends ChangeNotifier {
+  @override
+  void notifyListeners() => super.notifyListeners();
 }
 
 /// What [IdeWorkspace.formatOutside] came to.

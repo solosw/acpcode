@@ -56,6 +56,10 @@ const browserWelcomeCommandId = 'baocode.browser.welcome';
 /// (showStashWelcome), as the first time its page shows.
 const stashWelcomeCommandId = 'baocode.stash.welcome';
 
+/// Set Up a Model…: what an upstream is, and adding one (showModelWelcome),
+/// as when a session first has no model to run on.
+const modelWelcomeCommandId = 'baocode.models.welcome';
+
 /// A command a keybinding may run, as the Keyboard Shortcuts page lists it.
 @immutable
 class CommandInfo {
@@ -167,6 +171,11 @@ final Map<String, CommandInfo> commandCatalog = {
       category: 'Help',
     ),
     const CommandInfo(stashWelcomeCommandId, 'Meet Stash...', category: 'Help'),
+    const CommandInfo(
+      modelWelcomeCommandId,
+      'Set Up a Model...',
+      category: 'Help',
+    ),
     const CommandInfo(
       'workbench.action.closeActiveEditor',
       'Close Editor',

@@ -182,8 +182,8 @@ class PermissionEngine {
       return PermissionAsk(
         reasonType: 'safetyCheck',
         message:
-            'Claude requested permissions to edit $target, which is a '
-            'sensitive file.',
+            '$target is a sensitive file (it changes how the agent, the '
+            'shell or git behave): editing it needs the user\'s yes.',
         suggestions: [if (inside) setModeSuggestion('acceptEdits')],
       );
     }

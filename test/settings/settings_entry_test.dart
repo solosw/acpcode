@@ -229,6 +229,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getSize(find.byType(SettingsDialog)), const Size(800, 600));
     expect(find.text('page general'), findsOneWidget);
+    // More sections can put the last group below the initial viewport.
+    await tester.scrollUntilVisible(
+      find.text('Data Directory'),
+      100,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ),
+    );
     // The pages listed in their groups' order.
     expect(
       tester.getTopLeft(find.text('Data Directory')).dy,

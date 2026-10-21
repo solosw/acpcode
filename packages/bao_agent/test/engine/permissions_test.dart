@@ -243,9 +243,8 @@ void main() {
         await h.turn('plan it');
         expect(h.permissionRequests.single['tool_name'], 'Write');
         final sent = jsonEncode(h.model.turns.first.body['messages']);
-        expect(sent, contains('Plan mode is active'));
-        final plan = RegExp(r'create your plan at ([^ ]+\.md)')
-            .firstMatch(sent)![1]!;
+        expect(sent, contains('You are in plan mode'));
+        final plan = RegExp(r'write it to ([^ ]+\.md)').firstMatch(sent)![1]!;
         h.model.script.addAll([
           Reply.tool('Write', {
             'file_path': plan,

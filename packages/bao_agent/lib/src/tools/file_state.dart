@@ -45,7 +45,8 @@ class ReadFileState {
   String? staleness(String path) {
     final record = _records[path];
     if (record == null) {
-      return 'File has not been read yet. Read it first before writing to it.';
+      return 'This file has not been read in this conversation: read it before '
+          'changing it.';
     }
     final file = File(path);
     if (!file.existsSync()) return null;
@@ -59,8 +60,9 @@ class ReadFileState {
           // Said below.
         }
       }
-      return 'File has been modified since read, either by the user or by '
-          'a linter. Read it again before attempting to write it.';
+      return 'The file has changed since it was read (the user, or a tool '
+          'such as a formatter, touched it): read it again, then make the '
+          'change.';
     }
     return null;
   }

@@ -12,9 +12,14 @@ import 'settings_widgets.dart';
 /// Settings → SSH: hosts the app keeps itself (user, port, password or
 /// key), instead of only reading `~/.ssh/config`.
 class SshHostsSettingsPage extends StatefulWidget {
-  const SshHostsSettingsPage({super.key, required this.hosts});
+  const SshHostsSettingsPage({
+    super.key,
+    required this.hosts,
+    this.embedded = false,
+  });
 
   final SshHostSettings hosts;
+  final bool embedded;
 
   @override
   State<SshHostsSettingsPage> createState() => _SshHostsSettingsPageState();
@@ -28,10 +33,7 @@ class _SshHostsSettingsPageState extends State<SshHostsSettingsPage> {
   }
 
   Future<void> _add() async {
-    final next = [
-      ...widget.hosts.hosts,
-      const SshSavedHost(host: ''),
-    ];
+    final next = [...widget.hosts.hosts, const SshSavedHost(host: '')];
     await widget.hosts.save(next);
   }
 
@@ -40,50 +42,55 @@ class _SshHostsSettingsPageState extends State<SshHostsSettingsPage> {
     final l10n = context.l10n;
     return ListenableBuilder(
       listenable: widget.hosts,
-      builder: (context, _) => SettingsPage(
-        title: l10n.settingsSectionSsh,
-        description: l10n.sshSettingsDescription,
-        children: [
-          SettingsGroup(
-            title: l10n.sshSettingsHosts,
-            description: l10n.sshSettingsHostsDescription,
-            children: [
-              if (widget.hosts.hosts.isEmpty)
-                SettingsRow(label: l10n.sshSettingsEmpty),
-              for (final (index, host) in widget.hosts.hosts.indexed)
-                _HostEditor(
-                  key: ValueKey('$index-${host.host}'),
-                  host: host,
-                  onSave: (updated, {String? password}) => unawaited(
-                    widget.hosts.save(
-                      [
-                        for (final (i, item) in widget.hosts.hosts.indexed)
-                          i == index ? updated : item,
-                      ],
-                      passwords: password == null
-                          ? const {}
-                          : {updated.host: password},
-                    ),
+      builder: (context, _) {
+        final group = SettingsGroup(
+          title: l10n.sshSettingsHosts,
+          description: l10n.sshSettingsHostsDescription,
+          children: [
+            if (widget.hosts.hosts.isEmpty)
+              SettingsRow(label: l10n.sshSettingsEmpty),
+            for (final (index, host) in widget.hosts.hosts.indexed)
+              _HostEditor(
+                key: ValueKey('$index-${host.host}'),
+                host: host,
+                onSave: (updated, {String? password}) => unawaited(
+                  widget.hosts.save(
+                    [
+                      for (final (i, item) in widget.hosts.hosts.indexed)
+                        i == index ? updated : item,
+                    ],
+                    passwords: password == null
+                        ? const {}
+                        : {updated.host: password},
                   ),
-                  onDelete: () => unawaited(
-                    widget.hosts.save([
+                ),
+                onDelete: () => unawaited(
+                  widget.hosts.save(
+                    [
                       for (final (i, item) in widget.hosts.hosts.indexed)
                         if (i != index) item,
-                    ], passwords: {host.host: ''}),
+                    ],
+                    passwords: {host.host: ''},
                   ),
                 ),
-              SettingsRow(
-                label: l10n.sshSettingsAdd,
-                trailing: IdeButton(
-                  label: l10n.sshSettingsAdd,
-                  icon: Codicons.add,
-                  onPressed: () => unawaited(_add()),
-                ),
               ),
-            ],
-          ),
-        ],
-      ),
+            SettingsRow(
+              label: l10n.sshSettingsAdd,
+              trailing: IdeButton(
+                label: l10n.sshSettingsAdd,
+                icon: Codicons.add,
+                onPressed: () => unawaited(_add()),
+              ),
+            ),
+          ],
+        );
+        if (widget.embedded) return group;
+        return SettingsPage(
+          title: l10n.settingsSectionSsh,
+          description: l10n.sshSettingsDescription,
+          children: [group],
+        );
+      },
     );
   }
 }
@@ -134,7 +141,9 @@ class _HostEditorState extends State<_HostEditor> {
         user: _user.text.trim(),
         port: port != null && port > 0 ? port : null,
         auth: _auth,
-        identityFile: _auth == SshAuthKind.key ? _secret.text.trim() : widget.host.identityFile,
+        identityFile: _auth == SshAuthKind.key
+            ? _secret.text.trim()
+            : widget.host.identityFile,
         hasPassword: password
             ? _secret.text.isNotEmpty
             : widget.host.hasPassword,
@@ -152,7 +161,12 @@ class _HostEditorState extends State<_HostEditor> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _field(l10n.sshSettingsHost, _host, l10n.sshSettingsHostHint, commit: false),
+          _field(
+            l10n.sshSettingsHost,
+            _host,
+            l10n.sshSettingsHostHint,
+            commit: false,
+          ),
           const SizedBox(height: 8),
           Row(
             children: [

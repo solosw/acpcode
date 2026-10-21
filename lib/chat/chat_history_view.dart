@@ -24,7 +24,9 @@ import 'chat_models.dart';
 import 'chat_session.dart';
 import 'composer/composer.dart';
 import 'composer/composer_draft.dart';
+import 'reply_scroll.dart';
 import 'side_panel/file_link_menu.dart';
+import 'steadiness.dart';
 import 'step_folds.dart';
 import 'user_message_style.dart';
 import 'widgets/chat_item_view.dart';
@@ -113,11 +115,39 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// Whether a turn was under way, as last seen: to tell when it ends.
   bool _wasLive = false;
 
-  void _refold() => _folds = StepFolds.of(
-    _feed.itemCount,
-    _feed.itemAt,
-    live: _feed.isStreaming,
+  void _refold() {
+    _folds = StepFolds.of(
+      _feed.itemCount,
+      _feed.itemAt,
+      live: _feed.isStreaming,
+    );
+    _liveStart = null;
+    if (!_feed.isStreaming) return;
+    for (var index = _feed.itemCount - 1; index >= 0; index--) {
+      if (_feed.itemAt(index) case UserMessageItem(queued: false)) {
+        _liveStart = index + 1;
+        break;
+      }
+    }
+  }
+
+  /// Where the turn under way's items start; null when none is.
+  int? _liveStart;
+
+  /// What shows of the turn under way only while it lasts, steadied: a
+  /// closed run's step under way, a thought open as it streams. What is
+  /// done in a blink never shows, rather than flash; what showed stays a
+  /// moment before it folds away.
+  late final Steadiness _steady = Steadiness(
+    onChange: () {
+      if (mounted) setState(() {});
+    },
   );
+
+  bool _isLive(int index) => switch (_liveStart) {
+    final start? => index >= start,
+    null => false,
+  };
 
   bool _isFoldOpen(StepFold fold) =>
       _foldOpen[fold.key] ??
@@ -130,8 +160,26 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     setState(() => _foldOpen[fold.key] = !_isFoldOpen(fold));
   }
 
-  StepRow _rowAt(int index) =>
-      _folds.rowAt(index, _feed.itemAt(index), _isFoldOpen);
+  /// What row [index] shows. Of a run under way the user has not opened
+  /// or closed: its step under way once it has run a moment, and a step
+  /// that showed kept a moment before it folds away (see [_steady]).
+  StepRow _rowAt(int index) {
+    final item = _shownAt(index);
+    final row = _folds.rowAt(index, item, _isFoldOpen);
+    if (!_isLive(index) || !isQuickStep(item) || row.work != null) return row;
+    final steps = _folds.stepsAt(index);
+    if (steps != null && _foldOpen.containsKey(steps.key)) return row;
+    final key = (#row, index);
+    final bool shown;
+    if (steps == null) {
+      // Showing anyway: from now, to keep it a moment once a run takes it.
+      shown = _steady.shows(key, wanted: row.item, delayed: false);
+    } else {
+      // A closed run's: shown only while under way.
+      shown = _steady.shows(key, wanted: row.item);
+    }
+    return (work: row.work, steps: row.steps, item: shown);
+  }
 
   /// Whether row [index] shows nothing: a closed fold hides its item.
   bool _isHidden(int index) => switch (_rowAt(index)) {
@@ -167,14 +215,18 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     );
   }
 
-  /// Under the last item of the turn under way, where its footer will be:
-  /// what the model has written so far, and how fast.
+  /// Under the status row of the turn under way, the last of all, whether
+  /// the row shows or not: how fast the model writes, how long the turn
+  /// has taken, and the tokens so far.
   Widget? _liveFooter(int index) {
-    if (!_feed.isStreaming || index != _contentCount - 1) return null;
-    return switch (_feed.itemAt(_feed.itemCount - 1)) {
-      LiveStatusItem(:final output?) when output.tokens > 0 => TurnFooter(
-        live: output,
-      ),
+    if (!_feed.isStreaming || index != _feed.itemCount - 1) return null;
+    return switch (_feed.itemAt(index)) {
+      LiveStatusItem(:final output, :final startedAt)
+          when startedAt != null || (output?.tokens ?? 0) > 0 =>
+        TurnFooter(
+          live: output ?? const TurnOutput(tokens: 0),
+          since: startedAt,
+        ),
       _ => null,
     };
   }
@@ -192,7 +244,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// and its item unless folded away.
   String _plainTextOf(int index) {
     final item = _shownAt(index);
-    final row = _folds.rowAt(index, item, _isFoldOpen);
+    final row = _rowAt(index);
     final l10n = context.l10n;
     return [
       if (row.work case StepFold(:final worked?) && final fold)
@@ -455,7 +507,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   @override
   void initState() {
     super.initState();
-    _scrollController.laidOut = _keepShownLaidOut;
+    _scrollController
+      ..laidOut = _keepShownLaidOut
+      ..stopAt = _replyStart;
     _find
       ..feed = _feed
       ..addListener(_findChanged);
@@ -561,6 +615,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   @override
   void dispose() {
+    _steady.dispose();
     _feed.removeListener(_handleSessionChanged);
     _find
       ..removeListener(_findChanged)
@@ -580,8 +635,15 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     super.dispose();
   }
 
-  bool _isExpanded(int index) =>
-      _expanded[index] ?? defaultExpanded(_shownAt(index));
+  /// Open as the user left it; else as [defaultExpanded] says, steadied
+  /// while the turn is under way: a thought of a blink stays closed.
+  bool _isExpanded(int index) {
+    if (_expanded[index] case final open?) return open;
+    final item = _shownAt(index);
+    final open = defaultExpanded(item);
+    if (!_isLive(index) || item is! ThinkingItem) return open;
+    return _steady.shows((#open, index), wanted: open);
+  }
 
   /// What row [index] shows: a run of thoughts as one (see [StepFolds]).
   ChatItem _shownAt(int index) => _folds.shownAt(index, _feed.itemAt(index));
@@ -932,6 +994,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       // move it less than that.
       _scrollController.anchored =
           position.pixels >= end && position.headedTo >= end;
+      // Taken to the end: what is written is followed again.
+      if (_scrollController.anchored) _toReplyStart = false;
     }
     if (_shownAtBottom != _atBottom) {
       setState(() => _shownAtBottom = _atBottom);
@@ -1171,11 +1235,43 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   }
 
   bool _handleMetricsChanged(ScrollMetricsNotification notification) {
+    // Let go of as it laid out (see [_replyStart]).
+    if (_shownAtBottom != _atBottom) {
+      setState(() => _shownAtBottom = _atBottom);
+    }
     _syncEdgeFades();
     _scheduleStickyUpdate();
     _editorMoved.value++;
     _wantEarlier();
     return false;
+  }
+
+  /// Whether the list, following the reply to a message sent, stops with
+  /// the message at the top ([ReplyScroll.start]): until the user takes it
+  /// back to the end, or the turn ends.
+  bool _toReplyStart = false;
+
+  /// The offset that has the message of the turn under way at the top,
+  /// as its stuck copy would be, while the list stops there; null while it
+  /// does not, or the message is not laid out. Read during layout.
+  double? _replyStart() {
+    if (!_toReplyStart || ReplyScroll.current.value != ReplyScroll.start) {
+      return null;
+    }
+    final index = (_liveStart ?? 0) - 1;
+    if (index < 0) return null;
+    for (final item in _laidOutItems()) {
+      if (_indexOf(item) != index) continue;
+      final offset =
+          (item.parentData! as SliverMultiBoxAdaptorParentData).layoutOffset;
+      final sliver = item.parent;
+      if (offset == null || sliver is! RenderSliver) return null;
+      return sliver.constraints.precedingScrollExtent +
+          offset +
+          _gapBefore(index) -
+          _stickyInset;
+    }
+    return null;
   }
 
   void _setAnchored(bool value) {
@@ -1191,6 +1287,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     final startedStreaming = _feed.isStreaming && !_wasLive;
     final ended = _wasLive && !_feed.isStreaming;
     _wasLive = _feed.isStreaming;
+    if (moved > 0 || ended || startedStreaming) _steady.clear();
     // A turn the agent took up on its own (a background task's report)
     // leaves the user reading where they are, the turns they read open.
     final sent = _feed.isStreaming && !_feed.isUnprompted;
@@ -1220,7 +1317,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _feed.editing = null;
     }
     // Sending a message always brings the live turn into view.
-    if (startedStreaming && sent) _jumpToBottom();
+    if (startedStreaming && sent) {
+      _jumpToBottom();
+      _toReplyStart = true;
+    }
+    if (ended) _toReplyStart = false;
     _itemsCame();
     _scheduleStickyUpdate();
     setState(() {});
@@ -1816,7 +1917,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
             SizedBox(key: _editorPlaceholderKey, height: _editorShownHeight),
       );
     }
-    final row = _folds.rowAt(index, item, _isFoldOpen);
+    final row = _rowAt(index);
     final folds = [?row.work, ?row.steps];
     final footer = _turnFooter(index) ?? _liveFooter(index);
     // Folded away (what the turn under way has written showing still).
@@ -1921,6 +2022,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   };
 
   void _jumpToBottom() {
+    _toReplyStart = false;
     _setAnchored(true);
     if (_scrollController.hasClients) {
       final position = _scrollController.position;
@@ -1937,7 +2039,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// Row [index] as the minimap samples it.
   ChatMinimapRow _minimapRow(int index) {
     final item = _shownAt(index);
-    final row = _folds.rowAt(index, item, _isFoldOpen);
+    final row = _rowAt(index);
     final hidden = row.work == null && row.steps == null && !row.item;
     return (
       item: item,
@@ -2420,6 +2522,10 @@ class _JumpToBottomButton extends StatelessWidget {
 class _BottomAnchoredScrollController extends SmoothScrollController {
   bool anchored = true;
 
+  /// While [anchored]: the furthest it follows to, if anywhere; there it
+  /// lets go (see [ReplyScroll.start]).
+  double? Function()? stopAt;
+
   /// Once the list is laid out: how far to move it, laid out again then.
   double Function()? laidOut;
 
@@ -2478,6 +2584,20 @@ class _BottomAnchoredScrollPosition extends ScrollPositionWithSingleContext
       minScrollExtent,
       maxScrollExtent,
     );
+    if (controller.anchored && hasPixels && activity is! DragScrollActivity) {
+      if (controller.stopAt?.call() case final stop?
+          when stop < maxScrollExtent) {
+        // As far as it follows: let go there (or here, past it already).
+        controller.anchored = false;
+        final target = math
+            .max(stop, pixels)
+            .clamp(minScrollExtent, maxScrollExtent);
+        if (target != pixels) {
+          correctPixels(target);
+          return false;
+        }
+      }
+    }
     if (controller.anchored &&
         hasPixels &&
         pixels != maxScrollExtent &&

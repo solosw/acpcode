@@ -51,19 +51,35 @@ esac
 ''');
     fakeSsh = p.join(sandbox.path, 'ssh');
     File(fakeSsh).writeAsStringSync(r'''#!/bin/sh
+all="$*"
+config=
 while [ $# -gt 0 ]; do
   case "$1" in
+    -G) config=1; shift ;;
     -o|-e|-p|-i|-F|-J|-l) shift 2 ;;
     -*) shift ;;
     *) break ;;
   esac
 done
 dest="$1"; shift
+if [ -n "$config" ]; then
+  # What ssh -G says: the config, the user's strictness as FAKE_STRICT.
+  printf 'hostname %s\nport %s\nstricthostkeychecking %s\nuserknownhostsfile %s %s\n' \
+    "$dest" "${FAKE_PORT:-22}" "${FAKE_STRICT:-ask}" "$HOME/.ssh/known_hosts" "$HOME/.ssh/known_hosts2"
+  exit 0
+fi
+printf '%s\n' "$all" >> "$FAKE_LOG.args"
 printf '%s\t%s\n' "$dest" "$*" >> "$FAKE_LOG"
 case "$dest" in
   unreachable) echo "ssh: Could not resolve hostname unreachable: nodename nor servname provided, or not known" >&2; exit 255 ;;
   locked) echo "me@locked: Permission denied (publickey)." >&2; exit 255 ;;
-  changed) echo "Host key verification failed." >&2; exit 255 ;;
+  changed)
+    echo "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@" >&2
+    echo "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @" >&2
+    echo "Host key for changed has changed and you have requested strict checking." >&2
+    echo "Host key verification failed." >&2
+    exit 255 ;;
+  strict) echo "Host key verification failed." >&2; exit 255 ;;
   secret)
     # Signs in with a password, asked up to three times.
     denied="me@secret: Permission denied (publickey,password)."
@@ -88,14 +104,27 @@ case "$dest" in
       [ "$pw" = hunter2 ] && break
     done ;;
   stranger)
-    answer=$("$SSH_ASKPASS" "The authenticity of host 'stranger' can't be established.
+    # Learned without a word where told to, else asked.
+    case "$all" in
+      *StrictHostKeyChecking=accept-new*) echo "Warning: Permanently added 'stranger' (ED25519) to the list of known hosts." >&2 ;;
+      *)
+        answer=$("$SSH_ASKPASS" "The authenticity of host 'stranger' can't be established.
 Are you sure you want to continue connecting (yes/no/[fingerprint])? ")
-    [ "$answer" = yes ] || { echo "Host key verification failed." >&2; exit 255; } ;;
+        [ "$answer" = yes ] || { echo "Host key verification failed." >&2; exit 255; } ;;
+    esac ;;
 esac
 cd "$HOME" || exit 255
 exec /bin/sh -c "$*"
 ''');
-    for (final script in [fakeSsh, p.join(fakeBin, 'uname')]) {
+    // Beside it, as OpenSSH's tools are: the arguments it ran with.
+    File(p.join(sandbox.path, 'ssh-keygen')).writeAsStringSync(r'''#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_LOG.keygen"
+''');
+    for (final script in [
+      fakeSsh,
+      p.join(sandbox.path, 'ssh-keygen'),
+      p.join(fakeBin, 'uname'),
+    ]) {
       Process.runSync('chmod', ['+x', script]);
     }
   });
@@ -186,7 +215,8 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
 
     expect(await failure('unreachable'), SshFailure.unreachable);
     expect(await failure('locked'), SshFailure.authentication);
-    expect(await failure('changed'), SshFailure.hostKey);
+    expect(await failure('changed'), SshFailure.hostKeyChanged);
+    expect(await failure('strict'), SshFailure.hostKey);
   });
 
   test('a password is asked for each ssh, again when refused', () async {
@@ -286,19 +316,39 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
     expect(File('${log.path}.asks').readAsLinesSync(), hasLength(1));
   }, timeout: const Timeout(Duration(minutes: 1)));
 
-  test('a host key it does not know is refused, not asked', () async {
+  test('a host key it does not know is learned, not asked', () async {
     final asked = <SshPrompt>[];
-    final launcher = SshLauncher(
+    SshLauncher launcher({String? strict}) => SshLauncher(
       ssh: fakeSsh,
       binaries: FakeBinaries('1', const {}),
-      start: starter(),
+      start: starter(extra: {'FAKE_STRICT': ?strict}),
       prompter: (prompt) async {
         asked.add(prompt);
         return 'yes';
       },
     );
+    // Past the key, to the server, of which there is no build here.
     await expectLater(
-      launcher.connect(SshTarget.parse('stranger')),
+      launcher().connect(SshTarget.parse('stranger')),
+      throwsA(
+        isA<SshConnectException>().having(
+          (e) => e.failure,
+          'failure',
+          SshFailure.server,
+        ),
+      ),
+    );
+    expect(asked, isEmpty);
+    expect(
+      File('${log.path}.args').readAsLinesSync(),
+      everyElement(contains('StrictHostKeyChecking=accept-new')),
+    );
+
+    // The user's config says what to do with one: as it says, so refused
+    // (ssh's question is not answered yes here).
+    File('${log.path}.args').deleteSync();
+    await expectLater(
+      launcher(strict: 'true').connect(SshTarget.parse('stranger')),
       throwsA(
         isA<SshConnectException>().having(
           (e) => e.failure,
@@ -308,6 +358,39 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
       ),
     );
     expect(asked, isEmpty);
+    expect(
+      File('${log.path}.args').readAsStringSync(),
+      isNot(contains('StrictHostKeyChecking')),
+    );
+  });
+
+  test('a changed host key is forgotten, in the known_hosts files there '
+      'are', () async {
+    final launcher = SshLauncher(
+      ssh: fakeSsh,
+      binaries: FakeBinaries('1', const {}),
+      start: starter(extra: {'FAKE_PORT': '2222'}),
+    );
+    final known = File(p.join(home.path, '.ssh', 'known_hosts'))
+      ..createSync(recursive: true);
+    await launcher.forgetHostKey(SshTarget.parse('changed'));
+    expect(File('${log.path}.keygen').readAsLinesSync(), [
+      '-R [changed]:2222 -f ${known.path}',
+    ]);
+  });
+
+  test("ssh -G's known_hosts files, a space in one's path", () {
+    final spaced = Directory(p.join(sandbox.path, 'John Doe'))..createSync();
+    // A file where the path's first word ends: not taken for it.
+    File(p.join(sandbox.path, 'John')).createSync();
+    final first = File(p.join(spaced.path, 'known_hosts'))..createSync();
+    final second = File(p.join(sandbox.path, 'known_hosts2'))..createSync();
+    expect(
+      SshLauncher.knownHostsFiles(
+        '${first.path} ${p.join(sandbox.path, 'missing')} ${second.path}',
+      ),
+      [first.path, second.path],
+    );
   });
 
   test('a Mac is given the macOS build', () async {
@@ -430,6 +513,57 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
     expect(launcher.serverPath, '.baocode-server/7/baocode-server');
     expect(launcher.uploadCommand('n', gzip: false), contains('cat >'));
   });
+
+  test(
+    'saved options override one port and preserve configured target in ssh -G',
+    () async {
+      final calls = <List<String>>[];
+      final run = starter();
+      final launcher = SshLauncher(
+        ssh: fakeSsh,
+        binaries: FakeBinaries('7', const {}),
+        optionsFor: (_) => const SshConnectOptions(
+          user: 'saved-user',
+          port: 2200,
+          identityFile: '/tmp/saved key',
+        ),
+        start: (executable, arguments, {environment}) {
+          calls.add(List.of(arguments));
+          return run(executable, arguments, environment: environment);
+        },
+      );
+      final plain = launcher.arguments(SshTarget.parse('dev:2222'), 'cmd');
+      expect(plain.where((value) => value == '-p'), hasLength(1));
+      expect(plain, containsAllInOrder(['-p', '2200', 'dev', 'cmd']));
+      expect(plain, isNot(contains('2222')));
+
+      final target = SshTarget.configured(
+        'dev',
+        destination: 'baocode-dev',
+        configFile: '/tmp/saved config',
+      );
+      final arguments = launcher.arguments(target, 'cmd');
+      final targetArguments = arguments.sublist(
+        arguments.indexOf('-F'),
+        arguments.length - 1,
+      );
+      expect(targetArguments, [
+        '-F',
+        '/tmp/saved config',
+        '-l',
+        'saved-user',
+        '-i',
+        '/tmp/saved key',
+        '-o',
+        'IdentitiesOnly=yes',
+        '-p',
+        '2200',
+        'baocode-dev',
+      ]);
+      await launcher.configOf(target);
+      expect(calls.single, ['-G', ...targetArguments]);
+    },
+  );
 
   group('ssh config', () {
     test('Host lines without patterns, Includes followed', () async {

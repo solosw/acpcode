@@ -647,4 +647,182 @@ void main() {
     );
     expect(path.status, 404);
   });
+
+  group('another upstream\'s model, and Anthropic\'s API', () {
+    late FakeUpstream anthropic;
+    late ModelProxy routing;
+    late ModelProvider claude;
+
+    setUp(() async {
+      anthropic = await FakeUpstream.start();
+      claude = ModelProvider(
+        id: 'an',
+        name: 'Claude',
+        baseUrl: anthropic.base,
+        auth: ProviderAuth.apiKey,
+        headers: const {'x-tenant': 'acme'},
+        roles: const ProviderRoles(subagent: '@gw/plain'),
+      );
+      routing = ModelProxy(
+        provider: (id) => {'gw': provider, 'an': claude}[id],
+        key: (id) async => 'sk-$id',
+        onError: (_, error) => errors.add(error),
+        findProxy: (_) => 'DIRECT',
+        token: 'tok',
+      );
+    });
+
+    tearDown(() async {
+      await routing.close();
+      await anthropic.close();
+    });
+
+    Future<Uri> on(String id, [String path = '']) async =>
+        Uri.parse('${(await routing.endpoint(id)).baseUrl}/v1/messages$path');
+
+    test('passes a request to Anthropic\'s API as it came, the key and '
+        'its headers set here, and its stream back as it comes', () async {
+      const events = [
+        'event: message_start',
+        'data: {"type":"message_start","message":{"id":"m1"}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+      ];
+      anthropic.reply = (_) => (200, events);
+      final body = {
+        'model': 'claude-opus-4-5',
+        'stream': true,
+        'max_tokens': 100,
+        'output_config': {'effort': 'high'},
+        'messages': [
+          {
+            'role': 'user',
+            'content': [
+              {
+                'type': 'text',
+                'text': 'hi',
+                'cache_control': {'type': 'ephemeral'},
+              },
+            ],
+          },
+        ],
+      };
+      final url = await on('an');
+      final answer = await post(
+        url.replace(query: 'beta=true'),
+        body,
+        headers: {
+          'x-api-key': 'tok',
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'interleaved-thinking-2025-05-14',
+          'user-agent': 'claude-cli/9.9.9 (external, cli)',
+        },
+      );
+      expect(answer.status, 200);
+      expect(answer.text, '${events.join('\n')}\n');
+      final sent = anthropic.requests.single;
+      expect(sent.path, '/v1/messages');
+      expect(sent.body, body);
+      expect(sent.headers['x-api-key'], 'sk-an');
+      expect(sent.headers.containsKey('authorization'), isFalse);
+      expect(sent.headers['anthropic-beta'], 'interleaved-thinking-2025-05-14');
+      expect(sent.headers['anthropic-version'], '2023-06-01');
+      expect(sent.headers['user-agent'], 'claude-cli/9.9.9 (external, cli)');
+      expect(sent.headers['x-tenant'], 'acme');
+      expect(upstream.requests, isEmpty);
+      expect(errors.last, isNull);
+    });
+
+    test('a model of another upstream goes there, by its own name', () async {
+      upstream.reply = (_) => (
+        200,
+        [
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"plain","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi."},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+        ],
+      );
+      final answer = await post(
+        await on('an'),
+        {
+          'model': '@gw/plain',
+          'max_tokens': 100,
+          'stream': true,
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      expect(anthropic.requests, isEmpty);
+      final sent = upstream.requests.single;
+      expect((sent.body! as Map)['model'], 'plain');
+      expect(sent.headers['authorization'], 'Bearer sk-gw');
+
+      // And the other way: an OpenAI session's subagents on Anthropic.
+      anthropic.reply = (_) => (200, const ['{"id":"m2"}']);
+      final back = await post(
+        await on('gw'),
+        {
+          'model': '@an/claude-haiku-4-5',
+          'max_tokens': 100,
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(back.status, 200);
+      expect(
+        (anthropic.requests.single.body! as Map)['model'],
+        'claude-haiku-4-5',
+      );
+    });
+
+    test('Anthropic\'s errors come back as they are; a count it has none '
+        'of is estimated', () async {
+      const error =
+          '{"type":"error","error":{"type":"overloaded_error","message":"busy"}}';
+      anthropic.reply = (_) => (529, const [error]);
+      final failed = await post(
+        await on('an'),
+        {'model': 'claude-opus-4-5', 'messages': []},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(failed.status, 529);
+      expect(failed.text.trim(), error);
+      expect(errors.last, contains('busy'));
+
+      anthropic.reply = (_) => (404, const ['{}']);
+      final counted = await post(
+        await on('an', '/count_tokens'),
+        {
+          'model': 'claude-opus-4-5',
+          'messages': [
+            {'role': 'user', 'content': 'hello there'},
+          ],
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(counted.status, 200);
+      expect(anthropic.requests.last.path, '/v1/messages/count_tokens');
+      expect((jsonDecode(counted.text) as Map)['input_tokens'], greaterThan(0));
+    });
+
+    test('Claude Code\'s own, or an upstream not here, is not found', () async {
+      for (final model in ['@claude-code/sonnet', '@gone/x']) {
+        final answer = await post(
+          await on('an'),
+          {'model': model, 'messages': []},
+          headers: {'x-api-key': 'tok'},
+        );
+        expect(answer.status, 404, reason: model);
+      }
+      expect(anthropic.requests, isEmpty);
+      expect(upstream.requests, isEmpty);
+    });
+  });
 }

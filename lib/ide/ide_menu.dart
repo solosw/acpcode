@@ -74,7 +74,8 @@ class IdeMenuAction extends IdeMenuEntry {
 
   final String label;
 
-  /// Before [label] (a project's icon), 16px square.
+  /// Before [label] (a project's icon, a codicon), 16px square; an [Icon]
+  /// takes the label's color and 16px unless it says otherwise.
   final Widget? icon;
 
   /// Run once the menu has closed ([keepOpen]: at once).
@@ -766,7 +767,17 @@ class _MenuItem extends StatelessWidget {
                       : null,
                 ),
                 if (action.icon case final icon?) ...[
-                  SizedBox.square(dimension: 16, child: Center(child: icon)),
+                  // An `Icon` given without a size or color is the label's,
+                  // 16px.
+                  SizedBox.square(
+                    dimension: 16,
+                    child: Center(
+                      child: IconTheme.merge(
+                        data: IconThemeData(size: 16, color: color),
+                        child: icon,
+                      ),
+                    ),
+                  ),
                   const SizedBox(width: 6),
                 ],
                 Expanded(
