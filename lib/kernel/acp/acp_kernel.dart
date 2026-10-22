@@ -9,13 +9,20 @@ import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import 'acp_catalog.dart';
+import 'acp_config_option.dart';
 import 'acp_mcp.dart';
 import 'acp_transport.dart';
 
 /// Adapts an ACP JSON-RPC agent over a message transport to [AgentKernel].
 class AcpKernel
     with KernelEventSource
-    implements AgentKernel, SelectsMode, ProvidesCommands, ReportsContext {
+    implements
+        AgentKernel,
+        SelectsModel,
+        SelectsMode,
+        SelectsEffort,
+        ProvidesCommands,
+        ReportsContext {
   AcpKernel(
     this.descriptor,
     this._context,
@@ -60,13 +67,36 @@ class AcpKernel
   bool _disposed = false;
   bool _cancelling = false;
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
+  final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
   final Set<String> _todoToolIds = {};
   final List<KernelOption> _modeOptions = [];
   List<KernelCommand> _commands = const [];
 
+  bool _hasConfigOptions = false;
+  Future<void> _configChanges = Future.value();
+  late final _legacyMode = LocalChoice([], onChanged: _selectMode);
+  late final _configOptions = {
+    'model': AcpConfigOption(Icons.smart_toy_rounded, _selectConfigOption),
+    'mode': AcpConfigOption(Icons.tune_rounded, _selectConfigOption),
+    'thought_level': AcpConfigOption(
+      Icons.psychology_rounded,
+      _selectConfigOption,
+    ),
+  };
+
   @override
-  late final KernelChoiceSource mode = LocalChoice([], onChanged: _selectMode);
+  KernelChoiceSource get model => _configOptions['model']!;
+
+  @override
+  KernelChoiceSource get mode =>
+      _hasConfigOptions ? _configOptions['mode']! : _legacyMode;
+
+  @override
+  late final ModelSetting effort = AcpThoughtLevel(
+    _configOptions['thought_level']!,
+    _configOptions['model']!,
+  );
 
   @override
   List<KernelCommand> get commands => _commands;
@@ -169,28 +199,29 @@ class AcpKernel
   Future<void> _ensureSession() async {
     if (_sessionId != null) return;
     final resume = _context.resume;
+    final Map<String, Object?> session;
     if (resume != null) {
       _sessionId = resume.id;
       _replaying = true;
       _closeAssistantStream();
-      await _request('session/load', {
+      session = await _request('session/load', {
         'sessionId': resume.id,
         'cwd': _agentCwd(_context.cwd ?? resume.cwd),
         'mcpServers': _mcp.servers,
       });
     } else {
-      final session = await _request('session/new', {
+      session = await _request('session/new', {
         'cwd': _agentCwd(_context.cwd),
         'mcpServers': _mcp.servers,
       });
       _sessionId = session['sessionId'] as String?;
     }
-    _applyModes(_lastSession?['modes']);
+    _applyModes(session['modes']);
     _setCommands(
-      _lastSession?['availableCommands'] ??
-          _lastSession?['available_commands'] ??
-          _lastSession?['commands'] ??
-          _lastSession?['slashCommands'],
+      session['availableCommands'] ??
+          session['available_commands'] ??
+          session['commands'] ??
+          session['slashCommands'],
     );
     // History session/update may have been queued before the load/new
     // response. Apply it now, while _replaying is still set for resume,
@@ -292,7 +323,71 @@ class AcpKernel
     send(KernelTurn(id: 'command_${++_nextId}', text: text));
   }
 
+  /// Both setup and config changes report the complete state, including
+  /// model-dependent reasoning choices that may have disappeared.
+  void _applyConfigOptions(Object? raw) {
+    if (raw is! List) return;
+    _hasConfigOptions = true;
+    for (final option in _configOptions.values) {
+      option.replace(null);
+    }
+    final seen = <String>{};
+    for (final item in raw) {
+      if (item is! Map || item['type'] != 'select') continue;
+      // Categories place the selectors. Recognize the standard ids too
+      // when category is absent; never guess from a localized label.
+      final category = item['category'] ?? item['id'];
+      final option = _configOptions[category];
+      if (option == null || !seen.add(category as String)) continue;
+      option.replace(item);
+    }
+    emitInfoChanged();
+  }
+
+  void _selectConfigOption(String configId, String value) {
+    final sessionId = _sessionId;
+    if (sessionId == null || !_initialized || _disposed) return;
+    final generation = _startGeneration;
+    bool obsolete() => _disposed || generation != _startGeneration;
+    // Serialize choices: a model response can change the thought levels.
+    // Recheck the value after that response, before sending the next change.
+    _configChanges = _configChanges
+        .then((_) async {
+          if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+          final option = _configOptions.values
+              .where((option) => option.configId == configId)
+              .firstOrNull;
+          if (option == null ||
+              option.selected == value ||
+              !option.options.any((o) => o.id == value)) {
+            return;
+          }
+          await _request('session/set_config_option', {
+            'sessionId': sessionId,
+            'configId': configId,
+            'value': value,
+          });
+        })
+        .catchError((Object error) {
+          if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+          // A rejected setting is not a failed conversation. Keep the reported
+          // choices and let the user try again or continue talking.
+          emit(
+            ItemUpserted(
+              nextSeq,
+              'acp_config_error_${++_nextId}',
+              NoticeItem(
+                NoticeKind.warning,
+                'Could not change ACP configuration: $error',
+              ),
+            ),
+          );
+          emitInfoChanged();
+        });
+  }
+
   void _applyModes(Object? raw) {
+    if (_hasConfigOptions) return;
     final Map<String, Object?> state;
     if (raw is List) {
       state = {'availableModes': raw};
@@ -315,11 +410,11 @@ class AcpKernel
                 item['description'] as String? ?? 'ACP mode',
               ),
         ]);
-      if (_modeOptions.isNotEmpty) (mode as LocalChoice).options = _modeOptions;
+      _legacyMode.options = List.of(_modeOptions);
     }
     final current = state['currentModeId'];
     if (current is String && current.isNotEmpty) {
-      (mode as LocalChoice).reported = current;
+      _legacyMode.reported = current;
     }
     emitInfoChanged();
   }
@@ -456,6 +551,11 @@ class AcpKernel
     final id = '${++_nextId}';
     final completer = Completer<Map<String, Object?>>();
     _pending[id] = completer;
+    if (method == 'session/new' ||
+        method == 'session/load' ||
+        method == 'session/set_config_option') {
+      _configRequests.add(id);
+    }
     _transport?.write({
       'jsonrpc': '2.0',
       'id': id,
@@ -464,12 +564,8 @@ class AcpKernel
     });
     // ACP turns and startup wait on the agent. A client timeout would end a
     // still-running prompt and look like a protocol failure.
-    final result = await completer.future;
-    _lastSession = result;
-    return result;
+    return completer.future;
   }
-
-  Map<String, Object?>? _lastSession;
 
   void _flushQueued() {
     final transport = _transport;
@@ -509,13 +605,17 @@ class AcpKernel
     final id = rawId?.toString();
     if (method == null && id != null) {
       final pending = _pending.remove(id);
+      final config = _configRequests.remove(id);
       if (pending == null) return;
       if (message['error'] case final Map error) {
         pending.completeError(StateError('${error['message'] ?? error}'));
       } else {
-        pending.complete(
-          (message['result'] as Map?)?.cast<String, Object?>() ?? const {},
-        );
+        final result =
+            (message['result'] as Map?)?.cast<String, Object?>() ?? const {};
+        // Apply config before completing the future: a later notification in
+        // the same stdout batch must not be overwritten by an await continuation.
+        if (config) _applyConfigOptions(result['configOptions']);
+        pending.complete(result);
       }
       return;
     }
@@ -701,6 +801,8 @@ class AcpKernel
               update['available_commands'] ??
               update['commands'],
         );
+      case 'config_option_update':
+        _applyConfigOptions(update['configOptions']);
       case 'current_mode_update':
         _applyModes({
           'currentModeId': update['currentModeId'],
@@ -1026,6 +1128,7 @@ class AcpKernel
       if (!completer.isCompleted) completer.completeError(error);
     }
     _pending.clear();
+    _configRequests.clear();
     emitInfoChanged();
   }
 
@@ -1044,6 +1147,15 @@ class AcpKernel
     _subscription?.cancel();
     _subscription = null;
     _sessionId = null;
+    _hasConfigOptions = false;
+    _configRequests.clear();
+    _configChanges = Future.value();
+    for (final option in _configOptions.values) {
+      option.replace(null);
+    }
+    _modeOptions.clear();
+    _legacyMode.options = const [];
+    _legacyMode.reported = null;
     _initialized = false;
     _closeMcp();
     _mcp = const AcpMcpServers();
@@ -1064,6 +1176,7 @@ class AcpKernel
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _configRequests.clear();
     _closeMcp();
     _receiveTimer?.cancel();
     _receiveTimer = null;

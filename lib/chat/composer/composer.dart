@@ -2029,6 +2029,18 @@ class ChatComposerState extends State<ChatComposer>
                       ),
                       const SizedBox(width: 2),
                     ],
+                    // Some agents expose reasoning but no model selector.
+                    if (model == null)
+                      for (final setting in session.modelSettings('')) ...[
+                        ComposerPicker(
+                          options: setting.options,
+                          selected: setting.selected ?? setting.options.first,
+                          tapRegionGroupId: widget.tapRegionGroupId,
+                          focusNode: _focusNode,
+                          onSelected: setting.onSelected,
+                        ),
+                        const SizedBox(width: 2),
+                      ],
                     // With none to pick, one to set up.
                     if (model != null || session.health.noModel)
                       SessionModelPicker(

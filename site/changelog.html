@@ -29,6 +29,25 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.4.1">
+    <h2 class="plain"><a href="#v1.4.1">1.4.1</a></h2>
+    <p>New</p>
+    <ul>
+    <li>Select models, operating modes and reasoning levels advertised by ACP agents, without hardcoded model or level lists.</li>
+    <li>Adjust reasoning levels from the current model menu; agents that expose reasoning without a model selector get a standalone picker.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Refresh dependent reasoning choices after model changes while retaining compatibility with the legacy ACP mode API.</li>
+    <li>Apply configuration changes only after agent confirmation; rejected changes preserve the reported settings and leave the conversation usable.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Prevent older session setup or configuration responses from overwriting newer configuration notifications.</li>
+    <li>Discard obsolete queued configuration changes when a session is restarted or closed.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.4.0">
     <h2 class="plain"><a href="#v1.4.0">1.4.0</a></h2>
     <p>New</p>
