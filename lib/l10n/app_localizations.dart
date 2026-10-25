@@ -4034,6 +4034,30 @@ abstract class AppLocalizations {
   /// **'briefly'**
   String get stepBriefly;
 
+  /// No description provided for @toolInput.
+  ///
+  /// In en, this message translates to:
+  /// **'Input'**
+  String get toolInput;
+
+  /// No description provided for @toolOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Output'**
+  String get toolOutput;
+
+  /// No description provided for @toolOutputContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Returned content'**
+  String get toolOutputContent;
+
+  /// No description provided for @toolInputUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The agent did not provide input details.'**
+  String get toolInputUnavailable;
+
   /// No description provided for @toolReading.
   ///
   /// In en, this message translates to:

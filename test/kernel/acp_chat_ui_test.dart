@@ -6,6 +6,8 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/panels/todo_panel.dart';
+import 'package:baocode/chat/widgets/step_header.dart';
+import 'package:baocode/chat/widgets/tool_call_row.dart';
 import 'package:baocode/kernel/acp/acp_kernel.dart';
 import 'package:baocode/kernel/acp/acp_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
@@ -143,7 +145,252 @@ Future<ChatSession> _pump(
   return session;
 }
 
+ToolCallItem _tool(ChatSession session, String id) => [
+  for (var i = 0; i < session.itemCount; i++)
+    if (session.itemAt(i) case final ToolCallItem tool when tool.callId == id)
+      tool,
+].single;
+
+String _pretty(Object? value) =>
+    const JsonEncoder.withIndent('  ').convert(value);
+
 void main() {
+  testWidgets(
+    'ACP tool expands input and output, retaining details across patches',
+    (tester) async {
+      final transport = _Transport();
+      final session = await _pump(tester, transport);
+      const input = {'command': 'printf hello', 'cwd': '/project with spaces'};
+      transport.update({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'run',
+        'title': 'Inspect project',
+        'kind': 'execute',
+        'status': 'pending',
+        'rawInput': input,
+      });
+      await tester.pump();
+      final row = find.byType(ToolCallRow);
+      final header = find.descendant(
+        of: row,
+        matching: find.byType(StepHeader),
+      );
+      expect(row, findsOneWidget);
+      expect(find.text(_pretty(input)), findsNothing);
+      expect(_tool(session, 'run').detail, isNull);
+      await tester.tap(header);
+      await tester.pump();
+      expect(find.text('Input'), findsOneWidget);
+      expect(find.text(_pretty(input)), findsOneWidget);
+      expect(find.text('Waiting for output'), findsOneWidget);
+      const output = {'stdout': 'hello', 'exitCode': 0};
+      transport.update({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'run',
+        'status': 'completed',
+        'rawOutput': output,
+      });
+      await tester.pump();
+      expect(_tool(session, 'run').target, 'Inspect project');
+      expect(_tool(session, 'run').details?.input, _pretty(input));
+      expect(_tool(session, 'run').details?.output, _pretty(output));
+      expect(find.text(_pretty(output)), findsOneWidget);
+      transport.update({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'run',
+        'content': [
+          {
+            'type': 'content',
+            'content': {'type': 'text', 'text': 'Command completed'},
+          },
+        ],
+      });
+      await tester.pump();
+      expect(_tool(session, 'run').status, ToolStatus.succeeded);
+      expect(find.text(_pretty(input)), findsOneWidget);
+      expect(find.text(_pretty(output)), findsOneWidget);
+      expect(find.text('Returned content'), findsOneWidget);
+      expect(find.text('Command completed'), findsOneWidget);
+      await tester.tap(header);
+      await tester.pump();
+      expect(find.text(_pretty(input)), findsNothing);
+      expect(find.text(_pretty(output)), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'ACP content output preserves block boundaries and structured blocks',
+    (tester) async {
+      final transport = _Transport();
+      final session = await _pump(tester, transport);
+      const diff = {
+        'type': 'diff',
+        'path': '/project/a.dart',
+        'oldText': 'before',
+        'newText': 'after',
+      };
+      const resource = {
+        'type': 'content',
+        'content': {
+          'type': 'resource',
+          'resource': {
+            'uri': 'file:///project/result.txt',
+            'mimeType': 'text/plain',
+            'text': 'Resource body',
+          },
+        },
+      };
+      const input = {'path': '/project/a.dart'};
+      transport.update({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'edit',
+        'kind': 'edit',
+        'title': 'Update source',
+        'raw_input': jsonEncode(input),
+      });
+      transport.update({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'edit',
+        'status': 'completed',
+        'content': [
+          {
+            'type': 'content',
+            'content': {'type': 'text', 'text': 'First block'},
+          },
+          {'type': 'text', 'text': 'Second block'},
+          diff,
+          resource,
+        ],
+      });
+      await tester.pump();
+      final content = [
+        'First block',
+        'Second block',
+        _pretty(diff),
+        _pretty(resource),
+      ].join(String.fromCharCodes([10, 10]));
+      final tool = _tool(session, 'edit');
+      expect(tool.kind, ToolKind.edit);
+      expect(tool.details?.input, _pretty(input));
+      expect(tool.details?.content, content);
+      expect(tool.output, content);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ToolCallRow),
+          matching: find.byType(StepHeader),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Output'), findsOneWidget);
+      expect(find.text(content), findsOneWidget);
+      expect(find.byType(SelectableText), findsNWidgets(2));
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('ACP missing payloads and failed calls remain expandable', (
+    tester,
+  ) async {
+    final transport = _Transport();
+    final session = await _pump(tester, transport);
+    transport.update({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'missing',
+      'title': 'Unavailable details',
+    });
+    await tester.pump();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ToolCallRow),
+        matching: find.byType(StepHeader),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.text('The agent did not provide input details.'),
+      findsOneWidget,
+    );
+    expect(find.text('Waiting for output'), findsOneWidget);
+    transport.update({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'missing',
+      'status': 'failed',
+      'input': <String, Object?>{},
+      'raw_output': 'Permission denied',
+    });
+    await tester.pump();
+    expect(_tool(session, 'missing').status, ToolStatus.failed);
+    expect(find.text('{}'), findsOneWidget);
+    expect(find.text('Permission denied'), findsOneWidget);
+    expect(find.text('Waiting for output'), findsNothing);
+    transport.update({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'missing',
+      'rawInput': null,
+      'rawOutput': null,
+      'content': [],
+    });
+    await tester.pump();
+    expect(_tool(session, 'missing').status, ToolStatus.failed);
+    expect(
+      find.text('The agent did not provide input details.'),
+      findsOneWidget,
+    );
+    expect(find.text('Output unavailable'), findsOneWidget);
+    expect(find.text('Permission denied'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('ACP replayed tool details expand like live calls', (
+    tester,
+  ) async {
+    const input = {'path': '/project/历史.txt'};
+    final transport = _Transport(
+      fixture: [
+        for (final update in <Map<String, Object?>>[
+          {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'history-tool',
+            'title': 'Read history file',
+            'kind': 'read',
+            'rawInput': input,
+          },
+          {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'history-tool',
+            'status': 'completed',
+            'rawOutput': '历史输出',
+          },
+        ])
+          {
+            'jsonrpc': '2.0',
+            'method': 'session/update',
+            'params': {'sessionId': 'session', 'update': update},
+          },
+      ],
+    );
+    final session = await _pump(tester, transport, resume: true);
+    final tool = _tool(session, 'history-tool');
+    expect(tool.target, 'Read history file');
+    expect(tool.kind, ToolKind.read);
+    expect(tool.status, ToolStatus.succeeded);
+    expect(tool.details?.input, _pretty(input));
+    expect(find.text('历史输出'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ToolCallRow),
+        matching: find.byType(StepHeader),
+      ),
+    );
+    await tester.pump();
+    expect(find.text(_pretty(input)), findsOneWidget);
+    expect(find.text('历史输出'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('ACP can mount below an existing session listener', (
     tester,
   ) async {

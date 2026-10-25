@@ -1274,6 +1274,10 @@
   "@stepBriefly": {
     "description": "After 'Thought', for a thought under a second."
   },
+  "toolInput": "Input",
+  "toolOutput": "Output",
+  "toolOutputContent": "Returned content",
+  "toolInputUnavailable": "The agent did not provide input details.",
   "toolReading": "Reading",
   "toolRead": "Read",
   "toolGrepping": "Grepping",

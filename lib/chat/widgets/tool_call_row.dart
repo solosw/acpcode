@@ -29,6 +29,7 @@ class ToolCallRow extends StatelessWidget {
     this.label,
     this.status = ToolStatus.succeeded,
     this.output,
+    this.details,
     this.images = const [],
     this.imageFiles = const [],
     this.expanded = false,
@@ -44,6 +45,7 @@ class ToolCallRow extends StatelessWidget {
   final String? label;
   final ToolStatus status;
   final String? output;
+  final ToolCallDetails? details;
 
   /// The pictures it returned (an image file read, a screenshot), shown
   /// under what it said as they are.
@@ -68,7 +70,11 @@ class ToolCallRow extends StatelessWidget {
     _ => null,
   };
 
-  bool get _opens => results.isNotEmpty || _shown != null || images.isNotEmpty;
+  bool get _opens =>
+      details != null ||
+      results.isNotEmpty ||
+      _shown != null ||
+      images.isNotEmpty;
 
   /// The file read or written, where the chat's files open (see
   /// [FileOpenScope]) and it is in the project.
@@ -137,7 +143,11 @@ class ToolCallRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         header,
-        if (expanded && (results.isNotEmpty || _shown != null))
+        if (expanded && details != null)
+          _ToolDetails(details: details!, running: _running),
+        if (expanded &&
+            details == null &&
+            (results.isNotEmpty || _shown != null))
           StepBody(
             child: results.isNotEmpty && files != null
                 ? _Results(results: results, files: files)
@@ -179,6 +189,46 @@ class ToolCallRow extends StatelessWidget {
             lines,
             style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
           ),
+      ],
+    );
+  }
+}
+
+/// Full ACP payloads, built only while expanded. Each section scrolls without
+/// making a long tool response take over the conversation.
+class _ToolDetails extends StatelessWidget {
+  const _ToolDetails({required this.details, required this.running});
+
+  final ToolCallDetails details;
+  final bool running;
+
+  Widget _section(String title, String text) => StepBody(
+    header: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Text(title, style: stepMono.copyWith(fontWeight: FontWeight.w600)),
+    ),
+    child: SelectableText(text, style: stepMono),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final output = details.output ?? details.content;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _section(l10n.toolInput, details.input ?? l10n.toolInputUnavailable),
+        _section(
+          l10n.toolOutput,
+          output ??
+              (running
+                  ? l10n.sidePanelWaitingOutput
+                  : l10n.sidePanelOutputUnavailable),
+        ),
+        if (details.output != null &&
+            details.content != null &&
+            details.content != details.output)
+          _section(l10n.toolOutputContent, details.content!),
       ],
     );
   }

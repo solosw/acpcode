@@ -189,6 +189,15 @@ enum ToolKind {
 
 enum ToolStatus { running, succeeded, failed, denied }
 
+/// Agent-reported invocation details, separate from the one-line summary.
+class ToolCallDetails {
+  const ToolCallDetails({this.input, this.output, this.content});
+
+  final String? input;
+  final String? output;
+  final String? content;
+}
+
 class ToolCallItem extends ChatItem {
   const ToolCallItem({
     required this.kind,
@@ -202,6 +211,7 @@ class ToolCallItem extends ChatItem {
     this.tool,
     this.callId,
     this.input = const {},
+    this.details,
     this.images = const [],
     this.imageFiles = const [],
   });
@@ -234,6 +244,9 @@ class ToolCallItem extends ChatItem {
 
   /// What it was called with, for those.
   final Map<String, Object?> input;
+
+  /// Present for ACP calls, including calls whose agent reported no payload.
+  final ToolCallDetails? details;
 
   /// The pictures it returned (a screenshot, say).
   final List<ImageAttachment> images;

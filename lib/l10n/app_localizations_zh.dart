@@ -2171,6 +2171,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get stepBriefly => '片刻';
 
   @override
+  String get toolInput => '输入';
+
+  @override
+  String get toolOutput => '输出';
+
+  @override
+  String get toolOutputContent => '返回内容';
+
+  @override
+  String get toolInputUnavailable => 'Agent 未提供输入详情。';
+
+  @override
   String get toolReading => '正在读取';
 
   @override

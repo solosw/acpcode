@@ -69,6 +69,7 @@ class AcpKernel
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
   final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
+  final Map<String, ToolCallItem> _tools = {};
   final Set<String> _todoToolIds = {};
   final List<KernelOption> _modeOptions = [];
   List<KernelCommand> _commands = const [];
@@ -861,34 +862,56 @@ class AcpKernel
         update['toolCallId'] as String? ??
         update['id'] as String? ??
         'acp_tool';
-    final title = update['title'] as String? ?? 'Tool call';
-    final rawStatus = update['status'] as String? ?? 'running';
-    final status = switch (rawStatus) {
-      'completed' || 'succeeded' || 'success' => CommandStatus.succeeded,
-      'failed' || 'error' => CommandStatus.failed,
-      _ => CommandStatus.running,
+    // ACP updates are patches: omitted fields retain the previous value.
+    final previous = _tools[id];
+    final title = update['title'] as String? ?? previous?.target ?? 'Tool call';
+    final toolStatus = switch (update['status']) {
+      'completed' || 'succeeded' || 'success' => ToolStatus.succeeded,
+      'failed' || 'error' => ToolStatus.failed,
+      'pending' || 'in_progress' || 'running' => ToolStatus.running,
+      _ => previous?.status ?? ToolStatus.running,
     };
-    final kind = _toolKind(
-      update['kind'] as String? ?? update['toolName'] as String?,
-    );
-    final toolStatus = switch (status) {
-      CommandStatus.succeeded => ToolStatus.succeeded,
-      CommandStatus.failed => ToolStatus.failed,
-      CommandStatus.running => ToolStatus.running,
+    final status = switch (toolStatus) {
+      ToolStatus.succeeded => CommandStatus.succeeded,
+      ToolStatus.failed || ToolStatus.denied => CommandStatus.failed,
+      ToolStatus.running => CommandStatus.running,
     };
-    emit(
-      ItemUpserted(
-        nextSeq,
-        id,
-        ToolCallItem(
-          kind: kind,
-          target: title,
-          label: update['title'] as String?,
-          status: toolStatus,
-          detail: _toolDetail(update),
-        ),
-      ),
+    final rawKind = update['kind'] as String? ?? update['toolName'] as String?;
+    final kind = rawKind == null
+        ? previous?.kind ?? ToolKind.other
+        : _toolKind(rawKind);
+    String? payload(List<String> keys, String? before) {
+      for (final key in keys) {
+        if (update.containsKey(key)) return _toolPayload(update[key]);
+      }
+      return before;
+    }
+
+    final details = ToolCallDetails(
+      input: payload(const [
+        'rawInput',
+        'raw_input',
+        'input',
+      ], previous?.details?.input),
+      output: payload(const [
+        'rawOutput',
+        'raw_output',
+      ], previous?.details?.output),
+      content: update.containsKey('content')
+          ? _toolContent(update['content'])
+          : previous?.details?.content,
     );
+    final item = ToolCallItem(
+      kind: kind,
+      target: title,
+      status: toolStatus,
+      callId: id,
+      tool: update['toolName'] as String? ?? previous?.tool,
+      output: details.content ?? details.output,
+      details: details,
+    );
+    _tools[id] = item;
+    emit(ItemUpserted(nextSeq, id, item));
     emit(
       TasksReported(nextSeq, [
         KernelTask(
@@ -916,6 +939,43 @@ class AcpKernel
     }
     if (value.contains('agent')) return ToolKind.agent;
     return ToolKind.other;
+  }
+
+  /// Strings stay readable; structured payloads (including JSON strings) are
+  /// formatted without interpreting them as Markdown or executable content.
+  String? _toolPayload(Object? value) {
+    if (value == null) return null;
+    if (value is String) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map || decoded is List) {
+          return const JsonEncoder.withIndent('  ').convert(decoded);
+        }
+      } on FormatException {
+        // Plain text is a valid tool payload too.
+      }
+      return value;
+    }
+    return const JsonEncoder.withIndent('  ').convert(value);
+  }
+
+  String? _toolContent(Object? content) {
+    if (content == null) return null;
+    if (content is! List) return _toolPayload(content);
+    if (content.isEmpty) return null;
+    return [
+      for (final block in content)
+        // Standard ACP text content, plus legacy agents' bare text blocks.
+        if (block is Map &&
+            (block['type'] == 'content' ||
+                block['type'] == 'text' ||
+                block['type'] == null) &&
+            _contentText(block) != null)
+          _contentText(block)!
+        else
+          // Preserve diffs, embedded resources and unknown structured blocks.
+          _toolPayload(block) ?? 'null',
+    ].join('\n\n');
   }
 
   String? _toolDetail(Map<String, Object?> update) {
@@ -1164,6 +1224,7 @@ class AcpKernel
     _cancelling = false;
     _closeAssistantStream();
     _messages.clear();
+    _tools.clear();
     _todoToolIds.clear();
     _health = KernelHealth.idle;
     prepare();
@@ -1176,6 +1237,7 @@ class AcpKernel
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _tools.clear();
     _configRequests.clear();
     _closeMcp();
     _receiveTimer?.cancel();

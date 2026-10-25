@@ -2245,6 +2245,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get stepBriefly => 'briefly';
 
   @override
+  String get toolInput => 'Input';
+
+  @override
+  String get toolOutput => 'Output';
+
+  @override
+  String get toolOutputContent => 'Returned content';
+
+  @override
+  String get toolInputUnavailable => 'The agent did not provide input details.';
+
+  @override
   String get toolReading => 'Reading';
 
   @override
