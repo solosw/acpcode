@@ -183,6 +183,8 @@ Future<AgentThread?> implementStash(
     l10n.stashImplementStarter(reference.reference),
     if (git)
       worktree ? l10n.stashImplementInWorktree : l10n.stashImplementInPlace,
+    // Its pull request then closes it.
+    if (note.ownIssue case final issue?) l10n.stashImplementIssue(issue),
     l10n.stashImplementComplete,
   ].join(' ');
   final workspace = controller.workspace;

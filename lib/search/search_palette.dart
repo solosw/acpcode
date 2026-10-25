@@ -15,6 +15,7 @@ import '../sidebar/sidebar.dart' show StatusIndicator, relativeTime;
 import '../theme/app_theme.dart';
 import '../theme/material_file_icons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
+import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
 import 'conversation_search.dart';
 
@@ -628,8 +629,13 @@ class _SearchPaletteState extends State<SearchPalette> {
         return Align(
           alignment: Alignment.topCenter,
           child: Padding(
+            // Below the header Windows draws, zoomed in on a short window
+            // too (see WindowControls.headerInset).
             padding: EdgeInsets.only(
-              top: math.min(72, constraints.maxHeight * 0.08),
+              top: math.max(
+                WindowControls.headerInset + 8,
+                math.min(72, constraints.maxHeight * 0.08),
+              ),
             ),
             child: Focus(
               onKeyEvent: _onKey,

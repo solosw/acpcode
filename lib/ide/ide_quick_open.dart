@@ -80,6 +80,7 @@ class IdeFileIndex extends ChangeNotifier {
   List<String> _paths = const [];
   List<String> _relative = const [];
   Set<String>? _pathSet;
+  List<({String path, String relative})>? _folders;
 
   /// The last filter, and the indices of the paths it matched: a filter
   /// typed on from it matches only among those.
@@ -104,6 +105,29 @@ class IdeFileIndex extends ChangeNotifier {
 
   /// Whether [path] is one of [paths].
   bool contains(String path) => (_pathSet ??= _paths.toSet()).contains(path);
+
+  /// The folders [paths] are in, below [root] (a workspace's folders among
+  /// them): each absolute, and relative as [relativePaths] has it. Found
+  /// once a listing.
+  List<({String path, String relative})> get folders {
+    if (_folders case final folders?) return folders;
+    final seen = <String>{};
+    final folders = <({String path, String relative})>[];
+    for (var i = 0; i < _paths.length; i++) {
+      var path = _paths[i];
+      var relative = _relative[i];
+      while (true) {
+        final cut = relative.lastIndexOf('/');
+        if (cut <= 0) break;
+        relative = relative.substring(0, cut);
+        path = pathContext.dirname(path);
+        // Its own folders were seen with it.
+        if (!seen.add(relative)) break;
+        folders.add((path: path, relative: relative));
+      }
+    }
+    return _folders = folders;
+  }
 
   /// The indices of the paths that may match [filter] (a subsequence of
   /// their relative path): those the last filter matched when [filter]
@@ -235,6 +259,7 @@ class IdeFileIndex extends ChangeNotifier {
       _loaded = true;
       _listedAt = DateTime.now();
       _pathSet = null;
+      _folders = null;
       _lastMatches = null;
       _generation++;
       _found = null;

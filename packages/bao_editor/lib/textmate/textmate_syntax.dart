@@ -234,19 +234,33 @@ class _Resources {
   final Set<String> grammarLanguages;
 }
 
-/// A running worker with the resources it was given.
+/// A running worker with the resources it was given, for the
+/// [TextMateSyntax]es using it.
 class _Runtime {
-  _Runtime(this.syntax, this.resources, this.channel, this.theme) {
+  _Runtime(
+    this.bundle,
+    this.resources,
+    this.channel,
+    this.theme,
+    List<IValidGrammarDefinition> grammars,
+  ) {
     _subscription = channel.responses.listen(_onResponse);
     channel
-      ..send(TextMateInit(syntax._allGrammars(resources)))
+      ..send(TextMateInit(grammars))
       ..send(
         TextMateSetTheme(toRawTheme(theme.data), theme.data.tokenColorMap),
       );
   }
 
-  final TextMateSyntax syntax;
+  final AssetBundle bundle;
   final _Resources resources;
+
+  /// The syntaxes using it: it stops as the last one is done with it.
+  final Set<TextMateSyntax> users = {};
+  bool disposed = false;
+
+  /// Its key in [TextMateSyntax._shared], when shared.
+  Object? sharedKey;
 
   /// The theme the worker tokenizes with.
   TextMateEditorTheme theme;
@@ -260,7 +274,7 @@ class _Runtime {
   void _onResponse(TextMateResponse response) {
     switch (response) {
       case TextMateReadFile(:final requestId, :final path):
-        _readAsset(syntax._bundle, path).then(
+        _readAsset(bundle, path).then(
           (bytes) => channel.send(TextMateFileContent(requestId, bytes)),
           onError: (Object error) =>
               channel.send(TextMateFileContent(requestId, null, '$error')),
@@ -270,7 +284,7 @@ class _Runtime {
       case TextMateColorized(:final requestId, :final lines):
         colorizing.remove(requestId)?.complete(lines);
       case TextMateWorkerError(:final message):
-        syntax._reportError(message);
+        TextMateSyntax._reportError(message);
     }
   }
 
@@ -287,10 +301,26 @@ class _Runtime {
     }
   }
 
+  /// [syntax] is done with it: its documents are closed, and the worker
+  /// stops if no other syntax uses it.
+  void release(TextMateSyntax syntax) {
+    users.remove(syntax);
+    if (users.isEmpty) {
+      dispose();
+      return;
+    }
+    for (final document in documents.values.toList()) {
+      if (document._owner == syntax) document._close();
+    }
+  }
+
   void dispose() {
+    disposed = true;
+    if (sharedKey case final key?) TextMateSyntax._shared.remove(key);
     for (final document in documents.values.toList()) {
       document._detach();
     }
+    documents.clear();
     for (final request in colorizing.values) {
       request.complete(null);
     }
@@ -339,6 +369,13 @@ class TextMateSyntax {
   Future<_Runtime?>? _runtime;
   _Runtime? _started;
   bool _disposed = false;
+
+  /// The workers syntaxes share, by their bundle, themes, launcher and zone
+  /// (a worker answers in the zone it was started in): one set of compiled
+  /// grammars for every editor, where each of its own would have its own
+  /// (Oniguruma's TypeScript alone is some 40MB). A syntax with contributed
+  /// grammars has a worker of its own.
+  static final Map<Object, Future<_Runtime?>> _shared = {};
 
   /// The theme the editor paints with; null until TextMate is available.
   ValueListenable<TextMateEditorTheme?> get editorTheme => _editorTheme;
@@ -401,9 +438,7 @@ class TextMateSyntax {
     if (started == null) return;
     // The worker took its grammars at init; a new set means a new runtime.
     final theme = started.theme;
-    _started = null;
-    _runtime = null;
-    started.dispose();
+    _release();
     unawaited(
       _ready().then((runtime) {
         if (runtime != null) runtime.setTheme(theme);
@@ -412,7 +447,47 @@ class TextMateSyntax {
     _editorTheme.value = null;
   }
 
-  Future<_Runtime?> _ready() => _runtime ??= _start();
+  Future<_Runtime?> _ready() => _runtime ??= _acquire();
+
+  /// The shared worker (see [_shared]), or one of its own; null when
+  /// TextMate is unavailable.
+  Future<_Runtime?> _acquire() async {
+    final key = _contributedGrammars.isEmpty
+        ? (_bundle, _themes, _launch, Zone.current)
+        : null;
+    while (true) {
+      final starting = key == null ? _start() : (_shared[key] ??= _start());
+      final runtime = await starting;
+      if (runtime == null || runtime.disposed) {
+        // Unavailable, to be tried again by the next syntax; or stopped as
+        // its last syntax went while it started.
+        if (key != null && identical(_shared[key], starting)) {
+          _shared.remove(key);
+        }
+        if (runtime == null) return null;
+        continue;
+      }
+      runtime.sharedKey = key;
+      if (_disposed) {
+        if (runtime.users.isEmpty) runtime.dispose();
+        return null;
+      }
+      runtime.users.add(this);
+      _started = runtime;
+      _editorTheme.value = runtime.theme;
+      _colorThemeChanged();
+      return runtime;
+    }
+  }
+
+  /// Done with the worker: its documents closed, and the worker stopped if
+  /// no other syntax uses it.
+  void _release() {
+    final runtime = _started;
+    _started = null;
+    _runtime = null;
+    runtime?.release(this);
+  }
 
   Future<_Runtime?> _start() async {
     final _Resources resources;
@@ -431,26 +506,24 @@ class TextMateSyntax {
       return null;
     }
     if (channel == null) return null;
-    if (_disposed) {
-      channel.dispose();
-      return null;
-    }
-    final runtime = _started = _Runtime(
-      this,
+    return _Runtime(
+      _bundle,
       resources,
       channel,
       TextMateEditorTheme(colorTheme),
+      _allGrammars(resources),
     );
-    _editorTheme.value = runtime.theme;
-    _colorThemeChanged();
-    return runtime;
   }
 
   void _colorThemeChanged() {
     final runtime = _started;
     if (runtime == null || _disposed) return;
     final colorTheme = _themes.colorTheme;
-    if (identical(colorTheme, runtime.theme.data)) return;
+    if (identical(colorTheme, runtime.theme.data)) {
+      // Another syntax on the worker had it first.
+      _editorTheme.value = runtime.theme;
+      return;
+    }
     final next = TextMateEditorTheme(colorTheme);
     if (next.sameTokenTheme(runtime.theme)) {
       runtime.theme = next;
@@ -460,7 +533,7 @@ class TextMateSyntax {
     _editorTheme.value = next;
   }
 
-  void _reportError(Object error, [StackTrace? stack]) =>
+  static void _reportError(Object error, [StackTrace? stack]) =>
       FlutterError.reportError(
         FlutterErrorDetails(
           exception: error,
@@ -515,6 +588,7 @@ class TextMateSyntax {
     final runtime = _started;
     if (runtime == null || _disposed) return null;
     final document = TextMateDocument._(
+      this,
       runtime,
       runtime._nextDocument++,
       languageId,
@@ -584,8 +658,7 @@ class TextMateSyntax {
   void dispose() {
     _disposed = true;
     _themes.removeListener(_colorThemeChanged);
-    _started?.dispose();
-    _started = null;
+    _release();
     _editorTheme.dispose();
   }
 }
@@ -603,6 +676,7 @@ typedef _PendingChange = ({
 /// One document highlighted by the worker; notifies when its spans change.
 class TextMateDocument extends ChangeNotifier {
   TextMateDocument._(
+    this._owner,
     this._runtime,
     this._id,
     this.languageId,
@@ -615,6 +689,7 @@ class TextMateDocument extends ChangeNotifier {
     _open();
   }
 
+  final TextMateSyntax _owner;
   final _Runtime _runtime;
   int _id;
 
@@ -855,13 +930,17 @@ class TextMateDocument extends ChangeNotifier {
     _viewportTimer?.cancel();
   }
 
+  /// Closed in the worker, which others still use.
+  void _close() {
+    if (_disposed) return;
+    _detach();
+    _runtime.documents.remove(_id);
+    _runtime.channel.send(TextMateClose(_id));
+  }
+
   @override
   void dispose() {
-    if (!_disposed) {
-      _detach();
-      _runtime.documents.remove(_id);
-      _runtime.channel.send(TextMateClose(_id));
-    }
+    _close();
     super.dispose();
   }
 }

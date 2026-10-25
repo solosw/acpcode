@@ -117,6 +117,64 @@ class CustomizationStore {
     });
   }
 
+  /// The file of the `/command` [name] as Claude Code lists it: a skill's
+  /// SKILL.md or a command's markdown, the user's, [project]'s or a
+  /// plugin's (`plugin:name`); null for none (one built in).
+  Future<String?> commandFile(String name, {String? project}) async {
+    if (!supported) return null;
+    final colon = name.indexOf(':');
+    if (colon > 0) {
+      return _pluginCommandFile(
+        name.substring(0, colon),
+        name.substring(colon + 1),
+      );
+    }
+    for (final skill in await list(
+      CustomizationKind.skills,
+      project: project,
+    )) {
+      if (skill.name == name ||
+          _paths.basename(_paths.dirname(skill.path)) == name) {
+        return skill.path;
+      }
+    }
+    for (final command in await list(
+      CustomizationKind.commands,
+      project: project,
+    )) {
+      if (command.name == '/$name') return command.path;
+    }
+    return null;
+  }
+
+  /// Plugin [plugin]'s skill or command [name], where it is installed.
+  Future<String?> _pluginCommandFile(String plugin, String name) async {
+    final installed = await _json(
+      _paths.join(await config(), 'plugins', 'installed_plugins.json'),
+    );
+    if (installed?['plugins'] case final Map<String, Object?> plugins) {
+      for (final MapEntry(key: id, value: entry) in plugins.entries) {
+        final at = id.indexOf('@');
+        if ((at < 0 ? id : id.substring(0, at)) != plugin) continue;
+        final install = switch (entry) {
+          final List<Object?> installs =>
+            installs.whereType<Map<String, Object?>>().firstOrNull,
+          final Map<String, Object?> install => install,
+          _ => null,
+        };
+        if (install?['installPath'] case final String root) {
+          for (final path in [
+            _paths.join(root, 'skills', name, 'SKILL.md'),
+            _paths.join(root, 'commands', '$name.md'),
+          ]) {
+            if (await _files.read(path) != null) return path;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   Future<String> read(String path) async =>
       await _files.read(path) ?? (throw IdeFileNotFoundException(path));
 

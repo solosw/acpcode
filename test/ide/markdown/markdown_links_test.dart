@@ -1,4 +1,5 @@
-import 'package:baocode/ide/markdown/markdown_document.dart';
+import 'package:bao_markdown/bao_markdown.dart';
+import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -7,25 +8,32 @@ void main() {
     expect(markdownSlug('Getting Started!'), 'getting-started');
     expect(markdownSlug('`code` & more_things'), 'code--more_things');
     expect(markdownSlug('核心架构（必须遵守）'), '核心架构必须遵守');
-    final source = MarkdownSource('# Usage\n\n## Usage\n\ntext\n\n### `Usage`');
-    expect(source.anchors.values, ['usage', 'usage-1', 'usage-2']);
-    expect(source.heading('usage-1'), 1);
-    expect(source.heading('Usage'), 0);
-    expect(source.heading('nope'), isNull);
+    final controller = MarkdownController(
+      text: '# Usage\n\n## Usage\n\ntext\n\n### `Usage`\n\n# snake_case **x**',
+    );
+    expect(markdownHeading(controller, 'usage'), 0);
+    expect(markdownHeading(controller, 'usage-1'), 2);
+    expect(markdownHeading(controller, 'usage-2'), 6);
+    expect(markdownHeading(controller, 'Usage'), 0);
+    expect(markdownHeading(controller, 'snake_case-x'), 8);
+    expect(markdownHeading(controller, 'nope'), isNull);
   });
 
   test('an anchor with a lone % is looked up as it is, not thrown on', () {
-    final source = MarkdownSource('# 100% done\n\n# Rate %d');
-    expect(source.heading('100%'), isNull);
-    expect(source.heading('100% done'), 0);
-    expect(source.heading('Rate %d'), 1);
+    final controller = MarkdownController(text: '# 100% done\n\n# Rate %d');
+    expect(markdownHeading(controller, '100%'), isNull);
+    expect(markdownHeading(controller, '100% done'), 0);
+    expect(markdownHeading(controller, 'Rate %d'), 2);
   });
 
   test('link definitions apply to the whole document', () {
-    final source = MarkdownSource('See [docs][d].\n\n[d]: https://dart.dev');
-    final html = source.parse(source.blocks.first).single;
-    expect(html.textContent, 'See docs.');
-    expect(source.blocks, hasLength(2));
+    final controller = MarkdownController(
+      text: 'See [docs][d].\n\n[d]: https://dart.dev',
+    );
+    final link = controller
+        .inlinesOf(0)
+        .firstWhere((run) => run.kind == MdInlineKind.link);
+    expect(link.href, 'https://dart.dev');
   });
 
   group('links', () {

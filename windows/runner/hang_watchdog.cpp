@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <vector>
@@ -147,6 +148,29 @@ std::vector<DWORD64> Walk(HANDLE process, HANDLE thread, CONTEXT context) {
   return frames;
 }
 
+// Where the memory |address| is in was reserved, if that is where an ELF
+// file was loaded: the app's Dart code, app.so, which Dart's own loader
+// puts in memory (no module Windows knows), its first byte at the start
+// of the range it reserves. Offsets from there are the addresses of the
+// file, which the symbols saved as it was built (tool/build_windows.dart)
+// name. 0 for any other memory.
+DWORD64 ElfBase(HANDLE process, DWORD64 address) {
+  MEMORY_BASIC_INFORMATION memory = {};
+  if (::VirtualQueryEx(process, reinterpret_cast<LPCVOID>(address), &memory,
+                       sizeof(memory)) != sizeof(memory) ||
+      memory.AllocationBase == nullptr) {
+    return 0;
+  }
+  char magic[4] = {};
+  SIZE_T read = 0;
+  if (!::ReadProcessMemory(process, memory.AllocationBase, magic,
+                           sizeof(magic), &read) ||
+      read != sizeof(magic) || std::memcmp(magic, "\x7f" "ELF", 4) != 0) {
+    return 0;
+  }
+  return reinterpret_cast<DWORD64>(memory.AllocationBase);
+}
+
 // |address| as module+offset, and the function's name where the module's
 // symbols are known (its exports, at least).
 std::string Describe(HANDLE process, DWORD64 address) {
@@ -154,6 +178,13 @@ std::string Describe(HANDLE process, DWORD64 address) {
   IMAGEHLP_MODULE64 module = {};
   module.SizeOfStruct = sizeof(module);
   const bool known = ::SymGetModuleInfo64(process, address, &module) != FALSE;
+  if (!known) {
+    if (const DWORD64 base = ElfBase(process, address)) {
+      std::snprintf(line, sizeof(line), "app.so+0x%llx",
+                    static_cast<unsigned long long>(address - base));
+      return line;
+    }
+  }
   const char* module_name = known ? module.ModuleName : "?";
   const DWORD64 offset = known ? address - module.BaseOfImage : address;
 
@@ -322,7 +353,11 @@ DWORD WINAPI Watch(LPVOID) {
       continue;
     }
     ::PostMessageW(window, kPingMessage, 0, 0);
-    if (now - g_answered.load() < kHangMilliseconds) {
+    // The thread, idle, can take the ping before this reads the time it
+    // did: that time is then after |now|, and taken from it, wraps round to
+    // a hang of centuries.
+    const ULONGLONG answered = g_answered.load();
+    if (answered >= now || now - answered < kHangMilliseconds) {
       written = false;
       continue;
     }

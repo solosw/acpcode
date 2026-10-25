@@ -4,21 +4,19 @@ import 'package:baocode/stash/stash_disk.dart';
 import 'package:baocode/stash/stash_editor.dart';
 import 'package:baocode/stash/stash_store.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('the text fades out at an edge scrolled past, not before', (
     tester,
   ) async {
-    final document = Document()..insert(0, List.filled(80, 'line').join('\n'));
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor(
+      List.filled(80, 'line').join('\n'),
+    );
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Scaffold(
           body: SizedBox(
             height: 200,
@@ -36,7 +34,7 @@ void main() {
         tester.widget<EdgeFadeMask>(find.byType(EdgeFadeMask));
     expect(mask().top, isFalse);
     expect(mask().bottom, isTrue);
-    await tester.drag(find.byType(QuillEditor), const Offset(0, -100));
+    await tester.drag(find.byType(MarkdownEditor), const Offset(0, -100));
     await tester.pumpAndSettle();
     expect(mask().top, isTrue);
   });

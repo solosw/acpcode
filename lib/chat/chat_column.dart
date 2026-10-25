@@ -40,9 +40,10 @@ class ChatColumnInset extends InheritedWidget {
 /// is always in the middle. Worked out as it is laid out, so a new width
 /// only lays [child] out again.
 ///
-/// It keeps [room] clear either side (for the conversation's minimap) as
+/// It keeps [room] clear at its left (for the conversation's minimap) as
 /// long as it is still at least [roomFrom] wide that way, narrower than
-/// [maxWidth] if need be; in less width it gives the room up.
+/// [maxWidth] if need be; in less width it gives the room up. Its right
+/// keeps none: only [right] there, for what floats over it.
 class ChatColumn extends SingleChildRenderObjectWidget {
   const ChatColumn({
     super.key,
@@ -132,12 +133,13 @@ class RenderChatColumn extends RenderShiftedBox {
     double room = 0,
     double roomFrom = 0,
   }) {
-    final centered = math.max(
-      0.0,
-      math.min(roomy(width, maxWidth, room: room, roomFrom: roomFrom), width),
-    );
-    // In the middle, unless that comes within [left] of the left edge.
-    final start = math.max((width - centered) / 2, math.min(left, width));
+    final centered = math.max(0.0, math.min(maxWidth, width));
+    // In the middle, unless that comes within [left] (or the minimap's
+    // [room]) of the left edge.
+    final clear = room > 0 && width - room >= roomFrom
+        ? math.max(left, room)
+        : left;
+    final start = math.max((width - centered) / 2, math.min(clear, width));
     final end = math.max(start, (width + centered) / 2);
     return (
       left: start,

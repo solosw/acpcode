@@ -9,8 +9,10 @@ void main() {
     expect(front, startsWith('---\nname: baocode-stash\n'));
     // Quoted: " #12" would start a YAML comment.
     expect(
-      RegExp(r'^description: "[^\n]*Stash #12[^\n]*"$', multiLine: true)
-          .hasMatch(front),
+      RegExp(
+        r'^description: "[^\n]*Stash #12[^\n]*"$',
+        multiLine: true,
+      ).hasMatch(front),
       isTrue,
     );
     expect(front, contains('  - "Read(//Users/me/BaoCode/Stash/**)"'));

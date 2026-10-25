@@ -14,16 +14,11 @@ void main() {
   test('writes of one stash at once leave the last asked for, whole', () async {
     final disk = FileStashDisk(root.path);
     // Long enough that the writes would overlap.
-    final texts = [
-      for (var i = 0; i < 12; i++) '$i ${'x' * 200000}',
-    ];
+    final texts = [for (var i = 0; i < 12; i++) '$i ${'x' * 200000}'];
     await Future.wait([for (final text in texts) disk.write(7, text)]);
     expect(await disk.read(7), texts.last);
     // No temporary file left behind.
-    expect(
-      root.listSync().map((entity) => p.basename(entity.path)),
-      ['7.md'],
-    );
+    expect(root.listSync().map((entity) => p.basename(entity.path)), ['7.md']);
   });
 
   test('two disks on one folder (two windows) do not share a temporary '
@@ -35,17 +30,17 @@ void main() {
     await Future.wait([one.write(3, a), two.write(3, b)]);
     // Either one, whole: never the two mixed.
     expect(await one.read(3), anyOf(a, b));
-    expect(
-      root.listSync().map((entity) => p.basename(entity.path)),
-      ['3.md'],
-    );
+    expect(root.listSync().map((entity) => p.basename(entity.path)), ['3.md']);
   });
 
   test('a write that fails leaves the next one to go on', () async {
     final disk = FileStashDisk(root.path);
     // A folder where the file goes: the move in place fails.
     Directory(p.join(root.path, '5.md')).createSync();
-    await expectLater(disk.write(5, 'first'), throwsA(isA<FileSystemException>()));
+    await expectLater(
+      disk.write(5, 'first'),
+      throwsA(isA<FileSystemException>()),
+    );
     expect(
       root.listSync().where((entity) => entity.path.endsWith('.tmp')),
       isEmpty,
@@ -68,9 +63,8 @@ void main() {
       await pumpEventQueue();
     });
 
-    Future<void> settle() => Future<void>.delayed(
-      const Duration(milliseconds: 400),
-    );
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 400));
 
     String at(String name) => p.join(root.path, name);
 
@@ -84,9 +78,7 @@ void main() {
     test('its own write moved in place is not, and the next of '
         "another's is", () async {
       await disk.write(4, 'mine');
-      events.add(
-        FileSystemMoveEvent(at('4.md.1-0-1.tmp'), false, at('4.md')),
-      );
+      events.add(FileSystemMoveEvent(at('4.md.1-0-1.tmp'), false, at('4.md')));
       await settle();
       expect(told, 0);
       events.add(FileSystemModifyEvent(at('4.md'), false, true));

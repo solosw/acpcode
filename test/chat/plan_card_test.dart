@@ -2,14 +2,11 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/widgets/plan_card.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
 
 Future<void> _pump(WidgetTester tester, PlanItem item) => tester.pumpWidget(
   MaterialApp(
     theme: buildAppTheme(),
-    localizationsDelegates: const [FlutterQuillLocalizations.delegate],
     home: Material(
       child: Center(
         child: SizedBox(width: 600, child: PlanCard(item: item)),

@@ -3,6 +3,7 @@ library;
 
 import 'dart:io';
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
@@ -11,7 +12,6 @@ import 'package:baocode/chat/composer/remote_drops.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -75,7 +75,6 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: buildAppTheme(),
-          localizationsDelegates: const [FlutterQuillLocalizations.delegate],
           home: Scaffold(
             body: Align(
               alignment: Alignment.bottomCenter,
@@ -89,16 +88,15 @@ void main() {
     }
 
     List<String> tags(WidgetTester tester) => [
-      for (final op
-          in tester
-              .widget<QuillEditor>(find.byType(QuillEditor))
-              .controller
-              .document
-              .toDelta()
-              .toList())
-        if (op.data case final Map<dynamic, dynamic> data
-            when data.containsKey(ComposerTokenEmbed.type))
-          ComposerTokenEmbed.plainText(data[ComposerTokenEmbed.type]),
+      for (final piece in composerPieces(
+        tester
+            .widget<MarkdownEditor>(find.byType(MarkdownEditor))
+            .controller
+            .text,
+      ))
+        if (piece
+            case ComposerEmbed(type: ComposerTokenEmbed.type) && final tag)
+          tag.plainText,
     ];
 
     testWidgets("of a remote project tags copies on the host of this "

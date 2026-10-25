@@ -197,13 +197,17 @@ class ClaudeLaunch {
       'permissions': {
         'allow': [for (final folder in readable) readRule(folder)],
       },
-    if ({
-          ...?env,
-          if (directories.isNotEmpty) ...additionalDirectoriesEnvironment,
-        }
-        case final env when env.isNotEmpty)
-      'env': env,
+    'env': {
+      ...unsetEnvironment,
+      ...?env,
+      if (directories.isNotEmpty) ...additionalDirectoriesEnvironment,
+    },
   };
+
+  /// The user's own setup set empty, in the shell's environment or their
+  /// settings' `env`: `CLAUDE_CODE_EFFORT_LEVEL` would hold every request
+  /// to its effort, over `--effort` and the one picked since.
+  static const unsetEnvironment = {'CLAUDE_CODE_EFFORT_LEVEL': ''};
 
   /// The permission rule that lets it read what is in [folder] (absolute):
   /// `Read(//Users/me/x/**)`, a Windows path as Claude Code matches it

@@ -1344,6 +1344,17 @@ class _ShapeCache {
 
   static const int capacity = 4096;
 
+  /// What the shapes kept may hold of the engine's memory, as [_bytesOf]
+  /// guesses it: a laid-out paragraph takes some 4KB, and a quarter of a
+  /// kilobyte more a character (a 2,000-character line half a megabyte).
+  /// Shapes a layout still shows are kept past it.
+  static const int byteCapacity = 32 << 20;
+
+  static int _bytesOf(_LineShape shape) => 4096 + 280 * shape.content.length;
+
+  /// How many shapes in use [add] passes over to find ones to drop.
+  static const int _maxSkipped = 32;
+
   final TextStyle style;
   final double wrapWidth;
   final TextDirection textDirection;
@@ -1357,6 +1368,7 @@ class _ShapeCache {
   /// Content -> shapes with different spans; iteration order is LRU.
   final LinkedHashMap<String, List<_LineShape>> _entries = LinkedHashMap();
   int _size = 0;
+  int _bytes = 0;
   int layouts = 0;
 
   bool isCompatible(
@@ -1397,10 +1409,24 @@ class _ShapeCache {
     _entries[shape.content] = candidates;
     shape.references++;
     _size++;
-    while (_size > capacity && _entries.length > 1) {
+    _bytes += _bytesOf(shape);
+    var skipped = 0;
+    while ((_size > capacity || _bytes > byteCapacity) &&
+        _entries.length > 1 &&
+        skipped < _maxSkipped) {
       final oldest = _entries.keys.first;
+      // Past all the shapes in use, to the one just added.
+      if (oldest == shape.content) break;
       final evicted = _entries.remove(oldest)!;
+      if (evicted.any((shape) => shape.references > 1)) {
+        // A layout shows it: kept, as the most recently used, and to be
+        // dropped once none does.
+        _entries[oldest] = evicted;
+        skipped++;
+        continue;
+      }
       for (final shape in evicted) {
+        _bytes -= _bytesOf(shape);
         shape.release();
       }
       _size -= evicted.length;
@@ -1416,6 +1442,7 @@ class _ShapeCache {
     }
     _entries.clear();
     _size = 0;
+    _bytes = 0;
   }
 }
 

@@ -8,6 +8,7 @@ class IoForgeHttp implements ForgeHttp {
     Map<String, String> headers = const {},
     Object? json,
     Map<String, String>? form,
+    List<int>? bytes,
   }) async => throw const ForgeException('No network here.');
 }
 

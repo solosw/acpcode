@@ -4,8 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_quill/quill_delta.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:path/path.dart' as p;
 
 import '../../kernel/kernel_types.dart' show FileSuggestion;
@@ -18,21 +17,126 @@ import '../../theme/workbench_theme.dart' show themeColors;
 import '../chat_models.dart';
 import '../floating/hover_tooltip.dart';
 import '../widgets/file_label.dart';
+import '../side_panel/file_link.dart';
 import '../side_panel/file_link_menu.dart';
 import '../side_panel/file_open.dart';
 import '../widgets/image_thumbnails.dart';
 import '../widgets/text_preview.dart';
+import 'command_details.dart';
 import 'composer_files.dart';
 import 'paste_store.dart';
 import 'composer_mock_data.dart';
 
-/// Inline, atomic token for a file or folder, or a /command. It occupies a
-/// single character in the document, so the caret skips it and backspace
-/// deletes it as a whole.
+/// One of the composer's things in its text (a tag, a picture's
+/// reference…), atomic: written in the text as one atom ([MdAtoms]), its
+/// [type] and its [data], so the caret skips it and Backspace deletes it as
+/// a whole.
+@immutable
+class ComposerEmbed {
+  const ComposerEmbed(this.type, this.data);
+
+  /// [ComposerTokenEmbed.type], [ComposerImageEmbed.type]…
+  final String type;
+
+  /// As its type has it (JSON, a number).
+  final String data;
+
+  /// It, as the composer's text has it: its type, a space, its data. Its
+  /// data is on one line (JSON's line breaks are escaped), and the atom's
+  /// marks in it are escaped too, as JSON reads them back.
+  String get atom => MdAtoms.encode(
+    '$type ${data.replaceAll(MdAtoms.open, r'\ue000').replaceAll(MdAtoms.close, r'\ue001')}',
+  );
+
+  /// The embed an atom holding [atomData] is; null for none of the
+  /// composer's.
+  static ComposerEmbed? parse(String atomData) {
+    final space = atomData.indexOf(' ');
+    if (space < 0) return null;
+    return ComposerEmbed(
+      atomData.substring(0, space),
+      atomData.substring(space + 1),
+    );
+  }
+
+  /// The embed [run] (an atom of [line]) is.
+  static ComposerEmbed? of(MdInline run, String line) =>
+      parse(MdAtoms.data(run, line));
+
+  /// Text it contributes to the sent message and to plain-text copies.
+  String get plainText => switch (type) {
+    ComposerTokenEmbed.type => ComposerTokenEmbed.plainText(data),
+    ComposerCodeEmbed.type => ComposerCodeEmbed.plainText(data),
+    ComposerPastedTextEmbed.type => ComposerPastedTextEmbed.plainText(data),
+    ComposerStashEmbed.type => ComposerStashEmbed.plainText(data),
+    ComposerImageEmbed.type => ComposerImageEmbed.plainText(data),
+    _ => '',
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ComposerEmbed && other.type == type && other.data == data;
+
+  @override
+  int get hashCode => Object.hash(type, data);
+
+  @override
+  String toString() => 'ComposerEmbed($type, $data)';
+}
+
+/// The composer's text in pieces: its text (a [String]) and its things
+/// ([ComposerEmbed]s), in order.
+Iterable<Object> composerPieces(String content) sync* {
+  var at = 0;
+  for (final run in MdAtoms.parse(content)) {
+    if (run.start > at) yield content.substring(at, run.start);
+    yield ComposerEmbed.of(run, content) ?? '';
+    at = run.end;
+  }
+  if (at < content.length) yield content.substring(at);
+}
+
+/// The things in the composer's text, with where each is.
+Iterable<({int start, int end, ComposerEmbed embed})> composerEmbedsIn(
+  String content,
+) sync* {
+  for (final run in MdAtoms.parse(content)) {
+    if (ComposerEmbed.of(run, content) case final embed?) {
+      yield (start: run.start, end: run.end, embed: embed);
+    }
+  }
+}
+
+/// The composer's text as it shows, each thing in it one character
+/// (U+FFFC), as an input method is told of it.
+String composerShownText(String content) {
+  if (!content.contains(MdAtoms.open)) return content;
+  final shown = StringBuffer();
+  for (final piece in composerPieces(content)) {
+    shown.write(piece is String ? piece : MdAtoms.shown);
+  }
+  return shown.toString();
+}
+
+/// The composer's text as text: each thing as the message says it.
+String composerPlainText(String content) {
+  if (!content.contains(MdAtoms.open)) return content;
+  final plain = StringBuffer();
+  for (final piece in composerPieces(content)) {
+    plain.write(switch (piece) {
+      final String text => text,
+      final ComposerEmbed embed => embed.plainText,
+      _ => '',
+    });
+  }
+  return plain.toString();
+}
+
+/// Inline, atomic token for a file or folder, or a /command.
 class ComposerTokenEmbed {
   static const type = 'composer-token';
 
-  static Embeddable fromSuggestion(Suggestion suggestion) => Embeddable(
+  static ComposerEmbed fromSuggestion(Suggestion suggestion) => ComposerEmbed(
     type,
     jsonEncode({
       'kind': suggestion.kind.name,
@@ -43,14 +147,16 @@ class ComposerTokenEmbed {
 
   /// The file or folder at [path], as the message refers to it (see
   /// [displayPath]).
-  static Embeddable file(String path, {bool directory = false}) => Embeddable(
-    type,
-    jsonEncode({
-      'kind': (directory ? SuggestionKind.folder : SuggestionKind.file).name,
-      'label': _name(path),
-      'value': path,
-    }),
-  );
+  static ComposerEmbed file(String path, {bool directory = false}) =>
+      ComposerEmbed(
+        type,
+        jsonEncode({
+          'kind':
+              (directory ? SuggestionKind.folder : SuggestionKind.file).name,
+          'label': _name(path),
+          'value': path,
+        }),
+      );
 
   /// The last part of [path], whichever its separators.
   static String _name(String path) {
@@ -71,7 +177,7 @@ class ComposerTokenEmbed {
   }
 
   /// Another conversation, by its session's [id], titled [title].
-  static Embeddable session(String id, String title) => Embeddable(
+  static ComposerEmbed session(String id, String title) => ComposerEmbed(
     type,
     jsonEncode({
       'kind': SuggestionKind.session.name,
@@ -124,8 +230,8 @@ final _sessionReference = RegExp(
 class ComposerCodeEmbed {
   static const type = 'composer-code';
 
-  static Embeddable of(CodeReference reference) =>
-      Embeddable(type, jsonEncode(reference.toJson()));
+  static ComposerEmbed of(CodeReference reference) =>
+      ComposerEmbed(type, jsonEncode(reference.toJson()));
 
   static CodeReference decode(Object? data) => CodeReference.fromJson(
     jsonDecode(data as String) as Map<String, Object?>,
@@ -141,8 +247,8 @@ class ComposerCodeEmbed {
 class ComposerPastedTextEmbed {
   static const type = 'composer-pasted';
 
-  static Embeddable of(PastedText pasted) =>
-      Embeddable(type, jsonEncode(pasted.toJson()));
+  static ComposerEmbed of(PastedText pasted) =>
+      ComposerEmbed(type, jsonEncode(pasted.toJson()));
 
   static PastedText decode(Object? data) =>
       PastedText.fromJson(jsonDecode(data as String) as Map<String, Object?>);
@@ -157,8 +263,8 @@ class ComposerPastedTextEmbed {
 class ComposerStashEmbed {
   static const type = 'composer-stash';
 
-  static Embeddable of(StashReference stash) =>
-      Embeddable(type, jsonEncode(stash.toJson()));
+  static ComposerEmbed of(StashReference stash) =>
+      ComposerEmbed(type, jsonEncode(stash.toJson()));
 
   static StashReference decode(Object? data) => StashReference.fromJson(
     jsonDecode(data as String) as Map<String, Object?>,
@@ -173,7 +279,7 @@ class ComposerStashEmbed {
 class ComposerGhostEmbed {
   static const type = 'composer-ghost';
 
-  static Embeddable of(List<ComposerFile> files) => Embeddable(
+  static ComposerEmbed of(List<ComposerFile> files) => ComposerEmbed(
     type,
     jsonEncode([
       for (final file in files)
@@ -193,7 +299,7 @@ class ComposerGhostEmbed {
 class ComposerImageEmbed {
   static const type = 'composer-image';
 
-  static Embeddable of(int number) => Embeddable(type, '$number');
+  static ComposerEmbed of(int number) => ComposerEmbed(type, '$number');
 
   static int decode(Object? data) => int.parse('$data');
 
@@ -215,6 +321,61 @@ class ComposerImages extends InheritedWidget {
   @override
   bool updateShouldNotify(ComposerImages oldWidget) =>
       !identical(images, oldWidget.images);
+}
+
+/// The composer's things as its editor shows them: each as its tag,
+/// centered on the text around it; copied as the message says it.
+class ComposerChips extends MarkdownEmbeds {
+  const ComposerChips();
+
+  @override
+  InlineSpan inline(BuildContext context, MdEmbed embed) {
+    final style = embed.style;
+    final Widget chip = switch (ComposerEmbed.of(embed.run, embed.line)) {
+      ComposerEmbed(type: ComposerTokenEmbed.type, :final data) =>
+        ComposerTokenChip(data: data, textStyle: style),
+      ComposerEmbed(type: ComposerCodeEmbed.type, :final data) =>
+        ComposerCodeChip(data: data, textStyle: style),
+      ComposerEmbed(type: ComposerPastedTextEmbed.type, :final data) =>
+        ComposerPastedTextChip(data: data, textStyle: style),
+      ComposerEmbed(type: ComposerStashEmbed.type, :final data) =>
+        ComposerStashChip(data: data, textStyle: style),
+      ComposerEmbed(type: ComposerImageEmbed.type, :final data) =>
+        _ComposerImageAtom(ComposerImageEmbed.decode(data), style),
+      ComposerEmbed(type: ComposerGhostEmbed.type, :final data) =>
+        ComposerGhostChip(data: data, textStyle: style),
+      _ => const SizedBox.shrink(),
+    };
+    // Baseline alignment against a baseline the tag reports itself (see
+    // [_CenteredOnText]). `PlaceholderAlignment.middle` depends on the glyph
+    // runs sharing the line, so a line holding only a tag and a trailing
+    // space laid out taller than one with text, and the composer jumped.
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: chip,
+    );
+  }
+
+  @override
+  String plainText(MdInline run, String line) =>
+      ComposerEmbed.of(run, line)?.plainText ?? '';
+}
+
+/// An image's reference in the composer: the image as [ComposerImages]
+/// has it now (the editor keeps its lines as they were built).
+class _ComposerImageAtom extends StatelessWidget {
+  const _ComposerImageAtom(this.number, this.textStyle);
+
+  final int number;
+  final TextStyle textStyle;
+
+  @override
+  Widget build(BuildContext context) => ComposerImageChip(
+    number: number,
+    image: ComposerImages.of(context)[number],
+    textStyle: textStyle,
+  );
 }
 
 /// What can become a token besides dropped files: the kernel's `/commands`,
@@ -270,18 +431,15 @@ class ComposerVocabulary extends InheritedWidget {
       (suggestFiles == null) != (oldWidget.suggestFiles == null);
 }
 
-/// A composer document for sent [text], the inverse of
-/// [ComposerTokenEmbed.plainText]: see [composerDeltaFromPaste].
-Delta composerDeltaFromText(
+/// The composer's text for sent [text], the inverse of
+/// [composerPlainText]: see [composerContentFromPaste].
+String composerContentFromText(
   String text,
   ComposerVocabulary vocabulary, {
   Set<int> images = const {},
-}) =>
-    composerDeltaFromPaste(text, vocabulary, atStart: true, images: images)
-      ..insert('\n');
+}) => composerContentFromPaste(text, vocabulary, atStart: true, images: images);
 
-/// [text] (plain, e.g. pasted) as composer content, without the document's
-/// closing newline: an `@path` becomes a file's token again (see
+/// [text] (plain, e.g. pasted) as the composer's text: an `@path` becomes a file's token again (see
 /// [parseFileReference]; `@override`, handles stay text), and so does a
 /// leading `/command` when the text goes [atStart] of the message (where
 /// alone a command counts). An `[Image #N]` becomes a reference again when
@@ -289,19 +447,19 @@ Delta composerDeltaFromText(
 /// when what it refers to is in the [codeAppendix] at the end, which goes.
 /// A `[Session id: …]`
 /// becomes the conversation's token again (see [parseSessionReference]).
-Delta composerDeltaFromPaste(
+String composerContentFromPaste(
   String text,
   ComposerVocabulary vocabulary, {
   required bool atStart,
   Set<int> images = const {},
 }) {
-  final (body: body, references: code) = splitCodeAppendix(text);
+  final (body: body, references: code) = splitCodeAppendix(MdAtoms.strip(text));
   text = body;
-  final delta = Delta();
+  final content = StringBuffer();
   final buffer = StringBuffer();
   void flush() {
     if (buffer.isEmpty) return;
-    delta.insert(buffer.toString());
+    content.write(buffer);
     buffer.clear();
   }
 
@@ -318,7 +476,7 @@ Delta composerDeltaFromPaste(
       if (text.startsWith(command.value, 1) &&
           endsAt(1 + command.value.length)) {
         flush();
-        delta.insert(ComposerTokenEmbed.fromSuggestion(command).toJson());
+        content.write(ComposerTokenEmbed.fromSuggestion(command).atom);
         i = 1 + command.value.length;
         break;
       }
@@ -332,7 +490,7 @@ Delta composerDeltaFromPaste(
         :final end,
       )) {
         flush();
-        delta.insert(ComposerTokenEmbed.session(id, title).toJson());
+        content.write(ComposerTokenEmbed.session(id, title).atom);
         i = end;
         continue;
       }
@@ -340,7 +498,7 @@ Delta composerDeltaFromPaste(
         if (imageReferencePattern.matchAsPrefix(text, i) case final match?
             when images.contains(int.parse(match[1]!))) {
           flush();
-          delta.insert(ComposerImageEmbed.of(int.parse(match[1]!)).toJson());
+          content.write(ComposerImageEmbed.of(int.parse(match[1]!)).atom);
           i = match.end;
           continue;
         }
@@ -350,10 +508,10 @@ Delta composerDeltaFromPaste(
         final reference = close < 0 ? null : code[text.substring(i, close + 1)];
         if (reference != null) {
           flush();
-          delta.insert(switch (reference) {
-            CodeReference() => ComposerCodeEmbed.of(reference).toJson(),
-            PastedText() => ComposerPastedTextEmbed.of(reference).toJson(),
-            StashReference() => ComposerStashEmbed.of(reference).toJson(),
+          content.write(switch (reference) {
+            CodeReference() => ComposerCodeEmbed.of(reference).atom,
+            PastedText() => ComposerPastedTextEmbed.of(reference).atom,
+            StashReference() => ComposerStashEmbed.of(reference).atom,
           });
           i = close + 1;
           continue;
@@ -368,9 +526,7 @@ Delta composerDeltaFromPaste(
         :final end,
       )) {
         flush();
-        delta.insert(
-          ComposerTokenEmbed.file(path, directory: directory).toJson(),
-        );
+        content.write(ComposerTokenEmbed.file(path, directory: directory).atom);
         i = end;
         continue;
       }
@@ -379,39 +535,50 @@ Delta composerDeltaFromPaste(
     i++;
   }
   flush();
-  return delta;
+  return content.toString();
 }
 
-class ComposerTokenEmbedBuilder extends EmbedBuilder {
-  const ComposerTokenEmbedBuilder();
-
-  @override
-  String get key => ComposerTokenEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // Baseline alignment against a baseline we report ourselves (see
-  // [_CenteredOnText]). `PlaceholderAlignment.middle` depends on the glyph
-  // runs sharing the line, so a line holding only a token and a trailing
-  // space laid out taller than one with text, and the composer jumped.
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
+/// A draft kept by a version that kept the composer's text as its old
+/// editor's operations ([ops]: inserts of text or of an embed, as JSON):
+/// the text as it is kept now, and where [offset]s of it (an embed one
+/// character) are in that.
+({String content, int Function(int offset) offset}) composerContentFromOps(
+  List<Object?> ops,
+) {
+  final content = StringBuffer();
+  // Where each embed was, and how much longer it is now.
+  final shifts = <(int, int)>[];
+  var at = 0;
+  for (final op in ops) {
+    if (op is! Map || op['insert'] == null) continue;
+    switch (op['insert']) {
+      case final String text:
+        content.write(MdAtoms.strip(text));
+        at += text.length;
+      case final Map<Object?, Object?> embed when embed.length == 1:
+        final MapEntry(:key, :value) = embed.entries.single;
+        final atom = ComposerEmbed('$key', '$value').atom;
+        content.write(atom);
+        shifts.add((at, atom.length - 1));
+        at++;
+      default:
+        at++;
+    }
+  }
+  var text = content.toString();
+  // The document's closing newline is not the composer's.
+  if (text.endsWith('\n')) text = text.substring(0, text.length - 1);
+  return (
+    content: text,
+    offset: (offset) {
+      var moved = offset;
+      for (final (where, by) in shifts) {
+        if (where >= offset) break;
+        moved += by;
+      }
+      return moved.clamp(0, text.length);
+    },
   );
-
-  @override
-  String toPlainText(Embed node) =>
-      ComposerTokenEmbed.plainText(node.value.data);
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) =>
-      ComposerTokenChip(
-        data: embedContext.node.value.data,
-        textStyle: embedContext.textStyle,
-      );
 }
 
 /// The inline tag for a token ([ComposerTokenEmbed] data), centered on text
@@ -531,10 +698,50 @@ class ComposerTokenChip extends StatelessWidget {
         child: tag,
       );
     }
+    // A command's whole description, its file on a click (#220).
+    if (isCommand) tag = CommandTagDetails(name: token.label, child: tag);
+    // A file or folder, where the chat's files open, on a click.
+    if (_opener(context, token) case final open?) {
+      tag = PreviewClick(onOpen: open, child: tag);
+    }
     return _SelectableToken(
       text: ComposerTokenEmbed.plainText(data),
       child: tag,
     );
+  }
+
+  /// What a click on [token] does: a file opens where the chat's files
+  /// do, a folder shows in the side panel's tree; null for any other, or
+  /// where there is nowhere to open it.
+  static VoidCallback? _opener(
+    BuildContext context,
+    ({SuggestionKind kind, String label, String value}) token,
+  ) {
+    final scope = FileOpenScope.maybeOf(context);
+    if (scope == null) return null;
+    final inProject = scope.resolve(token.value);
+    final path =
+        inProject ??
+        ((scope.paths ?? p.context).isAbsolute(token.value)
+            ? token.value
+            : null);
+    if (path == null) return null;
+    return switch (token.kind) {
+      // One outside the project (dropped from elsewhere) as it is.
+      SuggestionKind.file when inProject == null => () => scope.onOpen(
+        FileOpenRequest(path),
+      ),
+      SuggestionKind.file => () => scope.activate(
+        FileLink(token.value),
+        path,
+        context,
+      ),
+      SuggestionKind.folder => switch (scope.onOpenFolder) {
+        final open? => () => open(path),
+        null => null,
+      },
+      _ => null,
+    };
   }
 }
 
@@ -549,35 +756,6 @@ class _PathTip extends StatelessWidget {
     constraints: const BoxConstraints(maxWidth: 420),
     child: Text(path, style: TextStyle(color: AppColors.text, fontSize: 12)),
   );
-}
-
-class ComposerCodeEmbedBuilder extends EmbedBuilder {
-  const ComposerCodeEmbedBuilder();
-
-  @override
-  String get key => ComposerCodeEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // As a token's (see [ComposerTokenEmbedBuilder]).
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
-  );
-
-  @override
-  String toPlainText(Embed node) =>
-      ComposerCodeEmbed.plainText(node.value.data);
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) =>
-      ComposerCodeChip(
-        data: embedContext.node.value.data,
-        textStyle: embedContext.textStyle,
-      );
 }
 
 /// The inline tag for lines of a file ([ComposerCodeEmbed] data), centered
@@ -652,15 +830,35 @@ class ComposerCodeChip extends StatelessWidget {
         content: (context) =>
             _TextPreview(label: reference.label, text: reference.code),
         child: PreviewClick(
-          onOpen: () => showTextPreview(
-            context,
-            title: reference.label,
-            text: reference.code,
-            // Its file's extension, for its language.
-            name:
-                '${p.basenameWithoutExtension(name)} ($lines)'
-                '${p.extension(name)}',
-          ),
+          onOpen: () {
+            // The file at those lines, where the chat's files open; the
+            // lines as they were copied where it is not to be found.
+            final scope = FileOpenScope.find(context);
+            final link = FileLink(
+              reference.path,
+              FileLineRange(reference.start, reference.end),
+            );
+            if (scope != null) {
+              if (scope.openLink(link)) return;
+              // One outside the project, as it is.
+              if ((scope.paths ?? p.context).isAbsolute(reference.path)) {
+                return scope.onOpen(
+                  FileOpenRequest(reference.path, range: link.range),
+                );
+              }
+            }
+            unawaited(
+              showTextPreview(
+                context,
+                title: reference.label,
+                text: reference.code,
+                // Its file's extension, for its language.
+                name:
+                    '${p.basenameWithoutExtension(name)} ($lines)'
+                    '${p.extension(name)}',
+              ),
+            );
+          },
           child: tag,
         ),
       ),
@@ -724,35 +922,6 @@ class _TextPreview extends StatelessWidget {
       ],
     ),
   );
-}
-
-class ComposerPastedTextEmbedBuilder extends EmbedBuilder {
-  const ComposerPastedTextEmbedBuilder();
-
-  @override
-  String get key => ComposerPastedTextEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // As a token's (see [ComposerTokenEmbedBuilder]).
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
-  );
-
-  @override
-  String toPlainText(Embed node) =>
-      ComposerPastedTextEmbed.plainText(node.value.data);
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) =>
-      ComposerPastedTextChip(
-        data: embedContext.node.value.data,
-        textStyle: embedContext.textStyle,
-      );
 }
 
 /// The inline tag for a long paste ([ComposerPastedTextEmbed] data),
@@ -880,35 +1049,6 @@ class _KeptTextPreviewState extends State<_KeptTextPreview> {
   );
 }
 
-class ComposerStashEmbedBuilder extends EmbedBuilder {
-  const ComposerStashEmbedBuilder();
-
-  @override
-  String get key => ComposerStashEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // As a token's (see [ComposerTokenEmbedBuilder]).
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
-  );
-
-  @override
-  String toPlainText(Embed node) =>
-      ComposerStashEmbed.plainText(node.value.data);
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) =>
-      ComposerStashChip(
-        data: embedContext.node.value.data,
-        textStyle: embedContext.textStyle,
-      );
-}
-
 /// The inline tag for a stash ([ComposerStashEmbed] data), centered on
 /// text of [textStyle]: its number and title, its text on hover, the stash
 /// itself on a click (where the chat's files open, as the Stash page shows
@@ -1013,36 +1153,27 @@ class ComposerStashChip extends StatelessWidget {
   }
 }
 
-class ComposerGhostEmbedBuilder extends EmbedBuilder {
-  const ComposerGhostEmbedBuilder();
+/// Where what is dragged over the composer would go ([ComposerGhostEmbed]
+/// data): the tags it would put in, faint, centered on text of
+/// [textStyle].
+class ComposerGhostChip extends StatelessWidget {
+  const ComposerGhostChip({
+    super.key,
+    required this.data,
+    required this.textStyle,
+  });
+
+  final String data;
+  final TextStyle textStyle;
 
   @override
-  String get key => ComposerGhostEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // As a token's (see [ComposerTokenEmbedBuilder]).
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
-  );
-
-  @override
-  String toPlainText(Embed node) => '';
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
+  Widget build(BuildContext context) {
     final files = [
-      for (final file in jsonDecode(
-        embedContext.node.value.data as String,
-      ) as List<dynamic>)
+      for (final file in jsonDecode(data) as List<dynamic>)
         file as Map<String, dynamic>,
     ];
     return _CenteredOnText(
-      textStyle: embedContext.textStyle,
+      textStyle: textStyle,
       child: IgnorePointer(
         child: Opacity(
           opacity: .45,
@@ -1092,38 +1223,6 @@ class ComposerGhostEmbedBuilder extends EmbedBuilder {
           ),
         ),
       ),
-    );
-  }
-}
-
-class ComposerImageEmbedBuilder extends EmbedBuilder {
-  const ComposerImageEmbedBuilder();
-
-  @override
-  String get key => ComposerImageEmbed.type;
-
-  @override
-  bool get expanded => false;
-
-  // As a token's (see [ComposerTokenEmbedBuilder]).
-  @override
-  WidgetSpan buildWidgetSpan(Widget widget) => WidgetSpan(
-    alignment: PlaceholderAlignment.baseline,
-    baseline: TextBaseline.alphabetic,
-    child: widget,
-  );
-
-  @override
-  String toPlainText(Embed node) =>
-      ComposerImageEmbed.plainText(node.value.data);
-
-  @override
-  Widget build(BuildContext context, EmbedContext embedContext) {
-    final number = ComposerImageEmbed.decode(embedContext.node.value.data);
-    return ComposerImageChip(
-      number: number,
-      image: ComposerImages.of(context)[number],
-      textStyle: embedContext.textStyle,
     );
   }
 }

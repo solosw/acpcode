@@ -28,6 +28,14 @@
 // bao_onig_scanner_new reports the first invalid pattern instead of
 // keeping a global for getLastOnigError. Oniguruma is initialized once
 // explicitly, where onig.cc's first onig_new does it implicitly.
+//
+// Unlike onig.cc, a pattern is compiled once for every scanner that has it
+// (see "Compiled patterns" below): vscode-textmate makes a scanner for each
+// rule of all the patterns it may match next, so TypeScript's grammar has
+// its 334 patterns in some 3,500 places, and Oniguruma's UTF-8 classes
+// (each [[:alnum:]] a table of Unicode's ranges) make each a few kilobytes
+// compiled. A search only reads its regex_t, so scanners on any thread
+// share one; each still has its own region and cache of the last search.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -47,6 +55,10 @@
 #endif
 
 #if defined(_WIN32)
+
+static SRWLOCK compiledLock = SRWLOCK_INIT;
+#define LOCK_COMPILED() AcquireSRWLockExclusive(&compiledLock)
+#define UNLOCK_COMPILED() ReleaseSRWLockExclusive(&compiledLock)
 
 static INIT_ONCE initOnce = INIT_ONCE_STATIC_INIT;
 
@@ -72,6 +84,10 @@ static double nowMilliseconds(void) {
 }
 
 #else
+
+static pthread_mutex_t compiledLock = PTHREAD_MUTEX_INITIALIZER;
+#define LOCK_COMPILED() pthread_mutex_lock(&compiledLock)
+#define UNLOCK_COMPILED() pthread_mutex_unlock(&compiledLock)
 
 static pthread_once_t initOnce = PTHREAD_ONCE_INIT;
 
@@ -164,6 +180,136 @@ static const UChar* offsetInto(const UChar* strData, int offset) {
   return (const UChar*)((uintptr_t)strData + (uintptr_t)(intptr_t)offset);
 }
 
+// Compiled patterns, by their UTF-8, each with the count of OnigRegExps
+// that have it: compiled by the first, freed with the last.
+
+typedef struct Compiled_ {
+  unsigned char* data;
+  int length;
+  uint64_t hash;
+  regex_t* regex;
+  int refs;
+  struct Compiled_* next;
+} Compiled;
+
+static Compiled** compiledTable = NULL;
+static size_t compiledBuckets = 0;
+static size_t compiledCount = 0;
+
+static uint64_t hashPattern(const unsigned char* data, int length) {
+  // FNV-1a.
+  uint64_t hash = 14695981039346656037ULL;
+  int i;
+  for (i = 0; i < length; i++) {
+    hash = (hash ^ data[i]) * 1099511628211ULL;
+  }
+  return hash;
+}
+
+// Doubles the table when it is full; under compiledLock.
+static void growCompiled(void) {
+  size_t buckets = compiledBuckets == 0 ? 256 : compiledBuckets * 2;
+  Compiled** table = (Compiled**)calloc(buckets, sizeof(Compiled*));
+  size_t i;
+  if (table == NULL) return;
+  for (i = 0; i < compiledBuckets; i++) {
+    Compiled* entry = compiledTable[i];
+    while (entry != NULL) {
+      Compiled* next = entry->next;
+      size_t bucket = (size_t)(entry->hash & (buckets - 1));
+      entry->next = table[bucket];
+      table[bucket] = entry;
+      entry = next;
+    }
+  }
+  free(compiledTable);
+  compiledTable = table;
+  compiledBuckets = buckets;
+}
+
+// The pattern compiled, shared; NULL with *status for an invalid one.
+static regex_t* acquireCompiled(const unsigned char* data, int length,
+                                int* status, OnigErrorInfo* errorInfo) {
+  uint64_t hash = hashPattern(data, length);
+  Compiled* entry;
+  regex_t* regex = NULL;
+
+  LOCK_COMPILED();
+  if (compiledCount >= compiledBuckets) growCompiled();
+  if (compiledBuckets == 0) {
+    UNLOCK_COMPILED();
+    *status = ONIGERR_MEMORY;
+    return NULL;
+  }
+  for (entry = compiledTable[hash & (compiledBuckets - 1)]; entry != NULL;
+       entry = entry->next) {
+    if (entry->hash == hash && entry->length == length &&
+        memcmp(entry->data, data, length) == 0) {
+      entry->refs++;
+      *status = ONIG_NORMAL;
+      UNLOCK_COMPILED();
+      return entry->regex;
+    }
+  }
+  *status = onig_new(&regex, data, data + length, ONIG_OPTION_CAPTURE_GROUP,
+                     ONIG_ENCODING_UTF8, ONIG_SYNTAX_DEFAULT, errorInfo);
+  if (*status == ONIG_NORMAL) {
+    entry = (Compiled*)malloc(sizeof(Compiled));
+    if (entry != NULL) {
+      entry->data = (unsigned char*)malloc(length > 0 ? length : 1);
+    }
+    if (entry == NULL || entry->data == NULL) {
+      // Out of memory: not shared, as if it were not compiled.
+      free(entry);
+      onig_free(regex);
+      UNLOCK_COMPILED();
+      *status = ONIGERR_MEMORY;
+      return NULL;
+    }
+    memcpy(entry->data, data, length);
+    entry->length = length;
+    entry->hash = hash;
+    entry->regex = regex;
+    entry->refs = 1;
+    entry->next = compiledTable[hash & (compiledBuckets - 1)];
+    compiledTable[hash & (compiledBuckets - 1)] = entry;
+    compiledCount++;
+  }
+  UNLOCK_COMPILED();
+  return *status == ONIG_NORMAL ? regex : NULL;
+}
+
+static void releaseCompiled(regex_t* regex, const unsigned char* data,
+                            int length) {
+  uint64_t hash = hashPattern(data, length);
+  Compiled** link;
+
+  LOCK_COMPILED();
+  for (link = &compiledTable[hash & (compiledBuckets - 1)]; *link != NULL;
+       link = &(*link)->next) {
+    Compiled* entry = *link;
+    if (entry->regex != regex) continue;
+    if (--entry->refs == 0) {
+      *link = entry->next;
+      compiledCount--;
+      onig_free(entry->regex);
+      free(entry->data);
+      free(entry);
+    }
+    break;
+  }
+  UNLOCK_COMPILED();
+}
+
+// The patterns compiled now, for tests.
+BAO_ONIG_EXPORT int64_t bao_onig_compiled_count(void) {
+  int64_t count;
+  LOCK_COMPILED();
+  count = (int64_t)compiledCount;
+  UNLOCK_COMPILED();
+  return count;
+}
+
 // OnigRegExp
 
 static int hasGAnchor(const unsigned char* str, int len) {
@@ -183,10 +329,8 @@ static OnigRegExp* createOnigRegExp(const unsigned char* data, int length,
   OnigRegExp* result;
   regex_t* regex;
 
-  *status = onig_new(&regex, data, data + length, ONIG_OPTION_CAPTURE_GROUP,
-                     ONIG_ENCODING_UTF8, ONIG_SYNTAX_DEFAULT, errorInfo);
-
-  if (*status != ONIG_NORMAL) {
+  regex = acquireCompiled(data, length, status, errorInfo);
+  if (regex == NULL) {
     return NULL;
   }
 
@@ -205,7 +349,7 @@ static OnigRegExp* createOnigRegExp(const unsigned char* data, int length,
 }
 
 static void freeOnigRegExp(OnigRegExp* regex) {
-  // regex->regex will be freed separately / as part of the regset
+  releaseCompiled(regex->regex, regex->strData, regex->strLength);
   free(regex->strData);
   onig_region_free(regex->region, 1);
   free(regex);
@@ -338,18 +482,19 @@ BAO_ONIG_EXPORT BaoOnigScanner* bao_onig_scanner_new(
 
 BAO_ONIG_EXPORT void bao_onig_scanner_free(BaoOnigScanner* scanner) {
   int i;
+  if (scanner->rset != NULL) {
+    // The regexes are shared: out of the regset before it frees them (from
+    // the end, nothing to move).
+    for (i = onig_regset_number_of_regex(scanner->rset) - 1; i >= 0; i--) {
+      onig_regset_replace(scanner->rset, i, NULL);
+    }
+    onig_regset_free(scanner->rset);
+  }
   for (i = 0; i < scanner->count; i++) {
     if (scanner->regexes[i] == NULL) continue;
-    if (scanner->rset == NULL) {
-      // Not in a regset to free it with.
-      onig_free(scanner->regexes[i]->regex);
-    }
     freeOnigRegExp(scanner->regexes[i]);
   }
   free(scanner->regexes);
-  if (scanner->rset != NULL) {
-    onig_regset_free(scanner->rset);
-  }
   free(scanner->result);
   free(scanner);
 }

@@ -7,6 +7,7 @@ import 'package:baocode/ide/ide_workbench.dart';
 import 'package:baocode/ide/markdown/markdown_paste.dart';
 import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/keybindings/keybinding_service.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -118,26 +119,46 @@ void main() {
     );
   });
 
-  testWidgets('a double click in the preview opens the source there', (
-    tester,
-  ) async {
-    await pumpWorkbench(tester, files, open: ['README.md']);
+  testWidgets('typed in the preview, the source opens at its caret, the '
+      'tab dirty; Undo in the source takes it back', (tester) async {
+    final workspace = await pumpWorkbench(tester, files, open: ['README.md']);
     await tester.pumpAndSettle();
-    final text = find.text('Some text.', findRichText: true);
-    // On `text`: after `Some `.
-    final at =
-        tester.getTopLeft(text) +
-        Offset(
-          tester.getSize(text).width * 5.5 / 10,
-          tester.getSize(text).height / 2,
-        );
-    await tester.tapAt(at);
-    await tester.pump(const Duration(milliseconds: 50));
-    await tester.tapAt(at);
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.text('Some text.', findRichText: true),
+    );
+    // Before `text`: after `Some `.
+    final box = paragraph
+        .getBoxesForSelection(
+          const TextSelection(baseOffset: 5, extentOffset: 6),
+        )
+        .first
+        .toRect();
+    await tester.tapAt(
+      paragraph.localToGlobal(box.centerLeft + const Offset(1, 0)),
+    );
+    await tester.pumpAndSettle();
+    // Typed as the platform's input tells it.
+    final told = tester.testTextInput.editingState!;
+    final caret = told['selectionBase'] as int;
+    tester.testTextInput.updateEditingValue(
+      TextEditingValue(
+        text: (told['text'] as String).replaceRange(caret, caret, 'x'),
+        selection: TextSelection.collapsed(offset: caret + 1),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final doc = workspace.active!;
+    expect(doc.text, '# Readme\n\nSome xtext.\n');
+    expect(doc.dirty, isTrue);
+
+    await chord(tester, LogicalKeyboardKey.keyV, control: true, shift: true);
     await tester.pumpAndSettle();
     expect(preview, findsNothing);
     expect(editor, findsOneWidget);
-    expect(find.textContaining('Ln 3, Col '), findsOneWidget);
+    expect(find.textContaining('Ln 3, Col 7'), findsOneWidget);
+    doc.model.undo();
+    await tester.pumpAndSettle();
+    expect(doc.text, '# Readme\n\nSome text.\n');
   });
 
   group('pasting files', () {

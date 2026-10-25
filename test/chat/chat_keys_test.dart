@@ -1,15 +1,15 @@
 // The chat's keys as keybindings (see keybindings/chat_keybindings.dart):
 // a chat alone, its composer and a prompt's options.
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
-import 'package:baocode/chat/composer/composer_embeds.dart';
+import 'package:baocode/chat/composer/composer_controller.dart';
 import 'package:baocode/chat/composer/composer_picker.dart';
 import 'package:baocode/chat/composer/suggestion_menu.dart';
 import 'package:baocode/chat/panels/interaction_panel.dart';
@@ -33,7 +33,6 @@ Future<ChatSession> pumpChat(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -41,25 +40,15 @@ Future<ChatSession> pumpChat(
   return session;
 }
 
-QuillController composer(WidgetTester tester) =>
-    tester.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+ComposerController composer(WidgetTester tester) =>
+    tester.widget<MarkdownEditor>(find.byType(MarkdownEditor)).controller
+        as ComposerController;
 
-String composerText(WidgetTester tester) {
-  final text = composer(tester).document.toPlainText();
-  return text.substring(0, text.length - 1);
-}
+String composerText(WidgetTester tester) => composer(tester).shownText;
 
 /// What the composer would send: its tokens as their text.
-String composerMessage(WidgetTester tester) => [
-  for (final op in composer(tester).document.toDelta().toList())
-    switch (op.data) {
-      final String text => text,
-      final Map<dynamic, dynamic> embed => ComposerTokenEmbed.plainText(
-        embed[ComposerTokenEmbed.type],
-      ),
-      _ => '',
-    },
-].join().trim();
+String composerMessage(WidgetTester tester) =>
+    composer(tester).plainText.trim();
 
 /// The (mock) window's file picker answers [paths].
 void pickFiles(WidgetTester tester, List<String> paths) {
@@ -90,7 +79,7 @@ Future<void> typeText(
 }) async {
   tester.testTextInput.updateEditingValue(
     TextEditingValue(
-      text: '$text\n',
+      text: text,
       selection: TextSelection.collapsed(offset: text.length),
       composing: composing,
     ),
@@ -98,9 +87,8 @@ Future<void> typeText(
   await tester.pump();
 }
 
-void moveCaret(WidgetTester tester, int offset) => composer(
-  tester,
-).updateSelection(TextSelection.collapsed(offset: offset), ChangeSource.local);
+void moveCaret(WidgetTester tester, int offset) =>
+    composer(tester).selection = TextSelection.collapsed(offset: offset);
 
 /// Presses [key] with the modifiers given.
 Future<void> press(
@@ -218,8 +206,8 @@ void main() {
     expect(find.byType(SuggestionMenu), findsNothing);
     expect(sentMessages(session), hasLength(before));
     expect(
-      composer(tester).document.toDelta().toList().map((op) => op.data),
-      contains(isA<Map>()),
+      composer(tester).embeds,
+      isNotEmpty,
       reason: 'the token of ${picked.label}',
     );
 
@@ -272,7 +260,7 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(composerMessage(tester), sent[sent.length - 2].trim());
 
-    moveCaret(tester, composer(tester).document.length - 1);
+    moveCaret(tester, composer(tester).length);
     await press(tester, LogicalKeyboardKey.arrowDown);
     expect(composerMessage(tester), sent.last.trim());
     await press(tester, LogicalKeyboardKey.arrowDown);
@@ -354,8 +342,8 @@ void main() {
       'scroll it; Ctrl+↓ goes back to the input', (tester) async {
     await pumpChat(tester);
     await tester.pump(const Duration(milliseconds: 300));
-    final input = tester.widget<QuillEditor>(find.byType(QuillEditor));
-    expect(input.focusNode.hasFocus, isTrue);
+    final input = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
+    expect(input.focusNode!.hasFocus, isTrue);
     final list = tester
         .stateList<ScrollableState>(
           find.descendant(
@@ -369,7 +357,7 @@ void main() {
     expect(list.pixels, closeTo(list.maxScrollExtent, 1));
 
     await press(tester, LogicalKeyboardKey.arrowUp, control: true);
-    expect(input.focusNode.hasFocus, isFalse);
+    expect(input.focusNode!.hasFocus, isFalse);
     await press(tester, LogicalKeyboardKey.home);
     expect(list.pixels, lessThan(1));
     await press(tester, LogicalKeyboardKey.arrowDown);
@@ -382,7 +370,7 @@ void main() {
     expect(list.pixels, closeTo(list.maxScrollExtent, 1));
 
     await press(tester, LogicalKeyboardKey.arrowDown, control: true);
-    expect(input.focusNode.hasFocus, isTrue);
+    expect(input.focusNode!.hasFocus, isTrue);
   });
 
   testWidgets('Ctrl+Enter allows the tool the agent asks for', (tester) async {

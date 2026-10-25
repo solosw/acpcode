@@ -12,6 +12,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/textmate/oniguruma/onig_lib.dart';
 import 'package:bao_editor/textmate/oniguruma/onig_lib_io.dart'
     hide loadNativeOnigLib;
+import 'package:bao_editor/textmate/oniguruma/onig_native.dart'
+    show onigCompiledCount;
 import 'package:bao_editor/textmate/vscode_textmate/onig_lib.dart';
 
 /// vscode-oniguruma's result, as its tests compare it.
@@ -617,6 +619,27 @@ void main() {
     test('empty strings and patterns', () {
       final scanner = _scanner(['', r'\z']);
       expect(_find(scanner, '', 0), _match(0, [(0, 0)]));
+    });
+
+    test('scanners share a pattern compiled once, until the last goes', () {
+      final before = onigCompiledCount();
+      final first = _lib.createOnigScanner([r'[[:alnum:]]+', 'b', 'b']);
+      final second = _lib.createOnigScanner(['b', r'[[:alnum:]]+', 'c']);
+      expect(onigCompiledCount(), before + 3);
+      // Each keeps its own match and search cache.
+      expect(_find(first, 'xb', 1), _match(0, [(1, 2)]));
+      expect(_find(second, 'xb', 1), _match(0, [(1, 2)]));
+      expect(_find(second, 'xb', 0), _match(1, [(0, 2)]));
+      first.dispose();
+      expect(onigCompiledCount(), before + 3);
+      expect(_find(second, 'c', 0), _match(1, [(0, 1)]));
+      second.dispose();
+      expect(onigCompiledCount(), before);
+      // An invalid pattern is not kept.
+      final invalid = _lib.createOnigScanner(['(', 'b']);
+      expect(onigCompiledCount(), before + 1);
+      invalid.dispose();
+      expect(onigCompiledCount(), before);
     });
   });
 }

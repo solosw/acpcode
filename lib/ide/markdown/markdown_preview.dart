@@ -1,37 +1,42 @@
-// A markdown file's preview: VS Code's markdown preview
-// (extensions/markdown-language-features). It shows; the source edits:
-// a double click opens the source where it was, as VS Code's
-// `markdown.preview.doubleClickToSwitchToEditor` does, the caret on the
-// text clicked.
+// A markdown file's preview, edited as it shows: the text is the document's
+// (bao_markdown's editor), a block's marks shown where the caret is, what
+// they make everywhere else.
 //
-// The preview shows the document's text as the editor holds it (unsaved
-// changes too). What it changes (a task box ticked, a file dropped), it
-// changes through the document's model, so the tab's dirty mark, undo,
-// saving, language servers and the agent's change review see one text.
+// It edits the document's model itself, so the tab's dirty mark, undo,
+// saving, language servers and the agent's change review see one text, and
+// what the source tab, the agent or a reload change shows here at once.
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
-import 'package:flutter/gestures.dart';
+import 'package:bao_markdown/bao_markdown.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:path/path.dart' as p;
-import 'package:super_sliver_list/super_sliver_list.dart';
 
-import '../../base/list_selection.dart';
 import '../../base/smooth_scroll.dart';
-import '../../chat/widgets/code_citation.dart' show MarkdownCodeBlock;
-import '../../chat/widgets/markdown_view.dart';
+import '../../chat/widgets/code_citation.dart';
+import '../../chat/widgets/markdown_math.dart';
+import '../../chat/widgets/mermaid_code_block.dart';
 import '../../platform/svg_text_transform.dart';
+import '../../stash/stash_ai.dart' show polishStashText;
+import '../../stash/stash_editor.dart' show StashEditor;
 import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
-import 'markdown_block_editor.dart';
-import 'markdown_blocks.dart';
-import 'markdown_document.dart';
+import '../../l10n/l10n.dart';
 import '../ide_hover.dart';
+import '../ide_menu.dart';
+import 'markdown_format_bar.dart';
+import 'markdown_front_matter.dart';
+import 'markdown_links.dart';
+import 'markdown_model_source.dart';
+import 'markdown_paste.dart';
+import 'markdown_table_menu.dart';
+import 'markdown_task_box.dart';
+
+export 'markdown_links.dart';
 
 /// Whether [path] is a markdown file the preview shows.
 bool isMarkdownPath(String path) {
@@ -51,9 +56,12 @@ class IdeMarkdownPreview extends StatefulWidget {
     this.initialLine,
     this.onLeave,
     this.onEdited,
-    this.onEdit,
+    this.onPaste,
     this.onOpenFile,
     this.onOpenExternal,
+    this.onReveal,
+    this.background,
+    this.padding,
   });
 
   final String path;
@@ -66,22 +74,22 @@ class IdeMarkdownPreview extends StatefulWidget {
   /// machine's when null.
   final p.Context? pathContext;
 
-  /// Shown, not changed (a revision's text): no task box ticks.
+  /// Shown, not changed (a revision's text).
   final bool readOnly;
 
-  /// The line (one-based) to show first: the block it is in.
+  /// The line (one-based) to show first.
   final int? initialLine;
 
-  /// Told, as the preview goes, the line (one-based) of the block at its
-  /// top, to show first when it comes back.
+  /// Told, as the preview goes, the line (one-based) at its top, to show
+  /// first when it comes back.
   final ValueChanged<int?>? onLeave;
 
   /// Told after the preview changed the text.
   final VoidCallback? onEdited;
 
-  /// Opens the source at a line and column (one-based): where the preview
-  /// was double clicked.
-  final void Function(int line, int column)? onEdit;
+  /// A paste of the clipboard's files and pictures (put beside the
+  /// document, linked to: see [MarkdownPaste]); its text pasted as usual.
+  final Future<MarkdownPasteOutcome> Function()? onPaste;
 
   /// Opens a file a link goes to, and the part of its address after `#`.
   final void Function(String path, String? fragment)? onOpenFile;
@@ -89,35 +97,90 @@ class IdeMarkdownPreview extends StatefulWidget {
   /// Opens a web or mail link.
   final void Function(Uri uri)? onOpenExternal;
 
+  /// Shows a file (the document, one it links to) in the file manager
+  /// (Finder, Explorer), from the right click's menu; none for a remote
+  /// project's.
+  final void Function(String path)? onReveal;
+
+  /// Behind it; the editor's when null.
+  final Color? background;
+
+  /// Around its text, for a view of its own laying it out (a
+  /// customization's, under its title); as wide as a page reads, in the
+  /// middle of a wide one, when null.
+  final EdgeInsets? padding;
+
   @override
   State<IdeMarkdownPreview> createState() => IdeMarkdownPreviewState();
 }
 
 class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
-  late MarkdownSource _source = MarkdownSource(widget.model.text);
-  StreamSubscription<EditorContentChangeEvent>? _changes;
-  Timer? _reparse;
+  late MarkdownController _controller = _controllerOf(widget.model);
 
-  final _list = ListController();
+  final _editorKey = GlobalKey<MarkdownEditorState>();
+  final _formatBar = GlobalKey<MarkdownFormatBarState>();
   final _scroll = SmoothScrollController();
   final _focus = FocusNode(debugLabel: 'markdown preview');
+  late final _embeds = _PreviewEmbeds(this);
 
   /// The images read, by path: read once while the preview shows.
   final Map<String, Future<Uint8List>> _images = {};
 
-  /// The blocks laid out now, for where a drop lands and a double click
-  /// is.
-  final Map<int, BuildContext> _shown = {};
+  /// Those of [_images] read by now: a line built again (scrolled back
+  /// to) shows its image at once, as tall as it is.
+  final Map<String, Uint8List> _imagesRead = {};
+
+  Future<Uint8List> _readImage(String path) {
+    if (_images[path] case final reading?) return reading;
+    final reading = _images[path] = widget.readBytes(path);
+    reading.then((bytes) {
+      // Not one read again since (the images cleared).
+      if (identical(_images[path], reading)) _imagesRead[path] = bytes;
+    }, onError: (_) {});
+    return reading;
+  }
+
+  /// Whether the caret was put somewhere (clicked, moved, revealed): where
+  /// the source opens.
+  bool _placed = false;
 
   p.Context get _context => widget.pathContext ?? p.context;
+
+  MarkdownEditorState? get _editor => _editorKey.currentState;
+
+  MarkdownController _controllerOf(EditorDocumentModel model) =>
+      MarkdownController.of(EditorModelMarkdownSource(model, onEdited: _edited))
+        ..selectionListenable.addListener(_selectionChanged);
+
+  void _selectionChanged() {
+    if (_focus.hasFocus) _placed = true;
+  }
+
+  bool _editedSoon = false;
+
+  /// Told once the change is made: the edits of one (the bar's marks at
+  /// both ends) are one step of the model's Undo, which a source tab told
+  /// in between would end.
+  void _edited() {
+    if (_editedSoon) return;
+    _editedSoon = true;
+    scheduleMicrotask(() {
+      _editedSoon = false;
+      widget.onEdited?.call();
+    });
+  }
 
   @override
   void initState() {
     super.initState();
-    _listen();
     if (widget.initialLine case final line?) {
+      final index = (line - 1).clamp(0, _controller.lines.lineCount - 1);
+      // The caret there too: where the source opens again.
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.lineStart(index),
+      );
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) revealLine(line);
+        if (mounted) _show(index);
       });
     }
   }
@@ -126,41 +189,38 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
   void didUpdateWidget(IdeMarkdownPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.model, widget.model)) {
-      unawaited(_changes?.cancel());
       _images.clear();
-      _source = MarkdownSource(widget.model.text);
-      _listen();
+      _imagesRead.clear();
+      final old = _controller;
+      _controller = _controllerOf(widget.model);
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
     } else if (oldWidget.path != widget.path) {
       _images.clear();
+      _imagesRead.clear();
     }
   }
 
-  void _listen() {
-    _changes = widget.model.changes.listen((_) {
-      _reparse?.cancel();
-      _reparse = Timer(const Duration(milliseconds: 120), _parse);
+  /// The line at the top when the view last came to rest: what is told
+  /// as the preview goes (its editor is gone by then).
+  late int? _restedAt = widget.initialLine;
+  bool _restScheduled = false;
+
+  /// [_restedAt] read after the frame (a scroll may end in its layout).
+  void _restSoon() {
+    if (_restScheduled) return;
+    _restScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restScheduled = false;
+      if (mounted) _restedAt = topLine ?? _restedAt;
     });
-  }
-
-  /// Its own changes are shown at once; others' a moment after.
-  void _parseNow() {
-    _reparse?.cancel();
-    _parse();
-  }
-
-  void _parse() {
-    if (!mounted) return;
-    setState(() => _source = MarkdownSource(widget.model.text));
   }
 
   @override
   void dispose() {
-    widget.onLeave?.call(topLine);
-    _reparse?.cancel();
-    unawaited(_changes?.cancel());
+    widget.onLeave?.call(_restedAt);
     _focus.dispose();
     _scroll.dispose();
-    _list.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -168,182 +228,185 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
 
   void focus() => _focus.requestFocus();
 
-  /// The line (one-based) of the block at the top of the view.
+  /// The line (one-based) at the top of the view.
   int? get topLine {
-    final blocks = _source.blocks;
-    if (blocks.isEmpty) return null;
-    final range = _list.isAttached ? _list.visibleRange : null;
-    final index = (range?.$1 ?? 0).clamp(0, blocks.length - 1);
-    return blocks[index].start + 1;
+    final editor = _editor;
+    final viewport = editor?.viewportRect;
+    if (editor == null || viewport == null) return null;
+    // Below the room the caret is kept in from the edge.
+    final at = editor.offsetAt(viewport.topLeft + const Offset(48, 12));
+    if (at != null) return _controller.lineAt(at) + 1;
+    final first = editor.firstVisibleLine;
+    return first == null ? null : first + 1;
   }
 
-  /// Shows the block [line] (one-based) is in at the top.
+  /// Where the caret is (one-based), when it was put somewhere: where the
+  /// source opens.
+  ({int line, int column})? get caret {
+    final selection = _controller.selection;
+    if (!_placed || !selection.isValid) return null;
+    final offset = selection.extentOffset;
+    final line = _controller.lineAt(offset);
+    return (line: line + 1, column: offset - _controller.lineStart(line) + 1);
+  }
+
+  /// Shows [line] (one-based) at the top, the caret at [column] of it.
   void revealLine(int line, [int column = 1]) {
-    final index = _source.blockAt(line - 1);
-    if (index == null) return;
-    _jumpTo(index);
+    final index = (line - 1).clamp(0, _controller.lines.lineCount - 1);
+    final start = _controller.lineStart(index);
+    final length = _controller.lines.content(index).length;
+    _controller.selection = TextSelection.collapsed(
+      offset: start + (column - 1).clamp(0, length),
+    );
+    _show(index);
     focus();
+    _placed = true;
   }
 
-  void _jumpTo(int index) {
-    if (!_list.isAttached || !_scroll.hasClients) return;
-    _list.jumpToItem(index: index, scrollController: _scroll, alignment: 0);
+  /// [line] (from 0) at the top: shown at once where it is laid out, else
+  /// once it is.
+  void _show(int line) {
+    _editor?.revealLine(line);
+    _restedAt = line + 1;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _editor?.revealLine(line);
+    });
   }
+
+  /// Opens the anchor [fragment] of the document (a link from another).
+  void revealAnchor(String fragment) => _open(MarkdownAnchorLink(fragment));
 
   /// Puts [text] (links, a dropped file's) as a block of its own after the
   /// block at [position] (global), or at the end.
   void insert(String text, {Offset? position}) {
     if (widget.readOnly || text.isEmpty) return;
-    final model = widget.model;
-    final lines = _source.lines;
-    final after = position == null ? null : _blockAt(position);
-    final String insertion;
+    final controller = _controller;
+    final newline = controller.lines.newline;
+    text = text.replaceAll(RegExp('\r\n|\r|\n'), newline);
+    final at = position == null ? null : _editor?.offsetAt(position);
     final int offset;
-    if (after != null && after < _source.blocks.length) {
-      final lineBreak = lines.lineBreak;
-      offset = lines.ends[_source.blocks[after].end - 1];
-      insertion = '$lineBreak$lineBreak${_withLineBreak(text, lineBreak)}';
+    final String insertion;
+    if (at != null) {
+      offset = controller.lineEnd(_blockEnd(controller.lineAt(at)));
+      insertion = '$newline$newline$text';
     } else {
-      offset = model.text.length;
-      insertion =
-          MarkdownBlockEdit.newBlockPrefix(model.text) +
-          _withLineBreak(text, lines.lineBreak);
+      offset = controller.length;
+      insertion = markdownBlockPrefix(controller.text) + text;
     }
-    model.closeUndoGroup();
-    model.applyOffsetEdits([EditorOffsetEdit(offset, offset, insertion)]);
-    model.closeUndoGroup();
-    _parseNow();
-    widget.onEdited?.call();
+    controller.breakUndo();
+    controller.replace(
+      offset,
+      offset,
+      insertion,
+      selection: TextSelection.collapsed(offset: offset + insertion.length),
+    );
+    controller.breakUndo();
   }
 
-  static String _withLineBreak(String text, String lineBreak) =>
-      text.replaceAll(RegExp('\r\n|\r|\n'), lineBreak);
+  /// The last line of the block [line] is in: a heading's own, a fence's
+  /// (a table's…) last, a paragraph's (a list's, a quote's) before the
+  /// empty line after it.
+  int _blockEnd(int line) {
+    final controller = _controller;
+    final info = controller.infoOf(line);
+    final (_, last) = controller.blockOf(line);
+    if (info.kind == MdLineKind.heading ||
+        info.kind == MdLineKind.rule ||
+        info.kind == MdLineKind.blank ||
+        info.isMultiline ||
+        info.kind == MdLineKind.html ||
+        info.kind == MdLineKind.frontMatter) {
+      return last;
+    }
+    var end = last;
+    while (end + 1 < controller.lines.lineCount &&
+        controller.infoOf(end + 1).kind != MdLineKind.blank &&
+        controller.infoOf(end + 1).kind != MdLineKind.heading) {
+      end++;
+    }
+    return end;
+  }
 
-  /// The block laid out at [global], if one is.
-  int? _blockAt(Offset global) {
-    for (final MapEntry(key: index, value: context) in _shown.entries) {
-      final box = context.findRenderObject();
-      if (box is! RenderBox || !box.attached || !box.hasSize) continue;
-      final local = box.globalToLocal(global);
-      if (local.dy >= 0 && local.dy <= box.size.height) return index;
+  // --- Links ------------------------------------------------------------------
+
+  /// A click at [offset]: a link there ⌘-clicked (clicked, read only) is
+  /// followed, the caret left where it was; else the caret goes there, a
+  /// link's bubble over it (as a stash's).
+  bool _click(int offset) {
+    final keyboard = HardwareKeyboard.instance;
+    final command = defaultTargetPlatform == TargetPlatform.macOS
+        ? keyboard.isMetaPressed
+        : keyboard.isControlPressed;
+    final opened = (command || widget.readOnly) && _openLinkAt(offset);
+    if (!opened) _placed = true;
+    return opened;
+  }
+
+  bool _openLinkAt(int offset) {
+    final controller = _controller;
+    final line = controller.lineAt(offset);
+    final column = offset - controller.lineStart(line);
+    for (final run in inlinesAt(controller.inlinesOf(line), column).reversed) {
+      if (column >= run.end) continue;
+      final href = switch (run.kind) {
+        MdInlineKind.link ||
+        MdInlineKind.autolink ||
+        MdInlineKind.url => run.href,
+        _ => null,
+      };
+      if (href == null) continue;
+      final target = resolveMarkdownLink(href, widget.path, _context);
+      if (target == null) return false;
+      _open(target);
+      return true;
+    }
+    return false;
+  }
+
+  /// The right click's menu's own: the file there shown in the file
+  /// manager (a link's or a picture's, else the document's).
+  List<IdeMenuEntry> _contextMenu(int? offset) {
+    final reveal = widget.onReveal;
+    if (reveal == null) return const [];
+    final target = offset == null ? null : _fileAt(offset);
+    return [
+      IdeMenuAction(
+        context.l10n.revealInFileManager,
+        onSelected: () => reveal(target ?? widget.path),
+      ),
+    ];
+  }
+
+  /// The project's file a link or a picture at [offset] goes to.
+  String? _fileAt(int offset) {
+    final controller = _controller;
+    final line = controller.lineAt(offset);
+    final column = offset - controller.lineStart(line);
+    for (final run in inlinesAt(controller.inlinesOf(line), column).reversed) {
+      final href = switch (run.kind) {
+        MdInlineKind.link || MdInlineKind.image => run.href,
+        _ => null,
+      };
+      if (href == null) continue;
+      return switch (resolveMarkdownLink(href, widget.path, _context)) {
+        MarkdownFileLink(:final path) => path,
+        _ => null,
+      };
     }
     return null;
   }
 
-  void _toggleTask(int index, int task) {
-    if (widget.readOnly || index >= _source.blocks.length) return;
-    final marks = _source.taskMarks(_source.blocks[index]);
-    if (task >= marks.length) return;
-    toggleMarkdownTask(widget.model, marks[task]);
-    _parseNow();
-    widget.onEdited?.call();
-  }
-
-  // --- A double click: the source, there ---------------------------------------
-
-  /// The last click, to tell a double click: the preview's text selects a
-  /// word on one, and a double click is told here beside it.
-  ({Duration time, Offset position})? _lastClick;
-  int? _imagePointer;
-
-  void _pointerDown(PointerDownEvent event) {
-    if (event.kind != PointerDeviceKind.mouse &&
-        event.kind != PointerDeviceKind.touch) {
-      return;
+  /// Opens where [href], a link's address, goes.
+  void _openHref(String href) {
+    if (resolveMarkdownLink(href, widget.path, _context) case final target?) {
+      _open(target);
     }
-    if (event.buttons != kPrimaryButton) return;
-    // The image's listener runs first: its clicks belong to the viewer.
-    final imagePointer = _imagePointer;
-    _imagePointer = null;
-    if (imagePointer == event.pointer) {
-      _lastClick = null;
-      return;
-    }
-    final last = _lastClick;
-    final double =
-        last != null &&
-        event.timeStamp - last.time <= kDoubleTapTimeout &&
-        (event.position - last.position).distance <= kDoubleTapSlop;
-    _lastClick = double
-        ? null
-        : (time: event.timeStamp, position: event.position);
-    if (!double) return;
-    final onEdit = widget.onEdit;
-    if (onEdit == null) return;
-    final at = sourceAt(event.position);
-    if (at == null) return;
-    // After the gesture: the click's word is selected first.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) onEdit(at.line, at.column);
-    });
-  }
-
-  /// The source's line and column (one-based) of the text shown at
-  /// [global]: the block's first line when no text is there.
-  ({int line, int column})? sourceAt(Offset global) {
-    final index = _blockAt(global);
-    if (index == null || index >= _source.blocks.length) return null;
-    final block = _source.blocks[index];
-    final lines = _source.lines;
-    final start = lines.starts[block.start];
-    final fallback = (line: block.start + 1, column: 1);
-    final box = _shown[index]?.findRenderObject();
-    if (box is! RenderBox) return fallback;
-    // The block's texts, in order, and the one at the point.
-    final texts = <RenderParagraph>[];
-    void collect(RenderObject object) {
-      if (object is RenderParagraph) texts.add(object);
-      object.visitChildren(collect);
-    }
-
-    collect(box);
-    final result = BoxHitTestResult();
-    box.hitTest(result, position: box.globalToLocal(global));
-    RenderParagraph? hit;
-    for (final entry in result.path) {
-      if (entry.target case final RenderParagraph paragraph) {
-        hit = paragraph;
-        break;
-      }
-    }
-    if (hit == null || !texts.contains(hit)) return fallback;
-    final shown = hit.text.toPlainText();
-    final offset = hit
-        .getPositionForOffset(hit.globalToLocal(global))
-        .offset
-        .clamp(0, shown.length);
-    final before = StringBuffer();
-    for (final text in texts) {
-      if (identical(text, hit)) break;
-      before
-        ..write(text.text.toPlainText())
-        ..write('\n');
-    }
-    before.write(shown.substring(0, offset));
-    final source = _source.source(block);
-    final at = markdownSourceOffset(
-      source,
-      shown: shown,
-      offset: offset,
-      before: before.toString(),
-    );
-    if (at == null) return fallback;
-    final line = lines.lineAt(start + at);
-    return (line: line + 1, column: start + at - lines.starts[line] + 1);
-  }
-
-  // --- Links and images -------------------------------------------------------
-
-  GestureRecognizer? _link(String? href) {
-    final target = resolveMarkdownLink(href, widget.path, _context);
-    if (target == null) return null;
-    return TapGestureRecognizer()..onTap = () => _open(target);
   }
 
   void _open(MarkdownLinkTarget target) {
     switch (target) {
       case MarkdownAnchorLink(:final anchor):
-        if (_source.heading(anchor) case final index?) _jumpTo(index);
+        if (_heading(anchor) case final line?) _show(line);
       case MarkdownExternalLink(:final uri):
         widget.onOpenExternal?.call(uri);
       case MarkdownFileLink(:final path, :final fragment):
@@ -355,248 +418,312 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
     }
   }
 
-  /// Opens the anchor [fragment] of the document (a link from another).
-  void revealAnchor(String fragment) => _open(MarkdownAnchorLink(fragment));
+  int? _heading(String anchor) => markdownHeading(_controller, anchor);
 
-  // HTML shows as its source here: no image has a size of its own.
-  Widget _image(
-    String src,
-    String alt,
-    String? title, {
-    double? width,
-    double? height,
-  }) => _MarkdownImage(
-    target: resolveMarkdownImage(src, widget.path, _context),
-    alt: alt,
-    title: title,
-    read: (path) => _images.putIfAbsent(path, () => widget.readBytes(path)),
-    onPointerDown: (event) => _imagePointer = event.pointer,
-  );
+  // --- Pasting ------------------------------------------------------------------
 
-  // --- Building ---------------------------------------------------------------
-
-  static TextStyle get _style =>
-      TextStyle(color: AppColors.text, fontSize: 14, height: 1.65);
-
-  MarkdownOptions _options(int index) => MarkdownOptions(
-    headingSizes: const [26, 21, 17.5, 15, 14, 13.5],
-    headingRules: true,
-    gap: 10,
-    headingGap: 16,
-    link: _link,
-    image: _image,
-    onToggleTask: widget.readOnly ? null : (task) => _toggleTask(index, task),
-  );
-
-  Widget _block(int index) {
-    final block = _source.blocks[index];
-    final source = _source.source(block);
-    switch (block.kind) {
-      case MarkdownBlockKind.frontMatter:
-        final lines = source.split(RegExp('\r\n|\r|\n'));
-        return MarkdownCodeBlock(
-          code: lines.sublist(1, lines.length - 1).join('\n'),
-          language: 'yaml',
-        );
-      case MarkdownBlockKind.html:
-        return _SourceText(source);
-      default:
-        final nodes = _source.parse(block);
-        // Link definitions alone: shown as they are written.
-        if (nodes.isEmpty) return _SourceText(source, faint: true);
-        return MarkdownBlocks(
-          nodes: nodes,
-          style: _style,
-          options: _options(index),
-        );
+  Future<bool> _paste() async {
+    final paste = widget.onPaste;
+    if (paste == null || widget.readOnly) return false;
+    final version = _controller.textVersion;
+    final outcome = await paste();
+    if (!mounted) return true;
+    switch (outcome) {
+      case MarkdownPasteText():
+        return false;
+      case MarkdownPasteNothing():
+        return true;
+      case MarkdownPasteLinks(:final text):
+        if (_controller.textVersion == version) {
+          _editor?.insertText(text);
+        } else {
+          insert(text);
+        }
+        return true;
     }
   }
 
-  Widget _item(BuildContext context, int index) {
-    final block = _source.blocks[index];
-    // A comment is the writer's note: nothing shows, not even its room.
-    if (block.kind == MarkdownBlockKind.html &&
-        isHtmlComment(_source.source(block))) {
-      return _Shown(
-        index: index,
-        shown: _shown,
-        child: const SizedBox.shrink(),
-      );
-    }
-    final heading = block.kind == MarkdownBlockKind.heading;
-    return _Shown(
-      index: index,
-      shown: _shown,
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 880),
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              32,
-              heading && index > 0 ? 12 : 4,
-              32,
-              4,
-            ),
-            child: _block(index),
-          ),
-        ),
+  // --- Building ---------------------------------------------------------------
+
+  MarkdownEditorStyle _style(BuildContext context) {
+    final base = DefaultTextStyle.of(context).style.merge(
+      TextStyle(
+        color: AppColors.text,
+        fontSize: 14,
+        height: 1.65,
+        leadingDistribution: TextLeadingDistribution.even,
       ),
+    );
+    final link = themeColors['textLink.foreground'];
+    final heading = TextStyle(
+      fontWeight: FontWeight.w600,
+      color: AppColors.textPrimary,
+      height: 1.4,
+    );
+    return MarkdownEditorStyle(
+      text: base,
+      headings: [
+        heading.copyWith(fontSize: 26),
+        heading.copyWith(fontSize: 21),
+        heading.copyWith(fontSize: 17.5),
+        heading.copyWith(fontSize: 15),
+        heading,
+        heading.copyWith(fontSize: 13.5),
+      ],
+      headingSpacing: const [(16, 8), (14, 6), (12, 2), (10, 0), (8, 0)],
+      headingRule: AppColors.partBorder,
+      bold: const TextStyle(fontWeight: FontWeight.w600),
+      code: AppFonts.uiCodeStyle(12.5).copyWith(color: AppColors.inlineCode),
+      codeBackground: AppColors.inlineCodeBackground,
+      codeBlock: AppFonts.uiCodeStyle(12.5)
+          .copyWith(color: AppColors.text, height: 1.5),
+      codeBlockBackground: themeColors['textCodeBlock.background'],
+      codeBlockBorder: themeColors['chat.requestBorder'],
+      // As the chat's tables are.
+      table: MdTableStyle(
+        border: themeColors['chat.requestBorder'],
+        head: AppColors.surfaceRaised,
+        accent: AppColors.accent,
+        control: themeColors['toolbar.hoverBackground'],
+        surface: themeColors['editorWidget.background'],
+        shadow: themeColors['widget.shadow'],
+      ),
+      link: TextStyle(
+        color: link,
+        decoration: TextDecoration.underline,
+        decorationColor: link.withValues(alpha: 0.4),
+      ),
+      marks: AppColors.textFaint,
+      quote: TextStyle(color: AppColors.textMuted),
+      quoteBar: AppColors.borderStrong,
+      rule: AppColors.border,
+      selection:
+          DefaultSelectionStyle.of(context).selectionColor ??
+          themeColors['editor.selectionBackground'],
+      caret: themeColors['editorCursor.foreground'],
+      composing: AppColors.textMuted,
+      placeholder: TextStyle(color: AppColors.textFaint),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final model = widget.model;
-    return Actions(
-      actions: {
-        UndoTextIntent: CallbackAction<UndoTextIntent>(
-          onInvoke: (_) {
-            if (widget.readOnly || !model.undo()) return null;
-            _parseNow();
-            widget.onEdited?.call();
-            return null;
-          },
-        ),
-        RedoTextIntent: CallbackAction<RedoTextIntent>(
-          onInvoke: (_) {
-            if (widget.readOnly || !model.redo()) return null;
-            _parseNow();
-            widget.onEdited?.call();
-            return null;
-          },
-        ),
-      },
-      child: ColoredBox(
-        color: themeColors['editor.background'],
-        child: Listener(
-          onPointerDown: _pointerDown,
-          child: SelectionArea(
+    final colorize =
+        CodeCitationScope.maybeOf(context)?.colorizeBlock ??
+        StashEditor.colorize;
+    return ColoredBox(
+      color: widget.background ?? themeColors['editor.background'],
+      child: Builder(
+        builder: (context) {
+          // As wide as the view: a wide table fits.
+          final padding =
+              widget.padding ?? const EdgeInsets.fromLTRB(32, 24, 32, 160);
+          final editor = MarkdownEditor(
+            key: _editorKey,
+            controller: _controller,
+            style: _style(context),
+            embeds: _embeds,
             focusNode: _focus,
-            child: ListSelection(
-              controller: _scroll,
-              child: SuperListView.builder(
-                listController: _list,
-                controller: _scroll,
-                // Room after the last block, to bring any to the top.
-                padding: const EdgeInsets.only(top: 24, bottom: 160),
-                itemCount: _source.blocks.length,
-                itemBuilder: (context, index) => ListSelectionItem(
-                  index: index,
-                  child: _item(context, index),
-                ),
-              ),
+            scrollController: _scroll,
+            // Room after the last line, to bring any to the top.
+            padding: padding,
+            readOnly: widget.readOnly,
+            // The bar's keys on a selection only: without one, ⌘B is the
+            // workbench's (its side bar).
+            onKey: (event) => _controller.selection.isCollapsed
+                ? KeyEventResult.ignored
+                : _formatBar.currentState?.handleKey(event) ??
+                      KeyEventResult.ignored,
+            onPaste: _paste,
+            onClick: _click,
+            // A link clicked shows as it did, its bubble over it.
+            revealsLinks: false,
+            colorize: colorize,
+            keyboardAppearance: themeColors.dark
+                ? Brightness.dark
+                : Brightness.light,
+          );
+          return NotificationListener<ScrollEndNotification>(
+            onNotification: (_) {
+              _restSoon();
+              return false;
+            },
+            // As a stash's: its marks, a link and a model's proofreading
+            // over the selection.
+            child: MarkdownFormatBar(
+              key: _formatBar,
+              controller: _controller,
+              focusNode: _focus,
+              editorKey: _editorKey,
+              readOnly: widget.readOnly,
+              onPolish: (text) => polishStashText(text, note: _controller.text),
+              onOpenLink: _openHref,
+              contextMenu: _contextMenu,
+              child: editor,
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
 
-/// Where in [source] (a block's markdown) is the text shown at [offset] of
-/// [shown] (a text of the block as it renders), [before] the block's text
-/// shown up to there: the text from there found in the source (as long a
-/// piece as is found, marks being in the source and not shown), the same
-/// time over as it is shown before. Null when it is not found.
-int? markdownSourceOffset(
-  String source, {
-  required String shown,
-  required int offset,
-  required String before,
-}) {
-  // What follows the point, on its line; at a line's end, what leads to it.
-  final lineEnd = shown.indexOf('\n', offset);
-  final ahead = shown.substring(offset, lineEnd < 0 ? shown.length : lineEnd);
-  final lineStart = shown.lastIndexOf('\n', math.max(offset - 1, 0)) + 1;
-  final behind = offset > lineStart ? shown.substring(lineStart, offset) : '';
-  final forward = ahead.trim().isNotEmpty;
-  final piece = forward ? ahead : behind;
-  if (piece.trim().isEmpty) return null;
-  for (var length = math.min(piece.length, 24); length > 0; length--) {
-    final needle = forward
-        ? piece.substring(0, length)
-        : piece.substring(piece.length - length);
-    if (needle.trim().isEmpty) continue;
-    final found = needle.allMatches(source).map((m) => m.start).toList();
-    if (found.isEmpty) continue;
-    // The same occurrence as shown: as many before it.
-    final shownBefore = forward
-        ? needle.allMatches(before).length
-        : needle.allMatches(before).length - 1;
-    final at = found[shownBefore.clamp(0, found.length - 1)];
-    return forward ? at : at + needle.length;
+/// The line of [controller]'s heading whose anchor is [anchor], anchors
+/// made as GitHub makes them: repeats numbered (`usage-1`).
+int? markdownHeading(MarkdownController controller, String anchor) {
+  final wanted = markdownSlug(markdownDecode(anchor));
+  final taken = <String, int>{};
+  for (var line = 0; line < controller.lines.lineCount; line++) {
+    final info = controller.infoOf(line);
+    if (info.kind != MdLineKind.heading) continue;
+    final text = controller.lines.content(line);
+    final base = markdownSlug(
+      _plainHeading(text.substring(info.contentStart, info.contentEnd)),
+    );
+    final count = taken[base];
+    taken[base] = (count ?? 0) + 1;
+    final slug = count == null ? base : '$base-$count';
+    if (slug == anchor || slug == wanted) return line;
   }
   return null;
 }
 
-/// Keeps [shown] told which blocks are laid out.
-class _Shown extends StatefulWidget {
-  const _Shown({required this.index, required this.shown, required this.child});
+/// A heading's text without its marks.
+String _plainHeading(String markdown) => markdown
+    .replaceFirst(RegExp(r'[ \t]+#+[ \t]*$'), '')
+    .replaceAllMapped(RegExp(r'!?\[([^\]]*)\]\([^)]*\)'), (match) => match[1]!)
+    .replaceAll(RegExp(r'[*`~]'), '')
+    // `_` of emphasis, not within a word (`snake_case`).
+    .replaceAll(
+      RegExp(r'(?<![\p{L}\p{N}])_+|_+(?![\p{L}\p{N}])', unicode: true),
+      '',
+    );
 
-  final int index;
-  final Map<int, BuildContext> shown;
-  final Widget child;
+/// What the preview shows for what is not text: images (the project's
+/// files, the web's), formulas, diagrams, front matter, task boxes.
+class _PreviewEmbeds extends MarkdownEmbeds {
+  _PreviewEmbeds(this.state);
 
-  @override
-  State<_Shown> createState() => _ShownState();
-}
-
-class _ShownState extends State<_Shown> {
-  @override
-  void initState() {
-    super.initState();
-    widget.shown[widget.index] = context;
-  }
-
-  @override
-  void didUpdateWidget(_Shown oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.index != widget.index) {
-      if (identical(oldWidget.shown[oldWidget.index], context)) {
-        oldWidget.shown.remove(oldWidget.index);
-      }
-      widget.shown[widget.index] = context;
-    }
-  }
+  final IdeMarkdownPreviewState state;
 
   @override
-  void dispose() {
-    if (identical(widget.shown[widget.index], context)) {
-      widget.shown.remove(widget.index);
-    }
-    super.dispose();
-  }
+  Future<MdTableAction?> tableMenu(
+    BuildContext context,
+    Rect anchor,
+    List<List<MdTableAction>> sections, {
+    Set<MdTableAction> checked = const {},
+  }) => showMarkdownTableMenu(context, anchor, sections, checked: checked);
 
   @override
-  Widget build(BuildContext context) => widget.child;
-}
-
-/// A block shown as it is written: HTML, link definitions.
-class _SourceText extends StatelessWidget {
-  const _SourceText(this.source, {this.faint = false});
-
-  final String source;
-  final bool faint;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-    decoration: faint
-        ? null
-        : BoxDecoration(
-            color: themeColors['textCodeBlock.background'],
-            borderRadius: BorderRadius.circular(6),
-          ),
-    child: Text(
-      source,
-      style: AppFonts.uiCodeStyle(12.5).copyWith(
-        color: faint ? AppColors.textMuted : AppColors.text,
-        height: 1.5,
-      ),
-    ),
+  Widget tableScrollbar(
+    BuildContext context,
+    ScrollController controller, {
+    required bool hovered,
+    required EdgeInsets padding,
+    required MarkdownEditorStyle style,
+    required Widget child,
+  }) => markdownTableScrollbar(
+    context,
+    controller,
+    hovered: hovered,
+    padding: padding,
+    child: child,
   );
+
+  @override
+  InlineSpan inline(BuildContext context, MdEmbed embed) {
+    final run = embed.run;
+    if (run.kind == MdInlineKind.math) {
+      return WidgetSpan(
+        alignment: PlaceholderAlignment.middle,
+        child: MathView(embed.line.substring(run.innerStart, run.innerEnd)),
+      );
+    }
+    final alt = embed.line.substring(run.innerStart, run.innerEnd);
+    final widget = state.widget;
+    final width = run.width;
+    Widget image = _MarkdownImage(
+      target: resolveMarkdownImage(run.href ?? '', widget.path, state._context),
+      alt: alt,
+      title: run.title,
+      read: state._readImage,
+      readNow: (path) => state._imagesRead[path],
+    );
+    if (width != null) image = SizedBox(width: width, child: image);
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.bottom,
+      child: MdEmbedRegion(child: image),
+    );
+  }
+
+  @override
+  bool showsBlock(MdLineKind kind) =>
+      kind == MdLineKind.tableHead ||
+      kind == MdLineKind.mathOpen ||
+      kind == MdLineKind.mathLine ||
+      kind == MdLineKind.frontMatter;
+
+  @override
+  bool showsCode(String? language) =>
+      language?.trim().split(RegExp(r'\s')).first.toLowerCase() == 'mermaid';
+
+  @override
+  Widget? block(
+    BuildContext context,
+    MdBlockEmbed embed,
+    MarkdownEditorStyle style,
+  ) {
+    if (embed.isTable) return super.block(context, embed, style);
+    final Widget shown;
+    switch (embed.kind) {
+      case MdLineKind.frontMatter:
+        // Its properties, each value on its line edited in a field (its
+        // source the place for the rest); YAML they do not read as.
+        if (parseFrontMatterProperties(embed.code) case final properties?) {
+          return MdEmbedRegion(
+            child: MarkdownFrontMatter(
+              properties: properties,
+              onChanged: state.widget.readOnly
+                  ? null
+                  : (key, value) => embed.replace(
+                      setFrontMatterValue(embed.source, key, value),
+                    ),
+            ),
+          );
+        }
+        shown = MarkdownCodeBlock(code: embed.code, language: 'yaml');
+      case MdLineKind.fenceOpen:
+        shown = MermaidCodeBlock(code: embed.code);
+      default:
+        shown = MathView(embed.tex, display: true);
+    }
+    return MdEmbedRegion(child: shown);
+  }
+
+  @override
+  Widget checkbox(
+    BuildContext context,
+    bool checked,
+    TextStyle style,
+    ValueChanged<bool>? onChanged,
+  ) => MdEmbedRegion(
+    child: MarkdownTaskBox(checked: checked, onChanged: onChanged),
+  );
+
+  @override
+  Widget rule(BuildContext context, MarkdownEditorStyle style) {
+    // As upstream's chat: the separator's color, faint.
+    final separator = themeColors['textSeparator.foreground'];
+    return Container(
+      height: 1,
+      color: separator.withValues(alpha: separator.a * 0.33),
+    );
+  }
+
+  /// Copied, an image's alt text, a formula's TeX.
+  @override
+  String plainText(MdInline run, String line) =>
+      line.substring(run.innerStart, run.innerEnd);
 }
 
 /// An image of the document: a file of the project's host, read with
@@ -607,14 +734,16 @@ class _MarkdownImage extends StatelessWidget {
     required this.alt,
     required this.title,
     required this.read,
-    required this.onPointerDown,
+    required this.readNow,
   });
 
   final ({Uri? url, String? path})? target;
   final String alt;
   final String? title;
   final Future<Uint8List> Function(String path) read;
-  final ValueChanged<PointerDownEvent> onPointerDown;
+
+  /// What [read] has read by now.
+  final Uint8List? Function(String path) readNow;
 
   void _preview(BuildContext context) {
     showDialog<void>(
@@ -663,10 +792,7 @@ class _MarkdownImage extends StatelessWidget {
 
   Widget _clickable(BuildContext context, Widget image) => MouseRegion(
     cursor: SystemMouseCursors.zoomIn,
-    child: Listener(
-      onPointerDown: onPointerDown,
-      child: GestureDetector(onTap: () => _preview(context), child: image),
-    ),
+    child: GestureDetector(onTap: () => _preview(context), child: image),
   );
 
   Widget _image({bool expanded = false}) {
@@ -683,6 +809,7 @@ class _MarkdownImage extends StatelessWidget {
     if (target?.path case final path?) {
       return FutureBuilder<Uint8List>(
         future: read(path),
+        initialData: readNow(path),
         builder: (context, snapshot) {
           if (snapshot.hasError) return _missing();
           final bytes = snapshot.data;

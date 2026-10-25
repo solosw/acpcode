@@ -3,12 +3,13 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/composer/composer.dart';
+import 'package:baocode/chat/composer/composer_controller.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/composer/composer_files.dart';
 import 'package:baocode/chat/composer/file_drop.dart';
@@ -30,7 +31,6 @@ Future<ChatSession> _pump(WidgetTester tester, {Widget? above}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: above == null
           ? screen
           : Column(
@@ -45,30 +45,28 @@ Future<ChatSession> _pump(WidgetTester tester, {Widget? above}) async {
   return session;
 }
 
-QuillController _controller(WidgetTester tester) => tester
-    .widget<QuillEditor>(
-      find.descendant(
-        of: find.byType(ChatComposer).last,
-        matching: find.byType(QuillEditor),
-      ),
-    )
-    .controller;
+ComposerController _controller(WidgetTester tester) =>
+    tester
+            .widget<MarkdownEditor>(
+              find.descendant(
+                of: find.byType(ChatComposer).last,
+                matching: find.byType(MarkdownEditor),
+              ),
+            )
+            .controller
+        as ComposerController;
 
 /// The composer's content: tags as their text in brackets, images as
 /// `<N>`, the placeholder of a drag as `{name…}`.
 String _content(WidgetTester tester) => [
-  for (final op in _controller(tester).document.toDelta().toList())
-    switch (op.data) {
-      {ComposerImageEmbed.type: final data} =>
+  for (final piece in composerPieces(_controller(tester).text))
+    switch (piece) {
+      ComposerEmbed(type: ComposerImageEmbed.type, :final data) =>
         '<${ComposerImageEmbed.decode(data)}>',
-      {ComposerCodeEmbed.type: final data} =>
-        '{${ComposerCodeEmbed.plainText(data)}}',
-      {ComposerPastedTextEmbed.type: final data} =>
-        '{${ComposerPastedTextEmbed.plainText(data)}}',
-      {ComposerGhostEmbed.type: final String data} => '{ghost $data}',
-      final Map<dynamic, dynamic> data =>
-        '{${ComposerTokenEmbed.plainText(data[ComposerTokenEmbed.type])}}',
-      final data => '$data',
+      ComposerEmbed(type: ComposerGhostEmbed.type, :final data) =>
+        '{ghost $data}',
+      final ComposerEmbed embed => '{${embed.plainText}}',
+      final text => '$text',
     },
 ].join().trimRight();
 
@@ -77,11 +75,12 @@ bool _hasGhost(WidgetTester tester) => _content(tester).contains('{ghost');
 void _type(WidgetTester tester, String text) {
   final controller = _controller(tester);
   final at = controller.selection.baseOffset;
-  controller.replaceText(
+  controller.replace(
     at,
-    0,
+    at,
     text,
-    TextSelection.collapsed(offset: at + text.length),
+    selection: TextSelection.collapsed(offset: at + text.length),
+    kind: MdEditKind.typing,
   );
 }
 
@@ -116,8 +115,16 @@ void _clipboardText(WidgetTester tester, String text) {
 }
 
 Future<void> _paste(WidgetTester tester) async {
-  // ignore: experimental_member_use
-  await tester.runAsync(() => _controller(tester).clipboardPaste());
+  await tester.runAsync(
+    () => tester
+        .state<MarkdownEditorState>(
+          find.descendant(
+            of: find.byType(ChatComposer).last,
+            matching: find.byType(MarkdownEditor),
+          ),
+        )
+        .paste(),
+  );
   await tester.pump();
 }
 
@@ -291,7 +298,7 @@ void main() {
       'look at {@lib/main.dart} {@lib/chat/} {@"/tmp/My Notes.txt"}',
     );
     final controller = _controller(tester);
-    expect(controller.selection.baseOffset, controller.document.length - 1);
+    expect(controller.selection.baseOffset, controller.length);
   }, variant: _macOS);
 
   testWidgets('a copied image file pastes as an image', (tester) async {
@@ -323,7 +330,7 @@ void main() {
     await tester.pump();
     final editor = find.descendant(
       of: find.byType(ChatComposer),
-      matching: find.byType(QuillEditor),
+      matching: find.byType(MarkdownEditor),
     );
     // At the start of the text.
     final start = tester.getTopLeft(editor) + const Offset(1, 8);
@@ -373,7 +380,7 @@ void main() {
     expect(_hasGhost(tester), isTrue);
     await _drag(tester, 'dragExit', Offset.zero);
     expect(_content(tester), isEmpty);
-    expect(_controller(tester).document.hasUndo, isFalse);
+    expect(_controller(tester).canUndo, isFalse);
   }, variant: _macOS);
 
   testWidgets('a file dragged from inside the app goes in as from outside', (

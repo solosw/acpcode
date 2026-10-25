@@ -24,10 +24,12 @@ import 'translate/thinking.dart';
 /// upstream, and its answer back, as it streams (see translate/).
 ///
 /// A request goes to the provider its path names, unless its model is
-/// another's ([modelRef], `@<id>/<model>`: subagents on another upstream
-/// than the session's), as that one's model. One of Anthropic's API is
+/// another's ([modelRef], `@<id>/<model>`: a role on another upstream
+/// than the session's), as that one's model; at the endpoint that model
+/// is spoken to at ([ModelProvider.protocolOf]). One of Anthropic's API is
 /// passed its request as it came, only the key and its headers set here:
-/// a session on it comes here when its subagents run elsewhere.
+/// a session on it comes here when a role of it runs elsewhere, or one of
+/// its models is spoken to through here.
 ///
 /// Listens on 127.0.0.1 only, on a port of the system's choosing, and
 /// answers only a request with its [token] (Claude Code's
@@ -168,10 +170,15 @@ class ModelProxy {
         wanted = id;
         body['model'] = model;
       }
-      final provider = wanted == builtinProviderId ? null : _provider(wanted);
-      if (provider == null) {
+      final found = wanted == builtinProviderId ? null : _provider(wanted);
+      if (found == null) {
         return await _fail(response, 404, 'No such provider: $wanted');
       }
+      // A model of an endpoint of its own (a relay's Claude at its Messages
+      // API): spoken to there, its effort after its name as ever.
+      final provider = found.speakingFor(
+        parseSuffix('${body['model'] ?? ''}').modelName.trim(),
+      );
       if (provider.protocol == ProviderProtocol.anthropic) {
         return await _passThrough(
           provider,

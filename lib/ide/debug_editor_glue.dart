@@ -192,8 +192,9 @@ final class DebugInlineValue {
 List<DebugInlineValue> debugInlineValues(DebugService service, VsUri uri) {
   if (service.settings().inlineValues == 'off') return const [];
   final frame = service.viewModel.focusedStackFrame;
-  if (frame == null || frame.source.uri.toString() != uri.toString())
+  if (frame == null || frame.source.uri.toString() != uri.toString()) {
     return const [];
+  }
   return _inlineValues[frame.getId()] ?? const [];
 }
 
@@ -246,8 +247,9 @@ class _DebugGlyphMarginState extends State<DebugGlyphMargin> {
     final visible = surface?.visibleLineRange;
     if (surface == null || visible == null) return null;
     for (var line = visible.first; line <= visible.last; line++) {
-      if (surface.glyphMarginRect(line)?.contains(position) ?? false)
+      if (surface.glyphMarginRect(line)?.contains(position) ?? false) {
         return line;
+      }
     }
     return null;
   }
@@ -325,10 +327,11 @@ class _DebugGlyphMarginState extends State<DebugGlyphMargin> {
             final line = _lineAt(details.localPosition);
             if (line == null) return;
             final bp = _breakpointAt(line);
-            if (bp != null)
+            if (bp != null) {
               unawaited(
                 widget.service.enableOrDisableBreakpoints(!bp.enabled, bp),
               );
+            }
           },
           child: Stack(
             children: [

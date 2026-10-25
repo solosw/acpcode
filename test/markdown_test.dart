@@ -303,6 +303,25 @@ void main() {
     });
   });
 
+  group('strikethrough', () {
+    List<String> struck(String data) {
+      final found = <String>[];
+      void visit(md.Node node) {
+        if (node is! md.Element) return;
+        if (node.tag == 'del') found.add(node.textContent);
+        node.children?.forEach(visit);
+      }
+
+      MarkdownView.document().parse(data).forEach(visit);
+      return found;
+    }
+
+    test('only between two tildes, not a range\'s one', () {
+      expect(struck('上一期覆盖 10-12~10-16，本期按 10-19~10-23 统计'), isEmpty);
+      expect(struck('a ~~gone~~ b'), ['gone']);
+    });
+  });
+
   group('HTML comments', () {
     testWidgets('do not show', (tester) async {
       await pumpMarkdown(
@@ -391,6 +410,118 @@ void main() {
       expect(
         ChatFind.markdownText('<analysis>\nWhy\n</analysis>\nThen'),
         matches(RegExp(r'^Analysis\s+Why\s+Then\s*$')),
+      );
+    });
+  });
+
+  group('segments', () {
+    // Every kind of block, some across blank lines, as a long reply has
+    // them, and the same again until it is long.
+    String reply(int length) {
+      const pieces = [
+        '## Heading\n\nA paragraph with `code` and a [link](a.md).\n',
+        '1. first\n2. second\n\n3. loose third\n\n   still the third\n',
+        '- tight\n- list\n  - nested\n\nAfter the list.\n',
+        '```dart\nvoid main() {\n\n  print(1);\n}\n\nnot code yet\n```\n',
+        '\$\$\na^2\n\nb^2\n\$\$\n',
+        '<analysis>\nWhy\n\nnot cut\n</analysis>\n',
+        '<!-- a comment\n\nacross lines -->\n',
+        '<pre>\nraw\n\nraw\n</pre>\n',
+        '| a | b |\n|---|---|\n| 1 | 2 |\n',
+        '> quoted\n> still\n\n> another quote\n',
+        'Setext\n===\n',
+        '***\n',
+        '<br>\n',
+        '~~~\ntilde\n\n````\n~~~\n',
+        '    indented\n\n    code\n',
+      ];
+      final out = StringBuffer();
+      for (var i = 0; out.length < length; i++) {
+        out
+          ..write(pieces[i % pieces.length])
+          ..write('\n')
+          ..write('Words of paragraph $i, ' * (1 + i % 7))
+          ..write('\n\n');
+      }
+      return out.toString();
+    }
+
+    final document = MarkdownView.document(tags: true);
+    // Between blocks, the renderer's line breaks or none.
+    String html(String text) =>
+        md.renderToHtml(document.parse(text)).replaceAll('\n', '');
+
+    test('parse as the whole does, and keep as it grows', () {
+      final text = reply(30000);
+      var before = <String>[];
+      for (var length = 0; length <= text.length; length += 397) {
+        final prefix = text.substring(0, length);
+        final segments = markdownSegments(prefix);
+        // Cut again from the last of those before, the same.
+        expect(
+          markdownSegmentsGrown(prefix, before),
+          segments,
+          reason: 'at $length',
+        );
+        expect(segments.join(), prefix);
+        expect(segments.map(html).join(), html(prefix), reason: 'at $length');
+        // All but the last as they were: only that is parsed again.
+        if (before.length > 1) {
+          expect(
+            segments.take(before.length - 1),
+            before.take(before.length - 1),
+            reason: 'at $length',
+          );
+        }
+        before = segments;
+      }
+      expect(before.length, greaterThan(8));
+    });
+
+    test('a text changed before its end is cut anew', () {
+      final text = reply(12000);
+      final before = markdownSegments(text);
+      expect(before, hasLength(greaterThan(2)));
+      final changed = 'A new start.\n\n${text.substring(40)}';
+      expect(markdownSegmentsGrown(changed, before), markdownSegments(changed));
+    });
+
+    test('footnotes and link definitions leave it whole', () {
+      final text = reply(10000);
+      expect(markdownSegments(text), hasLength(greaterThan(1)));
+      expect(markdownSegments('$text\n[^1]: a note\n'), hasLength(1));
+      expect(markdownSegments('$text\n[a]: https://a.dev\n'), hasLength(1));
+    });
+
+    testWidgets('a long reply shows as it does whole', (tester) async {
+      final text = reply(12000);
+      expect(markdownSegments(text), hasLength(greaterThan(2)));
+      const key = Key('shown');
+      Future<(String, double)> shown(Widget markdown) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: KeyedSubtree(key: key, child: markdown),
+              ),
+            ),
+          ),
+        );
+        return (
+          leaves(tester).map((span) => span.text).join('|'),
+          tester.getSize(find.byKey(key)).height,
+        );
+      }
+
+      // The same text, as high as its blocks in one column.
+      expect(
+        await shown(MarkdownView(text)),
+        await shown(
+          MarkdownBlocks(
+            nodes: MarkdownView.document(tags: true).parse(text),
+            style: MarkdownView.baseStyle,
+          ),
+        ),
       );
     });
   });

@@ -825,4 +825,148 @@ void main() {
       expect(upstream.requests, isEmpty);
     });
   });
+
+  group('a model at an endpoint of its own', () {
+    late FakeUpstream relay;
+    late ModelProxy routing;
+    late ModelProvider mixed;
+
+    setUp(() async {
+      relay = await FakeUpstream.start();
+      // A relay serving each API at one base URL: its GPT at Chat
+      // Completions, as the upstream is set, its Claude at Messages, one
+      // more at Responses. Its auth set for its Claude.
+      mixed = ModelProvider(
+        id: 'rl',
+        name: 'Relay',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: relay.base,
+        auth: ProviderAuth.apiKey,
+        models: const [
+          ProviderModel(id: 'gpt-5'),
+          ProviderModel(
+            id: 'claude-sonnet-4-5',
+            protocol: ProviderProtocol.anthropic,
+          ),
+          ProviderModel(
+            id: 'gpt-5-codex',
+            protocol: ProviderProtocol.openaiResponses,
+          ),
+        ],
+      );
+      routing = ModelProxy(
+        provider: (id) => {'rl': mixed, 'gw': provider}[id],
+        key: (id) async => 'sk-$id',
+        onError: (_, error) => errors.add(error),
+        findProxy: (_) => 'DIRECT',
+        token: 'tok',
+      );
+    });
+
+    tearDown(() async {
+      await routing.close();
+      await relay.close();
+    });
+
+    Future<Uri> on(String id, [String path = '']) async =>
+        Uri.parse('${(await routing.endpoint(id)).baseUrl}/v1/messages$path');
+
+    final hi = [
+      {'role': 'user', 'content': 'hi'},
+    ];
+
+    test('its Claude goes to the Messages API as it came, the key as '
+        'x-api-key', () async {
+      relay.reply = (_) => (200, const ['{"id":"m1"}']);
+      final body = {
+        'model': 'claude-sonnet-4-5',
+        'max_tokens': 100,
+        'output_config': {'effort': 'high'},
+        'messages': hi,
+      };
+      final answer = await post(
+        await on('rl'),
+        body,
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/messages');
+      expect(sent.body, body);
+      expect(sent.headers['x-api-key'], 'sk-rl');
+      expect(sent.headers.containsKey('authorization'), isFalse);
+      expect(sent.headers['anthropic-version'], '2023-06-01');
+
+      // Its count too, at the Messages API.
+      relay.reply = (_) => (200, const ['{"input_tokens":7}']);
+      final counted = await post(
+        await on('rl', '/count_tokens'),
+        {'model': 'claude-sonnet-4-5', 'messages': hi},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(jsonDecode(counted.text), {'input_tokens': 7});
+      expect(relay.requests.last.path, '/v1/messages/count_tokens');
+    });
+
+    test('its GPT goes to Chat Completions, translated, the effort after '
+        'its name, the key a bearer token', () async {
+      relay.reply = (_) => (
+        200,
+        [
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi."},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+        ],
+      );
+      final answer = await post(
+        await on('rl'),
+        {
+          'model': 'gpt-5(high)',
+          'max_tokens': 100,
+          'stream': true,
+          'messages': hi,
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/chat/completions');
+      expect((sent.body! as Map)['model'], 'gpt-5');
+      expect((sent.body! as Map)['reasoning_effort'], 'high');
+      expect(sent.headers['authorization'], 'Bearer sk-rl');
+      expect(sent.headers.containsKey('x-api-key'), isFalse);
+      expect(sent.headers.containsKey('anthropic-version'), isFalse);
+    });
+
+    test('one at Responses goes there', () async {
+      await post(
+        await on('rl'),
+        {
+          'model': 'gpt-5-codex(low)',
+          'max_tokens': 100,
+          'stream': true,
+          'messages': hi,
+        },
+        headers: {'x-api-key': 'tok'},
+      );
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/responses');
+      expect((sent.body! as Map)['model'], 'gpt-5-codex');
+      expect((sent.body! as Map)['reasoning'], containsPair('effort', 'low'));
+    });
+
+    test('picked from another upstream, at its own endpoint too', () async {
+      relay.reply = (_) => (200, const ['{"id":"m2"}']);
+      final answer = await post(
+        await on('gw'),
+        {'model': '@rl/claude-sonnet-4-5', 'max_tokens': 100, 'messages': hi},
+        headers: {'x-api-key': 'tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/messages');
+      expect((sent.body! as Map)['model'], 'claude-sonnet-4-5');
+      expect(upstream.requests, isEmpty);
+    });
+  });
 }

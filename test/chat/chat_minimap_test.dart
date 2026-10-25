@@ -10,6 +10,7 @@ import 'package:baocode/chat/composer/composer_files.dart';
 import 'package:baocode/chat/widgets/assistant_text.dart';
 import 'package:baocode/chat/widgets/chat_minimap.dart';
 import 'package:baocode/chat/widgets/hover_scrollbar.dart';
+import 'package:baocode/chat/widgets/user_message_bubble.dart';
 import 'package:baocode/theme/app_theme.dart';
 
 class _Feed extends ChangeNotifier implements ChatFeed {
@@ -151,10 +152,13 @@ void main() {
         final strip = _track(tester);
         final text = tester.getRect(find.byType(AssistantText).first);
         expect(strip.left, greaterThanOrEqualTo(12));
-        // Room to breathe beside the text, as much on the other side.
+        // Room to breathe beside the text; none kept on the other side,
+        // where the column is narrower than it could be.
         expect(strip.right, lessThanOrEqualTo(text.left - 20));
         expect(text.left, greaterThanOrEqualTo(ChatMinimap.room));
-        expect(width - text.right, greaterThanOrEqualTo(ChatMinimap.room));
+        if (width < 1200) {
+          expect(width - text.right, lessThan(ChatMinimap.room));
+        }
       },
     );
   }
@@ -162,7 +166,7 @@ void main() {
   testWidgets('gives way in a very narrow pane only', (tester) async {
     await _pump(tester, _Feed(_conversation(30)), width: 600);
     expect(_opacity(tester), 1);
-    await _pump(tester, _Feed(_conversation(30)), width: 400);
+    await _pump(tester, _Feed(_conversation(30)), width: 380);
     expect(_opacity(tester), 0);
     // The scrollbar is back.
     expect(_scrollbar(tester).interactive, isTrue);
@@ -234,6 +238,57 @@ void main() {
     final three = height('one\ntwo\nthree');
     expect(height('one\ntwo\nthree\nfour'), greaterThan(three));
     expect(height([for (var i = 0; i < 40; i++) 'line $i'].join('\n')), three);
+  });
+
+  testWidgets('the pointer is drawn to a message of the user\'s, peeks at it '
+      'and what answered it, and a press goes there', (tester) async {
+    await _pump(tester, _Feed(_conversation(30)));
+    final strip = tester.getRect(_strip);
+    final pointer = TestPointer(1, PointerDeviceKind.mouse);
+    final peek = find.descendant(
+      of: find.byType(ChatMinimap),
+      matching: find.textContaining('问题'),
+    );
+    expect(peek, findsNothing);
+
+    // Down the minimap, until near one.
+    Offset? at;
+    for (var y = strip.top + 2; y < strip.bottom; y += 3) {
+      // Beside it, not on it: near enough.
+      at = Offset(strip.left - 6, y);
+      await tester.sendEventToBinding(pointer.hover(at));
+      await tester.pump(const Duration(milliseconds: 100));
+      if (peek.evaluate().isNotEmpty) break;
+    }
+    expect(peek, findsOneWidget);
+    final shown = tester.widget<Text>(peek);
+    final asked = shown.data ?? shown.textSpan!.toPlainText();
+    expect(
+      find.descendant(
+        of: find.byType(ChatMinimap),
+        matching: find.textContaining('The column keeps its width'),
+      ),
+      findsWidgets,
+    );
+
+    await tester.sendEventToBinding(pointer.down(at!));
+    await tester.sendEventToBinding(pointer.up());
+    await tester.pumpAndSettle();
+    // The message at the top of the history.
+    final bubble = find.byWidgetPredicate(
+      (widget) => widget is UserMessageBubble && widget.text == asked,
+    );
+    expect(bubble, findsWidgets);
+    final history = tester.getRect(find.byType(Scrollable).first);
+    expect(
+      tester.getRect(bubble.first).top - history.top,
+      inInclusiveRange(0, 40),
+    );
+
+    // Away from the minimap, gone.
+    await tester.sendEventToBinding(pointer.hover(history.center));
+    await tester.pumpAndSettle();
+    expect(peek, findsNothing);
   });
 
   testWidgets('the wheel over it scrolls the history', (tester) async {

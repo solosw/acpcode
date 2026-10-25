@@ -3,7 +3,9 @@
 // GitLab's (/api/v4). Over [ForgeHttp], which tests answer themselves.
 
 import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart' show sha1;
 import 'package:flutter/foundation.dart';
 
 import 'forge_ref.dart';
@@ -21,8 +23,9 @@ class ForgeResponse {
   Object? get json => body.isEmpty ? null : jsonDecode(body);
 }
 
-/// Sends a request: [form] as a form, else [json] as JSON. Throws
-/// [ForgeException] when there is no answer.
+/// Sends a request: [form] as a form, else [json] as JSON, else [bytes]
+/// as they are (their type in [headers]). Throws [ForgeException] when
+/// there is no answer.
 abstract interface class ForgeHttp {
   Future<ForgeResponse> send(
     String method,
@@ -30,6 +33,7 @@ abstract interface class ForgeHttp {
     Map<String, String> headers = const {},
     Object? json,
     Map<String, String>? form,
+    List<int>? bytes,
   });
 }
 
@@ -88,6 +92,16 @@ enum ForgeChecks {
       values.where((checks) => checks.name == value).firstOrNull;
 }
 
+/// What a pull request's reviewers say, together: changes asked for while
+/// any's latest review asks for them; else approved when any approved.
+enum ForgeReview {
+  approved,
+  changesRequested;
+
+  static ForgeReview? parse(Object? value) =>
+      values.where((review) => review.name == value).firstOrNull;
+}
+
 @immutable
 class ForgeLabel {
   const ForgeLabel(this.name, {this.color});
@@ -119,6 +133,7 @@ class ForgeItem {
     this.comments = 0,
     this.updated,
     this.checks,
+    this.review,
     this.branch,
   });
 
@@ -137,12 +152,33 @@ class ForgeItem {
   /// A pull request's, when it has any.
   final ForgeChecks? checks;
 
+  /// A pull request's, when it was reviewed.
+  final ForgeReview? review;
+
   /// A pull request's branch.
   final String? branch;
 }
 
 /// Whose issues a list is of.
 enum ForgeIssueFilter { assigned, created, all }
+
+/// A comment on an issue or pull request.
+@immutable
+class ForgeComment {
+  const ForgeComment({
+    required this.author,
+    required this.body,
+    this.created,
+    this.url,
+  });
+
+  final String author;
+
+  /// As Markdown.
+  final String body;
+  final DateTime? created;
+  final String? url;
+}
 
 /// Who the token is of.
 @immutable
@@ -183,8 +219,44 @@ abstract class ForgeApi {
   /// Comments [body] on [ref].
   Future<void> comment(ForgeRef ref, String body);
 
-  /// Closes the issue [ref].
-  Future<void> close(ForgeRef ref);
+  /// Closes the issue [ref]; as not planned when [duplicate] (its
+  /// comment says of which).
+  Future<void> close(ForgeRef ref, {bool duplicate = false});
+
+  /// [ref]'s last comments (up to [most]), the oldest first; [total] how
+  /// many it has, where known (to ask for the last of them).
+  Future<List<ForgeComment>> comments(ForgeRef ref, {int? total, int most = 5});
+
+  /// [repo]'s issues, the most recently updated first, page by page up to
+  /// [most]: the open ones, or (since [since]) all changed since, closed
+  /// ones too. Not its pull requests.
+  Future<List<ForgeItem>> allIssues(
+    ForgeRepo repo, {
+    DateTime? since,
+    int most = 1000,
+  });
+
+  /// How many a page of [allIssues] asks for.
+  static const pageSize = 100;
+
+  /// Opens an issue in [repo], as the user: [title], [body] its
+  /// description.
+  Future<ForgeItem> createIssue(
+    ForgeRepo repo, {
+    required String title,
+    required String body,
+  });
+
+  /// Changes the issue [ref]'s title and description.
+  Future<ForgeItem> editIssue(
+    ForgeRef ref, {
+    required String title,
+    required String body,
+  });
+
+  /// Puts [bytes], a picture named [name], where [repo]'s issues can show
+  /// it; its address. The same picture is put there once.
+  Future<String> uploadImage(ForgeRepo repo, String name, List<int> bytes);
 
   Uri get _base;
 
@@ -195,6 +267,8 @@ abstract class ForgeApi {
     String path, {
     Map<String, String>? query,
     Object? json,
+    List<int>? bytes,
+    String? contentType,
   }) async {
     final url = _base.replace(
       path: '${_base.path}$path',
@@ -203,8 +277,9 @@ abstract class ForgeApi {
     final response = await http.send(
       method,
       url,
-      headers: _headers(await token()),
+      headers: {..._headers(await token()), 'Content-Type': ?contentType},
       json: json,
+      bytes: bytes,
     );
     if (!response.ok) {
       throw ForgeException(
@@ -217,6 +292,22 @@ abstract class ForgeApi {
 
   static DateTime? _date(Object? value) =>
       value is String ? DateTime.tryParse(value)?.toLocal() : null;
+
+  /// A picture's name by what it is: the same picture, the same name.
+  static String _assetName(String name, List<int> bytes) {
+    final dot = name.lastIndexOf('.');
+    final extension = dot < 0 ? '.png' : name.substring(dot).toLowerCase();
+    return '${sha1.convert(bytes).toString().substring(0, 20)}$extension';
+  }
+
+  static String _mimeOf(String name) =>
+      switch (name.substring(name.lastIndexOf('.') + 1).toLowerCase()) {
+        'jpg' || 'jpeg' => 'image/jpeg',
+        'gif' => 'image/gif',
+        'webp' => 'image/webp',
+        'svg' => 'image/svg+xml',
+        _ => 'image/png',
+      };
 }
 
 /// GitHub's REST API.
@@ -278,8 +369,41 @@ class GitHubApi extends ForgeApi {
           ? ForgeState.draft
           : ForgeState.open,
       checks: sha == null ? null : await _checks(repo, sha),
+      review: await _review(repo, ref.number),
       branch: (json['head'] as Map?)?['ref'] as String?,
     );
+  }
+
+  /// Pull request [number]'s reviews, together (see [ForgeReview]): each
+  /// reviewer's latest that approves, asks for changes or was dismissed.
+  Future<ForgeReview?> _review(String repo, int number) async {
+    try {
+      final json = await _call(
+        'GET',
+        '$repo/pulls/$number/reviews',
+        query: {'per_page': '100'},
+      ) as List;
+      final latest = <String, String>{};
+      for (final review in json.whereType<Map>()) {
+        final state = review['state'] as String?;
+        final user = (review['user'] as Map?)?['login'] as String?;
+        if (user == null ||
+            !const {
+              'APPROVED',
+              'CHANGES_REQUESTED',
+              'DISMISSED',
+            }.contains(state)) {
+          continue;
+        }
+        latest[user] = state!;
+      }
+      if (latest.values.contains('CHANGES_REQUESTED')) {
+        return ForgeReview.changesRequested;
+      }
+      return latest.values.contains('APPROVED') ? ForgeReview.approved : null;
+    } on ForgeException {
+      return null;
+    }
   }
 
   /// The commit [sha]'s check runs, together: failed when any failed,
@@ -312,6 +436,7 @@ class GitHubApi extends ForgeApi {
     ForgeItemKind kind = ForgeItemKind.issue,
     ForgeState? state,
     ForgeChecks? checks,
+    ForgeReview? review,
     String? branch,
   }) => ForgeItem(
     ref: ForgeRef(repo: repo, kind: kind, number: json['number'] as int),
@@ -339,6 +464,7 @@ class GitHubApi extends ForgeApi {
     comments: json['comments'] as int? ?? 0,
     updated: ForgeApi._date(json['updated_at']),
     checks: checks,
+    review: review,
     branch: branch,
   );
 
@@ -378,11 +504,181 @@ class GitHubApi extends ForgeApi {
   );
 
   @override
-  Future<void> close(ForgeRef ref) => _call(
+  Future<void> close(ForgeRef ref, {bool duplicate = false}) => _call(
     'PATCH',
     '/repos/${ref.repo.path}/issues/${ref.number}',
-    json: {'state': 'closed'},
+    json: {'state': 'closed', if (duplicate) 'state_reason': 'not_planned'},
   );
+
+  @override
+  Future<List<ForgeComment>> comments(
+    ForgeRef ref, {
+    int? total,
+    int most = 5,
+  }) async {
+    Future<List<ForgeComment>> page(int page) async {
+      final json = await _call(
+        'GET',
+        '/repos/${ref.repo.path}/issues/${ref.number}/comments',
+        query: {'per_page': '$most', 'page': '$page'},
+      ) as List;
+      return [
+        for (final comment in json)
+          if (comment is Map)
+            ForgeComment(
+              author: (comment['user'] as Map?)?['login'] as String? ?? '',
+              body: comment['body'] as String? ?? '',
+              created: ForgeApi._date(comment['created_at']),
+              url: comment['html_url'] as String?,
+            ),
+      ];
+    }
+
+    // The oldest first: the last page is the latest.
+    final last = total == null || total <= 0 ? 1 : (total + most - 1) ~/ most;
+    final comments = await page(last);
+    if (comments.length < most && last > 1) {
+      comments.insertAll(0, await page(last - 1));
+    }
+    return comments.length > most
+        ? comments.sublist(comments.length - most)
+        : comments;
+  }
+
+  @override
+  Future<List<ForgeItem>> allIssues(
+    ForgeRepo repo, {
+    DateTime? since,
+    int most = 1000,
+  }) async {
+    final items = <ForgeItem>[];
+    for (var page = 1; items.length < most; page++) {
+      final json = await _call(
+        'GET',
+        '/repos/${repo.path}/issues',
+        query: {
+          'state': since == null ? 'open' : 'all',
+          'since': ?since?.toUtc().toIso8601String(),
+          'sort': 'updated',
+          'direction': 'desc',
+          'per_page': '${ForgeApi.pageSize}',
+          'page': '$page',
+        },
+      ) as List;
+      for (final issue in json) {
+        // Pull requests are issues to GitHub.
+        if (issue is Map && issue['pull_request'] == null) {
+          items.add(_issue(repo, issue));
+        }
+      }
+      if (json.length < ForgeApi.pageSize) break;
+    }
+    return items.take(most).toList();
+  }
+
+  @override
+  Future<ForgeItem> createIssue(
+    ForgeRepo repo, {
+    required String title,
+    required String body,
+  }) async {
+    final json = await _call(
+      'POST',
+      '/repos/${repo.path}/issues',
+      json: {'title': title, 'body': body},
+    ) as Map;
+    return _issue(repo, json);
+  }
+
+  @override
+  Future<ForgeItem> editIssue(
+    ForgeRef ref, {
+    required String title,
+    required String body,
+  }) async {
+    final json = await _call(
+      'PATCH',
+      '/repos/${ref.repo.path}/issues/${ref.number}',
+      json: {'title': title, 'body': body},
+    ) as Map;
+    return _issue(ref.repo, json);
+  }
+
+  /// The branch the pictures go in: one of their own, with no history of
+  /// the code's, made the first time.
+  static const assetsBranch = 'baocode-stash-assets';
+
+  /// GitHub has no API for an issue's attachments: the picture is a file
+  /// of [assetsBranch] (`stash/<its hash>.png`), shown from there.
+  @override
+  Future<String> uploadImage(
+    ForgeRepo repo,
+    String name,
+    List<int> bytes,
+  ) async {
+    final path = 'stash/${ForgeApi._assetName(name, bytes)}';
+    await _ensureAssetsBranch(repo);
+    try {
+      await _call(
+        'PUT',
+        '/repos/${repo.path}/contents/$path',
+        json: {
+          'message': 'Add a picture from BaoCode Stash',
+          'content': base64Encode(bytes),
+          'branch': assetsBranch,
+        },
+      );
+    } on ForgeException catch (error) {
+      // There already: put there before.
+      if (error.status != 422) rethrow;
+    }
+    return Uri.https(repo.host, '/${repo.path}/blob/$assetsBranch/$path', {
+      'raw': 'true',
+    }).toString();
+  }
+
+  final Set<ForgeRepo> _branched = {};
+
+  Future<void> _ensureAssetsBranch(ForgeRepo repo) async {
+    if (_branched.contains(repo)) return;
+    final at = '/repos/${repo.path}';
+    try {
+      await _call('GET', '$at/branches/$assetsBranch');
+    } on ForgeException catch (error) {
+      if (error.status != 404) rethrow;
+      final tree = await _call(
+        'POST',
+        '$at/git/trees',
+        json: {
+          'tree': [
+            {
+              'path': 'README.md',
+              'mode': '100644',
+              'type': 'blob',
+              'content':
+                  'Pictures of the issues opened from BaoCode\'s '
+                  'Stash (https://baocode.dev).\n',
+            },
+          ],
+        },
+      ) as Map;
+      final commit = await _call(
+        'POST',
+        '$at/git/commits',
+        json: {
+          'message': 'BaoCode Stash pictures',
+          'tree': tree['sha'],
+          'parents': const <String>[],
+        },
+      ) as Map;
+      await _call(
+        'POST',
+        '$at/git/refs',
+        json: {'ref': 'refs/heads/$assetsBranch', 'sha': commit['sha']},
+      );
+    }
+    _branched.add(repo);
+  }
 }
 
 /// GitLab's REST API (v4).
@@ -440,6 +736,10 @@ class GitLabApi extends ForgeApi {
         null || 'skipped' || 'manual' => null,
         _ => ForgeChecks.pending,
       },
+      review: switch (json['detailed_merge_status']) {
+        'requested_changes' => ForgeReview.changesRequested,
+        _ => null,
+      },
       branch: json['source_branch'] as String?,
     );
   }
@@ -450,6 +750,7 @@ class GitLabApi extends ForgeApi {
     ForgeItemKind kind = ForgeItemKind.issue,
     ForgeState? state,
     ForgeChecks? checks,
+    ForgeReview? review,
     String? branch,
   }) => ForgeItem(
     ref: ForgeRef(repo: repo, kind: kind, number: json['iid'] as int),
@@ -478,6 +779,7 @@ class GitLabApi extends ForgeApi {
     comments: json['user_notes_count'] as int? ?? 0,
     updated: ForgeApi._date(json['updated_at']),
     checks: checks,
+    review: review,
     branch: branch,
   );
 
@@ -518,9 +820,127 @@ class GitLabApi extends ForgeApi {
   );
 
   @override
-  Future<void> close(ForgeRef ref) => _call(
+  Future<void> close(ForgeRef ref, {bool duplicate = false}) => _call(
     'PUT',
     '${_project(ref.repo)}/issues/${ref.number}',
     json: {'state_event': 'close'},
   );
+
+  @override
+  Future<List<ForgeComment>> comments(
+    ForgeRef ref, {
+    int? total,
+    int most = 5,
+  }) async {
+    final kind = ref.kind == ForgeItemKind.pull ? 'merge_requests' : 'issues';
+    final json = await _call(
+      'GET',
+      '${_project(ref.repo)}/$kind/${ref.number}/notes',
+      query: {
+        'sort': 'desc',
+        'order_by': 'created_at',
+        'per_page': '${most * 4}',
+      },
+    ) as List;
+    return [
+      for (final note in json)
+        // Not those GitLab writes itself (labels changed, mentioned…).
+        if (note is Map && note['system'] != true)
+          ForgeComment(
+            author: (note['author'] as Map?)?['username'] as String? ?? '',
+            body: note['body'] as String? ?? '',
+            created: ForgeApi._date(note['created_at']),
+          ),
+    ].take(most).toList().reversed.toList();
+  }
+
+  @override
+  Future<List<ForgeItem>> allIssues(
+    ForgeRepo repo, {
+    DateTime? since,
+    int most = 1000,
+  }) async {
+    final items = <ForgeItem>[];
+    for (var page = 1; items.length < most; page++) {
+      final json = await _call(
+        'GET',
+        '${_project(repo)}/issues',
+        query: {
+          if (since == null) 'state': 'opened',
+          'updated_after': ?since?.toUtc().toIso8601String(),
+          'scope': 'all',
+          'with_labels_details': 'true',
+          'order_by': 'updated_at',
+          'sort': 'desc',
+          'per_page': '${ForgeApi.pageSize}',
+          'page': '$page',
+        },
+      ) as List;
+      for (final issue in json) {
+        if (issue is Map) items.add(_item(repo, issue));
+      }
+      if (json.length < ForgeApi.pageSize) break;
+    }
+    return items.take(most).toList();
+  }
+
+  @override
+  Future<ForgeItem> createIssue(
+    ForgeRepo repo, {
+    required String title,
+    required String body,
+  }) async {
+    final json = await _call(
+      'POST',
+      '${_project(repo)}/issues',
+      json: {'title': title, 'description': body},
+    ) as Map;
+    return _item(repo, json);
+  }
+
+  @override
+  Future<ForgeItem> editIssue(
+    ForgeRef ref, {
+    required String title,
+    required String body,
+  }) async {
+    final json = await _call(
+      'PUT',
+      '${_project(ref.repo)}/issues/${ref.number}',
+      json: {'title': title, 'description': body},
+    ) as Map;
+    return _item(ref.repo, json);
+  }
+
+  /// The project's uploads, as a picture pasted into an issue is.
+  @override
+  Future<String> uploadImage(
+    ForgeRepo repo,
+    String name,
+    List<int> bytes,
+  ) async {
+    final file = ForgeApi._assetName(name, bytes);
+    final boundary =
+        'baocode-${math.Random().nextInt(1 << 32).toRadixString(16)}';
+    final body = <int>[
+      ...utf8.encode(
+        '--$boundary\r\n'
+        'Content-Disposition: form-data; name="file"; filename="$file"\r\n'
+        'Content-Type: ${ForgeApi._mimeOf(file)}\r\n\r\n',
+      ),
+      ...bytes,
+      ...utf8.encode('\r\n--$boundary--\r\n'),
+    ];
+    final json = await _call(
+      'POST',
+      '${_project(repo)}/uploads',
+      bytes: body,
+      contentType: 'multipart/form-data; boundary=$boundary',
+    ) as Map;
+    return switch ((json['full_path'], json['url'])) {
+      (final String full, _) => 'https://$host$full',
+      (_, final String url) => 'https://$host/${repo.path}$url',
+      _ => throw const ForgeException('The picture was not taken.'),
+    };
+  }
 }

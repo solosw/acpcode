@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' show sha1;
 import 'package:flutter/foundation.dart';
 
 /// Where a stash stands. It moves on by what is done with it, never by
@@ -20,6 +21,34 @@ enum StashStatus {
 
   static StashStatus parse(Object? value) =>
       values.where((status) => status.name == value).firstOrNull ?? collected;
+}
+
+/// What happened on a stash's issue or pull requests that the user has
+/// not seen, the weightiest: it was opened there (a stash new to the
+/// user), changed there (taken in), commented on, closed, or opened again;
+/// a pull request of it merged, its checks failed, changes asked of it;
+/// or marked so by the user, to come back to.
+enum StashNews {
+  marked,
+  opened,
+  changed,
+  commented,
+  closed,
+  reopened,
+  merged,
+  changesRequested,
+  checksFailed;
+
+  /// Which says more: kept over another as a stash's news.
+  int get weight => switch (this) {
+    marked => 0,
+    opened => 1,
+    changed => 2,
+    commented => 3,
+    closed || reopened || merged => 4,
+    changesRequested => 5,
+    checksFailed => 6,
+  };
 }
 
 /// Where in BaoCode a stash was jotted down (its shortcut pressed there,
@@ -158,6 +187,11 @@ class StashIssueLink {
     this.checks,
     this.session,
     this.answered = false,
+    this.comments,
+    this.mergedFrom,
+    this.review,
+    this.updated,
+    this.commentAt,
   });
 
   /// Its page: `https://github.com/o/r/issues/3`.
@@ -177,6 +211,24 @@ class StashIssueLink {
   /// open, the stash done: say so there) was answered.
   final bool answered;
 
+  /// How many comments it had, as last asked.
+  final int? comments;
+
+  /// The stash it was the issue of, merged into this one: the same thing,
+  /// so it may be closed as this one's duplicate (asked of the user).
+  final int? mergedFrom;
+
+  /// A pull request's review: `approved` or `changesRequested` (a
+  /// ForgeReview's name).
+  final String? review;
+
+  /// When it was last changed there, as last asked (ISO 8601).
+  final String? updated;
+
+  /// When the latest of its comments seen was written (ISO 8601): those
+  /// after it are new.
+  final String? commentAt;
+
   Map<String, Object?> toJson() => {
     'url': url,
     'title': ?title,
@@ -184,6 +236,11 @@ class StashIssueLink {
     'checks': ?checks,
     'session': ?session,
     if (answered) 'answered': true,
+    'comments': ?comments,
+    'mergedFrom': ?mergedFrom,
+    'review': ?review,
+    'updated': ?updated,
+    'commentAt': ?commentAt,
   };
 
   static StashIssueLink? fromJson(Object? json) => switch (json) {
@@ -194,6 +251,11 @@ class StashIssueLink {
       checks: json['checks'] as String?,
       session: json['session'] as String?,
       answered: json['answered'] == true,
+      comments: (json['comments'] as num?)?.toInt(),
+      mergedFrom: (json['mergedFrom'] as num?)?.toInt(),
+      review: json['review'] as String?,
+      updated: json['updated'] as String?,
+      commentAt: json['commentAt'] as String?,
     ),
     _ => null,
   };
@@ -204,6 +266,11 @@ class StashIssueLink {
     String? checks,
     String? session,
     bool? answered,
+    int? comments,
+    int? mergedFrom,
+    String? review,
+    String? updated,
+    String? commentAt,
   }) => StashIssueLink(
     url: url,
     title: title ?? this.title,
@@ -211,6 +278,11 @@ class StashIssueLink {
     checks: checks ?? this.checks,
     session: session ?? this.session,
     answered: answered ?? this.answered,
+    comments: comments ?? this.comments,
+    mergedFrom: mergedFrom ?? this.mergedFrom,
+    review: review ?? this.review,
+    updated: updated ?? this.updated,
+    commentAt: commentAt ?? this.commentAt,
   );
 
   @override
@@ -221,10 +293,27 @@ class StashIssueLink {
       other.state == state &&
       other.checks == checks &&
       other.session == session &&
-      other.answered == answered;
+      other.answered == answered &&
+      other.comments == comments &&
+      other.mergedFrom == mergedFrom &&
+      other.review == review &&
+      other.updated == updated &&
+      other.commentAt == commentAt;
 
   @override
-  int get hashCode => Object.hash(url, title, state, checks, session, answered);
+  int get hashCode => Object.hash(
+    url,
+    title,
+    state,
+    checks,
+    session,
+    answered,
+    comments,
+    mergedFrom,
+    review,
+    updated,
+    commentAt,
+  );
 }
 
 /// One stash: a markdown file, `<id>.md`, its pictures and files in the
@@ -244,6 +333,12 @@ class StashNote {
     List<StashIssueLink>? issues,
     this.source = StashSource.none,
     this.suggestedProject,
+    this.issue,
+    this.local = false,
+    this.synced,
+    this.syncedRemote,
+    this.news,
+    this.newsMine = false,
   }) : updated = updated ?? created,
        threads = threads ?? [],
        issues = issues ?? [];
@@ -283,6 +378,81 @@ class StashNote {
 
   /// A project the model thinks it is about, for the user to confirm.
   String? suggestedProject;
+
+  /// The issue it is (its page): the same thing on the project's forge,
+  /// kept in step with it (see StashForge). Not the issues it links to.
+  String? issue;
+
+  /// Kept to this machine: not made an issue, nor asked to be.
+  bool local;
+
+  /// [syncHash] of its title and text, and of the issue's, as they were
+  /// when last the same: which of the two changed since.
+  String? synced;
+  String? syncedRemote;
+
+  /// What happened on its issue the user has not seen yet (it is shown
+  /// marked till its detail is opened): see [StashNews].
+  StashNews? news;
+
+  /// Whether [news] is about the user: their issue or pull request (theirs,
+  /// assigned to them, from their conversation), or one naming them.
+  /// What is not is shown quieter.
+  bool newsMine;
+
+  /// [news] told: kept over what it had if it says as much or more; about
+  /// the user if this or that is.
+  void tell(StashNews told, {required bool mine}) {
+    final had = news;
+    if (had == null || told.weight >= had.weight) news = told;
+    newsMine = had != null && newsMine || mine;
+  }
+
+  /// Its news seen.
+  void seen() {
+    news = null;
+    newsMine = false;
+  }
+
+  /// The issue it is: [issue], else (imported before it was kept) the one
+  /// whose card its text starts with; none when [local].
+  String? get ownIssue {
+    if (local) return null;
+    if (issue case final issue?) return issue;
+    final card = _leadingCard(body);
+    if (card == null) return null;
+    return issues.any((link) => link.url == card) ? card : null;
+  }
+
+  /// Its text as its issue's description: without the card of the issue
+  /// it starts with (imported).
+  String get issueText {
+    final own = ownIssue;
+    if (own == null || _leadingCard(body) != own) return body.trim();
+    final newline = body.indexOf('\n');
+    return newline < 0 ? '' : body.substring(newline + 1).trim();
+  }
+
+  /// Its text with [text], its issue's, in place of [issueText].
+  String withIssueText(String text) {
+    final own = ownIssue;
+    if (own == null || _leadingCard(body) != own) return text.trim();
+    final card = body.split('\n').first;
+    return text.trim().isEmpty ? card : '$card\n\n${text.trim()}';
+  }
+
+  /// The address of the card (`[…](url "card")`) [body] starts with.
+  static String? _leadingCard(String body) =>
+      RegExp(r'^\[[^\n]*\]\((\S+) "card"\)[ \t]*(?:\n|$)')
+          .firstMatch(body.trimLeft())?[1];
+
+  /// What tells a title and text from another: [synced]'s.
+  static String syncHash(String title, String text) =>
+      sha1.convert(utf8.encode('${title.trim()}\n${text.trim()}')).toString();
+
+  /// Whether it was changed here since it was last as its issue is.
+  bool get changedHere =>
+      synced != null && syncHash(title, issueText) != synced;
 
   /// `#12`.
   String get tag => '#$id';
@@ -370,6 +540,12 @@ class StashNote {
     issues: [...issues],
     source: source,
     suggestedProject: suggestedProject,
+    issue: issue,
+    local: local,
+    synced: synced,
+    syncedRemote: syncedRemote,
+    news: news,
+    newsMine: newsMine,
   );
 
   // --- The file ---------------------------------------------------------------
@@ -390,6 +566,12 @@ class StashNote {
         'issues': [for (final link in issues) link.toJson()],
       if (!source.isEmpty) 'source': source.toJson(),
       'suggestedProject': ?suggestedProject,
+      'issue': ?issue,
+      if (local) 'local': true,
+      'synced': ?synced,
+      'syncedRemote': ?syncedRemote,
+      'news': ?news?.name,
+      if (news != null && newsMine) 'newsMine': true,
     };
     final buffer = StringBuffer('---\n');
     for (final MapEntry(:key, :value) in meta.entries) {
@@ -435,6 +617,15 @@ class StashNote {
       ],
       source: StashSource.fromJson(meta['source']),
       suggestedProject: meta['suggestedProject'] as String?,
+      issue: switch (meta['issue']) {
+        final String url when url.isNotEmpty => url,
+        _ => null,
+      },
+      local: meta['local'] == true,
+      synced: meta['synced'] as String?,
+      syncedRemote: meta['syncedRemote'] as String?,
+      news: StashNews.values.asNameMap()[meta['news']],
+      newsMine: meta['newsMine'] == true,
     );
   }
 

@@ -6,14 +6,12 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_quill/quill_delta.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 
 import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../keybindings/chat_keybindings.dart';
 import '../../l10n/l10n.dart';
-import '../../platform/quill_focus.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show WorkbenchColors, themeColors;
 import '../chat_keys.dart';
@@ -64,13 +62,8 @@ class _Trigger {
       other != null && other.kind == kind && other.start == start;
 }
 
-/// A rich-text shortcut of Quill's: with no action for it, the key is not
-/// handled (see [ChatComposerState._richTextShortcuts]).
-class _NoRichTextIntent extends Intent {
-  const _NoRichTextIntent();
-}
-
-/// The chat input, built on flutter_quill.
+/// The chat input: an editor of plain text (bao_markdown's, see
+/// [ComposerController]) with tags in it.
 ///
 /// The dock's composer sends to [session]. With [onSubmit] it edits instead
 /// (e.g. a sent message reopened in the history): it starts from
@@ -151,12 +144,11 @@ class ChatComposerState extends State<ChatComposer>
   /// the composer at the height it had with the old context row.
   static const _minEditorHeight = _lineHeight + 28;
   static const _maxEditorLines = 10;
-  static const _plainTextEmbed = '￼';
 
   late final ComposerController _controller = _createController();
   final FocusNode _focusNode = FocusNode(debugLabel: 'Composer');
   final ScrollController _scrollController = ScrollController();
-  final GlobalKey<EditorState> _editorKey = GlobalKey();
+  final GlobalKey<MarkdownEditorState> _editorKey = GlobalKey();
   final GlobalKey _boxKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modePickerKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modelPickerKey = GlobalKey();
@@ -220,27 +212,15 @@ class ChatComposerState extends State<ChatComposer>
   }
 
   ComposerController _createController() {
-    final config = QuillControllerConfig(
-      // Quill's only hook for taking over paste; experimental in 11.x.
-      // ignore: experimental_member_use
-      clipboardConfig: QuillClipboardConfig(
-        // ignore: experimental_member_use
-        onClipboardPaste: _paste,
-        // Nor, where that leaves it to Quill, its HTML or Markdown as such.
-        // ignore: experimental_member_use
-        enableExternalRichPaste: false,
-      ),
-    );
     if (widget.draft case final draft? when draft.saved) {
-      final document = Document.fromDelta(draft.content!);
-      final end = document.length - 1;
+      final content = draft.content!;
+      final end = content.length;
       return ComposerController(
-        document: document,
+        text: content,
         selection: TextSelection(
           baseOffset: draft.selection.baseOffset.clamp(0, end),
           extentOffset: draft.selection.extentOffset.clamp(0, end),
         ),
-        config: config,
       );
     }
     var text = widget.initialText ?? '';
@@ -254,18 +234,15 @@ class ChatComposerState extends State<ChatComposer>
     if (unreferred.isNotEmpty) {
       text = [unreferred.map(imageReference).join(' '), text].join(' ');
     }
-    if (text.isEmpty) return ComposerController.basic(config: config);
-    final document = Document.fromDelta(
-      composerDeltaFromText(
-        text,
-        ComposerVocabulary.read(context),
-        images: numbers,
-      ),
+    if (text.isEmpty) return ComposerController();
+    final content = composerContentFromText(
+      text,
+      ComposerVocabulary.read(context),
+      images: numbers,
     );
     return ComposerController(
-      document: document,
-      selection: TextSelection.collapsed(offset: document.length - 1),
-      config: config,
+      text: content,
+      selection: TextSelection.collapsed(offset: content.length),
     );
   }
 
@@ -273,11 +250,11 @@ class ChatComposerState extends State<ChatComposer>
   /// (images as images), code the IDE's editor copied as a tag of its lines,
   /// a picture (a screenshot), or else its plain text, with its `@paths`
   /// (and a leading /command) as tags, as the message will show once sent:
-  /// copied from the history, from this editor or from elsewhere alike.
-  /// Also keeps Quill from pasting HTML or Markdown as rich text into this
-  /// plain-text input. Returns false (Quill's own handling) for nothing.
-  /// With `raw` (⇧⌘V / Ctrl+Shift+V), its text goes in as it is, past the
-  /// long-paste tag; files and images still come in as such.
+  /// copied from the history or from elsewhere alike. (What this editor
+  /// copied itself, its tags and all, the editor pastes back as it was.)
+  /// Returns false for nothing to paste. With `raw` (⇧⌘V / Ctrl+Shift+V),
+  /// its text goes in as it is, past the long-paste tag; files and images
+  /// still come in as such.
   Future<bool> _paste({bool raw = false}) async {
     final files = await WindowControls.readPasteboardFiles();
     if (!mounted) return false;
@@ -305,7 +282,7 @@ class ChatComposerState extends State<ChatComposer>
       }
     }
     if (text == null || !mounted) return false;
-    var plain = text.replaceAll('\r\n', '\n');
+    var plain = MdAtoms.strip(text.replaceAll('\r\n', '\n'));
     if (widget.session.acceptsImages) {
       plain = await _picturesIn(plain);
       if (!mounted) return false;
@@ -322,45 +299,31 @@ class ChatComposerState extends State<ChatComposer>
       return true;
     }
     final selection = _controller.selection;
-    final start = selection.start;
-    final Delta token;
-    if (raw) {
-      token = Delta()..insert(plain);
-    } else {
-      token = composerDeltaFromPaste(
-        plain,
-        ComposerVocabulary.read(context),
-        atStart: start == 0,
-        images: _pool.keys.toSet(),
-      );
-    }
-    final delta =
-        (Delta()
-              ..retain(start)
-              ..delete(selection.end - start))
-            .concat(token);
-    // `compose` keeps the caret where it was (before the insert), whatever
-    // selection it is given: move it after the pasted text.
+    final start = selection.isValid ? selection.start : _controller.length;
+    final end = selection.isValid ? selection.end : start;
+    final content = raw
+        ? plain
+        : composerContentFromPaste(
+            plain,
+            ComposerVocabulary.read(context),
+            atStart: start == 0,
+            images: _pool.keys.toSet(),
+          );
     _controller
-      ..compose(delta, selection, ChangeSource.local)
-      ..updateSelection(
-        TextSelection.collapsed(
-          // Delta.length counts operations, not characters.
-          offset: start + token.toList().fold(0, (sum, op) => sum + op.length!),
-        ),
-        ChangeSource.local,
-      );
+      ..breakUndo()
+      ..replace(start, end, content)
+      ..breakUndo();
     return true;
   }
 
   /// The number for a long paste: one past the highest the text has.
   int _nextPastedNumber() {
     var highest = 0;
-    for (final op in _controller.document.toDelta().toList()) {
-      if (op.data case {ComposerPastedTextEmbed.type: final data}) {
+    for (final (:embed, start: _, end: _) in _controller.embeds) {
+      if (embed.type == ComposerPastedTextEmbed.type) {
         highest = math.max(
           highest,
-          ComposerPastedTextEmbed.decode(data).number,
+          ComposerPastedTextEmbed.decode(embed.data).number,
         );
       }
     }
@@ -372,7 +335,7 @@ class ChatComposerState extends State<ChatComposer>
     super.initState();
     _padTrailingTokens();
     _images = _referredImages();
-    _hasContent = _controller.document.toPlainText().trim().isNotEmpty;
+    _hasContent = _controller.text.trim().isNotEmpty;
     _controller.addListener(_handleEditorChanged);
     _focusNode.addListener(_handleFocusChanged);
     widget.draft?.addListener(_handleDraftChanged);
@@ -421,12 +384,10 @@ class ChatComposerState extends State<ChatComposer>
   /// The numbers of the images the text refers to, in its order, with
   /// where each reference is.
   Iterable<({int number, int offset})> _references() sync* {
-    var offset = 0;
-    for (final op in _controller.document.toDelta().toList()) {
-      if (op.data case {ComposerImageEmbed.type: final data}) {
-        yield (number: ComposerImageEmbed.decode(data), offset: offset);
+    for (final (:embed, :start, end: _) in _controller.embeds) {
+      if (embed.type == ComposerImageEmbed.type) {
+        yield (number: ComposerImageEmbed.decode(embed.data), offset: start);
       }
-      offset += op.length!;
     }
   }
 
@@ -609,36 +570,29 @@ class ChatComposerState extends State<ChatComposer>
   /// from a word before them, each followed by a space, so that none is
   /// the last thing on its line (see [_padTrailingTokens]); the caret after
   /// them. One edit, undone as one.
-  void _insertTags(List<Embeddable> tags, {int? at}) {
+  void _insertTags(List<ComposerEmbed> tags, {int? at}) {
     if (tags.isEmpty) return;
     final selection = _controller.selection;
-    final end = _controller.document.length - 1;
-    final start = (at ?? selection.start).clamp(0, end);
-    final replaced = at == null ? math.max(0, selection.end - start) : 0;
-    final plain = _controller.document.toPlainText();
-    final content = Delta();
-    if (start > 0 && plain[start - 1].trim().isNotEmpty) content.insert(' ');
+    final end = _controller.length;
+    final start = (at ?? (selection.isValid ? selection.start : end)).clamp(
+      0,
+      end,
+    );
+    final replaced = at == null && selection.isValid
+        ? math.max(0, selection.end - start)
+        : 0;
+    final text = _controller.text;
+    final content = StringBuffer();
+    if (start > 0 && text[start - 1].trim().isNotEmpty) content.write(' ');
     for (final tag in tags) {
       content
-        ..insert(tag.toJson())
-        ..insert(' ');
+        ..write(tag.atom)
+        ..write(' ');
     }
     _controller
-      ..compose(
-        (Delta()
-              ..retain(start)
-              ..delete(replaced))
-            .concat(content),
-        selection,
-        ChangeSource.local,
-      )
-      ..updateSelection(
-        TextSelection.collapsed(
-          offset:
-              start + content.toList().fold(0, (sum, op) => sum + op.length!),
-        ),
-        ChangeSource.local,
-      );
+      ..breakUndo()
+      ..replace(start, start + replaced, content.toString())
+      ..breakUndo();
     _focusNode.requestFocus();
   }
 
@@ -662,13 +616,13 @@ class ChatComposerState extends State<ChatComposer>
   };
 
   void _acceptSuggestion() {
-    final suggestion = _suggestion;
-    if (suggestion == null) return;
-    _controller.replaceText(
+    final suggestion = MdAtoms.strip(_suggestion ?? '');
+    if (suggestion.isEmpty) return;
+    _controller.replace(
       0,
       0,
       suggestion,
-      TextSelection.collapsed(offset: suggestion.length),
+      selection: TextSelection.collapsed(offset: suggestion.length),
     );
   }
 
@@ -678,11 +632,13 @@ class ChatComposerState extends State<ChatComposer>
       _scrollController.hasClients ? _scrollController.position : null;
 
   /// The editor subtree, built once and reused so that keystrokes (which
-  /// rebuild this state for the menu and send button) do not hand Quill a
-  /// new config: it treats new styles as a change and relays out every line.
-  /// Rebuilt only when an inherited dependency (theme, window size) or the
-  /// color theme changes.
+  /// rebuild this state for the menu and send button) do not build it
+  /// again. Rebuilt only when an inherited dependency (theme, window size),
+  /// the color theme or the placeholder changes.
   Widget? _editor;
+
+  /// [_shownOfText] when the box was last built.
+  _ShownOfText? _shownBuilt;
 
   /// The color theme's colors [_editor] was built with.
   WorkbenchColors? _editorColors;
@@ -697,18 +653,22 @@ class ChatComposerState extends State<ChatComposer>
 
   /// An input method is composing text: a composition not empty. A macOS
   /// one may leave an empty one (its letters deleted, or after a commit)
-  /// until its next: not composing, as Quill draws it, or the keys (Tab,
-  /// Enter) went to Quill (#143).
-  bool get _isComposing {
-    final state = _editorKey.currentState;
-    if (state is! QuillRawEditorState) return false;
-    final range = state.composingRange.value;
-    return range.isValid && !range.isCollapsed;
-  }
+  /// until its next: not composing, or the keys (Tab, Enter) went to the
+  /// editor (#143).
+  bool get _isComposing => _controller.isComposing;
 
   void _handleFocusChanged() {
-    if (!_focusNode.hasFocus) _closeMenu();
-    releaseQuillFocus(_editorKey);
+    if (!_focusNode.hasFocus) {
+      _closeMenu();
+    } else {
+      // Focused, the caret in view: an edit's opens scrolled to its end.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final selection = _controller.selection;
+        if (mounted && _focusNode.hasFocus && selection.isValid) {
+          _editorKey.currentState?.ensureVisible(selection.extentOffset);
+        }
+      });
+    }
     setState(() {});
   }
 
@@ -741,23 +701,21 @@ class ChatComposerState extends State<ChatComposer>
     if (unreferred.isNotEmpty) {
       text = [unreferred.map(imageReference).join(' '), text].join(' ');
     }
-    final content = composerDeltaFromText(
+    final content = composerContentFromText(
       text,
       ComposerVocabulary.read(context),
       images: _pool.keys.toSet(),
     );
-    final current = _controller.document.toDelta();
-    final typed = _controller.document.length > 1;
+    final end = _controller.length;
     _controller
-      ..compose(
-        current.diff(typed ? current.concat(content) : content),
-        _controller.selection,
-        ChangeSource.local,
+      ..breakUndo()
+      ..replace(
+        end,
+        end,
+        content,
+        selection: TextSelection.collapsed(offset: end + content.length),
       )
-      ..updateSelection(
-        TextSelection.collapsed(offset: _controller.document.length - 1),
-        ChangeSource.local,
-      );
+      ..breakUndo();
     _focusNode.requestFocus();
   }
 
@@ -765,7 +723,7 @@ class ChatComposerState extends State<ChatComposer>
   void _saveDraft() {
     if (_takingDraft) return;
     widget.draft?.save(
-      _controller.document.toDelta(),
+      _controller.text,
       _controller.selection,
       _pool.values.toList(),
       by: this,
@@ -784,48 +742,95 @@ class ChatComposerState extends State<ChatComposer>
     if (draft == null || identical(draft.savedBy, this) || !draft.saved) {
       return;
     }
-    final current = _controller.document.toDelta();
-    final change = current.diff(draft.content!);
-    if (change.isEmpty) return;
+    final current = _controller.text;
+    final content = draft.content!;
+    if (current == content) return;
     _pool = {..._pool, for (final image in draft.images) ?image.number: image};
-    final selection = _controller.selection;
-    final end = draft.content!.length - 1;
-    final history = _controller.document.history;
-    final ignoring = history.ignoreChange;
+    // Only what differs replaced, the caret moved along.
+    var start = 0;
+    final shorter = math.min(current.length, content.length);
+    while (start < shorter &&
+        current.codeUnitAt(start) == content.codeUnitAt(start)) {
+      start++;
+    }
+    var end = 0;
+    while (end < shorter - start &&
+        current.codeUnitAt(current.length - 1 - end) ==
+            content.codeUnitAt(content.length - 1 - end)) {
+      end++;
+    }
+    // Not into an atom: one changed is replaced whole.
+    while (start > 0 && _inAtom(current, start)) {
+      start--;
+    }
+    while (end > 0 && _inAtom(current, current.length - end)) {
+      end--;
+    }
     _takingDraft = true;
-    history.ignoreChange = true;
     try {
-      _controller.compose(
-        change,
-        TextSelection(
-          baseOffset: change
-              .transformPosition(selection.baseOffset)
-              .clamp(0, end),
-          extentOffset: change
-              .transformPosition(selection.extentOffset)
-              .clamp(0, end),
-        ),
-        ChangeSource.remote,
-      );
+      // Not this composer's edit to undo, and its steps no longer the
+      // text's.
+      _controller
+        ..forgetUndo()
+        ..replaceUnrecorded(
+          start,
+          current.length - end,
+          content.substring(start, content.length - end),
+        );
     } finally {
-      history.ignoreChange = ignoring;
       _takingDraft = false;
     }
   }
 
+  /// Whether [offset] of [text] is inside an atom (after its opening mark,
+  /// before or at its closing one).
+  static bool _inAtom(String text, int offset) {
+    if (offset <= 0 || offset > text.length) return false;
+    final open = text.lastIndexOf(MdAtoms.open, offset - 1);
+    if (open < 0) return false;
+    final close = text.lastIndexOf(MdAtoms.close, offset - 1);
+    return close < open;
+  }
+
+  /// What the box shows that follows the text, besides the text (which
+  /// the editor shows itself): the menu, the images, whether the message
+  /// can be sent and polished. A key typed that changes none of it since
+  /// the box was built ([_shownBuilt]) does not build it again (its
+  /// pickers, its buttons).
+  _ShownOfText _shownOfText() => (
+    menu: (_trigger != null, _menuX, _menuKind, _matches, _highlighted),
+    pool: _pool,
+    canSend: _canSend,
+    polishable: ComposerPolishSetting.current() && _hasWords(),
+  );
+
+  /// Whether the text has words to polish: read again only once it
+  /// changed, not each time the session builds the box.
+  bool _hasWords() {
+    final version = _controller.textVersion;
+    if (version != _wordsVersion) {
+      _wordsVersion = version;
+      _words = _polishText().hasWords;
+    }
+    return _words;
+  }
+
+  int? _wordsVersion;
+  bool _words = false;
+
   void _handleEditorChanged() {
     // The placeholder of a drag coming and going: not the user's edit.
     if (_ghosting) return;
-    if (_padTrailingTokens()) return; // Re-entered with the fixed document.
+    if (_padTrailingTokens()) return; // Re-entered with the fixed text.
     _images = _referredImages();
     _saveDraft();
-    final plain = _controller.document.toPlainText();
+    final text = _controller.text;
     // Edited, a message recalled from the history is the one typed.
-    if (_historyAt != null && !_recalling && plain != _historyShown) {
+    if (_historyAt != null && !_recalling && text != _historyShown) {
       _leaveHistory();
     }
-    final hasContent = plain.trim().isNotEmpty;
-    final trigger = _findTrigger(plain);
+    final hasContent = text.trim().isNotEmpty;
+    final trigger = _findTrigger(text);
 
     if (trigger == null || !trigger.sameAnchor(_dismissedTrigger)) {
       _dismissedTrigger = null;
@@ -877,7 +882,7 @@ class ChatComposerState extends State<ChatComposer>
     _trigger = visible ? trigger : null;
     _syncMenuRegistration();
     _hasContent = hasContent;
-    setState(() {});
+    if (_shownOfText() != _shownBuilt) setState(() {});
   }
 
   int _lookups = 0;
@@ -919,30 +924,31 @@ class ChatComposerState extends State<ChatComposer>
 
   /// Flutter lays out a line whose only content is an inline widget taller
   /// than a line with text, so a token must never end a line: when it does
-  /// (e.g. the space after it was deleted), add a space after it and leave
-  /// the caret where it was. Sending trims it. Returns true if it edited.
+  /// (e.g. the space after it was deleted), add a space after it, part of
+  /// the edit that left it there, and leave the caret where it was. Sending
+  /// trims it. Returns true if it edited.
   bool _padTrailingTokens() {
-    final plain = _controller.document.toPlainText();
-    for (var i = plain.length - 1; i >= 0; i--) {
-      final endsLine = i + 1 >= plain.length || plain[i + 1] == '\n';
-      if (plain[i] != _plainTextEmbed || !endsLine) continue;
-      final selection = _controller.selection;
-      _controller.replaceText(i + 1, 0, ' ', selection);
+    final text = _controller.text;
+    for (final run in MdAtoms.parse(text).reversed) {
+      final end = run.end;
+      if (end < text.length && text[end] != '\n') continue;
+      _controller.amend(end, end, ' ');
       return true;
     }
     return false;
   }
 
-  _Trigger? _findTrigger(String plain) {
+  _Trigger? _findTrigger(String text) {
     final selection = _controller.selection;
     if (!selection.isCollapsed || selection.baseOffset < 1) return null;
-    final caret = math.min(selection.baseOffset, plain.length);
+    final caret = math.min(selection.baseOffset, text.length);
 
+    // A space, a line's end, or a tag's either end.
     bool isBoundary(String char) =>
-        char.trim().isEmpty || char == _plainTextEmbed;
+        char.trim().isEmpty || char == MdAtoms.open || char == MdAtoms.close;
     // Only at the end of a query: a caret moved into existing text (e.g.
     // `/re|view`) is not typing one.
-    if (caret < plain.length && !isBoundary(plain[caret])) return null;
+    if (caret < text.length && !isBoundary(text[caret])) return null;
     // A / or an @ starting the word the caret ends: a command, or a file or
     // a conversation to refer to.
     final vocabulary = ComposerVocabulary.read(context);
@@ -951,10 +957,10 @@ class ChatComposerState extends State<ChatComposer>
         vocabulary.suggestFiles != null ||
         vocabulary.stashes != null;
     for (var i = caret - 1; i >= 0; i--) {
-      final char = plain[i];
+      final char = text[i];
       if (isBoundary(char)) return null;
-      if (i > 0 && !isBoundary(plain[i - 1])) continue;
-      final query = plain.substring(i + 1, caret);
+      if (i > 0 && !isBoundary(text[i - 1])) continue;
+      final query = text.substring(i + 1, caret);
       if (char == '/') return _Trigger(SuggestionKind.command, i, query);
       if (char == '@' && mentions) {
         return _Trigger(SuggestionKind.file, i, query);
@@ -965,12 +971,10 @@ class ChatComposerState extends State<ChatComposer>
 
   /// Horizontal caret position of [offset] relative to the composer box.
   double _caretX(int offset) {
-    final editor = _editorKey.currentState?.renderEditor;
+    final caret = _editorKey.currentState?.caretRect(offset);
     final box = _boxKey.currentContext?.findRenderObject() as RenderBox?;
-    if (editor == null || box == null || !editor.attached) return 12;
-    final caret = editor.getLocalRectForCaret(TextPosition(offset: offset));
-    final global = editor.localToGlobal(caret.topLeft);
-    final x = box.globalToLocal(global).dx - 8;
+    if (caret == null || box == null || !box.attached) return 12;
+    final x = box.globalToLocal(caret.topLeft).dx - 8;
     return x.clamp(0, math.max(0, box.size.width - SuggestionMenu.width));
   }
 
@@ -1020,7 +1024,7 @@ class ChatComposerState extends State<ChatComposer>
       return;
     }
     final caret = _controller.selection.baseOffset;
-    final Embeddable token;
+    final ComposerEmbed token;
     if (suggestion.kind == SuggestionKind.stash) {
       final stash = ComposerVocabulary.read(context).stash
           ?.call(int.parse(suggestion.id));
@@ -1035,63 +1039,31 @@ class ChatComposerState extends State<ChatComposer>
     } else {
       token = ComposerTokenEmbed.fromSuggestion(suggestion);
     }
-    // Space first, then the token before it, so the token is never the last
-    // thing on its line (see [_padTrailingTokens]).
-    _controller.replaceText(
-      trigger.start,
-      caret - trigger.start,
-      ' ',
-      TextSelection.collapsed(offset: trigger.start + 1),
-    );
-    _controller.replaceText(
-      trigger.start,
-      0,
-      token,
-      TextSelection.collapsed(offset: trigger.start + 2),
-    );
+    // The token and a space after it, so the token is never the last thing
+    // on its line (see [_padTrailingTokens]).
+    final tag = '${token.atom} ';
+    _controller
+      ..breakUndo()
+      ..replace(
+        trigger.start,
+        caret,
+        tag,
+        selection: TextSelection.collapsed(offset: trigger.start + tag.length),
+      )
+      ..breakUndo();
     _focusNode.requestFocus();
   }
 
   // --- Keyboard ------------------------------------------------------------
 
-  static final _allowedShortcutKeys = {
-    LogicalKeyboardKey.keyA,
-    LogicalKeyboardKey.keyC,
-    LogicalKeyboardKey.keyV,
-    LogicalKeyboardKey.keyX,
-    LogicalKeyboardKey.keyZ,
-    LogicalKeyboardKey.keyY,
-    LogicalKeyboardKey.arrowLeft,
-    LogicalKeyboardKey.arrowRight,
-    LogicalKeyboardKey.arrowUp,
-    LogicalKeyboardKey.arrowDown,
-    LogicalKeyboardKey.backspace,
-    LogicalKeyboardKey.delete,
-    LogicalKeyboardKey.enter,
-  };
-
-  KeyEventResult? _handleKey(KeyEvent event, Node? node) {
-    if (event is KeyUpEvent || _isComposing) return null;
+  KeyEventResult _handleKey(KeyEvent event) {
+    if (event is KeyUpEvent || _isComposing) return KeyEventResult.ignored;
     // Run by the window's keybindings (it sees keys first).
     if (ChatKeys.isHandled(event)) return KeyEventResult.handled;
     // An open picker menu (or tooltip) takes arrows, Enter and Esc first.
     if (FloatingRegistry.handleKey(event) case final result?) return result;
     // Then the keybindings: Enter sends, the menu's keys…
-    if (ChatKeys.dispatch(event) case final result?) return result;
-    final key = event.logicalKey;
-    final keyboard = HardwareKeyboard.instance;
-
-    // This is a plain-text input: swallow Quill's rich-text shortcuts
-    // (bold, headers, lists, links…) without triggering anything else.
-    if ((keyboard.isMetaPressed || keyboard.isControlPressed) &&
-        !_allowedShortcutKeys.contains(key) &&
-        key != LogicalKeyboardKey.metaLeft &&
-        key != LogicalKeyboardKey.metaRight &&
-        key != LogicalKeyboardKey.controlLeft &&
-        key != LogicalKeyboardKey.controlRight) {
-      return KeyEventResult.skipRemainingHandlers;
-    }
-    return null;
+    return ChatKeys.dispatch(event) ?? KeyEventResult.ignored;
   }
 
   bool get _caretAtStart {
@@ -1101,8 +1073,7 @@ class ChatComposerState extends State<ChatComposer>
 
   bool get _caretAtEnd {
     final selection = _controller.selection;
-    return selection.isCollapsed &&
-        selection.baseOffset >= _controller.document.length - 1;
+    return selection.isCollapsed && selection.baseOffset >= _controller.length;
   }
 
   @override
@@ -1181,11 +1152,11 @@ class ChatComposerState extends State<ChatComposer>
   // faint, in the text at the pointer, the text making room for them. Let
   // go, the tags take their place.
 
-  /// Where the placeholder is in the document, while a drag is over it.
+  /// Where the placeholder is in the text, while a drag is over it.
   int? _ghostAt;
 
-  /// The placeholder and the space after it.
-  static const _ghostLength = 2;
+  /// The placeholder and the space after it, as they are in the text.
+  String _ghost = '';
 
   /// What the placeholder shows.
   List<ComposerFile> _ghostFiles = const [];
@@ -1195,18 +1166,18 @@ class ChatComposerState extends State<ChatComposer>
   bool _ghosting = false;
 
   /// Where in the text [position] (the window's) would put what is let go
-  /// there: an offset in the document without the placeholder. Below or
+  /// there: an offset in the text without the placeholder. Below or
   /// beside the text (the toolbar, the pictures), its end.
   int _dropOffset(Offset position) {
-    final end =
-        _controller.document.length - 1 - (_ghostAt == null ? 0 : _ghostLength);
-    final editor = _editorKey.currentState?.renderEditor;
-    if (editor == null || !editor.attached) return end;
-    final local = editor.globalToLocal(position);
-    if (!(Offset.zero & editor.size).contains(local)) return end;
-    var offset = editor.getPositionForOffset(position).offset;
+    final end = _controller.length - (_ghostAt == null ? 0 : _ghost.length);
+    final editor = _editorKey.currentState;
+    final area = editor?.viewportRect;
+    if (editor == null || area == null || !area.contains(position)) {
+      return end;
+    }
+    var offset = editor.offsetAt(position) ?? end;
     if (_ghostAt case final ghost? when offset > ghost) {
-      offset = math.max(ghost, offset - _ghostLength);
+      offset = math.max(ghost, offset - _ghost.length);
     }
     return offset.clamp(0, end);
   }
@@ -1215,16 +1186,19 @@ class ChatComposerState extends State<ChatComposer>
   /// where the text is there.
   void _dropStashes(Offset position, List<StashReference> stashes) {
     if (!mounted) return;
-    var at = _dropOffset(position);
-    for (final stash in stashes) {
-      _controller.replaceText(at, 0, ' ', null);
-      _controller.replaceText(at, 0, ComposerStashEmbed.of(stash), null);
-      at += 2;
-    }
-    _controller.updateSelection(
-      TextSelection.collapsed(offset: at),
-      ChangeSource.local,
-    );
+    final at = _dropOffset(position);
+    final tags = [
+      for (final stash in stashes) '${ComposerStashEmbed.of(stash).atom} ',
+    ].join();
+    _controller
+      ..breakUndo()
+      ..replace(
+        at,
+        at,
+        tags,
+        selection: TextSelection.collapsed(offset: at + tags.length),
+      )
+      ..breakUndo();
     _focusNode.requestFocus();
   }
 
@@ -1235,15 +1209,10 @@ class ChatComposerState extends State<ChatComposer>
     final shown = _ghostAt != null;
     _editGhost(() {
       _removeGhost();
-      _controller.compose(
-        Delta()
-          ..retain(at)
-          ..insert(ComposerGhostEmbed.of(files).toJson())
-          ..insert(' '),
-        _controller.selection,
-        ChangeSource.local,
-      );
+      final ghost = '${ComposerGhostEmbed.of(files).atom} ';
+      _controller.replaceUnrecorded(at, at, ghost);
       _ghostAt = at;
+      _ghost = ghost;
       _ghostFiles = files;
     });
     // The border shows it.
@@ -1259,26 +1228,18 @@ class ChatComposerState extends State<ChatComposer>
   void _removeGhost() {
     final at = _ghostAt;
     if (at == null) return;
+    final length = _ghost.length;
     _ghostAt = null;
+    _ghost = '';
     _ghostFiles = const [];
-    _controller.compose(
-      Delta()
-        ..retain(at)
-        ..delete(_ghostLength),
-      _controller.selection,
-      ChangeSource.local,
-    );
+    _controller.replaceUnrecorded(at, at + length, '');
   }
 
   void _editGhost(VoidCallback edit) {
-    final history = _controller.document.history;
-    final ignoring = history.ignoreChange;
     _ghosting = true;
-    history.ignoreChange = true;
     try {
       edit();
     } finally {
-      history.ignoreChange = ignoring;
       _ghosting = false;
     }
   }
@@ -1323,7 +1284,7 @@ class ChatComposerState extends State<ChatComposer>
   int? _historyAt;
 
   /// What was being typed when the history was opened.
-  Delta? _historyDraft;
+  String? _historyDraft;
 
   /// The text the history put in: once it is edited, it is the message
   /// typed, and the history closes.
@@ -1354,16 +1315,15 @@ class ChatComposerState extends State<ChatComposer>
   /// Shows the message [step] from the one shown (-1: the one before).
   void _showPrompt(int step) {
     final prompts = _sentPrompts();
-    final document = _controller.document;
     final from = _historyAt ?? prompts.length;
     final at = from + step;
     if (at < 0 || at > prompts.length) return;
-    _historyDraft ??= document.toDelta().slice(0, document.length - 1);
-    final Delta content;
+    _historyDraft ??= _controller.text;
+    final String content;
     if (at == prompts.length) {
       content = _historyDraft!;
     } else {
-      content = composerDeltaFromPaste(
+      content = composerContentFromPaste(
         prompts[at],
         ComposerVocabulary.read(context),
         atStart: true,
@@ -1371,21 +1331,18 @@ class ChatComposerState extends State<ChatComposer>
     }
     _recalling = true;
     try {
-      final length = document.length - 1;
-      final delta = Delta();
-      if (length > 0) delta.delete(length);
-      _controller.compose(
-        delta.concat(content),
-        _controller.selection,
-        ChangeSource.local,
-      );
       // Going back, at the start: ↑ goes on back; going on, at the end.
-      _controller.updateSelection(
-        TextSelection.collapsed(
-          offset: step < 0 ? 0 : _controller.document.length - 1,
-        ),
-        ChangeSource.local,
-      );
+      _controller
+        ..breakUndo()
+        ..replace(
+          0,
+          _controller.length,
+          content,
+          selection: TextSelection.collapsed(
+            offset: step < 0 ? 0 : content.length,
+          ),
+        )
+        ..breakUndo();
     } finally {
       _recalling = false;
     }
@@ -1393,19 +1350,14 @@ class ChatComposerState extends State<ChatComposer>
       _leaveHistory();
     } else {
       _historyAt = at;
-      _historyShown = _controller.document.toPlainText();
+      _historyShown = _controller.text;
     }
   }
 
   // --- Polish --------------------------------------------------------------
 
   /// The text as the model is given it to polish (see [composerPolishText]).
-  ComposerPolishText _polishText() {
-    final document = _controller.document;
-    return composerPolishText(
-      document.toDelta().slice(0, math.max(0, document.length - 1)),
-    );
-  }
+  ComposerPolishText _polishText() => composerPolishText(_controller.text);
 
   /// Has the auxiliary model polish the text, its tags, images, code and
   /// links kept as they are; put in its place as one change (⌘Z takes it
@@ -1414,12 +1366,12 @@ class ChatComposerState extends State<ChatComposer>
     if (_polishing) return;
     final asked = _polishText();
     if (!asked.hasWords) return;
-    final before = _controller.document.toDelta();
+    final before = _controller.text;
     final notifications = IdeNotificationsScope.maybeOf(context);
     final l10n = context.l10n;
     setState(() => _polishing = true);
     try {
-      final Delta polished;
+      final String polished;
       try {
         polished = await polishComposerText(
           asked,
@@ -1433,20 +1385,18 @@ class ChatComposerState extends State<ChatComposer>
         );
         return;
       }
-      if (!mounted || _controller.document.toDelta() != before) return;
-      final length = polished.toList().fold(
-        0,
-        (sum, op) => sum + (op.length ?? 0),
-      );
+      if (!mounted || _controller.text != before) return;
       // One change of its own to undo: not merged with what was typed just
       // before it, nor with what is typed next.
-      final history = _controller.document.history..lastRecorded = 0;
-      _controller.compose(
-        (Delta()..delete(_controller.document.length - 1)).concat(polished),
-        TextSelection.collapsed(offset: length),
-        ChangeSource.local,
-      );
-      history.lastRecorded = 0;
+      _controller
+        ..breakUndo()
+        ..replace(
+          0,
+          _controller.length,
+          polished,
+          selection: TextSelection.collapsed(offset: polished.length),
+        )
+        ..breakUndo();
       _focusNode.requestFocus();
     } finally {
       if (mounted) setState(() => _polishing = false);
@@ -1459,33 +1409,32 @@ class ChatComposerState extends State<ChatComposer>
     final text = StringBuffer();
     final mentions = <String>[];
     final code = <String, AppendedText>{};
-    for (final op in _controller.document.toDelta().toList()) {
-      final data = op.data;
-      if (data is String) {
-        text.write(data);
-      } else if (data case {ComposerImageEmbed.type: final image}) {
-        text.write(ComposerImageEmbed.plainText(image));
-      } else if (data case {ComposerCodeEmbed.type: final raw}) {
-        final reference = ComposerCodeEmbed.decode(raw);
-        text.write(reference.reference);
-        code.putIfAbsent(reference.reference, () => reference);
-      } else if (data case {ComposerPastedTextEmbed.type: final raw}) {
-        final pasted = ComposerPastedTextEmbed.decode(raw);
-        text.write(pasted.reference);
-        code.putIfAbsent(pasted.reference, () => pasted);
-      } else if (data case {ComposerStashEmbed.type: final raw}) {
-        final stash = ComposerStashEmbed.decode(raw);
-        text.write(stash.reference);
-        code.putIfAbsent(stash.reference, () => stash);
-      } else if (data is Map && data.containsKey(ComposerTokenEmbed.type)) {
-        final raw = data[ComposerTokenEmbed.type];
-        text.write(ComposerTokenEmbed.plainText(raw));
-        final token = ComposerTokenEmbed.decode(raw);
-        if ((token.kind == SuggestionKind.file ||
-                token.kind == SuggestionKind.folder) &&
-            !mentions.contains(token.value)) {
-          mentions.add(token.value);
-        }
+    for (final piece in composerPieces(_controller.text)) {
+      switch (piece) {
+        case final String data:
+          text.write(data);
+        case ComposerEmbed(type: ComposerImageEmbed.type, :final data):
+          text.write(ComposerImageEmbed.plainText(data));
+        case ComposerEmbed(type: ComposerCodeEmbed.type, :final data):
+          final reference = ComposerCodeEmbed.decode(data);
+          text.write(reference.reference);
+          code.putIfAbsent(reference.reference, () => reference);
+        case ComposerEmbed(type: ComposerPastedTextEmbed.type, :final data):
+          final pasted = ComposerPastedTextEmbed.decode(data);
+          text.write(pasted.reference);
+          code.putIfAbsent(pasted.reference, () => pasted);
+        case ComposerEmbed(type: ComposerStashEmbed.type, :final data):
+          final stash = ComposerStashEmbed.decode(data);
+          text.write(stash.reference);
+          code.putIfAbsent(stash.reference, () => stash);
+        case ComposerEmbed(type: ComposerTokenEmbed.type, :final data):
+          text.write(ComposerTokenEmbed.plainText(data));
+          final token = ComposerTokenEmbed.decode(data);
+          if ((token.kind == SuggestionKind.file ||
+                  token.kind == SuggestionKind.folder) &&
+              !mentions.contains(token.value)) {
+            mentions.add(token.value);
+          }
       }
     }
     return ComposerMessage(
@@ -1504,6 +1453,14 @@ class ChatComposerState extends State<ChatComposer>
       !(widget.session.canQueue && _canSend);
 
   void _submit() {
+    // Empty while a turn runs, messages queued behind it: the first of them
+    // taken up now, as its Send Now.
+    if (widget.onSubmit == null && widget.session.isStreaming && !_canSend) {
+      if (widget.session.queued.firstOrNull case (final id, _)) {
+        widget.session.sendQueuedNow(id);
+      }
+      return;
+    }
     if (_showsStop) return;
     final message = _buildMessage();
     if (message.text.isEmpty && message.images.isEmpty) return;
@@ -1523,6 +1480,7 @@ class ChatComposerState extends State<ChatComposer>
 
   @override
   Widget build(BuildContext context) {
+    _shownBuilt = _shownOfText();
     final focused = _focusNode.hasFocus;
     final suggestion = widget.onSubmit == null
         ? widget.session.promptSuggestion
@@ -1545,7 +1503,14 @@ class ChatComposerState extends State<ChatComposer>
       _editorColors = colors;
       _editor = null;
     }
-    return FloatingLayer(
+    // Before what is built is told by it (see [_buildInputs]).
+    _editor ??= _buildEditor(context);
+    final inputs = _buildInputs();
+    if (_built case final built? when listEquals(inputs, _builtFrom)) {
+      return built;
+    }
+    _builtFrom = inputs;
+    return _built = FloatingLayer(
       visible: _trigger != null,
       // Above the composer at the trigger character; below it when there
       // is no room above.
@@ -1578,6 +1543,76 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
+  /// What [build] made, and of what ([_buildInputs]): the same again
+  /// while none of it changed, so that the session's every change (an
+  /// answer's each word, streaming) does not build the box again, its
+  /// pickers and buttons.
+  Widget? _built;
+  List<Object?>? _builtFrom;
+
+  /// The hovers of the toolbar's mode and model pickers and its context
+  /// ring, with the keys that do the same in the input.
+  late ({String mode, String model, String ring}) _hovers;
+
+  /// All that [build] reads, as it is now: the widget's, the state's, and
+  /// the session's that the toolbar shows. A kernel's options are the same
+  /// list while they do not change; the kernel among these, the picks'
+  /// callbacks built with it stay its.
+  List<Object?> _buildInputs() {
+    final session = widget.session;
+    final l10n = context.l10n;
+    const input = {ChatContextKeys.inChatInput: true};
+    _hovers = (
+      mode: ChatKeys.titleWithKey(
+        l10n.composerSetMode,
+        ChatCommandIds.openModePicker,
+        input,
+      ),
+      model: ChatKeys.titleWithKey(
+        l10n.composerPickModel,
+        ChatCommandIds.openModelPicker,
+        input,
+      ),
+      ring: ChatKeys.titleWithKey(
+        l10n.composerContextUsage,
+        ChatCommandIds.toggleContextPanel,
+        const {...input, ChatContextKeys.inChat: true},
+      ),
+    );
+    final model = session.models;
+    return [
+      session,
+      widget.onSubmit == null,
+      widget.tapRegionGroupId,
+      widget.contextPanelOpen,
+      widget.onToggleContextPanel,
+      _focusNode.hasFocus,
+      _ghostAt != null,
+      _shownBuilt,
+      _editor,
+      _polishing,
+      ComposerPolishSetting.current(),
+      l10n,
+      themeColors,
+      _hovers,
+      session.kernel,
+      _showsStop,
+      session.health.noModel,
+      session.context?.fraction,
+      for (final choice in [
+        session.kernelChoice,
+        session.modes,
+        session.permissions,
+        model,
+      ]) ...[choice?.options, choice?.selected],
+      // What the model's label says of its settings (see
+      // SessionModelPicker): their lists are made anew each time.
+      for (final setting in session.modelSettings(
+        model?.selected.id ?? '',
+      )) ...[setting.kind, setting.selected, ...setting.options],
+    ];
+  }
+
   Widget _buildBox({required bool focused}) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -1597,10 +1632,7 @@ class ChatComposerState extends State<ChatComposer>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ComposerImages(
-              images: _pool,
-              child: _editor ??= _buildEditor(context),
-            ),
+            ComposerImages(images: _pool, child: _editor!),
             _buildToolbar(),
           ],
         ),
@@ -1630,7 +1662,7 @@ class ChatComposerState extends State<ChatComposer>
       child: Scrollbar(
         controller: _scrollController,
         // Desktop scroll behavior would add a second, default scrollbar to
-        // Quill's internal scroll view.
+        // the editor's scroll view.
         child: ScrollConfiguration(
           behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
           child: _buildEditorBody(context),
@@ -1645,24 +1677,15 @@ class ChatComposerState extends State<ChatComposer>
       child: ClipRect(
         child: ComposerCaret(
           editorKey: _editorKey,
-          controller: _controller,
-          focusNode: _focusNode,
-          scrollController: _scrollController,
-          height: (_fontSize * 1.2).roundToDouble(),
-          color: themeColors['editorCursor.foreground'],
           child: Listener(
-            onPointerDown: _handleSelectPointerDown,
-            onPointerMove: _handleSelectPointerMove,
-            onPointerUp: _handleSelectPointerUp,
-            onPointerCancel: (_) {
-              _selectDragFrom = null;
-              _clickDownAt = null;
-            },
+            onPointerDown: _handleClickDown,
+            onPointerUp: _handleClickUp,
+            onPointerCancel: (_) => _clickDownAt = null,
             child: Listener(
               onPointerDown: _handleMenuPointerDown,
               onPointerUp: _handleMenuPointerUp,
               onPointerCancel: (_) => _menuPressAt = null,
-              child: _buildQuill(context),
+              child: _buildMarkdownEditor(context),
             ),
           ),
         ),
@@ -1672,8 +1695,7 @@ class ChatComposerState extends State<ChatComposer>
 
   // --- Context menu -------------------------------------------------------
   //
-  // A right click opens the system's menu (Quill's own is a Flutter one,
-  // turned off). Quill has placed the caret by the time it opens: at the
+  // A right click opens the system's menu, the caret first put at the
   // click, unless the click is on a selection.
 
   /// Where a right click went down; null for other presses.
@@ -1691,7 +1713,14 @@ class ChatComposerState extends State<ChatComposer>
     final down = _menuPressAt;
     _menuPressAt = null;
     if (down == null || (event.position - down).distance > kTouchSlop) return;
-    // After Quill's handling of the click, which comes after this.
+    final selection = _controller.selection;
+    if (_editorKey.currentState?.offsetAt(event.position) case final at?
+        when selection.isCollapsed ||
+            at < selection.start ||
+            at > selection.end) {
+      _controller.selection = TextSelection.collapsed(offset: at);
+    }
+    _focusNode.requestFocus();
     SchedulerBinding.instance
       ..addPostFrameCallback((_) => _showContextMenu(event.position))
       ..scheduleFrame();
@@ -1712,7 +1741,7 @@ class ChatComposerState extends State<ChatComposer>
         'selectAll',
         l10n.commonSelectAll,
         key: 'a',
-        enabled: _controller.document.length > 1,
+        enabled: _controller.length > 0,
       ),
     ]);
     final editor = _editorKey.currentState;
@@ -1721,78 +1750,27 @@ class ChatComposerState extends State<ChatComposer>
     // As their shortcuts do: the selection stays where it is.
     switch (chosen) {
       case 'cut':
-        editor.cutSelection(SelectionChangedCause.keyboard);
+        await editor.copy(cut: true);
       case 'copy':
-        editor.copySelection(SelectionChangedCause.keyboard);
+        await editor.copy();
       case 'paste':
-        await editor.pasteText(SelectionChangedCause.keyboard);
+        await editor.paste();
       case 'selectAll':
-        editor.selectAll(SelectionChangedCause.keyboard);
+        _selectAll();
     }
   }
 
-  // --- Drag selection -----------------------------------------------------
-  //
-  // Quill throttles a mouse drag selection to one update per 50ms (Flutter's
-  // own text fields no longer do), so the selection trails the pointer.
-  // Extend it on every move instead; Quill's late update then lands on the
-  // same position.
-
-  /// Where a primary mouse press that may become a drag selection went down.
-  Offset? _selectDragFrom;
-  bool _selectDragging = false;
-
-  void _handleSelectPointerDown(PointerDownEvent event) {
-    // Quill takes the keyboard on a click, not on a drag: text selected by
-    // one is to be deleted, typed over.
-    if (event.kind == PointerDeviceKind.mouse &&
-        event.buttons & kPrimaryMouseButton != 0 &&
-        !_focusNode.hasFocus) {
-      _focusNode.requestFocus();
-    }
-    final plainPress =
-        event.kind == PointerDeviceKind.mouse &&
-        event.buttons == kPrimaryMouseButton &&
-        !HardwareKeyboard.instance.isShiftPressed;
-    _selectDragFrom = plainPress ? event.position : null;
-    _selectDragging = false;
-    _handleClickDown(event, plainPress: plainPress);
-  }
-
-  void _handleSelectPointerUp(PointerUpEvent event) {
-    _selectDragFrom = null;
-    _handleClickUp(event);
-  }
-
-  void _handleSelectPointerMove(PointerMoveEvent event) {
-    final from = _selectDragFrom;
-    if (from == null || event.buttons != kPrimaryMouseButton) return;
-    // Past the same slop at which Quill's drag recognizer starts.
-    if (!_selectDragging &&
-        (event.position - from).distance <= kPrecisePointerPanSlop) {
-      return;
-    }
-    _selectDragging = true;
-    final to = event.position;
-    // Pointer listeners see a move before gesture recognizers do: on the
-    // move that starts the drag, Quill sets the selection's origin after
-    // this handler returns.
-    scheduleMicrotask(() {
-      final editor = _editorKey.currentState?.renderEditor;
-      if (_selectDragFrom == null || editor == null || !editor.attached) {
-        return;
-      }
-      editor.extendSelection(to, cause: SelectionChangedCause.drag);
-    });
-  }
+  void _selectAll() => _controller.selection = TextSelection(
+    baseOffset: 0,
+    extentOffset: _controller.length,
+  );
 
   // --- Double-click -------------------------------------------------------
   //
   // A double-click with nothing selected selects everything; with text
-  // selected it selects a word, as Quill does. Told apart here rather than
-  // by Quill: a real click often moves the pointer a pixel or two, past
-  // where Quill's drag recognizer takes the press from its tap, and then it
-  // sees no double-click at all.
+  // selected it selects a word, as the editor does. Told apart here rather
+  // than by the editor: a real click often moves the pointer a pixel or
+  // two, past where a drag starts, and then it sees no double-click at all.
 
   /// How far a press may move and still be a click.
   static const _clickSlop = 6.0;
@@ -1810,7 +1788,11 @@ class ChatComposerState extends State<ChatComposer>
   /// Whether the current press is a double-click's second.
   bool _secondClick = false;
 
-  void _handleClickDown(PointerDownEvent event, {required bool plainPress}) {
+  void _handleClickDown(PointerDownEvent event) {
+    final plainPress =
+        event.kind == PointerDeviceKind.mouse &&
+        event.buttons == kPrimaryMouseButton &&
+        !HardwareKeyboard.instance.isShiftPressed;
     final upAt = _clickUpAt;
     _clickDownAt = plainPress ? event.position : null;
     _secondClick =
@@ -1830,15 +1812,13 @@ class ChatComposerState extends State<ChatComposer>
     if (downAt == null || (event.position - downAt).distance > _clickSlop) {
       return;
     }
-    // As Quill's, a third click is a click again (no window after a second).
+    // A third click is a click again (no window after a second).
     if (_secondClick) {
       if (_clickOnSelection) return;
-      // After Quill's handling of the up, which comes after this: whatever
-      // it made of the press (a word, a caret, a drag of a pixel).
+      // After the editor's handling of the up, which comes after this:
+      // whatever it made of the press (a word, a caret, a drag of a pixel).
       scheduleMicrotask(() {
-        if (mounted) {
-          _editorKey.currentState?.selectAll(SelectionChangedCause.tap);
-        }
+        if (mounted) _selectAll();
       });
       return;
     }
@@ -1856,100 +1836,37 @@ class ChatComposerState extends State<ChatComposer>
     );
   }
 
-  Widget _buildQuill(BuildContext context) {
-    return QuillEditor(
-      controller: _controller,
-      focusNode: _focusNode,
-      scrollController: _scrollController,
-      config: QuillEditorConfig(
-        editorKey: _editorKey,
+  Widget _buildMarkdownEditor(BuildContext context) {
+    final colors = themeColors;
+    final base = DefaultTextStyle.of(context).style.merge(_textStyle);
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        minHeight: _minEditorHeight,
+        maxHeight: _maxEditorHeight(context),
+      ),
+      child: MarkdownEditor(
+        key: _editorKey,
+        controller: _controller,
+        focusNode: _focusNode,
+        scrollController: _scrollController,
+        shrinkWrap: true,
+        embeds: const ComposerChips(),
         // A suggested prompt, then the key that takes it as the keybindings
-        // label it (`Tab`); alone when it has none.
-        placeholder: _quillPlaceholder(switch ((_suggestion, _suggestionKey)) {
+        // label it (`Tab`); alone when it has none. On one line.
+        placeholder: switch ((_suggestion, _suggestionKey)) {
           (final suggestion?, final key?) => '$suggestion    $key',
           (final suggestion?, null) => suggestion,
           (null, _) => context.l10n.composerPlaceholder,
-        }),
-        minHeight: _minEditorHeight,
-        maxHeight: _maxEditorHeight(context),
-        textCapitalization: TextCapitalization.none,
-        enableSelectionToolbar: false,
-        embedBuilders: const [
-          ComposerTokenEmbedBuilder(),
-          ComposerImageEmbedBuilder(),
-          ComposerCodeEmbedBuilder(),
-          ComposerPastedTextEmbedBuilder(),
-          ComposerStashEmbedBuilder(),
-          ComposerGhostEmbedBuilder(),
-        ],
-        // ignore: experimental_member_use
-        onKeyPressed: _handleKey,
-        customShortcuts: _richTextShortcuts(),
-        onTapOutside: (event, focusNode) {},
-        showCursor: false,
-        customStyles: _editorStyles(context),
-      ),
-    );
-  }
-
-  /// Quill's rich-text shortcuts (headers, styles, lists, indents, its link,
-  /// image and search dialogs), bound to nothing: they do nothing here and
-  /// go on to the window. [_handleKey] swallows them first, but not when an
-  /// open menu answers for the key; and the controller takes no style.
-  static Map<ShortcutActivator, Intent> _richTextShortcuts() {
-    // Quill's own modifier: ⌘ on macOS, Ctrl elsewhere.
-    final mac = defaultTargetPlatform == TargetPlatform.macOS;
-    return {
-      for (final (key, shift) in _quillShortcutKeys)
-        SingleActivator(key, meta: mac, control: !mac, shift: shift):
-            const _NoRichTextIntent(),
-    };
-  }
-
-  static final _quillShortcutKeys = [
-    (LogicalKeyboardKey.keyB, false),
-    (LogicalKeyboardKey.keyB, true),
-    (LogicalKeyboardKey.keyU, false),
-    (LogicalKeyboardKey.keyI, false),
-    (LogicalKeyboardKey.keyS, true),
-    (LogicalKeyboardKey.backquote, false),
-    (LogicalKeyboardKey.tilde, true),
-    (LogicalKeyboardKey.keyK, false),
-    (LogicalKeyboardKey.keyL, true),
-    (LogicalKeyboardKey.keyO, true),
-    (LogicalKeyboardKey.keyC, true),
-    (LogicalKeyboardKey.keyM, false),
-    (LogicalKeyboardKey.keyM, true),
-    for (var digit = 0; digit <= 6; digit++)
-      (LogicalKeyboardKey(LogicalKeyboardKey.digit0.keyId + digit), false),
-    (LogicalKeyboardKey.keyG, false),
-    (LogicalKeyboardKey.keyF, false),
-  ];
-
-  /// [text] as Quill's placeholder takes it. Quill reads the placeholder as
-  /// JSON it splices the text into, escaping only its quotes: a backslash
-  /// (a Windows path in a suggested prompt) or a control character (a line
-  /// break) failed its build, and the input was a grey box until the app
-  /// restarted. On one line, its backslashes escaped.
-  static String _quillPlaceholder(String text) =>
-      text.replaceAll(RegExp(r'[\x00-\x1f]+'), ' ').replaceAll(r'\', r'\\');
-
-  /// Quill's paragraph style does not inherit the ambient text theme, so
-  /// derive it explicitly to match the rest of the UI.
-  DefaultStyles _editorStyles(BuildContext context) {
-    final base = DefaultTextStyle.of(context).style;
-    DefaultTextBlockStyle block(TextStyle style) => DefaultTextBlockStyle(
-      base.merge(style),
-      HorizontalSpacing.zero,
-      VerticalSpacing.zero,
-      VerticalSpacing.zero,
-      null,
-    );
-    return DefaultStyles(
-      paragraph: block(_textStyle),
-      placeHolder: block(
-        _textStyle.copyWith(
-          color: themeColors['agentsChatInput.placeholderForeground'],
+        }.replaceAll(RegExp(r'[\x00-\x1f]+'), ' '),
+        onKey: _handleKey,
+        onPaste: _paste,
+        style: MarkdownEditorStyle(
+          text: base,
+          selection: AppColors.textSelection,
+          caret: colors['editorCursor.foreground'],
+          placeholder: TextStyle(
+            color: colors['agentsChatInput.placeholderForeground'],
+          ),
         ),
       ),
     );
@@ -1970,9 +1887,6 @@ class ChatComposerState extends State<ChatComposer>
       KernelChoiceKind.permission,
       option,
     );
-    // The pickers' and the ring's hovers, with the keys that do the same in
-    // the input.
-    const input = {ChatContextKeys.inChatInput: true};
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
       child: Row(
@@ -2002,11 +1916,7 @@ class ChatComposerState extends State<ChatComposer>
                         options: mode.options,
                         selected: mode.selected,
                         emphasized: true,
-                        tooltip: ChatKeys.titleWithKey(
-                          l10n.composerSetMode,
-                          ChatCommandIds.openModePicker,
-                          input,
-                        ),
+                        tooltip: _hovers.mode,
                         tapRegionGroupId: widget.tapRegionGroupId,
                         focusNode: _focusNode,
                         onSelected: mode.onSelected,
@@ -2046,11 +1956,7 @@ class ChatComposerState extends State<ChatComposer>
                       SessionModelPicker(
                         session: session,
                         pickerKey: _modelPickerKey,
-                        tooltip: ChatKeys.titleWithKey(
-                          l10n.composerPickModel,
-                          ChatCommandIds.openModelPicker,
-                          input,
-                        ),
+                        tooltip: _hovers.model,
                         tapRegionGroupId: widget.tapRegionGroupId,
                         focusNode: _focusNode,
                       ),
@@ -2063,7 +1969,7 @@ class ChatComposerState extends State<ChatComposer>
           if (ComposerPolishSetting.current()) ...[
             _PolishButton(
               busy: _polishing,
-              enabled: _polishing || _polishText().hasWords,
+              enabled: _polishing || _shownBuilt!.polishable,
               onTap: () => unawaited(_polish()),
             ),
             const SizedBox(width: 2),
@@ -2076,11 +1982,7 @@ class ChatComposerState extends State<ChatComposer>
               fraction: usage.fraction,
               active: widget.contextPanelOpen,
               // Toggle Context Panel's, which has none by default.
-              tooltip: ChatKeys.titleWithKey(
-                l10n.composerContextUsage,
-                ChatCommandIds.toggleContextPanel,
-                const {...input, ChatContextKeys.inChat: true},
-              ),
+              tooltip: _hovers.ring,
               onTap: onToggle,
             ),
             const SizedBox(width: 2),
@@ -2321,3 +2223,10 @@ class _SendButton extends StatelessWidget {
     );
   }
 }
+
+typedef _ShownOfText = ({
+  Object menu,
+  Map<int, ImageAttachment> pool,
+  bool canSend,
+  bool polishable,
+});

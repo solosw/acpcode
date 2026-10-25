@@ -142,14 +142,16 @@ abstract final class UpstreamUrls {
 }
 
 /// Whether [provider]'s key goes as `x-api-key`: asked for, or left to
-/// [ProviderAuth.auto] on Anthropic's own API.
-bool sendsApiKeyHeader(ModelProvider provider) => switch (provider.auth) {
-  ProviderAuth.apiKey => true,
-  ProviderAuth.bearer => false,
-  ProviderAuth.auto =>
+/// [ProviderAuth.auto] on Anthropic's own API. Only ever to its Messages
+/// API: OpenAI's take a bearer token (a model of a relay spoken to there,
+/// its upstream's auth set for its Claude).
+bool sendsApiKeyHeader(ModelProvider provider) =>
     provider.protocol == ProviderProtocol.anthropic &&
-        provider.host.endsWith('anthropic.com'),
-};
+    switch (provider.auth) {
+      ProviderAuth.apiKey => true,
+      ProviderAuth.bearer => false,
+      ProviderAuth.auto => provider.host.endsWith('anthropic.com'),
+    };
 
 /// Claude Code's user agent. Some relays serve only clients that look
 /// like it, to every protocol: without this (any [HttpClient] default

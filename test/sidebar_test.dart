@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/widgets/pixel_loader.dart';
 import 'package:baocode/chat/chat_screen.dart';
-import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
@@ -811,7 +810,8 @@ void main() {
       find.descendant(
         of: row,
         matching: find.byWidgetPredicate(
-          (widget) => widget is Positioned && widget.left == 0 && widget.width == 2,
+          (widget) =>
+              widget is Positioned && widget.left == 0 && widget.width == 2,
         ),
       ),
       findsNothing,
@@ -963,14 +963,14 @@ void main() {
     await tester.pump();
     expect(thread.title, 'Quota');
 
-    // The title bar, left-aligned with the conversation's column.
+    // The title bar's title at its left, not the conversation's column.
     final title = find.descendant(
       of: find.byType(ChatScreen),
       matching: find.text('Quota'),
     );
     expect(
       tester.getTopLeft(title).dx,
-      tester.getTopLeft(find.byType(ChatComposer)).dx,
+      tester.getTopLeft(find.byType(ChatScreen)).dx + 12,
     );
     await tester.tap(title);
     await tester.pump(const Duration(milliseconds: 50));

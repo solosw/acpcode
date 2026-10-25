@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>手机上的 BaoCode：隐私说明</title>
+<meta name="description" content="BaoCode 手机版保存什么、发送什么、发给谁，以及它绝不做的事。">
+<link rel="icon" href="/icon.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/head.js"></script>
+<link rel="alternate" hreflang="en" href="https://baocode.dev/mobile-privacy">
+<link rel="alternate" hreflang="zh" href="https://baocode.dev/zh/mobile-privacy">
+</head>
+<body>
+<canvas class="grid" aria-hidden="true"></canvas>
+<svg class="sprite" aria-hidden="true">
+  <!-- Lucide (ISC), https://lucide.dev -->
+  <symbol id="ic-github" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5c.08-1.25-.27-2.48-1-3.5c.28-1.15.28-2.35 0-3.5c0 0-1 0-3 1.5c-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5c-.39.49-.68 1.05-.85 1.65S8.93 17.38 9 18v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></g></symbol>
+</svg>
+<header class="top">
+  <a class="brand" href="/zh/"><img src="/icon.png" alt="">BaoCode</a>
+  <a href="/zh/download">下载</a>
+  <a href="/zh/changelog">更新日志</a>
+  <a href="https://github.com/baocode-dev/baocode"><svg class="ic" aria-hidden="true"><use href="#ic-github"/></svg>GitHub</a>
+  <a class="lang" href="/mobile-privacy" hreflang="en" lang="en">English</a>
+</header>
+
+<main class="page">
+  <h1>手机上的 BaoCode 与你的隐私</h1>
+  <p class="meta"><span>更新于 2026 年 10 月 21 日</span></p>
+
+  <p>手机上的 BaoCode 连接你电脑上的桌面应用 BaoCode，让你不在电脑前也能查看那里的 agent、回答它们、给它们发消息。本页说明手机版保存什么、发送什么，以及发给谁。</p>
+
+  <h2 class="plain">只在你的手机和电脑之间</h2>
+  <p>App 只和你配对过的电脑通信：在局域网里直连，或经互联网连到你设好的地址（电脑自己的地址，或你自己的 Cloudflare Tunnel）。两端之间的一切都端到端加密（X25519 与 XSalsa20-Poly1305），密钥在配对时由你的设备各自生成，配对时你会在两个屏幕上核对安全码。中间没有 BaoCode 的服务器，我们也无从看到你发送的内容。</p>
+
+  <h2 class="plain">手机上保存什么</h2>
+  <p>App 只保存它自己的密钥和与它配对的电脑列表（名字、地址和密钥），放在只有它能读取的私有存储里。对话是电脑发来时显示的，不保存在手机上。卸载 App 就会把这些全部删掉。</p>
+
+  <h2 class="plain">它要哪些权限</h2>
+  <ul>
+    <li><strong>相机</strong>：扫描电脑上显示的二维码来配对，以及拍照发给 agent。</li>
+    <li><strong>照片</strong>：把你选的照片发给 agent。它只能看到你选的那几张。</li>
+    <li><strong>本地网络</strong>：在同一网络里找到你的电脑并连接。</li>
+    <li><strong>通知</strong>：agent 问你问题或做完时提醒你。通知由手机自己显示，不经过任何推送服务。</li>
+  </ul>
+
+  <h2 class="plain">你的电脑和你的 AI 服务商</h2>
+  <p>你在手机上发出的内容（消息、回答和照片）会交给你电脑上的 BaoCode，就像你在电脑上输入的一样。那里的 agent 会把对话发送给你使用的 AI 模型（Claude Code 用的是 Anthropic 的模型，或你自己配置的服务商），适用该服务商的条款。</p>
+
+  <h2 class="plain">它绝不做的事</h2>
+  <ul>
+    <li>没有统计、没有追踪、没有广告。App 不会把你或你的使用情况发给任何人。</li>
+    <li>不需要账号，没有什么要注册的。</li>
+    <li>不出售数据，也不交给任何第三方。</li>
+  </ul>
+  <p>如果你同意了与 App 开发者共享分析数据（iPhone 上的 设置 → 隐私与安全性 → 分析与改进），Apple 可能会把崩溃报告转给我们；TestFlight 会转交你主动发送的反馈。两者都不包含你的对话。</p>
+
+  <h2 class="plain">有问题？</h2>
+  <p>加密连接的部分是开源的，在 <a href="https://github.com/baocode-dev/baocode/tree/main/packages/bao_link">BaoCode 的代码</a>里。其他问题可以<a href="https://github.com/baocode-dev/baocode/issues">提一个 issue</a>。</p>
+</main>
+<script src="/site.js"></script>
+</body>
+</html>

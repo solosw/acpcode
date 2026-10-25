@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:math' show Random;
 import 'dart:ui' as ui;
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
@@ -52,7 +52,6 @@ Future<ChatSession> pumpSession(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -99,7 +98,6 @@ Future<({ChatSession session, FakeCli cli})> pumpScripted(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -141,6 +139,26 @@ Map<String, Object?> result(
 };
 
 void main() {
+  testWidgets('Enter in the empty composer while the agent works sends the '
+      'queued message now; with none queued, does nothing (#160)', (
+    tester,
+  ) async {
+    final (:session, :cli) = await pumpScripted(tester, cli: FakeCli());
+    await tester.tap(find.byType(MarkdownEditor).last);
+    await tester.pump();
+    expect(session.isStreaming, isTrue);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(cli.requests('interrupt'), isEmpty);
+
+    session.send(const ComposerMessage(text: 'and lint'));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(session.queued, hasLength(1));
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(cli.requests('interrupt'), hasLength(1));
+  });
+
   testWidgets('messages sent while the agent works wait over the composer, '
       'to be taken back to edit, sent now or removed', (tester) async {
     final (:session, :cli) = await pumpScripted(
@@ -169,8 +187,10 @@ void main() {
     await tester.tap(find.text('then the tests'));
     await tester.pump(const Duration(milliseconds: 100));
     expect(cli.requests('cancel_async_message'), hasLength(1));
-    final composer = tester.widget<QuillEditor>(find.byType(QuillEditor).last);
-    expect(composer.controller.document.toPlainText(), 'then the tests\n');
+    final composer = tester.widget<MarkdownEditor>(
+      find.byType(MarkdownEditor).last,
+    );
+    expect(composer.controller.text, 'then the tests');
     expect(composer.controller.selection.baseOffset, 14);
     expect(
       [for (final (_, item) in session.queued) item.text],
@@ -233,7 +253,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );
@@ -441,7 +460,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(
           session: session,
           fileLinks: FileLinkTarget(open: opened.add),
@@ -597,8 +615,8 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
-    final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
-    expect(editor.controller.document.toPlainText().trim(), 'Run the tests');
+    final editor = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
+    expect(editor.controller.text, 'Run the tests');
     await tester.pump(const Duration(seconds: 5));
   });
 
@@ -616,7 +634,7 @@ void main() {
     expect(session.promptSuggestion, 'Run the tests');
     tester.testTextInput.updateEditingValue(
       const TextEditingValue(
-        text: '\n',
+        text: '',
         selection: TextSelection.collapsed(offset: 0),
         composing: TextRange.collapsed(0),
       ),
@@ -625,13 +643,12 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
-    final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
-    expect(editor.controller.document.toPlainText(), 'Run the tests\n');
-    // The input method's next state ends it (Quill, disposed with it still
-    // there, sets its state as it goes).
+    final editor = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
+    expect(editor.controller.text, 'Run the tests');
+    // The input method's next state ends it.
     tester.testTextInput.updateEditingValue(
       const TextEditingValue(
-        text: 'Run the tests\n',
+        text: 'Run the tests',
         selection: TextSelection.collapsed(offset: 13),
       ),
     );
@@ -640,9 +657,9 @@ void main() {
 
   testWidgets('a suggested prompt with a Windows path, quotes and a line '
       'break shows in the placeholder, the input still there', (tester) async {
-    // Quill reads its placeholder as JSON it splices the text into: a
-    // backslash or a line break once broke the editor's build, and the
-    // input turned into a grey box until the app restarted.
+    // A backslash or a line break in the placeholder once broke the
+    // editor's build, and the input turned into a grey box until the app
+    // restarted.
     const suggestion =
         r'Run release\win-unpacked\BaoCode.exe'
         '\n'
@@ -668,8 +685,8 @@ void main() {
     // Taken, it is the text as suggested.
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
-    final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
-    expect(editor.controller.document.toPlainText().trim(), suggestion);
+    final editor = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
+    expect(editor.controller.text, suggestion);
     await tester.pump(const Duration(seconds: 5));
   });
 
@@ -1307,7 +1324,6 @@ void main() {
     // Away to another conversation and back: still open, as it was.
     Widget screen(Widget home) => MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: home,
     );
     await tester.pumpWidget(screen(const SizedBox()));

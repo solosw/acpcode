@@ -8,8 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/platform/error_log.dart';
 import 'package:baocode/update/version.dart';
 
-/// Fails to build, as Quill's editor did on a suggested prompt with a
-/// Windows path in it.
+/// Fails to build, as the composer's old editor did on a suggested prompt
+/// with a Windows path in it.
 class _Throws extends StatelessWidget {
   const _Throws();
 

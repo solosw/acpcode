@@ -407,6 +407,40 @@ void main() {
     current.dispose();
   });
 
+  test('long lines past the memory budget: the oldest go, the shown stay', () {
+    // Each some 1MB laid out: more on screen than the 32MB kept.
+    final text = List<String>.generate(
+      200,
+      (index) => 'v$index = ${'x' * 4000};',
+    ).join('\n');
+    const viewport = Size(300, 1200);
+    var current = layout(text, viewport: viewport);
+    final shown = current.visibleRowRange.end - current.visibleRowRange.start;
+    expect(shown, greaterThan(40));
+    // Laid out again where it is, nothing is shaped again.
+    var next = layout(text, viewport: viewport, previous: current);
+    current.dispose();
+    current = next;
+    expect(current.shapedLineCount, 0);
+
+    for (var top = shown; top < 200; top += shown) {
+      next = layout(
+        text,
+        viewport: viewport,
+        previous: current,
+        vertical: current.lineHeight * top,
+      );
+      current.dispose();
+      current = next;
+    }
+    // Back at the top, its lines are long gone and shaped anew.
+    next = layout(text, viewport: viewport, previous: current);
+    current.dispose();
+    current = next;
+    expect(current.shapedLineCount, shown);
+    current.dispose();
+  });
+
   test('100k-line edits and scrolling shape only visible lines', () {
     final lines = List<String>.generate(100000, (index) => 'line $index;');
     final stopwatch = Stopwatch()..start();

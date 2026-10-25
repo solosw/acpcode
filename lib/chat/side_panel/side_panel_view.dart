@@ -157,6 +157,19 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
 
   AgentSidePanel get _panel => widget.panel;
 
+  /// The widest it shows in [room]: beside the conversations, what they
+  /// leave at their least; over them, all but a strip of them.
+  double _most(double room) => _overlay
+      ? math.max(0.0, room - 48)
+      : math.max(
+          0.0,
+          room - AgentSidePanelArea.minChat - AgentSidePanelArea.sashWidth,
+        );
+
+  /// How wide it shows in [room]: as wide as it was made, as far as there
+  /// is room for.
+  double _shownWidth(double room) => math.min(_panel.width, _most(room));
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: _panel,
@@ -174,17 +187,7 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
         final atLeft = _panel.atLeft;
         final beside = shown && !overlay;
         final rail = !shown && widget.rail != null;
-        final width = overlay
-            ? math.min(_panel.width, math.max(0.0, room - 48))
-            : math.max(
-                0.0,
-                math.min(
-                  _panel.width,
-                  room -
-                      AgentSidePanelArea.minChat -
-                      AgentSidePanelArea.sashWidth,
-                ),
-              );
+        final width = _shownWidth(room);
         // Each child keyed: the conversations and the panel are never
         // built anew as the rail, the scrim or the drag's cursor come and
         // go (the panel built anew mid-drag would drop the drag, and
@@ -315,20 +318,26 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
       key: const ValueKey('side-panel-sash'),
       behavior: HitTestBehavior.opaque,
       dragStartBehavior: DragStartBehavior.down,
+      // From the width it shows, not the one it was made: narrower where
+      // the room is short, the sash would wait for the pointer to cover the
+      // difference before it moved.
       onHorizontalDragStart: (details) => setState(() {
         _dragging = true;
-        _dragStart = (x: details.globalPosition.dx, width: _panel.width);
+        _dragStart = (
+          x: details.globalPosition.dx,
+          width: _shownWidth(context.size?.width ?? double.infinity),
+        );
       }),
       onHorizontalDragUpdate: (details) {
         final start = _dragStart;
         if (start == null) return;
-        final room =
-            (context.size?.width ?? double.infinity) -
-            AgentSidePanelArea.minChat;
+        final room = context.size?.width ?? double.infinity;
         final moved = details.globalPosition.dx - start.x;
+        // No wider than it shows: past that the sash waits, and follows
+        // again once the pointer is back.
         _panel.width = math.min(
           atLeft ? start.width + moved : start.width - moved,
-          math.max(AgentSidePanel.minWidth, room),
+          math.max(AgentSidePanel.minWidth, _most(room)),
         );
       },
       onHorizontalDragEnd: (_) => _endDrag(),
@@ -390,10 +399,20 @@ class AgentSidePanelView extends StatelessWidget {
     this.repositories = const [],
     this.onAddFolder,
     this.onRemoveFolder,
+    this.titleBarInset = 0,
+    this.leading,
   });
 
   final AgentSidePanel panel;
   final ChatSession session;
+
+  /// Room kept at the left of its tabs: for the traffic lights, where it
+  /// is at the window's top left.
+  final double titleBarInset;
+
+  /// Before its tabs, after [titleBarInset]: the window's sidebar toggle,
+  /// by the traffic lights, where it is at the window's top left.
+  final Widget? leading;
 
   /// The name of the multi-folder workspace the conversation is in; null
   /// for a folder's.
@@ -508,6 +527,8 @@ class AgentSidePanelView extends StatelessWidget {
             session: session,
             tabs: tabs,
             changes: _gits.fold(0, (sum, git) => sum + (git.state?.count ?? 0)),
+            inset: titleBarInset,
+            leading: leading,
           ),
           Expanded(
             child: switch (tabs.shown) {
@@ -1403,10 +1424,22 @@ class _SectionBar extends StatelessWidget {
     required this.session,
     required this.tabs,
     required this.changes,
+    this.inset = 0,
+    this.leading,
   });
   final AgentSidePanel panel;
   final ChatSession session;
   final SidePanelTabs tabs;
+
+  /// Room kept at the left of the tabs (see
+  /// [AgentSidePanelView.titleBarInset]).
+  final double inset;
+
+  /// See [AgentSidePanelView.leading].
+  final Widget? leading;
+
+  /// What [leading] takes, with its gap.
+  static const _leadingWidth = 22.0 + 6;
 
   /// How many files Git has changed.
   final int changes;
@@ -1484,10 +1517,17 @@ class _SectionBar extends StatelessWidget {
                     SidePanelSection.changes: changes,
                     SidePanelSection.terminal: running,
                   }) +
-                  _actionsWidth;
+                  _actionsWidth +
+                  inset +
+                  (leading == null ? 0 : _leadingWidth);
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              SizedBox(width: inset),
+              if (leading case final leading?) ...[
+                Center(child: leading),
+                const SizedBox(width: 6),
+              ],
               for (final section in sections)
                 _SectionTab(
                   section: section,

@@ -52,6 +52,35 @@ void main() {
     expect(bodyOf(text), '\n# PDF\n');
   });
 
+  test('finds a /command\'s file: a skill\'s, a command\'s, a plugin\'s '
+      '(#220)', () async {
+    final skill = p.join(config, 'skills', 'pdf-tools', 'SKILL.md');
+    write(skill, '---\nname: pdf\ndescription: Reads PDFs\n---\n');
+    final command = p.join(project, '.claude', 'commands', 'ship.md');
+    write(command, 'Ship it.\n');
+    final root = p.join(config, 'plugins', 'cache', 'cf');
+    final pluginSkill = p.join(root, 'skills', 'wrangler', 'SKILL.md');
+    write(pluginSkill, '---\nname: wrangler\n---\n');
+    write(
+      p.join(config, 'plugins', 'installed_plugins.json'),
+      jsonEncode({
+        'version': 2,
+        'plugins': {
+          'cloudflare@market': [
+            {'installPath': root},
+          ],
+        },
+      }),
+    );
+    expect(await store.commandFile('pdf', project: project), skill);
+    expect(await store.commandFile('pdf-tools', project: project), skill);
+    expect(await store.commandFile('ship', project: project), command);
+    expect(await store.commandFile('ship'), isNull);
+    expect(await store.commandFile('cloudflare:wrangler'), pluginSkill);
+    expect(await store.commandFile('cloudflare:nope'), isNull);
+    expect(await store.commandFile('compact', project: project), isNull);
+  });
+
   test('lists the user\'s and the project\'s skills, agents, commands '
       'and rules', () async {
     write(

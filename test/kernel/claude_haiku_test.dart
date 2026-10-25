@@ -84,6 +84,29 @@ void main() {
     expect(const ClaudeHaikuTools().settings, isEmpty);
   });
 
+  test('the answer is read from verbose output\'s array of events, not '
+      'taken from stderr', () {
+    final output = jsonEncode([
+      {'type': 'system', 'subtype': 'init'},
+      {'type': 'assistant'},
+      {'type': 'result', 'is_error': false, 'result': 'Tidied.'},
+    ]);
+    expect(
+      claudeHaikuAnswer(output, '[claude-code:unrecognized_model] {}', 0),
+      'Tidied.',
+    );
+    expect(
+      () => claudeHaikuAnswer('[{"type":"system"}]', 'It broke.', 1),
+      throwsA(
+        isA<ClaudeHaikuException>().having(
+          (e) => e.message,
+          'message',
+          'It broke.',
+        ),
+      ),
+    );
+  });
+
   group('on BaoCode\'s own core', () {
     late FakeApi api;
     late Directory root;

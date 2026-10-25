@@ -3068,11 +3068,11 @@ abstract class AppLocalizations {
   /// **'Source'**
   String get sidePanelSource;
 
-  /// Shows a markdown file's text in the side panel, to edit.
+  /// Under a /command's description: opens its file (a skill's SKILL.md, a command's markdown) in the side panel.
   ///
   /// In en, this message translates to:
-  /// **'Edit'**
-  String get sidePanelEdit;
+  /// **'Open details'**
+  String get commandOpenDetails;
 
   /// Over a side panel preview asked for a diff it cannot show.
   ///
@@ -6113,7 +6113,7 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsClaudeCoreDescription.
   ///
   /// In en, this message translates to:
-  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.'**
+  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.'**
   String get generalSettingsClaudeCoreDescription;
 
   /// Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app.
@@ -6427,6 +6427,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open Anyway'**
   String get placeholderOpenAnyway;
+
+  /// No description provided for @changeOpenWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Open With'**
+  String get changeOpenWith;
 
   /// Hands a file the IDE does not show (a PDF, a video…) to the app the system opens it with.
   ///
@@ -9513,18 +9519,6 @@ abstract class AppLocalizations {
   /// **'Fast IDE'**
   String get generalSettingsIde;
 
-  /// No description provided for @generalSettingsAutoOpenChanges.
-  ///
-  /// In en, this message translates to:
-  /// **'Show agent changes as diffs'**
-  String get generalSettingsAutoOpenChanges;
-
-  /// No description provided for @generalSettingsAutoOpenChangesDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'While the IDE shows, a file the agent changes opens as a diff of it against its text before, as the agent edits it.'**
-  String get generalSettingsAutoOpenChangesDescription;
-
   /// No description provided for @explorerExcludeSetting.
   ///
   /// In en, this message translates to:
@@ -10929,6 +10923,18 @@ abstract class AppLocalizations {
   /// **'No longer listed by the upstream; kept until you remove it.'**
   String get modelsMissingTooltip;
 
+  /// No description provided for @modelsRemoveMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Gone ({count})'**
+  String modelsRemoveMissing(int count);
+
+  /// No description provided for @modelsRemoveMissingConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {count} models the upstream no longer lists?'**
+  String modelsRemoveMissingConfirm(int count);
+
   /// No description provided for @modelsCustom.
   ///
   /// In en, this message translates to:
@@ -10958,6 +10964,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Edit…'**
   String get modelsEdit;
+
+  /// No description provided for @modelsDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate…'**
+  String get modelsDuplicate;
 
   /// No description provided for @modelsRemove.
   ///
@@ -11016,7 +11028,7 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRolesDescription.
   ///
   /// In en, this message translates to:
-  /// **'Which model Claude Code uses for each part of its work. Unset, the model picked stands in.'**
+  /// **'Which model Claude Code uses for each part of its work. Unset, the model picked stands in. All but the main model may be another upstream\'s: BaoCode\'s local proxy sends their requests there.'**
   String get modelsRolesDescription;
 
   /// No description provided for @modelsRoleUnset.
@@ -11088,13 +11100,13 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRoleSubagentDescription.
   ///
   /// In en, this message translates to:
-  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: BaoCode\'s local proxy sends its requests there.'**
+  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).'**
   String get modelsRoleSubagentDescription;
 
   /// Under a role that picks another upstream's model, once that upstream or model is gone.
   ///
   /// In en, this message translates to:
-  /// **'This model is no longer one of its upstream\'s: subagents\' requests to it will fail.'**
+  /// **'This model is no longer one of its upstream\'s: requests to it will fail.'**
   String get modelsRoleMissing;
 
   /// No description provided for @modelsAdvanced.
@@ -11198,6 +11210,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'x-session-id: my-session'**
   String get modelsHeadersPlaceholder;
+
+  /// No description provided for @modelsDuplicateProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate Upstream'**
+  String get modelsDuplicateProvider;
+
+  /// No description provided for @modelsDuplicateProviderDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A copy of this upstream, with its models, settings and key.'**
+  String get modelsDuplicateProviderDescription;
+
+  /// No description provided for @modelsDuplicateName.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} Copy'**
+  String modelsDuplicateName(String name);
 
   /// No description provided for @modelsDelete.
   ///
@@ -11444,6 +11474,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Image models are not offered in the model picker: agents make pictures with them through the generate_image tool.'**
   String get modelsKindDescription;
+
+  /// No description provided for @modelsEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Endpoint'**
+  String get modelsEndpoint;
+
+  /// The endpoint choice of a model that follows its upstream's protocol, that protocol's name in it.
+  ///
+  /// In en, this message translates to:
+  /// **'As the upstream ({protocol})'**
+  String modelsEndpointUpstream(String protocol);
+
+  /// No description provided for @modelsEndpointDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.'**
+  String get modelsEndpointDescription;
 
   /// No description provided for @modelsImageBadge.
   ///
@@ -12650,6 +12698,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The connection to {host} is lost: click to reconnect now'**
   String remoteStatusTooltipLost(String host);
+
+  /// No description provided for @remoteStatusTooltipResuming.
+  ///
+  /// In en, this message translates to:
+  /// **'The connection to {host} is lost, and being made again: its terminals and Claude Code keep running there meanwhile. Click to reconnect now'**
+  String remoteStatusTooltipResuming(String host);
 
   /// No description provided for @remoteReconnect.
   ///
@@ -14145,6 +14199,24 @@ abstract class AppLocalizations {
   /// **'Edit link'**
   String get stashLinkEdit;
 
+  /// No description provided for @stashLinkCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link address'**
+  String get stashLinkCopy;
+
+  /// No description provided for @stashLinkRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove link'**
+  String get stashLinkRemove;
+
+  /// No description provided for @stashFormatMenu.
+  ///
+  /// In en, this message translates to:
+  /// **'Format'**
+  String get stashFormatMenu;
+
   /// No description provided for @stashDraft.
   ///
   /// In en, this message translates to:
@@ -14294,6 +14366,114 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Code block'**
   String get stashFormatCodeBlock;
+
+  /// Menu of a markdown table's row (from its handle) and column: what it does to them.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert row above'**
+  String get markdownTableInsertRowAbove;
+
+  /// No description provided for @markdownTableInsertRowBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert row below'**
+  String get markdownTableInsertRowBelow;
+
+  /// No description provided for @markdownTableDeleteRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete row'**
+  String get markdownTableDeleteRow;
+
+  /// No description provided for @markdownTableInsertColumnLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert column left'**
+  String get markdownTableInsertColumnLeft;
+
+  /// No description provided for @markdownTableInsertColumnRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert column right'**
+  String get markdownTableInsertColumnRight;
+
+  /// No description provided for @markdownTableDeleteColumn.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete column'**
+  String get markdownTableDeleteColumn;
+
+  /// No description provided for @markdownTableAlignLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Align left'**
+  String get markdownTableAlignLeft;
+
+  /// No description provided for @markdownTableAlignCenter.
+  ///
+  /// In en, this message translates to:
+  /// **'Align center'**
+  String get markdownTableAlignCenter;
+
+  /// No description provided for @markdownTableAlignRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Align right'**
+  String get markdownTableAlignRight;
+
+  /// No description provided for @markdownTableDuplicateRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate row'**
+  String get markdownTableDuplicateRow;
+
+  /// No description provided for @markdownTableMoveRowUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Move row up'**
+  String get markdownTableMoveRowUp;
+
+  /// No description provided for @markdownTableMoveRowDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Move row down'**
+  String get markdownTableMoveRowDown;
+
+  /// No description provided for @markdownTableClearRow.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear row'**
+  String get markdownTableClearRow;
+
+  /// No description provided for @markdownTableDuplicateColumn.
+  ///
+  /// In en, this message translates to:
+  /// **'Duplicate column'**
+  String get markdownTableDuplicateColumn;
+
+  /// No description provided for @markdownTableMoveColumnLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Move column left'**
+  String get markdownTableMoveColumnLeft;
+
+  /// No description provided for @markdownTableMoveColumnRight.
+  ///
+  /// In en, this message translates to:
+  /// **'Move column right'**
+  String get markdownTableMoveColumnRight;
+
+  /// No description provided for @markdownTableClearColumn.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear column'**
+  String get markdownTableClearColumn;
+
+  /// No description provided for @markdownTableDeleteTable.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete table'**
+  String get markdownTableDeleteTable;
 
   /// No description provided for @stashFormatClear.
   ///
@@ -16173,6 +16353,24 @@ abstract class AppLocalizations {
   /// **'Set Up a Model'**
   String get modelSetUp;
 
+  /// No description provided for @claudeCoreHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat runs on BaoCode\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.'**
+  String get claudeCoreHint;
+
+  /// No description provided for @claudeCoreHintSwitch.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to Claude Code'**
+  String get claudeCoreHintSwitch;
+
+  /// No description provided for @claudeCoreHintLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Not Now'**
+  String get claudeCoreHintLater;
+
   /// No description provided for @remoteAddServer.
   ///
   /// In en, this message translates to:
@@ -16940,6 +17138,540 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open'**
   String get aboutOpen;
+
+  /// No description provided for @stashSettingsIssueSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Issues as stashes'**
+  String get stashSettingsIssueSync;
+
+  /// No description provided for @stashSettingsIssueSyncDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.'**
+  String get stashSettingsIssueSyncDescription;
+
+  /// No description provided for @stashIssueSyncMine.
+  ///
+  /// In en, this message translates to:
+  /// **'Only those assigned to or opened by me'**
+  String get stashIssueSyncMine;
+
+  /// No description provided for @stashIssueSyncOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off: imported or published ones only'**
+  String get stashIssueSyncOff;
+
+  /// No description provided for @stashIssueLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Local only'**
+  String get stashIssueLocal;
+
+  /// No description provided for @stashIssueAllow.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow publishing as an issue'**
+  String get stashIssueAllow;
+
+  /// No description provided for @stashIssueNotPublished.
+  ///
+  /// In en, this message translates to:
+  /// **'Not an issue yet'**
+  String get stashIssueNotPublished;
+
+  /// No description provided for @stashIssuePublishTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish as an issue of {repo}…'**
+  String stashIssuePublishTo(String repo);
+
+  /// No description provided for @stashIssueKeepLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep it local'**
+  String get stashIssueKeepLocal;
+
+  /// No description provided for @stashIssuePush.
+  ///
+  /// In en, this message translates to:
+  /// **'Push changes to the issue…'**
+  String get stashIssuePush;
+
+  /// No description provided for @stashIssuePushShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Push'**
+  String get stashIssuePushShort;
+
+  /// No description provided for @stashIssueTakeRemote.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard local changes, use the issue\'s'**
+  String get stashIssueTakeRemote;
+
+  /// No description provided for @stashIssueUnlinkOwn.
+  ///
+  /// In en, this message translates to:
+  /// **'Unlink, keep it local'**
+  String get stashIssueUnlinkOwn;
+
+  /// No description provided for @stashIssueConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'{tag} was changed on the forge too. Which version to keep?'**
+  String stashIssueConflict(String tag);
+
+  /// No description provided for @stashIssueKeepMine.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep mine (push)'**
+  String get stashIssueKeepMine;
+
+  /// No description provided for @stashIssueKeepTheirs.
+  ///
+  /// In en, this message translates to:
+  /// **'Use the issue\'s'**
+  String get stashIssueKeepTheirs;
+
+  /// No description provided for @stashIssueChangedHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes here are not on {tag} yet.'**
+  String stashIssueChangedHere(String tag);
+
+  /// No description provided for @stashIssueDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard'**
+  String get stashIssueDiscard;
+
+  /// No description provided for @stashIssuePublishTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish as an issue of {repo}'**
+  String stashIssuePublishTitle(String repo);
+
+  /// No description provided for @stashIssuePushTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Push changes to {tag}'**
+  String stashIssuePushTitle(String tag);
+
+  /// No description provided for @stashIssuePublish.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish'**
+  String get stashIssuePublish;
+
+  /// No description provided for @stashIssueNoText.
+  ///
+  /// In en, this message translates to:
+  /// **'(no description)'**
+  String get stashIssueNoText;
+
+  /// No description provided for @stashIssuePicturesGitHub.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 picture is uploaded to the repository\'s {branch} branch, for the issue to show it.} other{{count} pictures are uploaded to the repository\'s {branch} branch, for the issue to show them.}}'**
+  String stashIssuePicturesGitHub(int count, String branch);
+
+  /// No description provided for @stashIssuePicturesGitLab.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 picture is uploaded to the project, for the issue to show it.} other{{count} pictures are uploaded to the project, for the issue to show them.}}'**
+  String stashIssuePicturesGitLab(int count);
+
+  /// No description provided for @stashImplementShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Implement'**
+  String get stashImplementShort;
+
+  /// No description provided for @stashImplementIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'It is issue {issue}: the pull request should say it fixes it.'**
+  String stashImplementIssue(String issue);
+
+  /// No description provided for @stashIssueSyncAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All open issues'**
+  String get stashIssueSyncAll;
+
+  /// No description provided for @stashIssueChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Looking for its repository…'**
+  String get stashIssueChecking;
+
+  /// No description provided for @stashIssueRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh now'**
+  String get stashIssueRefresh;
+
+  /// No description provided for @stashIssuePublishButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish as Issue'**
+  String get stashIssuePublishButton;
+
+  /// No description provided for @stashIssuePushButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Push to Issue'**
+  String get stashIssuePushButton;
+
+  /// No description provided for @stashIssueLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get stashIssueLoading;
+
+  /// No description provided for @stashSyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing issues…'**
+  String get stashSyncing;
+
+  /// No description provided for @stashSyncingRepo.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing the issues of {repo} ({index}/{total})…'**
+  String stashSyncingRepo(String repo, int index, int total);
+
+  /// No description provided for @stashSyncTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync issues now'**
+  String get stashSyncTooltip;
+
+  /// No description provided for @stashSyncTooltipLast.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync issues now · last at {time}'**
+  String stashSyncTooltipLast(String time);
+
+  /// No description provided for @stashSyncFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not sync the issues of {repo}: {error}'**
+  String stashSyncFailed(String repo, String error);
+
+  /// No description provided for @stashSyncSignIn.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Sign in to {forge} for the issues of {repo} to be stashes.} other{Sign in to {forge} for the issues of {repo} and {count} more repositories to be stashes.}}'**
+  String stashSyncSignIn(String forge, String repo, int count);
+
+  /// No description provided for @stashSyncingEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing the projects\' issues…'**
+  String get stashSyncingEmpty;
+
+  /// No description provided for @stashFilterAnyIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'Any source'**
+  String get stashFilterAnyIssue;
+
+  /// No description provided for @stashFilterIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'Issues'**
+  String get stashFilterIssue;
+
+  /// No description provided for @stashFilterNotIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'Local only'**
+  String get stashFilterNotIssue;
+
+  /// No description provided for @stashImplementEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Write something first, then implement it in BaoCode'**
+  String get stashImplementEmpty;
+
+  /// No description provided for @stashIssueDuplicateBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'{issue}, of stash {stash} merged into this one, is still open. Close it as a duplicate?'**
+  String stashIssueDuplicateBanner(String issue, String stash);
+
+  /// No description provided for @stashIssueCloseDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'Close as duplicate…'**
+  String get stashIssueCloseDuplicate;
+
+  /// No description provided for @stashIssueDuplicateNoIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'Merged into another note; closing as a duplicate.'**
+  String get stashIssueDuplicateNoIssue;
+
+  /// No description provided for @stashNewsOpened.
+  ///
+  /// In en, this message translates to:
+  /// **'New issue'**
+  String get stashNewsOpened;
+
+  /// No description provided for @stashNewsChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Changed on the forge'**
+  String get stashNewsChanged;
+
+  /// No description provided for @stashNewsCommented.
+  ///
+  /// In en, this message translates to:
+  /// **'New comments'**
+  String get stashNewsCommented;
+
+  /// No description provided for @stashNewsClosed.
+  ///
+  /// In en, this message translates to:
+  /// **'Closed on the forge'**
+  String get stashNewsClosed;
+
+  /// No description provided for @stashNewsReopened.
+  ///
+  /// In en, this message translates to:
+  /// **'Reopened on the forge'**
+  String get stashNewsReopened;
+
+  /// No description provided for @stashNewsCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 update} other{{count} updates}}'**
+  String stashNewsCount(int count);
+
+  /// No description provided for @stashNewsCountTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Show only the updates about you: your issues and pull requests, those assigned to you or naming you'**
+  String get stashNewsCountTooltip;
+
+  /// No description provided for @stashNewsCountTooltipOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Showing only the updates about you; click for all'**
+  String get stashNewsCountTooltipOn;
+
+  /// No description provided for @stashFilterNews.
+  ///
+  /// In en, this message translates to:
+  /// **'About you'**
+  String get stashFilterNews;
+
+  /// No description provided for @stashMarkAllSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark all as seen'**
+  String get stashMarkAllSeen;
+
+  /// No description provided for @stashIssueComments.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 comment} other{{count} comments}}'**
+  String stashIssueComments(int count);
+
+  /// No description provided for @stashIssueDiscussion.
+  ///
+  /// In en, this message translates to:
+  /// **'Discussion'**
+  String get stashIssueDiscussion;
+
+  /// No description provided for @stashIssueDiscussionAll.
+  ///
+  /// In en, this message translates to:
+  /// **'See all {count} on {forge}'**
+  String stashIssueDiscussionAll(int count, String forge);
+
+  /// No description provided for @stashIssueDiscussionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load the comments.'**
+  String get stashIssueDiscussionFailed;
+
+  /// No description provided for @stashIssueDiscussionLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading the comments…'**
+  String get stashIssueDiscussionLoading;
+
+  /// No description provided for @stashDeleteAndClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete and close {issue}…'**
+  String stashDeleteAndClose(String issue);
+
+  /// No description provided for @stashDeleteOpenIssue.
+  ///
+  /// In en, this message translates to:
+  /// **'Its issue {issue} stays open on the forge unless closed too.'**
+  String stashDeleteOpenIssue(String issue);
+
+  /// No description provided for @stashIssueInSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Same as {issue}'**
+  String stashIssueInSync(String issue);
+
+  /// No description provided for @stashIssueSyncedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'synced {time}'**
+  String stashIssueSyncedAt(String time);
+
+  /// No description provided for @stashIssueNotPushed.
+  ///
+  /// In en, this message translates to:
+  /// **'Changed here, not pushed yet'**
+  String get stashIssueNotPushed;
+
+  /// No description provided for @stashIssueRemoteNewer.
+  ///
+  /// In en, this message translates to:
+  /// **'Changed on the forge'**
+  String get stashIssueRemoteNewer;
+
+  /// No description provided for @stashIssueBothChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Changed both here and on the forge'**
+  String get stashIssueBothChanged;
+
+  /// No description provided for @stashIssueDiscussionEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No comments yet'**
+  String get stashIssueDiscussionEmpty;
+
+  /// No description provided for @stashNewsMerged.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull request merged'**
+  String get stashNewsMerged;
+
+  /// No description provided for @stashNewsChangesRequested.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes requested'**
+  String get stashNewsChangesRequested;
+
+  /// No description provided for @stashNewsChecksFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Checks failed'**
+  String get stashNewsChecksFailed;
+
+  /// No description provided for @stashNewsMarked.
+  ///
+  /// In en, this message translates to:
+  /// **'Marked as unread'**
+  String get stashNewsMarked;
+
+  /// No description provided for @stashNewsOther.
+  ///
+  /// In en, this message translates to:
+  /// **'{news} (not about you)'**
+  String stashNewsOther(String news);
+
+  /// No description provided for @stashNewsSidebar.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 update about you} other{{count} updates about you}}'**
+  String stashNewsSidebar(int count);
+
+  /// No description provided for @stashFilterAllNews.
+  ///
+  /// In en, this message translates to:
+  /// **'Any updates'**
+  String get stashFilterAllNews;
+
+  /// No description provided for @stashMarkSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as Read'**
+  String get stashMarkSeen;
+
+  /// No description provided for @stashMarkUnseen.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as Unread'**
+  String get stashMarkUnseen;
+
+  /// No description provided for @stashPullChecksFailedBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'The checks of {pull} failed.'**
+  String stashPullChecksFailedBanner(String pull);
+
+  /// No description provided for @stashPullChangesBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes were requested on {pull}.'**
+  String stashPullChangesBanner(String pull);
+
+  /// No description provided for @stashPullMergedBanner.
+  ///
+  /// In en, this message translates to:
+  /// **'{pull} was merged. Is this done too?'**
+  String stashPullMergedBanner(String pull);
+
+  /// No description provided for @stashPullFix.
+  ///
+  /// In en, this message translates to:
+  /// **'Fix in Its Conversation'**
+  String get stashPullFix;
+
+  /// No description provided for @stashPullView.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get stashPullView;
+
+  /// No description provided for @stashPullFixChecks.
+  ///
+  /// In en, this message translates to:
+  /// **'The checks of {pull} failed. Find out what failed and fix it.'**
+  String stashPullFixChecks(String pull);
+
+  /// No description provided for @stashPullFixChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes were requested on {pull}. Read the review and make them.'**
+  String stashPullFixChanges(String pull);
+
+  /// No description provided for @stashWriteManyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Comment on {count} issues'**
+  String stashWriteManyTitle(int count);
+
+  /// No description provided for @stashWriteCloseManyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Close {count} issues'**
+  String stashWriteCloseManyTitle(int count);
+
+  /// No description provided for @stashDeleteOpenIssues.
+  ///
+  /// In en, this message translates to:
+  /// **'Their issues {issues} stay open on the forge unless closed too.'**
+  String stashDeleteOpenIssues(int count, String issues);
+
+  /// No description provided for @stashDeleteAndCloseMany.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete and close {count} issues…'**
+  String stashDeleteAndCloseMany(int count);
 }
 
 class _AppLocalizationsDelegate

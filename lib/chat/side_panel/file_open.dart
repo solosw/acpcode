@@ -109,9 +109,14 @@ class FileLinkTarget {
     this.inPanel = false,
     this.openInIde,
     this.showBrowserTab,
+    this.openFolder,
   });
 
   final ValueChanged<FileOpenRequest> open;
+
+  /// Shows a folder the chat names (absolute, on the project's host) in
+  /// the side panel's tree; none where there is no such tree.
+  final ValueChanged<String>? openFolder;
 
   /// Shows a tab of the user's browser (its id, as the agents' tools have
   /// it) beside the conversation: on the side panel's browser page.
@@ -240,8 +245,12 @@ class FileOpenScope extends InheritedWidget {
     this.inPanel = false,
     this.onOpenInIde,
     this.onShowBrowserTab,
+    this.onOpenFolder,
     required super.child,
   });
+
+  /// See [FileLinkTarget.openFolder].
+  final ValueChanged<String>? onOpenFolder;
 
   /// See [FileLinkTarget.showBrowserTab].
   final ValueChanged<int>? onShowBrowserTab;
@@ -317,14 +326,13 @@ class FileOpenScope extends InheritedWidget {
     final context = paths ?? p.context;
     if (path.isEmpty || path.startsWith('~')) return null;
     final normalized = context.normalize(path);
+    final index = _SeenIndex.of(seen, context);
     final full = context.normalize(context.join(root, path));
-    for (final file in seen.reversed) {
-      if (context.equals(file, full)) return file;
-    }
+    if (index.byPath[context.canonicalize(full)] case final file?) return file;
     final parts = context.split(normalized);
     if (context.isAbsolute(normalized) || parts.contains('..')) return null;
-    for (final file in seen.reversed) {
-      final names = context.split(context.normalize(file));
+    for (final (:file, :names)
+        in index.byName[parts.last] ?? const <_SeenFile>[]) {
       if (names.length <= parts.length) continue;
       var same = true;
       for (var i = 1; i <= parts.length && same; i++) {
@@ -535,6 +543,41 @@ class FileOpenScope extends InheritedWidget {
       readBytes != oldWidget.readBytes ||
       inPanel != oldWidget.inPanel ||
       onOpenInIde != oldWidget.onOpenInIde ||
+      onOpenFolder != oldWidget.onOpenFolder ||
       !listEquals(roots, oldWidget.roots) ||
       !listEquals(seen, oldWidget.seen);
 }
+
+/// [FileOpenScope.seen] looked up by path, made once for each list: every
+/// path in the chat's text (a code span, a link) is looked for in it, as
+/// the chat is built, and a long session's has thousands of files.
+class _SeenIndex {
+  _SeenIndex(List<String> seen, this.context) {
+    // The last read first, as the files are looked for.
+    for (final file in seen.reversed) {
+      byPath.putIfAbsent(context.canonicalize(file), () => file);
+      final names = context.split(context.normalize(file));
+      if (names.isEmpty) continue;
+      (byName[names.last] ??= <_SeenFile>[]).add((file: file, names: names));
+    }
+  }
+
+  static final _made = Expando<_SeenIndex>();
+
+  static _SeenIndex of(List<String> seen, p.Context context) {
+    final made = _made[seen];
+    if (made != null && made.context == context) return made;
+    return _made[seen] = _SeenIndex(seen, context);
+  }
+
+  final p.Context context;
+
+  /// The files, by their canonical path.
+  final byPath = <String, String>{};
+
+  /// The files and their names, by the last of those, the last read first.
+  final byName = <String, List<_SeenFile>>{};
+}
+
+/// A file of [FileOpenScope.seen], and its names (its folders' and its own).
+typedef _SeenFile = ({String file, List<String> names});

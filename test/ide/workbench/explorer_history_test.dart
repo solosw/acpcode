@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:baocode/chat/composer/file_drop.dart';
 import 'package:baocode/ide/ide_explorer.dart';
+import 'package:baocode/theme/workbench_theme.dart';
 
 import 'fake_files.dart';
 
@@ -173,7 +174,9 @@ void main() {
       matching: find.byWidgetPredicate(
         (widget) =>
             widget is DecoratedBox &&
-            widget.position == DecorationPosition.foreground,
+            widget.decoration is BoxDecoration &&
+            (widget.decoration as BoxDecoration).color ==
+                themeColors['list.dropBackground'],
       ),
     );
     expect(highlighted, findsOneWidget);

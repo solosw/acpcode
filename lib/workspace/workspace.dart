@@ -4,12 +4,12 @@ import 'dart:convert';
 import 'package:bao_remote/client.dart' show SshServer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextSelection;
-import 'package:flutter_quill/quill_delta.dart';
 import 'package:path/path.dart' as p;
 
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 import '../chat/composer/composer_draft.dart';
+import '../chat/composer/composer_embeds.dart' show composerContentFromOps;
 import '../chat/mock_conversation.dart';
 import '../chat/resume_after_reset.dart';
 import '../icons/emoji_sheet.dart';
@@ -1821,9 +1821,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _drafts.remove(was);
     }
     _draftKeys[thread] = key;
-    final empty = draft.content!.toList().every(
-      (op) => op.data is String && (op.data! as String).trim().isEmpty,
-    );
+    // Its things are no space.
+    final empty = draft.content!.trim().isEmpty;
     if (empty) {
       if (_drafts.remove(key) == null) return;
     } else {
@@ -1846,7 +1845,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void _writeDrafts() => unawaited(_draftStore?.write({..._drafts}));
 
   static Map<String, Object?> _encodeDraft(ComposerDraft draft) => {
-    'content': draft.content!.toJson(),
+    'text': draft.content,
     'base': draft.selection.baseOffset,
     'extent': draft.selection.extentOffset,
     'images': [
@@ -1876,17 +1875,25 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
               number: image['number'] as int?,
             ),
       ];
-      // As plain text: not with a style kept from before the composer's
-      // text was kept plain (a header ⌘2 made, several times its size).
-      final content = Delta();
-      for (final op in Delta.fromJson(
-        kept['content']! as List<Object?>,
-      ).toList()) {
-        if (op.isInsert) content.insert(op.data);
+      var base = kept['base']! as int;
+      var extent = kept['extent']! as int;
+      final String content;
+      if (kept['text'] case final String text) {
+        content = text;
+      } else {
+        // Kept as the old editor's operations, by a version before: as
+        // plain text, not with a style kept from before the composer's
+        // text was kept plain (a header ⌘2 made, several times its size).
+        final converted = composerContentFromOps(
+          kept['content']! as List<Object?>,
+        );
+        content = converted.content;
+        base = converted.offset(base);
+        extent = converted.offset(extent);
       }
       final selection = TextSelection(
-        baseOffset: kept['base']! as int,
-        extentOffset: kept['extent']! as int,
+        baseOffset: base.clamp(0, content.length),
+        extentOffset: extent.clamp(0, content.length),
       );
       draft
         ..content = content
@@ -2220,6 +2227,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (!_threads.contains(thread)) return;
     final session = thread.session;
     _noteLimit(thread);
+    // Renamed in Claude Code (/rename): named so here too.
+    if (session.takeRenamed() case final title?) rename(thread, title);
     if (thread._title.isEmpty && session.itemCount > 0) {
       if (session.itemAt(0) case UserMessageItem(:final text)) {
         thread._title = text.trim().split('\n').first;

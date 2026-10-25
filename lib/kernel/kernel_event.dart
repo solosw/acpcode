@@ -172,6 +172,14 @@ final class PlanWritten extends KernelEvent {
   final String path;
 }
 
+/// Renamed in the agent itself (Claude Code's `/rename`): the name its
+/// list shows.
+final class SessionRenamed extends KernelEvent {
+  const SessionRenamed(super.seq, this.title);
+
+  final String title;
+}
+
 /// The files changed so far are back as they were.
 final class ChangesReverted extends KernelEvent {
   const ChangesReverted(super.seq);

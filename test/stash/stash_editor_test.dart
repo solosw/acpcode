@@ -1,18 +1,15 @@
 import 'dart:async';
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/l10n/l10n.dart';
-import 'package:baocode/chat/widgets/code_citation.dart' show MarkdownCodeBlock;
-import 'package:baocode/stash/stash_caret.dart';
 import 'package:baocode/stash/stash_disk.dart';
 import 'package:baocode/stash/stash_editor.dart';
-import 'package:baocode/stash/stash_markdown.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/stash/stash_store.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
-import 'package:flutter_quill/quill_delta.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/models/model_providers.dart';
 
@@ -26,16 +23,12 @@ void main() {
       await (ModelProviders.current = ModelProviders.memory()).setActionsModel(
         ModelProviders.followAuxiliary,
       );
-      final document = Document()..insert(0, '321321\n321\n3123');
-      final controller = StashEditor.controllerFor(document);
+      final controller = StashEditor.controllerFor('321321\n321\n3123');
       final focus = FocusNode();
       final answer = Completer<String?>();
       await tester.pumpWidget(
         MaterialApp(
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            FlutterQuillLocalizations.delegate,
-          ],
+          localizationsDelegates: const [AppLocalizations.delegate],
           home: Scaffold(
             body: StashEditor(
               controller: controller,
@@ -50,9 +43,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       focus.requestFocus();
-      controller.updateSelection(
-        TextSelection(baseOffset: 0, extentOffset: document.length - 1),
-        ChangeSource.local,
+      controller.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: controller.length,
       );
       await tester.pumpAndSettle();
       expect(find.text('Polish'), findsOneWidget);
@@ -71,7 +64,7 @@ void main() {
 
       answer.complete('Better text');
       await tester.pumpAndSettle();
-      expect(document.toPlainText(), 'Better text\n');
+      expect(controller.text, 'Better text');
       expect(
         controller.selection,
         const TextSelection(baseOffset: 0, extentOffset: 11),
@@ -82,85 +75,73 @@ void main() {
     },
   );
 
-  testWidgets(
-    'the bar\'s model menu, open, keeps the bar where it stands',
-    (tester) async {
-      // None picked: the polish opens the menu that picks one.
-      final previous = ModelProviders.current;
-      addTearDown(() => ModelProviders.current = previous);
-      ModelProviders.current = ModelProviders.memory();
-      final document = Document()..insert(0, '321321\n321\n3123');
-      final controller = StashEditor.controllerFor(document);
-      final focus = FocusNode();
-      addTearDown(focus.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            FlutterQuillLocalizations.delegate,
-          ],
-          home: Scaffold(
-            body: StashEditor(
-              controller: controller,
-              store: StashStore(MemoryStashDisk()),
-              ensureNote: () async => 1,
-              focusNode: focus,
-              autofocus: true,
-              onPolish: (text) async => 'POLISHED',
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      focus.requestFocus();
-      controller.updateSelection(
-        TextSelection(baseOffset: 0, extentOffset: document.length - 1),
-        ChangeSource.local,
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Polish'), findsOneWidget);
-
-      // Polish, clicked with the mouse: no model picked yet, so the menu
-      // that picks one opens. It takes the keyboard; the bar stays over
-      // the selection all the same.
-      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await mouse.addPointer(location: Offset.zero);
-      await mouse.moveTo(tester.getCenter(find.text('Polish')));
-      await tester.pump(const Duration(milliseconds: 700));
-      await mouse.down(tester.getCenter(find.text('Polish')));
-      await tester.pump();
-      await mouse.up();
-      await tester.pumpAndSettle();
-      expect(find.text(englishLocalizations.aiModelFirst), findsOneWidget);
-      expect(find.text('Polish'), findsOneWidget);
-
-      // Picked from it: the polish goes on with the text selected, the bar
-      // still there.
-      await tester.tap(find.text(englishLocalizations.aiModelAuxiliary));
-      await tester.pumpAndSettle();
-      expect(
-        ModelProviders.current.actionsModel,
-        ModelProviders.followAuxiliary,
-      );
-      expect(document.toPlainText(), 'POLISHED\n');
-      expect(find.text('Polish'), findsOneWidget);
-      await mouse.removePointer();
-      await tester.pumpAndSettle(const Duration(seconds: 1));
-    },
-  );
-
-  testWidgets('text selected by a drag, the editor not focused before, is '
-      'deleted by Backspace', (tester) async {
-    final document = Document()..insert(0, 'hello world');
-    final controller = StashEditor.controllerFor(document);
+  testWidgets('the bar\'s model menu, open, keeps the bar where it stands', (
+    tester,
+  ) async {
+    // None picked: the polish opens the menu that picks one.
+    final previous = ModelProviders.current;
+    addTearDown(() => ModelProviders.current = previous);
+    ModelProviders.current = ModelProviders.memory();
+    final controller = StashEditor.controllerFor('321321\n321\n3123');
     final focus = FocusNode();
     addTearDown(focus.dispose);
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
+        home: Scaffold(
+          body: StashEditor(
+            controller: controller,
+            store: StashStore(MemoryStashDisk()),
+            ensureNote: () async => 1,
+            focusNode: focus,
+            autofocus: true,
+            onPolish: (text) async => 'POLISHED',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    focus.requestFocus();
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.length,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Polish'), findsOneWidget);
+
+    // Polish, clicked with the mouse: no model picked yet, so the menu
+    // that picks one opens. It takes the keyboard; the bar stays over
+    // the selection all the same.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(find.text('Polish')));
+    await tester.pump(const Duration(milliseconds: 700));
+    await mouse.down(tester.getCenter(find.text('Polish')));
+    await tester.pump();
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(find.text(englishLocalizations.aiModelFirst), findsOneWidget);
+    expect(find.text('Polish'), findsOneWidget);
+
+    // Picked from it: the polish goes on with the text selected, the bar
+    // still there.
+    await tester.tap(find.text(englishLocalizations.aiModelAuxiliary));
+    await tester.pumpAndSettle();
+    expect(ModelProviders.current.actionsModel, ModelProviders.followAuxiliary);
+    expect(controller.text, 'POLISHED');
+    expect(find.text('Polish'), findsOneWidget);
+    await mouse.removePointer();
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+  });
+
+  testWidgets('text selected by a drag, the editor not focused before, is '
+      'deleted by Backspace', (tester) async {
+    final controller = StashEditor.controllerFor('hello world');
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Scaffold(
           body: StashEditor(
             controller: controller,
@@ -173,8 +154,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(focus.hasFocus, isFalse);
-    final text = find.byType(QuillEditor);
-    final start = tester.getTopLeft(text) + const Offset(2, 10);
+    final start = _editor(tester).caretRect(0)!.center;
     final mouse = await tester.startGesture(
       start,
       kind: PointerDeviceKind.mouse,
@@ -190,22 +170,129 @@ void main() {
     expect(focus.hasFocus, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     await tester.pumpAndSettle();
-    expect(document.toPlainText(), isNot(contains('hello')));
+    expect(controller.text, isNot(contains('hello')));
+  });
+
+  testWidgets('a triple click selects the paragraph', (tester) async {
+    final controller = StashEditor.controllerFor(
+      'export function tokens(input: number) {\nsecond line',
+    );
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [AppLocalizations.delegate],
+        home: Scaffold(
+          body: StashEditor(
+            controller: controller,
+            store: StashStore(MemoryStashDisk()),
+            ensureNote: () async => 1,
+            focusNode: focus,
+            onPolish: (text) async => text,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final at = _editor(tester).caretRect(2)!.center;
+    Future<void> clicks(int count) async {
+      for (var i = 0; i < count; i++) {
+        final mouse = await tester.startGesture(
+          at,
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump(const Duration(milliseconds: 20));
+        await mouse.up();
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+    }
+
+    await clicks(2);
+    await tester.pump(const Duration(milliseconds: 600));
+    final text = controller.text;
+    expect(controller.selection.textInside(text), 'export');
+    await clicks(3);
+    await tester.pumpAndSettle();
+    expect(
+      controller.selection.textInside(text),
+      'export function tokens(input: number) {',
+    );
+  });
+
+  testWidgets('a drag held past the bottom keeps scrolling, the selection '
+      'with it', (tester) async {
+    final controller = StashEditor.controllerFor(
+      [for (var i = 0; i < 200; i++) 'line $i'].join('\n'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [AppLocalizations.delegate],
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 400,
+              height: 300,
+              child: StashEditor(
+                controller: controller,
+                store: StashStore(MemoryStashDisk()),
+                ensureNote: () async => 1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Its own scrolling, as the stashes' page has it.
+    final scroll = tester
+        .state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byType(MarkdownEditor),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        )
+        .position;
+    final mouse = await tester.startGesture(
+      const Offset(30, 100),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    for (var y = 110.0; y <= 320; y += 10) {
+      await mouse.moveTo(Offset(60, y));
+      await tester.pump(const Duration(milliseconds: 8));
+    }
+    // Held still past the bottom for a second.
+    for (var i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final scrolled = scroll.pixels;
+    final extent = controller.selection.extentOffset;
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(scrolled, greaterThan(300));
+    expect(
+      tester.getRect(find.byType(StashEditor)).bottom,
+      300,
+      reason: 'the editor as tall as its box',
+    );
+    expect(extent, greaterThan(controller.text.indexOf('line 20')));
   });
 
   testWidgets('the color menu keeps focus and applies and clears both colors', (
     tester,
   ) async {
-    final document = Document()..insert(0, 'hello world');
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('hello world');
     final focus = await _edit(tester, controller);
-    const selection = TextSelection(baseOffset: 1, extentOffset: 5);
-    controller.updateSelection(selection, ChangeSource.local);
+    controller.selection = const TextSelection(baseOffset: 1, extentOffset: 5);
     await tester.pumpAndSettle();
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: Offset.zero);
 
     Future<void> pick(Finder swatch) async {
+      final selection = controller.selection;
       await tester.tap(find.byIcon(Codicons.symbolColor));
       await tester.pumpAndSettle();
       final position = tester.getCenter(swatch);
@@ -218,92 +305,68 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('A'), findsNothing);
       expect(find.byIcon(Codicons.symbolColor), findsOneWidget);
+      // Still on the same text.
+      expect(controller.selectedText, 'ello');
     }
 
     await pick(find.text('A').first);
-    expect(document.collectStyle(1, 4).attributes['color']?.value, 'red');
-    expect(document.collectStyle(0, 1).attributes['color'], isNull);
-    expect(document.collectStyle(5, 6).attributes['color'], isNull);
+    expect(controller.text, 'h<span style="color:red">ello</span> world');
     await pick(find.text('A').at(StashColors.text.length));
     expect(
-      document.collectStyle(1, 4).attributes['background']?.value,
-      'mistyrose',
+      controller.text,
+      'h<span style="color:red;background-color:mistyrose">ello</span> world',
     );
-    expect(document.collectStyle(1, 4).attributes['color']?.value, 'red');
     await pick(find.text('∅').first);
-    expect(document.collectStyle(1, 4).attributes['color'], isNull);
     expect(
-      document.collectStyle(1, 4).attributes['background']?.value,
-      'mistyrose',
+      controller.text,
+      'h<span style="background-color:mistyrose">ello</span> world',
     );
     await pick(find.text('∅').last);
-    expect(document.collectStyle(1, 4).attributes['background'], isNull);
-    expect(document.toPlainText(), 'hello world\n');
+    expect(controller.text, 'hello world');
     await mouse.removePointer();
     await tester.pumpAndSettle(const Duration(seconds: 1));
   });
 
   testWidgets('a link is typed in the bar, not a dialog', (tester) async {
-    final document = Document()..insert(0, 'see the docs');
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('see the docs');
     await _edit(tester, controller);
-    controller.updateSelection(
-      const TextSelection(baseOffset: 8, extentOffset: 12),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection(baseOffset: 8, extentOffset: 12);
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Codicons.link));
     await tester.pumpAndSettle();
-    // The field in the bar (the text is Quill's own, no EditableText).
+    // The field in the bar (the text is the editor's own, no EditableText).
     expect(find.byType(EditableText), findsOneWidget);
     await tester.enterText(find.byType(EditableText), 'https://x.dev');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
-    final style = controller.document.collectStyle(8, 4);
-    expect(style.attributes[Attribute.link.key]?.value, 'https://x.dev');
+    expect(controller.text, 'see the [docs](https://x.dev)');
     expect(find.byType(EditableText), findsNothing);
   });
 
   testWidgets('pictures and links are tags in the line, code a block', (
     tester,
   ) async {
-    final document = Document()
-      ..insert(0, 'a ')
-      ..insert(2, StashEmbeds.of(StashEmbeds.image, {'src': '1/a.png'}))
-      ..insert(3, ' b ')
-      ..insert(
-        6,
-        StashEmbeds.of(StashEmbeds.card, {
-          'url': 'https://x.dev',
-          'title': 'X',
-        }),
-      )
-      ..insert(7, '\n')
-      ..insert(
-        8,
-        StashEmbeds.of(StashEmbeds.code, {'code': 'x\ny', 'language': 'dart'}),
-      );
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor(
+      'a ![](1/a.png) b [X](https://x.dev "card")\n```dart\nx\ny\n```',
+    );
     await _edit(tester, controller);
+    controller.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pumpAndSettle();
     expect(find.text('Image 1'), findsOneWidget);
     expect(find.text('X'), findsOneWidget);
     // All on the one line.
     final y = tester.getCenter(find.text('Image 1')).dy;
-    // Code, as the chat shows it, on lines of its own.
-    expect(find.byType(MarkdownCodeBlock), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.byType(MarkdownCodeBlock)).dy,
-      greaterThan(y),
-    );
     expect(tester.getCenter(find.text('X')).dy, closeTo(y, 2));
+    // Code on lines of its own, its fences hidden.
+    final code = find.text('x', findRichText: true);
+    expect(code, findsOneWidget);
+    expect(tester.getTopLeft(code).dy, greaterThan(y));
+    expect(find.text('```dart', findRichText: true), findsNothing);
   });
 
   testWidgets('a task box is at the left edge of the text, centered on its '
       'line, and checks it', (tester) async {
-    final document = Document()
-      ..insert(0, 'plain\ntask\n')
-      ..format(6, 1, Attribute.unchecked);
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('plain\n- [ ] task');
     await _edit(tester, controller);
     final box = find.byWidgetPredicate(
       (widget) => widget is Semantics && widget.properties.checked != null,
@@ -318,9 +381,7 @@ void main() {
 
     await tester.tap(box);
     await tester.pump();
-    expect(controller.document.toDelta().toList()[1].attributes, {
-      Attribute.list.key: Attribute.checked.value,
-    });
+    expect(controller.text, 'plain\n- [x] task');
   });
 
   testWidgets('said clearly, its text is replaced in one step Undo takes '
@@ -328,7 +389,7 @@ void main() {
     tester,
   ) async {
     final controller = StashEditor.controllerFor(
-      stashDocument('btn hidden ![](1/a.png) sidebar\n\n## 需求\n\nold one\n'),
+      'btn hidden ![](1/a.png) sidebar\n\n## 需求\n\nold one',
     );
     await _edit(tester, controller);
     final state = tester.state<StashEditorState>(find.byType(StashEditor));
@@ -345,67 +406,52 @@ void main() {
       isTrue,
     );
     await tester.pump();
-    final markdown = stashDeltaToMarkdown(controller.document.toDelta());
     expect(
-      markdown,
-      startsWith('The button is hidden by ![](1/a.png) sidebar'),
+      controller.text,
+      'The button is hidden by ![](1/a.png) sidebar\n\n## 需求\n\nold one',
     );
-    expect(markdown, contains('## 需求\n\nold one'));
 
     controller.undo();
     expect(
-      stashDeltaToMarkdown(controller.document.toDelta()),
-      startsWith('btn hidden ![](1/a.png) sidebar'),
+      controller.text,
+      'btn hidden ![](1/a.png) sidebar\n\n## 需求\n\nold one',
     );
   });
 
-  testWidgets('a tag never ends a line: a space after it', (tester) async {
-    final document = Document()
-      ..insert(0, 'see ')
-      ..insert(
-        4,
-        StashEmbeds.of(StashEmbeds.card, {
-          'url': 'https://x.dev',
-          'title': 'X',
-        }),
-      );
-    final controller = StashEditor.controllerFor(document);
+  testWidgets('a tag at a line\'s end: the caret goes after it, the text '
+      'as it was', (tester) async {
+    const text = 'see [X](https://x.dev "card")';
+    final controller = StashEditor.controllerFor(text);
     await _edit(tester, controller);
-    expect(document.toPlainText(), 'see \uFFFC \n');
+    expect(controller.text, text);
+    final editor = _editor(tester);
+    final tag = tester.getRect(find.text('X'));
+    expect(editor.caretRect(text.length)!.left, greaterThan(tag.right));
+    expect(editor.caretRect(4)!.left, lessThan(tag.left));
   });
 
   testWidgets('the caret in a web link: a bar over it opens or edits it, '
       'the text typed on', (tester) async {
-    final document = Document()
-      ..insert(0, 'see docs now')
-      ..format(4, 4, const LinkAttribute('https://x.dev/guide'));
-    final controller = StashEditor.controllerFor(document);
-    final focus = await _edit(tester, controller);
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 6),
-      ChangeSource.local,
+    final controller = StashEditor.controllerFor(
+      'see [docs](https://x.dev/guide) now',
     );
+    final focus = await _edit(tester, controller);
+    controller.selection = const TextSelection.collapsed(offset: 6);
     await tester.pumpAndSettle();
     expect(find.text('x.dev/guide'), findsOneWidget);
     // Typing goes on in the text: the bar takes no focus.
     expect(focus.hasFocus, isTrue);
     // Beside the link, not in it: no bar.
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 9),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection.collapsed(offset: 33);
     await tester.pumpAndSettle();
     expect(find.text('x.dev/guide'), findsNothing);
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 5),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection.collapsed(offset: 7);
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Codicons.edit));
     await tester.pumpAndSettle();
     expect(
       controller.selection,
-      const TextSelection(baseOffset: 4, extentOffset: 8),
+      const TextSelection(baseOffset: 5, extentOffset: 9),
     );
     // The link field, with the link in it.
     expect(find.byType(EditableText), findsOneWidget);
@@ -416,15 +462,11 @@ void main() {
   });
 
   testWidgets('another stash shown closes the link field', (tester) async {
-    final document = Document()..insert(0, 'see docs');
-    final first = StashEditor.controllerFor(document);
+    final first = StashEditor.controllerFor('see docs');
     final focus = FocusNode();
     final store = StashStore(MemoryStashDisk());
-    Widget editor(QuillController controller) => MaterialApp(
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
+    Widget editor(MarkdownController controller) => MaterialApp(
+      localizationsDelegates: const [AppLocalizations.delegate],
       home: Scaffold(
         body: StashEditor(
           controller: controller,
@@ -438,17 +480,12 @@ void main() {
     await tester.pumpWidget(editor(first));
     focus.requestFocus();
     await tester.pumpAndSettle();
-    first.updateSelection(
-      const TextSelection(baseOffset: 4, extentOffset: 8),
-      ChangeSource.local,
-    );
+    first.selection = const TextSelection(baseOffset: 4, extentOffset: 8);
     await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Codicons.link));
     await tester.pumpAndSettle();
     expect(find.byType(EditableText), findsOneWidget);
-    await tester.pumpWidget(
-      editor(StashEditor.controllerFor(Document()..insert(0, 'other'))),
-    );
+    await tester.pumpWidget(editor(StashEditor.controllerFor('other')));
     await tester.pumpAndSettle();
     expect(find.byType(EditableText), findsNothing);
   });
@@ -456,83 +493,106 @@ void main() {
   testWidgets('code pasted amid a line goes on lines of its own', (
     tester,
   ) async {
-    final document = Document()..insert(0, 'abc def');
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('abc def');
     await _edit(tester, controller);
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 3),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection.collapsed(offset: 3);
     tester
         .state<StashEditorState>(find.byType(StashEditor))
         .insertMarkdown('```\nx = 1\n```');
     await tester.pumpAndSettle();
-    final nodes = document.root.children.toList();
-    expect(nodes, hasLength(3));
-    expect(nodes[0].toPlainText(), 'abc\n');
-    // Lines of the editor's own code block, typed in in place.
-    expect(nodes[1], isA<Block>());
-    expect(nodes[1].toPlainText(), 'x = 1\n');
-    expect(
-      (nodes[1] as Block).style.attributes.containsKey(Attribute.codeBlock.key),
-      isTrue,
-    );
-    expect(nodes[2].toPlainText(), ' def\n');
+    expect(controller.text, 'abc\n```\nx = 1\n```\n def');
+    expect(controller.infoOf(2).kind, MdLineKind.fence);
     // The caret after it.
-    expect(controller.selection.baseOffset, 10);
+    expect(controller.selection.baseOffset, 18);
   });
 
   testWidgets('a code block: started with ```lang and Enter, typed in, '
       'left with Enter on its empty last line, written as a fence', (
     tester,
   ) async {
-    final document = Document()..insert(0, 'note\n```dart');
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('note\n```dart');
     await _edit(tester, controller);
-    controller.updateSelection(
-      TextSelection.collapsed(offset: document.length - 1),
-      ChangeSource.local,
-    );
+    controller.selection = TextSelection.collapsed(offset: controller.length);
+    await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    controller.replaceText(
-      controller.selection.baseOffset,
-      0,
-      'var a = 1;',
-      const TextSelection.collapsed(offset: 15),
-    );
+    await _type(tester, 'var a = 1;');
     // A new line, as the system's text input types it.
-    controller.replaceText(
-      15,
-      0,
-      '\n',
-      const TextSelection.collapsed(offset: 16),
-    );
-    await tester.pump();
+    await _type(tester, '\n');
     expect(
-      document
-          .queryChild(16)
-          .node!
-          .style
-          .attributes[Attribute.codeBlock.key]
-          ?.value,
-      'dart',
+      controller
+          .infoOf(controller.lineAt(controller.selection.baseOffset))
+          .kind,
+      MdLineKind.fence,
     );
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
-    controller.replaceText(controller.selection.baseOffset, 0, 'after', null);
+    await _type(tester, 'after');
     await tester.pumpAndSettle();
-    expect(
-      stashDeltaToMarkdown(document.toDelta()),
-      'note\n```dart\nvar a = 1;\n```\nafter',
-    );
-    // Read back as the same lines.
-    expect(
-      stashDeltaToMarkdown(
-        stashMarkdownToDelta('note\n```dart\nvar a = 1;\n```\nafter'),
+    expect(controller.text, 'note\n```dart\nvar a = 1;\n```\nafter');
+  });
+
+  testWidgets('[[ offers the other stashes; picked, one goes in as a link', (
+    tester,
+  ) async {
+    final controller = StashEditor.controllerFor('see ');
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    final opened = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [AppLocalizations.delegate],
+        home: Scaffold(
+          body: StashEditor(
+            controller: controller,
+            store: StashStore(MemoryStashDisk()),
+            ensureNote: () async => 1,
+            focusNode: focus,
+            autofocus: true,
+            refs: StashRefs(
+              stashes: () => const [
+                (id: 3, title: 'Login bug'),
+                (id: 4, title: 'Sidebar'),
+              ],
+              projects: () => const [],
+              open: opened.add,
+            ),
+          ),
+        ),
       ),
-      'note\n```dart\nvar a = 1;\n```\nafter',
     );
+    await tester.pumpAndSettle();
+    focus.requestFocus();
+    controller.selection = const TextSelection.collapsed(offset: 4);
+    await tester.pump();
+    await _type(tester, '[[side');
+    await tester.pumpAndSettle();
+    expect(find.text('Sidebar'), findsOneWidget);
+    expect(find.text('Login bug'), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(controller.text, 'see [Sidebar](stash:4) ');
+    expect(find.text('#4'), findsNothing, reason: 'the menu closed');
+  });
+
+  testWidgets('⌘B and ⌘I mark the selection', (tester) async {
+    final controller = StashEditor.controllerFor('make it bold');
+    await _edit(tester, controller);
+    controller.selection = const TextSelection(baseOffset: 8, extentOffset: 12);
+    await tester.pump();
+    final command = defaultTargetPlatform == TargetPlatform.macOS
+        ? LogicalKeyboardKey.meta
+        : LogicalKeyboardKey.control;
+    await tester.sendKeyDownEvent(command);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+    await tester.sendKeyUpEvent(command);
+    await tester.pump();
+    expect(controller.text, 'make it **bold**');
+    await tester.sendKeyDownEvent(command);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyI);
+    await tester.sendKeyUpEvent(command);
+    await tester.pump();
+    expect(controller.text, 'make it ***bold***');
   });
 
   test('code is told from prose and markdown', () {
@@ -560,62 +620,53 @@ void main() {
     );
   });
 
-  testWidgets('a picture put in is undone at once, the space after it too', (
+  testWidgets('a card put in is undone at once, the space after it too', (
     tester,
   ) async {
     // As read from the file: nothing to undo of it.
-    final document = Document.fromJson([
-      {'insert': 'see\n'},
-    ]);
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('see');
     await _edit(tester, controller);
     final state = tester.state<StashEditorState>(find.byType(StashEditor));
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 3),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection.collapsed(offset: 3);
     state.insertCard('https://x.dev');
     await tester.pumpAndSettle();
-    expect(document.toPlainText(), 'see\uFFFC \n');
+    const card = '[https://x.dev](https://x.dev "card")';
+    expect(controller.text, 'see$card ');
     // The caret after it, typing on.
-    expect(controller.selection, const TextSelection.collapsed(offset: 5));
+    expect(
+      controller.selection,
+      const TextSelection.collapsed(offset: 3 + card.length + 1),
+    );
     controller.undo();
     await tester.pumpAndSettle();
-    expect(document.toPlainText(), 'see\n');
+    expect(controller.text, 'see');
+    expect(controller.canUndo, isFalse);
   });
 
-  testWidgets('a click on a code block puts the caret after it', (
+  testWidgets('a click in a code block puts the caret in its code', (
     tester,
   ) async {
-    final document = Document()
-      ..insert(0, 'before\n')
-      ..insert(
-        7,
-        StashEmbeds.of(StashEmbeds.code, {'code': 'a\nb\nc', 'language': ''}),
-      );
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('before\n```\na\nb\nc\n```');
     await _edit(tester, controller);
-    final block = find.byType(MarkdownCodeBlock);
-    final box = tester.getRect(block);
-    await tester.tapAt(Offset(box.center.dx, box.bottom - 4));
+    controller.selection = const TextSelection.collapsed(offset: 0);
     await tester.pumpAndSettle();
-    expect(controller.selection, const TextSelection.collapsed(offset: 9));
-    expect(document.toPlainText().endsWith('\uFFFC\n\n'), isTrue);
+    final b = find.text('b', findRichText: true);
+    await tester.tapAt(tester.getCenter(b));
+    await tester.pumpAndSettle();
+    final offset = controller.selection.baseOffset;
+    expect(controller.lineAt(offset), 3);
+    await _type(tester, 'X');
+    expect(controller.lines.content(3), anyOf('Xb', 'bX'));
   });
 
   testWidgets('files dragged in go where the pointer is, shown as they '
       'come', (tester) async {
-    final document = Document()..insert(0, 'hello world');
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('hello world');
     await _edit(tester, controller);
-    controller.updateSelection(
-      const TextSelection.collapsed(offset: 0),
-      ChangeSource.local,
-    );
+    controller.selection = const TextSelection.collapsed(offset: 0);
     final editor = tester.state<StashEditorState>(find.byType(StashEditor));
-    final quill = tester.getTopLeft(find.byType(QuillEditor));
     // Past the text's end, on its line.
-    final over = quill + const Offset(300, 22);
+    final over = _editor(tester).caretRect(0)!.center + const Offset(300, 0);
     editor.fileDragOver(over, const []);
     await tester.pump();
     expect(find.byType(ColoredBox), findsWidgets);
@@ -628,11 +679,8 @@ void main() {
       'stash (a new controller)', (tester) async {
     final focus = FocusNode();
     final store = StashStore(MemoryStashDisk());
-    Widget editor(QuillController controller) => MaterialApp(
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
+    Widget editor(MarkdownController controller) => MaterialApp(
+      localizationsDelegates: const [AppLocalizations.delegate],
       home: Scaffold(
         body: StashEditor(
           controller: controller,
@@ -643,36 +691,33 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(editor(StashEditor.controllerFor(Document())));
+    await tester.pumpWidget(editor(StashEditor.controllerFor('')));
     await tester.pumpAndSettle();
-    final next = StashEditor.controllerFor(Document());
+    final next = StashEditor.controllerFor('');
     await tester.pumpWidget(editor(next));
     focus.requestFocus();
     await tester.pumpAndSettle();
-    final caret = tester.state<StashCaretState>(find.byType(StashCaret));
-    final start = caret.caretRect!.left;
-    next.replaceText(0, 0, '321321', const TextSelection.collapsed(offset: 6));
-    await tester.pump();
-    expect(caret.caretRect!.left, greaterThan(start + 40));
-    next.updateSelection(
-      const TextSelection.collapsed(offset: 3),
-      ChangeSource.local,
+    final start = _editor(tester).caretRect()!.left;
+    next.replace(
+      0,
+      0,
+      '321321',
+      selection: const TextSelection.collapsed(offset: 6),
     );
     await tester.pump();
-    expect(caret.caretRect!.left, lessThan(start + 60));
-    expect(caret.caretRect!.left, greaterThan(start + 20));
+    expect(_editor(tester).caretRect()!.left, greaterThan(start + 40));
+    next.selection = const TextSelection.collapsed(offset: 3);
+    await tester.pump();
+    expect(_editor(tester).caretRect()!.left, lessThan(start + 60));
+    expect(_editor(tester).caretRect()!.left, greaterThan(start + 20));
   });
 
   testWidgets('pictures and files show above the text, each once', (
     tester,
   ) async {
-    final document = Document()
-      ..insert(0, 'a  b  c  d')
-      ..insert(1, StashEmbeds.of(StashEmbeds.image, {'src': '1/a.png'}))
-      ..insert(4, StashEmbeds.of(StashEmbeds.file, {'path': '1/x.pdf'}))
-      ..insert(7, StashEmbeds.of(StashEmbeds.image, {'src': '1/a.png'}));
-    final controller = StashEditor.controllerFor(document);
-    expect(StashAttachment.of(document), const [
+    const text = 'a![](1/a.png) b[x.pdf](1/x.pdf) c![](1/a.png) d';
+    final controller = StashEditor.controllerFor(text);
+    expect(StashAttachment.of(text), const [
       StashAttachment.picture('1/a.png'),
       StashAttachment.file('1/x.pdf', 'x.pdf'),
     ]);
@@ -690,33 +735,17 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
 
     // Another put in: shown at once; all gone, nothing shows.
-    controller.replaceText(
-      0,
-      0,
-      StashEmbeds.of(StashEmbeds.image, {'src': '1/b.png'}),
-      null,
-    );
+    controller.replace(0, 0, '![](1/b.png)');
     await tester.pump();
     expect(find.byType(Image), findsNWidgets(2));
-    controller.replaceText(0, document.length - 1, '', null);
+    controller.replace(0, controller.length, '');
     await tester.pump();
     expect(find.byType(Image), findsNothing);
     expect(find.text('x.pdf'), findsNothing);
   });
 
   test('polished, pictures and files go as their paths and come back', () {
-    final slice = Delta()
-      ..insert('see ')
-      ..insert('this', {'bold': true})
-      ..insert(' ')
-      ..insert(StashEmbeds.of(StashEmbeds.image, {'src': '1/a.png'}).toJson())
-      ..insert(' and ')
-      ..insert(
-        StashEmbeds.of(StashEmbeds.file, {
-          'path': '1/b.pdf',
-          'name': 'b.pdf',
-        }).toJson(),
-      );
+    const slice = 'see **this** ![](1/a.png) and [b.pdf](1/b.pdf)';
     final asked = stashTextForModel(slice, (path) => '/stash/$path');
     expect(asked.text, 'see **this** [/stash/1/a.png] and [/stash/1/b.pdf]');
 
@@ -726,12 +755,12 @@ void main() {
       asked.attachments,
       endsLine: false,
     );
-    final ops = back.toList();
-    expect(ops.first.data, 'Look at ');
-    expect((ops[1].data! as Map).keys.single, StashEmbeds.image);
-    expect(ops.any((op) => op.attributes?['bold'] == true), isTrue);
-    expect((ops.last.data! as Map).keys.single, StashEmbeds.file);
-    expect(back.toList().any((op) => op.data == '\n'), isFalse);
+    expect(back, 'Look at ![](1/a.png): **this**. [b.pdf](1/b.pdf)');
+    expect(
+      stashTextFromModel('x', const [], endsLine: true),
+      'x\n',
+      reason: 'the line goes on after it, as it did',
+    );
   });
 
   testWidgets('copied and pasted in a stash, pictures stay pictures; as '
@@ -750,49 +779,62 @@ void main() {
         return null;
       },
     );
-    final document = Document.fromJson([
-      {'insert': 'a '},
-      {
-        'insert': StashEmbeds.of(StashEmbeds.image, {
-          'src': '/pics/a.png',
-        }).toJson(),
-      },
-      {'insert': ' b\n'},
-    ]);
-    final controller = StashEditor.controllerFor(document);
+    final controller = StashEditor.controllerFor('a ![](/pics/a.png) b');
     await _edit(tester, controller);
-    controller.updateSelection(
-      const TextSelection(baseOffset: 0, extentOffset: 5),
-      ChangeSource.local,
+    controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: controller.length,
     );
-    // ignore: experimental_member_use
-    controller.clipboardSelection(true);
+    await _editor(tester).copy();
     expect(clipboard, 'a @/pics/a.png b');
 
-    controller.updateSelection(
-      TextSelection.collapsed(offset: document.length - 1),
-      ChangeSource.local,
-    );
-    // ignore: experimental_member_use
-    await controller.clipboardPaste();
+    controller.selection = TextSelection.collapsed(offset: controller.length);
+    await _editor(tester).paste();
     await tester.pumpAndSettle();
-    final pictures = document.toDelta().toList().where(
-      (op) =>
-          op.data is Map && (op.data! as Map).containsKey(StashEmbeds.image),
-    );
-    expect(pictures, hasLength(2));
+    expect(controller.text, 'a ![](/pics/a.png) ba ![](/pics/a.png) b');
   });
 }
 
-/// [document] in an editor, focused.
-Future<FocusNode> _edit(WidgetTester tester, QuillController controller) async {
+MarkdownEditorState _editor(WidgetTester tester) =>
+    tester.state<MarkdownEditorState>(find.byType(MarkdownEditor));
+
+/// Typed in, as the platform's input sends it: [text] where the caret is.
+/// What was typed last is what the input has, until the editor tells it
+/// otherwise.
+Future<void> _type(WidgetTester tester, String text) async {
+  final told = tester.testTextInput.editingState!;
+  final value = identical(told, _told) ? _typed! : _valueOf(told);
+  _told = told;
+  final (a, b) = (value.selection.start, value.selection.end);
+  _typed = TextEditingValue(
+    text: value.text.replaceRange(a, b, text),
+    selection: TextSelection.collapsed(offset: a + text.length),
+  );
+  tester.testTextInput.updateEditingValue(_typed!);
+  await tester.pump();
+}
+
+Map<String, dynamic>? _told;
+TextEditingValue? _typed;
+
+TextEditingValue _valueOf(Map<String, dynamic> state) {
+  final base = state['selectionBase'] as int;
+  final extent = state['selectionExtent'] as int;
+  return TextEditingValue(
+    text: state['text'] as String,
+    selection: TextSelection(baseOffset: base, extentOffset: extent),
+  );
+}
+
+/// [controller] in an editor, focused.
+Future<FocusNode> _edit(
+  WidgetTester tester,
+  MarkdownController controller,
+) async {
   final focus = FocusNode();
   await tester.pumpWidget(
     MaterialApp(
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        FlutterQuillLocalizations.delegate,
-      ],
+      localizationsDelegates: const [AppLocalizations.delegate],
       home: Scaffold(
         body: StashEditor(
           controller: controller,

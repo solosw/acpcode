@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/ide_menu.dart';
+import 'package:baocode/theme/app_theme.dart' show AppMetrics;
 import 'package:baocode/theme/codicons.dart';
 
 final _panels = find.byWidgetPredicate(
@@ -16,6 +17,7 @@ Future<void> _open(
   required Rect anchor,
   required List<IdeMenuEntry> entries,
   bool alignRight = false,
+  bool iconsInCheckColumn = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -36,6 +38,7 @@ Future<void> _open(
       context,
       anchor: anchor,
       alignRight: alignRight,
+      iconsInCheckColumn: iconsInCheckColumn,
       entries: entries,
     ),
   );
@@ -100,6 +103,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // #198: the window drags itself by the header Windows draws, so a first
+  // item over it could not be chosen.
+  testWidgets('long dropdown stays below the window\'s own header on Windows', (
+    tester,
+  ) async {
+    var chosen = false;
+    await _open(
+      tester,
+      size: size,
+      anchor: const Rect.fromLTWH(400, 300, 100, 26),
+      entries: [
+        IdeMenuAction('First', onSelected: () => chosen = true),
+        for (var i = 0; i < 50; i++) IdeMenuAction('Sound $i'),
+      ],
+    );
+    final panel = tester.getRect(_panels);
+    expect(panel.top, AppMetrics.headerHeight);
+    expect(panel.bottom, size.height - 8);
+    expect(
+      tester.getRect(find.text('First')).top,
+      greaterThan(AppMetrics.headerHeight),
+    );
+    await tester.tap(find.text('First'));
+    await tester.pumpAndSettle();
+    expect(chosen, isTrue);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
   testWidgets('wide right-aligned dropdown stays inside the inset', (
     tester,
   ) async {
@@ -159,6 +189,33 @@ void main() {
     final label = tester.widget<Text>(find.text('Disconnect')).style!.color;
     final icon = tester.element(find.byIcon(Codicons.debugDisconnect));
     expect(IconTheme.of(icon).color, label);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('icons in the check column: where a check is, at the panel\'s '
+      'start; one checked shows its check instead', (tester) async {
+    await _open(
+      tester,
+      size: size,
+      anchor: const Rect.fromLTWH(20, 20, 100, 26),
+      iconsInCheckColumn: true,
+      entries: const [
+        IdeMenuAction('Copy', icon: Icon(Codicons.copy)),
+        IdeMenuAction('Left', icon: Icon(Codicons.arrowLeft), checked: true),
+      ],
+    );
+    final panel = tester.getRect(_panels);
+    final copy = tester.getRect(find.byIcon(Codicons.copy));
+    expect(copy.size, const Size(16, 16));
+    expect(copy.left - panel.left, lessThan(26));
+    expect(copy.right, lessThan(tester.getRect(find.text('Copy')).left));
+    // The labels where they are with no icons.
+    expect(
+      tester.getRect(find.text('Copy')).left,
+      tester.getRect(find.text('Left')).left,
+    );
+    expect(find.byIcon(Codicons.arrowLeft), findsNothing);
+    expect(find.byIcon(Codicons.menuSelection), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

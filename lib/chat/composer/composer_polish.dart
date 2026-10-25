@@ -3,8 +3,10 @@
 // are each a marker it is told to keep, put back as they were; a reply that
 // loses, doubles or makes up one is not taken.
 
+import 'package:bao_markdown/bao_markdown.dart' show MdAtoms;
 import 'package:flutter/foundation.dart';
-import 'package:flutter_quill/quill_delta.dart';
+
+import 'composer_embeds.dart';
 
 import '../../kernel/claude_code/claude_haiku.dart';
 import '../../models/model_providers.dart';
@@ -38,9 +40,8 @@ class ComposerPolishException implements Exception {
 
 /// The composer's content as the model is given it: [text], each thing
 /// kept out of its reach a marker (`⟦1⟧`, `⟦2⟧`…) standing for the one in
-/// [kept] at that number less one: an embed's operation (a tag, an image,
-/// lines of a file…) or text that must stay as it is (code, a link, a
-/// path).
+/// [kept] at that number less one: an embed (a tag, an image, lines of a
+/// file…) or text that must stay as it is (code, a link, a path).
 class ComposerPolishText {
   const ComposerPolishText(this.text, this.kept);
 
@@ -66,9 +67,8 @@ final _kept = RegExp(
   r'|⟦[^⟧\n]*⟧',
 );
 
-/// [content] (the composer's, without the document's closing newline) as
-/// the model is given it.
-ComposerPolishText composerPolishText(Delta content) {
+/// [content] (the composer's text) as the model is given it.
+ComposerPolishText composerPolishText(String content) {
   final text = StringBuffer();
   final kept = <Object>[];
   void keep(Object what) {
@@ -76,47 +76,48 @@ ComposerPolishText composerPolishText(Delta content) {
     kept.add(what);
   }
 
-  for (final op in content.toList()) {
-    final data = op.data;
-    if (data is! String) {
-      keep(op);
+  for (final piece in composerPieces(content)) {
+    if (piece is! String) {
+      keep(piece);
       continue;
     }
     var at = 0;
-    for (final match in _kept.allMatches(data)) {
-      text.write(data.substring(at, match.start));
+    for (final match in _kept.allMatches(piece)) {
+      text.write(piece.substring(at, match.start));
       keep(match.group(0)!);
       at = match.end;
     }
-    text.write(data.substring(at));
+    text.write(piece.substring(at));
   }
   return ComposerPolishText(text.toString(), kept);
 }
 
-/// [reply] (the model's, for [asked]) as composer content: the markers
+/// [reply] (the model's, for [asked]) as the composer's text: the markers
 /// put back as what they stand for; null when one is missing, doubled or
 /// made up.
-Delta? composerPolishContent(String reply, ComposerPolishText asked) {
+String? composerPolishContent(String reply, ComposerPolishText asked) {
   final seen = <int>{};
-  final content = Delta();
+  final content = StringBuffer();
   var at = 0;
   for (final match in _marker.allMatches(reply)) {
     final index = int.parse(match.group(1)!) - 1;
     if (index < 0 || index >= asked.kept.length || !seen.add(index)) {
       return null;
     }
-    if (match.start > at) content.insert(reply.substring(at, match.start));
+    if (match.start > at) {
+      content.write(MdAtoms.strip(reply.substring(at, match.start)));
+    }
     switch (asked.kept[index]) {
-      case final Operation op:
-        content.insert(op.data, op.attributes);
+      case final ComposerEmbed embed:
+        content.write(embed.atom);
       case final String text:
-        content.insert(text);
+        content.write(text);
     }
     at = match.end;
   }
   if (seen.length != asked.kept.length) return null;
-  if (at < reply.length) content.insert(reply.substring(at));
-  return content;
+  if (at < reply.length) content.write(MdAtoms.strip(reply.substring(at)));
+  return content.toString();
 }
 
 // One line, so that it passes through a shell unchanged.
@@ -155,7 +156,7 @@ composerPolishAsker;
 /// the composer's new content. Throws [ComposerPolishException] when there
 /// is none, or the reply lost what it was to keep, or ran on far longer
 /// (written on, not polished).
-Future<Delta> polishComposerText(
+Future<String> polishComposerText(
   ComposerPolishText asked, {
   String? model,
   String? location,

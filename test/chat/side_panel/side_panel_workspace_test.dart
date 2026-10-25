@@ -21,8 +21,6 @@ import 'package:baocode/theme/codicons.dart';
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -92,7 +90,6 @@ Future<({AgentSidePanel panel, ChatSession session})> _pump(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       builder: uiScale == null
           ? null
           : (context, child) {

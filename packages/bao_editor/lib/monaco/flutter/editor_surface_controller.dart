@@ -373,6 +373,7 @@ class EditorSurfaceController extends ValueNotifier<TextEditingValue> {
     TextRange composing = TextRange.empty,
     bool keepColumnSelect = false,
     bool keepSession = false,
+    bool keepUndoGroup = false,
   }) {
     if (_disposed) return;
     final text = document.text;
@@ -387,7 +388,7 @@ class EditorSurfaceController extends ValueNotifier<TextEditingValue> {
     if (!keepSession) _multiCursorSession = null;
     if (!fromEdit) {
       _prevEditType = EditOperationType.other;
-      document.closeUndoGroup();
+      if (!keepUndoGroup) document.closeUndoGroup();
     }
     final next = TextEditingValue(
       text: text,
@@ -1870,14 +1871,19 @@ class EditorSurfaceController extends ValueNotifier<TextEditingValue> {
       _lastEditVersion = -1;
       _autoClosed = const [];
       _eolCache = null;
-      _setSelections(restored, reveal: restored.first.extentOffset);
+      _setSelections(
+        restored,
+        reveal: restored.first.extentOffset,
+        keepUndoGroup: true,
+      );
       return;
     }
     if (super.value.text != document.text) {
       _autoClosed = const [];
       _eolCache = null;
     }
-    _setSelections(selections);
+    // Another's edit shown: its step of Undo not ended by it.
+    _setSelections(selections, keepUndoGroup: true);
   }
 
   Future<void> copy() async {

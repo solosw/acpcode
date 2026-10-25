@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:baocode/forge/forge_accounts.dart';
 import 'package:baocode/ide/ide_list.dart' show IdeListColors;
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/models/model_providers.dart';
+import 'package:baocode/models/secret_store.dart';
 import 'package:baocode/stash/stash_ai.dart';
 import 'package:baocode/stash/stash_controller.dart';
 import 'package:baocode/stash/stash_disk.dart';
@@ -12,17 +14,20 @@ import 'package:baocode/stash/stash_note_editor.dart';
 import 'package:baocode/stash/stash_store.dart';
 import 'package:baocode/sidebar/sidebar.dart' show SidebarIconButton;
 import 'package:baocode/stash/stash_thread_view.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/stash/stash_view.dart';
 import 'package:baocode/chat/chat_session.dart' show ComposerMessage;
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
+
+import '../forge/forge_test.dart' show FakeForgeHttp;
+import '../workspace/project_workspace_test.dart' show FakeWorkspaceDirectories;
 
 void main() {
   late StashStore store;
@@ -170,10 +175,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashView(
             controller: controller,
@@ -476,8 +478,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('the card shows the conversation it was last worked on in, '
-      'what its agent said; the detail lists them all, a click away', (
+  testWidgets('the row shows the conversation it was last worked on in, '
+      'what its agent said on hover; the detail lists them all, a click away', (
     tester,
   ) async {
     // Its agents' kernels started in the test's time.
@@ -520,17 +522,23 @@ void main() {
     AgentThread? opened;
     await pumpView(tester, onOpenAgent: (thread) => opened = thread);
 
-    final chip = find.byType(StashThreadChip);
+    final chip = find.byType(StashThreadInline);
     expect(chip, findsOneWidget);
     Finder inChip(String text) =>
         find.descendant(of: chip, matching: find.text(text));
     expect(inChip(thread.title), findsOneWidget);
-    expect(inChip('Uploads retry three times now.'), findsOneWidget);
     expect(inChip('+1'), findsOneWidget);
-    // In place of its text (its title stays).
+    // What its agent said, on hover.
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeHover &&
+            '${widget.message}'.contains('Uploads retry three times now.'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Uploads fail'), findsOneWidget);
-    expect(find.text('They should retry on 503'), findsNothing);
-    // A click on it is the card's: the stash opens, not the conversation.
+    // A click on it is the row's: the stash opens, not the conversation.
     await tester.tap(chip);
     expect(opened, isNull);
     // Sliding in.
@@ -547,6 +555,116 @@ void main() {
     expect(opened, isNull);
     await tester.tap(inList('Uploads retry three times now.'));
     expect(opened, thread);
+    await unmount(tester);
+  });
+
+  test('a workspace\'s stashes are its folders\' too', () async {
+    final workspace = Workspace(
+      projects: const [Project('api', '/code/api')],
+      workspaceDirectories: FakeWorkspaceDirectories(),
+    );
+    final made = workspace.createWorkspace('web', ['/code/site', '/code/api'])!;
+    final about = StashController(
+      store: store,
+      workspace: workspace,
+      host: StashHost(channel: const MethodChannel('test/stash-about')),
+    );
+    addTearDown(about.dispose);
+    final api = await store.create(body: 'a', project: '/code/api');
+    final elsewhere = await store.create(body: 'b', project: '/code/other');
+    expect(about.isAbout(api, made.path), isTrue);
+    expect(about.isAbout(api, '/code/api'), isTrue);
+    expect(about.isAbout(elsewhere, made.path), isFalse);
+  });
+
+  testWidgets('a row hovered offers what is done with it: done, and back', (
+    tester,
+  ) async {
+    final note = (await tester.runAsync(
+      () => store.create(body: 'Retry uploads'),
+    ))!;
+    await pumpView(tester);
+    final row = find.text('Retry uploads').first;
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(row));
+    await tester.pump();
+    Finder action(String tooltip) => find.byWidgetPredicate(
+      (widget) => widget is IdeHover && widget.message == tooltip,
+    );
+    expect(action('Implement in BaoCode'), findsOneWidget);
+    expect(action('More'), findsWidgets);
+    await tester.tap(action('Mark Done'));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(store.byId(note.id)!.status, StashStatus.done);
+    await unmount(tester);
+  });
+
+  testWidgets('what is new about a stash\'s issue is told on its row and '
+      'over the list till it is shown', (tester) async {
+    controller.dispose();
+    controller = StashController(
+      store: store,
+      workspace: Workspace.mock(),
+      host: StashHost(channel: const MethodChannel('test/stash-view')),
+      accounts: ForgeAccounts(
+        http: FakeForgeHttp(),
+        secrets: MemorySecretStore(),
+      ),
+    );
+    final ids = (await tester.runAsync(() async {
+      final quiet = await store.create(body: 'Quiet one');
+      // News, but not about the user: not counted, quieter.
+      await store.update(quiet.id, (note) {
+        note.issue = 'https://github.com/o/r/issues/4';
+        note.issues.add(
+          const StashIssueLink(
+            url: 'https://github.com/o/r/issues/4',
+            state: 'open',
+          ),
+        );
+        note.tell(StashNews.changed, mine: false);
+      });
+      final told = await store.create(body: 'Told one');
+      await store.update(told.id, (note) {
+        // Not two collected: no merge asked of the model.
+        note.status = StashStatus.requirement;
+        note.issues.add(
+          const StashIssueLink(
+            url: 'https://github.com/o/r/issues/3',
+            state: 'open',
+            comments: 2,
+          ),
+        );
+        note.issue = 'https://github.com/o/r/issues/3';
+        note.tell(StashNews.commented, mine: true);
+      });
+      return [quiet.id, told.id];
+    }))!;
+    await pumpView(tester);
+    expect(find.text('1 update'), findsOneWidget);
+    expect(controller.store.byId(ids.first)!.news, StashNews.changed);
+    expect(find.textContaining('2 comments'), findsOneWidget);
+
+    // Only those with news, then all again.
+    await tester.tap(find.text('1 update'));
+    await tester.pump();
+    expect(find.text('Quiet one'), findsNothing);
+    await tester.tap(find.text('1 update'));
+    await tester.pump();
+    expect(find.text('Quiet one'), findsOneWidget);
+
+    await tester.tap(find.text('Told one'));
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(store.byId(ids.last)!.news, isNull);
+    expect(store.byId(ids.first)!.news, StashNews.changed);
+    expect(find.text('1 update'), findsNothing);
+    // Still said in the stash while it shows.
+    expect(find.text('New comments'), findsOneWidget);
     await unmount(tester);
   });
 
@@ -568,10 +686,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: Builder(builder: (context) => view.build(context, path)),
         ),
@@ -594,10 +709,7 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashView(
             controller: controller,

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,6 +8,7 @@ import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
+import '../workspace/window_controls.dart';
 
 /// Shows a feature's welcome (Stash's, the browser's): a card over the
 /// window that comes in growing a little, gone with Escape, Enter, or its
@@ -123,7 +126,14 @@ class WelcomeFrame extends StatelessWidget {
                   : stacked
                   ? _stackedWidth
                   : 480,
-              constraints: BoxConstraints(maxHeight: size.height * .9),
+              // Centered, so its top stays below the header Windows draws
+              // (see WindowControls.headerInset).
+              constraints: BoxConstraints(
+                maxHeight: math.min(
+                  size.height * .9,
+                  size.height - 2 * (WindowControls.headerInset + 8),
+                ),
+              ),
               decoration: BoxDecoration(
                 color: themeColors['editorWidget.background'],
                 borderRadius: BorderRadius.circular(16),

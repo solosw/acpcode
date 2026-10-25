@@ -54,3 +54,8 @@ bool localClaudeInstalled() => LocalClaude.installed();
 /// Looks for Claude Code on this machine again, as the user's shell finds
 /// it.
 Future<void> lookForLocalClaude() => LocalClaude.lookForInstall();
+
+/// Downloads Claude Code for this machine where it has none, as the first
+/// session on the CLI would (its progress LocalClaudeInstall's); nothing on
+/// the web.
+Future<void> installLocalClaude() => LocalClaude.install();

@@ -109,8 +109,9 @@ class IdeCodeFind extends ChangeNotifier {
     final value = _controller.value;
     final selection = value.selection;
     if (!selection.isValid) return null;
-    if (selection.isCollapsed)
+    if (selection.isCollapsed) {
       return _controller.wordAt(selection.extentOffset);
+    }
     final text = selection.textInside(value.text);
     if (!multiline && (text.contains('\n') || text.contains('\r'))) {
       return null;

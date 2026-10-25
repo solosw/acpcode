@@ -1662,7 +1662,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelSource => 'Source';
 
   @override
-  String get sidePanelEdit => 'Edit';
+  String get commandOpenDetails => 'Open details';
 
   @override
   String get sidePanelNoOriginal =>
@@ -3606,7 +3606,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default when Claude Code is installed here, the built-in core otherwise. Changes apply to new sessions.';
+      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.';
 
   @override
   String get generalSettingsClaudeCoreBuiltin => 'Built-in';
@@ -3787,6 +3787,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get placeholderOpenAnyway => 'Open Anyway';
+
+  @override
+  String get changeOpenWith => 'Open With';
 
   @override
   String get openInDefaultApp => 'Open in Default App';
@@ -5896,13 +5899,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get generalSettingsIde => 'Fast IDE';
 
   @override
-  String get generalSettingsAutoOpenChanges => 'Show agent changes as diffs';
-
-  @override
-  String get generalSettingsAutoOpenChangesDescription =>
-      'While the IDE shows, a file the agent changes opens as a diff of it against its text before, as the agent edits it.';
-
-  @override
   String get explorerExcludeSetting => 'Hidden files and folders';
 
   @override
@@ -6736,6 +6732,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'No longer listed by the upstream; kept until you remove it.';
 
   @override
+  String modelsRemoveMissing(int count) {
+    return 'Remove Gone ($count)';
+  }
+
+  @override
+  String modelsRemoveMissingConfirm(int count) {
+    return 'Remove $count models the upstream no longer lists?';
+  }
+
+  @override
   String get modelsCustom => 'Manual';
 
   @override
@@ -6752,6 +6758,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsEdit => 'Edit…';
+
+  @override
+  String get modelsDuplicate => 'Duplicate…';
 
   @override
   String get modelsRemove => 'Remove';
@@ -6788,7 +6797,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRolesDescription =>
-      'Which model Claude Code uses for each part of its work. Unset, the model picked stands in.';
+      'Which model Claude Code uses for each part of its work. Unset, the model picked stands in. All but the main model may be another upstream\'s: BaoCode\'s local proxy sends their requests there.';
 
   @override
   String get modelsRoleUnset => 'Unset';
@@ -6830,11 +6839,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit). It may be another upstream\'s: BaoCode\'s local proxy sends its requests there.';
+      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).';
 
   @override
   String get modelsRoleMissing =>
-      'This model is no longer one of its upstream\'s: subagents\' requests to it will fail.';
+      'This model is no longer one of its upstream\'s: requests to it will fail.';
 
   @override
   String get modelsAdvanced => 'Advanced';
@@ -6893,6 +6902,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsHeadersPlaceholder => 'x-session-id: my-session';
+
+  @override
+  String get modelsDuplicateProvider => 'Duplicate Upstream';
+
+  @override
+  String get modelsDuplicateProviderDescription =>
+      'A copy of this upstream, with its models, settings and key.';
+
+  @override
+  String modelsDuplicateName(String name) {
+    return '$name Copy';
+  }
 
   @override
   String get modelsDelete => 'Delete Upstream';
@@ -7031,6 +7052,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get modelsKindDescription =>
       'Image models are not offered in the model picker: agents make pictures with them through the generate_image tool.';
+
+  @override
+  String get modelsEndpoint => 'Endpoint';
+
+  @override
+  String modelsEndpointUpstream(String protocol) {
+    return 'As the upstream ($protocol)';
+  }
+
+  @override
+  String get modelsEndpointDescription =>
+      'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.';
 
   @override
   String get modelsImageBadge => 'Image';
@@ -7798,6 +7831,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String remoteStatusTooltipLost(String host) {
     return 'The connection to $host is lost: click to reconnect now';
+  }
+
+  @override
+  String remoteStatusTooltipResuming(String host) {
+    return 'The connection to $host is lost, and being made again: its terminals and Claude Code keep running there meanwhile. Click to reconnect now';
   }
 
   @override
@@ -8705,6 +8743,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get stashLinkEdit => 'Edit link';
 
   @override
+  String get stashLinkCopy => 'Copy link address';
+
+  @override
+  String get stashLinkRemove => 'Remove link';
+
+  @override
+  String get stashFormatMenu => 'Format';
+
+  @override
   String get stashDraft => 'Draft';
 
   @override
@@ -8780,6 +8827,60 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashFormatCodeBlock => 'Code block';
+
+  @override
+  String get markdownTableInsertRowAbove => 'Insert row above';
+
+  @override
+  String get markdownTableInsertRowBelow => 'Insert row below';
+
+  @override
+  String get markdownTableDeleteRow => 'Delete row';
+
+  @override
+  String get markdownTableInsertColumnLeft => 'Insert column left';
+
+  @override
+  String get markdownTableInsertColumnRight => 'Insert column right';
+
+  @override
+  String get markdownTableDeleteColumn => 'Delete column';
+
+  @override
+  String get markdownTableAlignLeft => 'Align left';
+
+  @override
+  String get markdownTableAlignCenter => 'Align center';
+
+  @override
+  String get markdownTableAlignRight => 'Align right';
+
+  @override
+  String get markdownTableDuplicateRow => 'Duplicate row';
+
+  @override
+  String get markdownTableMoveRowUp => 'Move row up';
+
+  @override
+  String get markdownTableMoveRowDown => 'Move row down';
+
+  @override
+  String get markdownTableClearRow => 'Clear row';
+
+  @override
+  String get markdownTableDuplicateColumn => 'Duplicate column';
+
+  @override
+  String get markdownTableMoveColumnLeft => 'Move column left';
+
+  @override
+  String get markdownTableMoveColumnRight => 'Move column right';
+
+  @override
+  String get markdownTableClearColumn => 'Clear column';
+
+  @override
+  String get markdownTableDeleteTable => 'Delete table';
 
   @override
   String get stashFormatClear => 'Clear formatting';
@@ -9903,6 +10004,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelSetUp => 'Set Up a Model';
 
   @override
+  String get claudeCoreHint =>
+      'This chat runs on BaoCode\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.';
+
+  @override
+  String get claudeCoreHintSwitch => 'Switch to Claude Code';
+
+  @override
+  String get claudeCoreHintLater => 'Not Now';
+
+  @override
   String get remoteAddServer => 'Add SSH Server...';
 
   @override
@@ -10346,4 +10457,378 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutOpen => 'Open';
+
+  @override
+  String get stashSettingsIssueSync => 'Issues as stashes';
+
+  @override
+  String get stashSettingsIssueSyncDescription =>
+      'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.';
+
+  @override
+  String get stashIssueSyncMine => 'Only those assigned to or opened by me';
+
+  @override
+  String get stashIssueSyncOff => 'Off: imported or published ones only';
+
+  @override
+  String get stashIssueLocal => 'Local only';
+
+  @override
+  String get stashIssueAllow => 'Allow publishing as an issue';
+
+  @override
+  String get stashIssueNotPublished => 'Not an issue yet';
+
+  @override
+  String stashIssuePublishTo(String repo) {
+    return 'Publish as an issue of $repo…';
+  }
+
+  @override
+  String get stashIssueKeepLocal => 'Keep it local';
+
+  @override
+  String get stashIssuePush => 'Push changes to the issue…';
+
+  @override
+  String get stashIssuePushShort => 'Push';
+
+  @override
+  String get stashIssueTakeRemote => 'Discard local changes, use the issue\'s';
+
+  @override
+  String get stashIssueUnlinkOwn => 'Unlink, keep it local';
+
+  @override
+  String stashIssueConflict(String tag) {
+    return '$tag was changed on the forge too. Which version to keep?';
+  }
+
+  @override
+  String get stashIssueKeepMine => 'Keep mine (push)';
+
+  @override
+  String get stashIssueKeepTheirs => 'Use the issue\'s';
+
+  @override
+  String stashIssueChangedHere(String tag) {
+    return 'Changes here are not on $tag yet.';
+  }
+
+  @override
+  String get stashIssueDiscard => 'Discard';
+
+  @override
+  String stashIssuePublishTitle(String repo) {
+    return 'Publish as an issue of $repo';
+  }
+
+  @override
+  String stashIssuePushTitle(String tag) {
+    return 'Push changes to $tag';
+  }
+
+  @override
+  String get stashIssuePublish => 'Publish';
+
+  @override
+  String get stashIssueNoText => '(no description)';
+
+  @override
+  String stashIssuePicturesGitHub(int count, String branch) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count pictures are uploaded to the repository\'s $branch branch, for the issue to show them.',
+      one:
+          '1 picture is uploaded to the repository\'s $branch branch, for the issue to show it.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String stashIssuePicturesGitLab(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$count pictures are uploaded to the project, for the issue to show them.',
+      one: '1 picture is uploaded to the project, for the issue to show it.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashImplementShort => 'Implement';
+
+  @override
+  String stashImplementIssue(String issue) {
+    return 'It is issue $issue: the pull request should say it fixes it.';
+  }
+
+  @override
+  String get stashIssueSyncAll => 'All open issues';
+
+  @override
+  String get stashIssueChecking => 'Looking for its repository…';
+
+  @override
+  String get stashIssueRefresh => 'Refresh now';
+
+  @override
+  String get stashIssuePublishButton => 'Publish as Issue';
+
+  @override
+  String get stashIssuePushButton => 'Push to Issue';
+
+  @override
+  String get stashIssueLoading => 'Loading…';
+
+  @override
+  String get stashSyncing => 'Syncing issues…';
+
+  @override
+  String stashSyncingRepo(String repo, int index, int total) {
+    return 'Syncing the issues of $repo ($index/$total)…';
+  }
+
+  @override
+  String get stashSyncTooltip => 'Sync issues now';
+
+  @override
+  String stashSyncTooltipLast(String time) {
+    return 'Sync issues now · last at $time';
+  }
+
+  @override
+  String stashSyncFailed(String repo, String error) {
+    return 'Could not sync the issues of $repo: $error';
+  }
+
+  @override
+  String stashSyncSignIn(String forge, String repo, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Sign in to $forge for the issues of $repo and $count more repositories to be stashes.',
+      one: 'Sign in to $forge for the issues of $repo to be stashes.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashSyncingEmpty => 'Syncing the projects\' issues…';
+
+  @override
+  String get stashFilterAnyIssue => 'Any source';
+
+  @override
+  String get stashFilterIssue => 'Issues';
+
+  @override
+  String get stashFilterNotIssue => 'Local only';
+
+  @override
+  String get stashImplementEmpty =>
+      'Write something first, then implement it in BaoCode';
+
+  @override
+  String stashIssueDuplicateBanner(String issue, String stash) {
+    return '$issue, of stash $stash merged into this one, is still open. Close it as a duplicate?';
+  }
+
+  @override
+  String get stashIssueCloseDuplicate => 'Close as duplicate…';
+
+  @override
+  String get stashIssueDuplicateNoIssue =>
+      'Merged into another note; closing as a duplicate.';
+
+  @override
+  String get stashNewsOpened => 'New issue';
+
+  @override
+  String get stashNewsChanged => 'Changed on the forge';
+
+  @override
+  String get stashNewsCommented => 'New comments';
+
+  @override
+  String get stashNewsClosed => 'Closed on the forge';
+
+  @override
+  String get stashNewsReopened => 'Reopened on the forge';
+
+  @override
+  String stashNewsCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count updates',
+      one: '1 update',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashNewsCountTooltip =>
+      'Show only the updates about you: your issues and pull requests, those assigned to you or naming you';
+
+  @override
+  String get stashNewsCountTooltipOn =>
+      'Showing only the updates about you; click for all';
+
+  @override
+  String get stashFilterNews => 'About you';
+
+  @override
+  String get stashMarkAllSeen => 'Mark all as seen';
+
+  @override
+  String stashIssueComments(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count comments',
+      one: '1 comment',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashIssueDiscussion => 'Discussion';
+
+  @override
+  String stashIssueDiscussionAll(int count, String forge) {
+    return 'See all $count on $forge';
+  }
+
+  @override
+  String get stashIssueDiscussionFailed => 'Couldn\'t load the comments.';
+
+  @override
+  String get stashIssueDiscussionLoading => 'Loading the comments…';
+
+  @override
+  String stashDeleteAndClose(String issue) {
+    return 'Delete and close $issue…';
+  }
+
+  @override
+  String stashDeleteOpenIssue(String issue) {
+    return 'Its issue $issue stays open on the forge unless closed too.';
+  }
+
+  @override
+  String stashIssueInSync(String issue) {
+    return 'Same as $issue';
+  }
+
+  @override
+  String stashIssueSyncedAt(String time) {
+    return 'synced $time';
+  }
+
+  @override
+  String get stashIssueNotPushed => 'Changed here, not pushed yet';
+
+  @override
+  String get stashIssueRemoteNewer => 'Changed on the forge';
+
+  @override
+  String get stashIssueBothChanged => 'Changed both here and on the forge';
+
+  @override
+  String get stashIssueDiscussionEmpty => 'No comments yet';
+
+  @override
+  String get stashNewsMerged => 'Pull request merged';
+
+  @override
+  String get stashNewsChangesRequested => 'Changes requested';
+
+  @override
+  String get stashNewsChecksFailed => 'Checks failed';
+
+  @override
+  String get stashNewsMarked => 'Marked as unread';
+
+  @override
+  String stashNewsOther(String news) {
+    return '$news (not about you)';
+  }
+
+  @override
+  String stashNewsSidebar(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count updates about you',
+      one: '1 update about you',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get stashFilterAllNews => 'Any updates';
+
+  @override
+  String get stashMarkSeen => 'Mark as Read';
+
+  @override
+  String get stashMarkUnseen => 'Mark as Unread';
+
+  @override
+  String stashPullChecksFailedBanner(String pull) {
+    return 'The checks of $pull failed.';
+  }
+
+  @override
+  String stashPullChangesBanner(String pull) {
+    return 'Changes were requested on $pull.';
+  }
+
+  @override
+  String stashPullMergedBanner(String pull) {
+    return '$pull was merged. Is this done too?';
+  }
+
+  @override
+  String get stashPullFix => 'Fix in Its Conversation';
+
+  @override
+  String get stashPullView => 'View';
+
+  @override
+  String stashPullFixChecks(String pull) {
+    return 'The checks of $pull failed. Find out what failed and fix it.';
+  }
+
+  @override
+  String stashPullFixChanges(String pull) {
+    return 'Changes were requested on $pull. Read the review and make them.';
+  }
+
+  @override
+  String stashWriteManyTitle(int count) {
+    return 'Comment on $count issues';
+  }
+
+  @override
+  String stashWriteCloseManyTitle(int count) {
+    return 'Close $count issues';
+  }
+
+  @override
+  String stashDeleteOpenIssues(int count, String issues) {
+    return 'Their issues $issues stay open on the forge unless closed too.';
+  }
+
+  @override
+  String stashDeleteAndCloseMany(int count) {
+    return 'Delete and close $count issues…';
+  }
 }

@@ -629,8 +629,8 @@ void main() {
     expect(tester.getRect(pane(first)).width, ChatGridView.minPane.width);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
-  testWidgets('the title keeps to the conversation\'s column and the buttons '
-      'to the pane\'s end, alone or side by side', (tester) async {
+  testWidgets('the title keeps to the pane\'s start and the buttons '
+      'to its end, alone or side by side', (tester) async {
     await pumpApp(tester);
 
     void expectPlaced(String title, Finder rightmost) {
@@ -644,7 +644,8 @@ void main() {
         ),
         matching: find.text(title),
       );
-      expect(tester.getTopLeft(text).dx, composer.left);
+      expect(tester.getTopLeft(text).dx, tester.getRect(pane(title)).left + 12);
+      expect(tester.getTopLeft(text).dx, lessThan(composer.left));
       expect(
         tester
             .getTopRight(find.descendant(of: pane(title), matching: rightmost))

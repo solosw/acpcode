@@ -1,0 +1,24 @@
+name: bao_markdown
+description: >-
+  A markdown editor that shows what it says as it is written: the text is
+  the markdown itself, edited where it is, its marks shown where the caret
+  is and what they make everywhere else.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.4
+  flutter: ">=3.44.0"
+
+dependencies:
+  characters: ^1.4.0
+  flutter:
+    sdk: flutter
+  # Lines laid out only where they show, a jump far off estimated.
+  super_sliver_list: ^0.4.1
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

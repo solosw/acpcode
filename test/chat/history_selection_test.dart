@@ -445,6 +445,129 @@ void main() {
     expect(copied, answer);
   });
 
+  testWidgets('Select All copies the whole conversation, not only what is '
+      'built of it', (tester) async {
+    String? copied;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final feed = _Feed([
+      for (var i = 0; i < 60; i++) ...[
+        UserMessageItem(text: 'Question $i?'),
+        AssistantTextItem('Answer $i, at some length.\n\nAnd a second line.'),
+      ],
+    ])..streaming = false;
+    addTearDown(feed.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(body: ChatHistoryView(feed: feed)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // At the end: the first answers are not built.
+    expect(find.textContaining('Question 0?'), findsNothing);
+
+    final last = tester.getCenter(find.textContaining('Answer 59,'));
+    final mouse = await tester.startGesture(
+      last,
+      kind: PointerDeviceKind.mouse,
+    );
+    await mouse.up();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    expect(copied, startsWith('Question 0?'));
+    expect(copied, contains('Answer 30, at some length.'));
+    expect(copied, endsWith('And a second line.'));
+  });
+
+  testWidgets('text left on the selection\'s list, no longer registered, is '
+      'taken off as the list next changes', (tester) async {
+    String? copied;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    const answer = 'The parser drops the last token.';
+    final feed = _Feed([
+      const UserMessageItem(text: 'Why does it fail?'),
+      const AssistantTextItem(answer),
+    ]);
+    addTearDown(feed.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(body: ChatHistoryView(feed: feed)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final delegate = tester
+        .widgetList<SelectionContainer>(
+          find.ancestor(
+            of: find.byType(SuperListView),
+            matching: find.byType(SelectionContainer),
+          ),
+        )
+        .map((container) => container.delegate)
+        .whereType<StaticSelectionContainerDelegate>()
+        .first;
+    // What Flutter's merge leaves when text goes while it merges (a code
+    // block's scroll view, as it streams).
+    final leftOver = _LeftOver();
+    // ignore: invalid_use_of_protected_member
+    delegate.selectables.insert(0, leftOver);
+    // The list changes: an item comes in.
+    feed.update([...feed.items, const AssistantTextItem('More to come.')]);
+    await tester.pumpAndSettle();
+    // ignore: invalid_use_of_protected_member
+    expect(delegate.selectables, isNot(contains(leftOver)));
+
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.byWidgetPredicate(
+        (widget) => widget is RichText && widget.text.toPlainText() == answer,
+      ),
+    );
+    final mouse = await tester.startGesture(
+      paragraph.localToGlobal(Offset(0.5, paragraph.size.height / 2)),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await mouse.moveTo(
+      paragraph.localToGlobal(
+        Offset(paragraph.size.width - 0.5, paragraph.size.height / 2),
+      ),
+    );
+    await tester.pump();
+    await mouse.up();
+    await tester.pump();
+    // Selected at once: nothing to do again, nothing to report.
+    expect(tester.takeException(), isNull);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+    expect(copied, answer);
+  });
+
   testWidgets('a selection holds while items come in above text that '
       'changes, in a scroll view or not', (tester) async {
     const answer = 'The parser drops the last token.';

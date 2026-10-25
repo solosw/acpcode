@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 import '../base/smooth_scroll.dart';
+import '../diagnostics/frame_watch.dart';
 import '../ide/ide_find_widget.dart';
 import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
@@ -35,6 +36,7 @@ import 'widgets/edge_fade_mask.dart';
 import 'widgets/content_image.dart' show ChatImage, ChatImages;
 import 'widgets/fold_line.dart';
 import 'widgets/hover_builder.dart';
+import 'widgets/lazy_segment.dart' show SelectionEndHolder;
 import 'widgets/turn_footer.dart';
 import 'widgets/user_message_bubble.dart';
 
@@ -82,6 +84,23 @@ class ChatHistoryView extends StatefulWidget {
   static void find(GlobalKey key, {String? query}) =>
       (key.currentState as _ChatHistoryViewState?)?._find.show(query: query);
 }
+
+/// Where a history was left, read up from its end: the row shown first and
+/// how far its top was above the view's, the earlier history then read
+/// ([ChatSession.prependedCount]), and the steps and folds opened or
+/// closed. Its view is built anew when the conversation shows again
+/// (another one shown in its place meanwhile), and goes back there.
+typedef _LeftAt = ({
+  int index,
+  double above,
+  int prepended,
+  Map<int, bool> expanded,
+  Map<(StepFoldKind, int), bool> folds,
+  Set<int> unfolded,
+});
+
+/// Each conversation's, by its feed; none while at the end, followed.
+final Expando<_LeftAt> _leftAt = Expando('chat history left at');
 
 class _ChatHistoryViewState extends State<ChatHistoryView>
     with TickerProviderStateMixin, ChatKeyTarget {
@@ -435,6 +454,38 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// The press went to the minimap, beside the list.
   bool _pressOnMinimap = false;
 
+  // --- Scrubbing ---------------------------------------------------------------
+  //
+  // The minimap's glass or the bar's thumb dragged: each frame a jump to rows
+  // not built yet. The list builds none ahead of the view meanwhile (it
+  // would build three views' worth a frame, for nothing: the next frame is
+  // somewhere else); after, it builds them again by steps.
+
+  /// How far past the view, either side, the list builds rows ahead.
+  static const _cacheExtent = 900.0;
+  double _cache = _cacheExtent;
+  bool _scrubbing = false;
+  Timer? _scrubEnded;
+
+  void _scrub(bool on) {
+    _scrubEnded?.cancel();
+    if (on) {
+      _scrubbing = true;
+      if (_cache != 0) setState(() => _cache = 0);
+      return;
+    }
+    if (!_scrubbing) return;
+    _scrubbing = false;
+    _scrubEnded = Timer(const Duration(milliseconds: 150), _buildAhead);
+  }
+
+  /// A third of [_cacheExtent] more each frame, until all of it.
+  void _buildAhead() {
+    if (!mounted || _scrubbing || _cache >= _cacheExtent) return;
+    setState(() => _cache = math.min(_cacheExtent, _cache + _cacheExtent / 3));
+    SchedulerBinding.instance.addPostFrameCallback((_) => _buildAhead());
+  }
+
   /// Where a drag on the list's text began, to check what it selected.
   Offset? _dragFrom;
   bool _isPointerInside = false;
@@ -454,6 +505,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     resolve: _resolveItemPoint,
     beyondBuilt: _beyondBuiltItems,
     plainTextOf: _plainTextOf,
+    itemCount: () => _feed.itemCount,
     onDragEdge: _autoScrollToward,
   );
   bool _reselectScheduled = false;
@@ -516,11 +568,60 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     _scrollController.addListener(_handleScroll);
     _feed.addListener(_handleSessionChanged);
     UserMessageStyle.current.addListener(_handleStyleChanged);
+    // Its size, for a slow frame's line in the event log.
+    FrameWatch.notes[this] = () =>
+        '${_feed.itemCount} items${_feed.isStreaming ? ', streaming' : ''}';
     _wasLive = _feed.isStreaming;
     _prependedSeen = _session?.prependedCount ?? 0;
     _refold();
     _seeItems();
     _resumeEditing();
+    _goBack();
+  }
+
+  /// The row shown first, as last scrolled to while not at the end (see
+  /// [_firstShown]): kept as where the history was left.
+  ({int index, double above})? _shownFirst;
+  bool _shownFirstScheduled = false;
+
+  /// Notes where [feed] is left: none at its end.
+  void _noteLeft(ChatFeed feed) {
+    final shown = _shownFirst;
+    _leftAt[feed] = _atBottom || shown == null
+        ? null
+        : (
+            index: shown.index,
+            above: shown.above,
+            prepended: _session?.prependedCount ?? 0,
+            expanded: {..._expanded},
+            folds: {..._foldOpen},
+            unfolded: {..._unfoldedTurns},
+          );
+  }
+
+  /// Back where [_feed] was left, if read up from its end (see [_leftAt]):
+  /// its rows moved on by the earlier history read since.
+  void _goBack() {
+    final left = _leftAt[_feed];
+    if (left == null) return;
+    final moved = math.max(0, (_session?.prependedCount ?? 0) - left.prepended);
+    _expanded.addAll({
+      for (final MapEntry(:key, :value) in left.expanded.entries)
+        key + moved: value,
+    });
+    _foldOpen.addAll({
+      for (final MapEntry(key: (kind, start), :value) in left.folds.entries)
+        (kind, start + moved): value,
+    });
+    _unfoldedTurns.addAll({for (final start in left.unfolded) start + moved});
+    final index = left.index + moved;
+    if (index >= _feed.itemCount) return;
+    _scrollController.anchored = false;
+    _shownAtBottom = false;
+    _shownFirst = (index: index, above: left.above);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _keepAt(index, left.above);
+    });
   }
 
   /// Opens the editor again on the message it was left open on, with what
@@ -543,6 +644,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   void didUpdateWidget(ChatHistoryView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.feed != widget.feed) {
+      _noteLeft(oldWidget.feed);
+      _shownFirst = null;
       oldWidget.feed.removeListener(_handleSessionChanged);
       widget.feed.addListener(_handleSessionChanged);
       _find.feed = widget.feed;
@@ -556,6 +659,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _refold();
       _seeItems();
       _resumeEditing();
+      _goBack();
     }
   }
 
@@ -615,6 +719,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   @override
   void dispose() {
+    FrameWatch.notes.remove(this);
+    _noteLeft(_feed);
     _steady.dispose();
     _feed.removeListener(_handleSessionChanged);
     _find
@@ -622,6 +728,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       ..dispose();
     UserMessageStyle.current.removeListener(_handleStyleChanged);
     _reselectTimer?.cancel();
+    _scrubEnded?.cancel();
     _autoScroller?.stopAutoScroll();
     _editorMoved.dispose();
     _editorReveal.dispose();
@@ -787,6 +894,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     _endHandoff();
     _stickyKeys.clear();
     _stickyIndices = const {};
+    if (_shownFirst case (:final index, :final above)) {
+      _shownFirst = (index: index + count, above: above);
+    }
     if (_editingIndex case final index?) _editingIndex = index + count;
     if (_closingIndex case final index?) _closingIndex = index + count;
     if (_feed.editing case (:final index, :final draft)) {
@@ -1000,6 +1110,14 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (_shownAtBottom != _atBottom) {
       setState(() => _shownAtBottom = _atBottom);
     }
+    if (!_atBottom && !_shownFirstScheduled) {
+      // Once the rows are laid out where it scrolled to.
+      _shownFirstScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _shownFirstScheduled = false;
+        if (mounted && !_atBottom) _shownFirst = _firstShown() ?? _shownFirst;
+      });
+    }
     // Back at the bottom: the turn read meanwhile folds.
     if (_atBottom && _unfoldedTurns.isNotEmpty) {
       setState(_unfoldedTurns.clear);
@@ -1048,10 +1166,14 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     // A press beside the bar, just missing it, neither starts a selection
     // nor clears one (as a browser's scrollbar).
     final list = _listKey.currentContext?.findRenderObject() as RenderBox?;
+    var onBar = false;
     if (list != null && list.hasSize) {
       final right = list.localToGlobal(Offset(list.size.width, 0)).dx;
-      _selectionDelegate.suspended =
-          !_minimapShown && event.position.dx >= right - _scrollbarGutter;
+      onBar = !_minimapShown && event.position.dx >= right - _scrollbarGutter;
+      _selectionDelegate.suspended = onBar;
+    }
+    if ((_pressOnMinimap || onBar) && event.buttons == kPrimaryMouseButton) {
+      _scrub(true);
     }
     _dragFrom =
         _pressInEditor ||
@@ -1098,6 +1220,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       });
     }
     if (_pointersDown <= 0) {
+      _scrub(false);
       _autoScroller?.stopAutoScroll();
       _selectionDelegate
         ..endDrag()
@@ -2332,7 +2455,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                                           listController: _listController,
                                           itemCount: _feed.itemCount,
                                           extentEstimation: _estimateExtent,
-                                          cacheExtent: 900,
+                                          cacheExtent: _cache,
                                           padding: EdgeInsets.fromLTRB(
                                             _gutter,
                                             _chatTopPadding +
@@ -2658,11 +2781,14 @@ class _ItemSelectionScopeState extends State<_ItemSelectionScope> {
   }
 }
 
-class _ItemRegistrar implements SelectionRegistrar {
+class _ItemRegistrar implements SelectionRegistrar, SelectionEndHolder {
   _ItemRegistrar(this.delegate, this.index);
 
   final _ChatSelectionDelegate delegate;
   int index;
+
+  @override
+  bool get holdsSelectionEnd => delegate._holdsEnd(index);
 
   @override
   void add(Selectable selectable) =>
@@ -2699,6 +2825,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
     required this.resolve,
     required this.beyondBuilt,
     required this.plainTextOf,
+    required this.itemCount,
     required this.onDragEdge,
   });
 
@@ -2710,6 +2837,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
   /// Where to put an edge for the unbuilt item at an index.
   final Offset? Function(int index) beyondBuilt;
   final String Function(int index) plainTextOf;
+  final int Function() itemCount;
   final void Function(Offset globalPosition) onDragEdge;
 
   /// A Shift+click is in progress: it moves the end and keeps the start.
@@ -2722,6 +2850,11 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
   final Map<Selectable, _ItemRegistrar> _items = {};
   _SelectionEdge? _start;
   _SelectionEdge? _end;
+
+  /// The selection is the whole history (Select All), not only what was
+  /// built when it was made: its ends are the first item's start and the
+  /// last's end, whole when not built.
+  bool _all = false;
   SelectionEdgeUpdateEvent? _dragEnd;
 
   /// Selected text of the end items, for when they are no longer built.
@@ -2738,6 +2871,12 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
   }
 
   int _itemOf(Selectable selectable) => _items[selectable]?.index ?? -1;
+
+  /// Whether item [index] holds an end of what is selected (not of a
+  /// click's collapsed selection).
+  bool _holdsEnd(int index) =>
+      (_all || value.status == SelectionStatus.uncollapsed) &&
+      (_start?.point.index == index || _end?.point.index == index);
 
   @override
   Comparator<Selectable> get compareOrder => (a, b) {
@@ -2812,14 +2951,32 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
         return SelectionResult.none;
       case ClearSelectionEvent():
         _start = _end = null;
+        _all = false;
         _dragEnd = null;
         _endText.clear();
         return super.dispatchSelectionEvent(event);
+      // All of it, not the built items alone: the ends in the model, which
+      // the items built later (scrolled to) are selected from.
+      case SelectAllSelectionEvent() when itemCount() > 0:
+        result = super.dispatchSelectionEvent(event);
+        const granularity = TextGranularity.character;
+        _start = (
+          point: (index: 0, local: Offset.zero),
+          granularity: granularity,
+        );
+        _end = (
+          point: (index: itemCount() - 1, local: const Offset(1e6, 1e6)),
+          granularity: granularity,
+        );
+        _all = true;
+        _dragEnd = null;
       case SelectionEdgeUpdateEvent(type: SelectionEventType.startEdgeUpdate):
+        _all = false;
         _start = _edgeAt(event.globalPosition, event.granularity);
         _refreshEdgeLocations();
         result = super.dispatchSelectionEvent(event);
       case SelectionEdgeUpdateEvent():
+        _all = false;
         _end = _edgeAt(event.globalPosition, event.granularity);
         _dragEnd = event;
         _refreshEdgeLocations();
@@ -2828,12 +2985,14 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
       case SelectAllSelectionEvent() ||
           SelectWordSelectionEvent() ||
           SelectParagraphSelectionEvent():
+        _all = false;
         result = super.dispatchSelectionEvent(event);
         _start = _edgeFromGeometry(end: false);
         _end = _edgeFromGeometry(end: true);
         _dragEnd = null;
       case GranularlyExtendSelectionEvent(:final isEnd) ||
           DirectionallyExtendSelectionEvent(:final isEnd):
+        _all = false;
         _refreshEdgeLocations();
         result = super.dispatchSelectionEvent(event);
         if (isEnd) {
@@ -2950,6 +3109,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
   /// here or in a scroll view's (Flutter's).
   @override
   void didChangeSelectables() {
+    _reconcile();
     if (_changePending) return;
     _changePending = true;
     scheduleMicrotask(() {
@@ -2966,6 +3126,29 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
 
   bool _changePending = false;
   bool _disposed = false;
+
+  /// Lists each piece of registered text once, and nothing else.
+  ///
+  /// Flutter merges the text added in a frame into the list in a loop that
+  /// also brings what it merges up to date with the selection; text that
+  /// goes meanwhile (a code block's scroll view, whose content changes as
+  /// it streams) is taken off what is to be merged, not off the list it is
+  /// merged into, and stays there: unregistered, disposed, still sent the
+  /// selection's events (which throw, and leave the selection half done:
+  /// a drag then selects nothing). Text added in that loop is dropped the
+  /// same way. Called after each merge.
+  void _reconcile() {
+    final listed = <Selectable>{};
+    for (final selectable in [...selectables]) {
+      if (!_items.containsKey(selectable) || !listed.add(selectable)) {
+        remove(selectable);
+      }
+    }
+    for (final selectable in _items.keys) {
+      // Waiting to be merged, or lost: add takes either once.
+      if (!listed.contains(selectable)) add(selectable);
+    }
+  }
 
   @override
   void dispose() {
@@ -3042,12 +3225,14 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate {
       buffer.write(text);
     }
 
-    write(_builtText(first) ?? _endText[first]);
+    // All of it: an end not built is its whole item.
+    String? whole(int index) => _all ? plainTextOf(index) : null;
+    write(_builtText(first) ?? _endText[first] ?? whole(first));
     if (last != first) {
       for (var index = first + 1; index < last; index++) {
         write(plainTextOf(index));
       }
-      write(_builtText(last) ?? _endText[last]);
+      write(_builtText(last) ?? _endText[last] ?? whole(last));
     }
     return buffer.isEmpty
         ? null

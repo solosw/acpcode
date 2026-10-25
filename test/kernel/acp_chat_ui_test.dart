@@ -12,7 +12,6 @@ import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Transport implements AcpTransport {
@@ -132,7 +131,6 @@ Future<ChatSession> _pump(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: listenAboveChat
           ? ListenableBuilder(
               listenable: session,
@@ -278,7 +276,10 @@ void main() {
 
     expect(session.todos, hasLength(2));
     expect(find.byType(TodoPanel), findsOneWidget);
-    expect(find.text('Analyze the existing codebase structure'), findsOneWidget);
+    expect(
+      find.text('Analyze the existing codebase structure'),
+      findsOneWidget,
+    );
     expect(
       find.text('Identify components that need refactoring'),
       findsOneWidget,

@@ -245,6 +245,7 @@ class AgentLoop {
       };
     }
     if (cache) _markCache(conversation);
+    _addPlanReminder(conversation);
     final maxTokens = _maxTokens(info);
     final body = <String, Object?>{
       'model': model,
@@ -372,8 +373,7 @@ class AgentLoop {
     return betas;
   }
 
-  /// Tells the model of its context with the first message, and of plan
-  /// mode with the last.
+  /// Tells the model of its context with the first message.
   void _addContext(List<Map<String, Object?>> conversation) {
     if (conversation.isEmpty) return;
     final context = userContext;
@@ -387,6 +387,13 @@ class AgentLoop {
         ],
       };
     }
+  }
+
+  /// Tells the model of plan mode with the last message. Added after the
+  /// cache is marked: the reminder is gone from it next turn, and a cache
+  /// ending on it would never be read.
+  void _addPlanReminder(List<Map<String, Object?>> conversation) {
+    if (conversation.isEmpty) return;
     if (isMain && session.permissionMode == 'plan') {
       final last = conversation.last;
       if (last['role'] == 'user') {

@@ -36,6 +36,20 @@ class EdgeStopScrollPhysics extends BouncingScrollPhysics {
   @override
   double applyBoundaryConditions(ScrollMetrics position, double value) =>
       const ClampingScrollPhysics().applyBoundaryConditions(position, value);
+
+  /// A flick goes as far as it would alone, not sped up by the fling it
+  /// stops (iOS's): the same flick four times went twice as far by the
+  /// fourth (tool/perf `follow.*`). The editors' `TrackpadFling` takes this
+  /// too.
+  @override
+  double carriedMomentum(double existingVelocity) => 0;
+
+  /// The fingers move the view from their first pixel, not after a dead
+  /// zone (iOS's 3.5px) that left the view short of them all along. (None
+  /// would be null, which [BouncingScrollPhysics] has no room for; it must
+  /// be more than 0.)
+  @override
+  double get dragStartDistanceMotionThreshold => 0.01;
 }
 
 /// A [ScrollController] for lists a mouse wheel scrolls smoothly
@@ -145,7 +159,9 @@ abstract final class _WheelSignal {
 mixin WheelGliding on ScrollPositionWithSingleContext {
   @override
   void pointerScroll(double delta) {
-    if (_WheelSignal.kind != PointerDeviceKind.mouse || delta == 0) {
+    // A smooth wheel's steps, like a trackpad's, move it as they come.
+    if (_WheelSignal.kind != PointerDeviceKind.mouse ||
+        !WheelGlide.glides(delta)) {
       super.pointerScroll(delta);
       return;
     }

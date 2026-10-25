@@ -102,13 +102,32 @@ class FileMentions {
         );
       }
     } else {
-      for (final (:path, :relative) in index.search(filter, limit: _limit)) {
+      // The files matching, and the folders whose names match, best first;
+      // a folder first of the two where they match as well.
+      final ranked = <({String path, String relative, int score, bool folder})>[
+        for (final (:path, :relative) in index.search(filter, limit: _limit))
+          (
+            path: path,
+            relative: relative,
+            score: scoreFilePath(filter, relative)?.score ?? 0,
+            folder: false,
+          ),
+        ..._folders(filter),
+      ];
+      ranked.sort((a, b) {
+        final byScore = b.score.compareTo(a.score);
+        if (byScore != 0) return byScore;
+        if (a.folder != b.folder) return a.folder ? -1 : 1;
+        return a.relative.length.compareTo(b.relative.length);
+      });
+      for (final (:path, :relative, score: _, :folder) in ranked) {
+        if (suggestions.length >= _limit) break;
         final reference = _reference(path, root);
         if (!seen.add(_key(reference))) continue;
         final slash = relative.lastIndexOf('/');
         suggestions.add(
           Suggestion(
-            kind: SuggestionKind.file,
+            kind: folder ? SuggestionKind.folder : SuggestionKind.file,
             label: relative.substring(slash + 1),
             detail: slash < 0 ? '' : relative.substring(0, slash),
             path: reference,
@@ -122,6 +141,26 @@ class FileMentions {
     }
     return suggestions;
   }
+
+  /// The listing's folders whose names match [filter], the best few.
+  List<({String path, String relative, int score, bool folder})> _folders(
+    String filter,
+  ) {
+    final found = [
+      for (final (:path, :relative) in index.folders)
+        if (scoreFilePath(filter, relative)
+            case (:final score, label: _, description: _)
+            when score >= _nameMatch)
+          (path: path, relative: relative, score: score, folder: true),
+    ]..sort((a, b) => b.score.compareTo(a.score));
+    return found.take(_maxFolders).toList();
+  }
+
+  /// At most this many folders among the files.
+  static const _maxFolders = 10;
+
+  /// What [scoreFilePath] gives a match of the name, not only of the path.
+  static const _nameMatch = 1000;
 
   Iterable<Suggestion> _kernelSuggestions(List<FileSuggestion> files) =>
       files.map(fileSuggestion);

@@ -120,6 +120,8 @@ class IdeCodeEditor extends StatefulWidget {
     this.interfaceSized = false,
     this.formatter,
     this.agent,
+    this.background,
+    this.glyphMargin = true,
   });
 
   final EditorSurfaceController controller;
@@ -166,6 +168,14 @@ class IdeCodeEditor extends StatefulWidget {
   /// An agent's change pending in the text, shown in it with Undo and Keep
   /// by each part (as the IDE's editor shows one).
   final IdeAgentDiff? agent;
+
+  /// Behind its text; the editor's when null (a page's own, where it is
+  /// laid on one).
+  final Color? background;
+
+  /// The margin left of the line numbers (breakpoints, decorations'
+  /// icons); none where nothing goes there.
+  final bool glyphMargin;
 
   @override
   State<IdeCodeEditor> createState() => IdeCodeEditorState();
@@ -661,14 +671,19 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
         focusNode: _focusNode,
         readOnly: widget.readOnly,
         lineNumbers: !widget.bare,
-        glyphMargin: !widget.bare,
+        glyphMargin: widget.glyphMargin && !widget.bare,
         folding: !widget.bare,
         indentGuides: !widget.bare,
         scrollBeyondLastLine: !widget.bare,
-        backgroundColor: colors['editor.background'],
+        backgroundColor: widget.background ?? colors['editor.background'],
         selectionColor: colors['editor.selectionBackground'],
         caretColor: colors['editorCursor.foreground'],
-        theme: EditorViewTheme.fromColors(colors.get),
+        // The gutter on its background too, where it lies on a page.
+        theme: EditorViewTheme.fromColors(
+          (id) => id == 'editorGutter.background' && widget.background != null
+              ? widget.background
+              : colors.get(id),
+        ),
         styledLines: _highlight?.styledLines,
         showMinimap: false,
         decorations: [

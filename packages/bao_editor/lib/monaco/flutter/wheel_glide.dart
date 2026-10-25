@@ -37,6 +37,13 @@ class WheelGlide {
 
   static const duration = Duration(milliseconds: 120);
 
+  /// Whether a wheel's [delta] is a notch to glide: not one of the small
+  /// steps a wheel that scrolls smoothly sends (its driver's, a free
+  /// spinning one's, precise deltas the system gives as they come), as
+  /// smooth already as they go, which a glide each only held back (55ms
+  /// behind, tool/perf `follow.*`). A notch is a line: 40px on macOS.
+  static bool glides(double delta) => delta.abs() >= 32;
+
   final double distance;
 
   /// A frame of the display.
@@ -121,6 +128,12 @@ class WheelGlider {
     required Offset max,
     required Duration frame,
   }) {
+    // A smooth wheel's steps move the view as they come.
+    if (!WheelGlide.glides(delta.dx) && !WheelGlide.glides(delta.dy)) {
+      stop();
+      move(delta);
+      return;
+    }
     if (delta.dx != 0) {
       _x = WheelGlide.next(
         _x,

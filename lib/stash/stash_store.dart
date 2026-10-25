@@ -28,6 +28,36 @@ class StashStore extends ChangeNotifier {
   /// Where merged stashes' numbers lead (see [merge]).
   final Map<int, int> _redirects = {};
 
+  /// The issues not to be stashes again: those whose stash was deleted, or
+  /// unlinked from it (in `.stash.json`, as the user's answer).
+  Set<String> get ignoredIssues => Set.unmodifiable(_ignored);
+  final Set<String> _ignored = {};
+
+  /// Keeps [url]'s issue from being a stash again (see [ignoredIssues]).
+  Future<void> ignoreIssue(String url) async {
+    if (!_ignored.add(url)) return;
+    await disk.locked(() async {
+      final meta = await disk.readMeta();
+      meta['ignoredIssues'] = {
+        ...?(meta['ignoredIssues'] as List?)?.whereType<String>(),
+        url,
+      }.toList();
+      await disk.writeMeta(meta);
+    });
+  }
+
+  /// [url]'s issue may be a stash again (imported by the user).
+  Future<void> unignoreIssue(String url) async {
+    if (!_ignored.remove(url)) return;
+    await disk.locked(() async {
+      final meta = await disk.readMeta();
+      meta['ignoredIssues'] = [
+        ...?(meta['ignoredIssues'] as List?)?.whereType<String>(),
+      ]..remove(url);
+      await disk.writeMeta(meta);
+    });
+  }
+
   bool _loaded = false;
   bool get loaded => _loaded;
   Future<void>? _loading;
@@ -126,6 +156,12 @@ class StashStore extends ChangeNotifier {
     _redirects
       ..clear()
       ..addAll(_parseRedirects(meta['redirects']));
+    _ignored
+      ..clear()
+      ..addAll([
+        if (meta['ignoredIssues'] case final List<Object?> urls)
+          ...urls.whereType<String>(),
+      ]);
     final order = _parseOrder(meta['order']);
     final reordered = !listEquals(order, _order);
     _order = order;
@@ -247,11 +283,13 @@ class StashStore extends ChangeNotifier {
   }
 
   /// Deletes [id]'s stash, its pictures and files with it. Its number is
-  /// never given again.
+  /// never given again; the issue it was, never a stash again.
   Future<void> delete(int id) async {
-    if (_notes.remove(id) == null) return;
+    final note = _notes.remove(id);
+    if (note == null) return;
     notifyListeners();
     await disk.delete(id);
+    if (note.ownIssue case final url?) await ignoreIssue(url);
   }
 
   /// The stash a stash that is blank was opened for, and closed without
@@ -318,6 +356,29 @@ class StashStore extends ChangeNotifier {
         body = rewriteAssetPaths(body, moved);
       }
       if (body.isNotEmpty) parts.add(body);
+    }
+    // Their issues and conversations kept with it: an issue that was one
+    // of them, a stash again, would be its double.
+    for (final note in merging) {
+      if (identical(note, kept)) continue;
+      final own = note.ownIssue;
+      for (final link in note.issues) {
+        if (kept.issueOf(link.url) != null) continue;
+        // Its issue the same thing as this one's: closed as its duplicate?
+        kept.issues.add(
+          link.url == own ? link.copyWith(mergedFrom: note.id) : link,
+        );
+      }
+      for (final link in note.threads) {
+        if (kept.threadOf(link.session) == null) kept.threads.add(link);
+      }
+      // None of its own: theirs, its text changed since (to be pushed).
+      if (kept.ownIssue == null && !kept.local && note.ownIssue != null) {
+        kept
+          ..issue = note.ownIssue
+          ..synced = note.synced
+          ..syncedRemote = note.syncedRemote;
+      }
     }
     kept
       ..body = parts.join('\n\n---\n\n')

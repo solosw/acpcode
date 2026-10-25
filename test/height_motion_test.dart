@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
@@ -20,7 +19,6 @@ Future<void> pumpScreen(WidgetTester tester) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -282,7 +280,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );

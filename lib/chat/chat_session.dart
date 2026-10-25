@@ -160,6 +160,11 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   }
 
   void _apply(KernelEvent event) {
+    if (event case SessionRenamed(:final title)) {
+      _renamed = title;
+      notifyListeners();
+      return;
+    }
     if (event is KernelInfoChanged || _transcript.apply(event)) {
       _cache.clear();
       _timeQuiet();
@@ -917,9 +922,11 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   /// returned, saved), absolute: what its text may link to outside the
   /// project, and where a file it names by a path gone wrong (relative to
   /// some other folder) may be.
-  List<String> get filesSeen => _cached(
-    #filesSeen,
-    () => {
+  ///
+  /// The same list while they stay the same, as the reply streams: what
+  /// looks a path up in it indexes each list once (FileOpenScope).
+  List<String> get filesSeen => _cached(#filesSeen, () {
+    final files = {
       for (var i = 0; i < _transcript.length; i++)
         if (_transcript.itemAt(i) case ToolCallItem(
           :final path,
@@ -930,8 +937,11 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
           for (final file in imageFiles) _absolute(file),
         ],
       for (final edit in _transcript.edits) _absolute(edit.change.path),
-    }.toList(),
-  );
+    }.toList();
+    if (listEquals(files, _filesSeen)) return _filesSeen;
+    return _filesSeen = files;
+  });
+  List<String> _filesSeen = const [];
 
   /// [path] absolute, on the project's host (a remote project's paths are
   /// its host's).
@@ -1188,6 +1198,16 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   void rename(String title) {
     if (_kernel case final RenamesSession kernel) kernel.rename(title);
+  }
+
+  String? _renamed;
+
+  /// The name it was last given in the agent itself (Claude Code's
+  /// `/rename`), once: null after.
+  String? takeRenamed() {
+    final renamed = _renamed;
+    _renamed = null;
+    return renamed;
   }
 
   /// The conversation is deleted: what its review kept goes too.

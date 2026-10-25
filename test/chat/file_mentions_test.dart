@@ -63,6 +63,31 @@ void main() {
     ]);
   });
 
+  test('finds folders by their names, among the files, a folder first '
+      'where they match as well (#223)', () async {
+    final found = await mentions().suggest(
+      'order',
+      root: app,
+      kernel: (_) async => [],
+    );
+    expect(found.first.kind, SuggestionKind.folder);
+    expect(found.first.label, 'order');
+    expect(found.first.detail, 'pages');
+    expect(found.first.value, 'pages/order');
+    // Each once; files whose folders alone match after.
+    expect(found.where((s) => s.label == 'order'), hasLength(1));
+    expect(
+      found.skip(1).map((s) => s.label),
+      containsAll(['fridge-confirm.vue', 'list.vue']),
+    );
+    // The project's own folder is not one of them.
+    expect(
+      (await mentions().suggest('app', root: app, kernel: (_) async => []))
+          .where((s) => s.kind == SuggestionKind.folder),
+      isEmpty,
+    );
+  });
+
   test('refers to a file in the conversation\'s directory from it', () async {
     final mention = mentions();
     await mention.index.refresh();

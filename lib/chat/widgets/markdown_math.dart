@@ -3,6 +3,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../theme/app_theme.dart';
+import 'will_change_paint.dart';
 
 /// TeX in markdown, as `math` elements (their `display` attribute `block`
 /// or `inline`), for [MathView] to render.
@@ -90,7 +91,7 @@ class MathView extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: math,
+      child: WillChangePaint(child: math),
     );
   }
 }

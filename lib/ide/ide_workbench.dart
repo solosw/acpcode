@@ -840,9 +840,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   /// Shows the active markdown document's preview, or its source: in
-  /// either, about where the other was (the caret's block; the source of
-  /// the block at the top), or the source at [at] (a line and column,
-  /// one-based: where the preview was double clicked).
+  /// either, where the other's caret was (or about where it was scrolled
+  /// to), or the source at [at] (a line and column, one-based).
   Future<void> _setMarkdownPreview(
     bool preview, {
     ({int line, int column})? at,
@@ -858,8 +857,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       _previewLines[doc] = _caretPosition.lineNumber;
       _markdownSources.remove(doc.path);
     } else {
-      line = at?.line ?? _preview?.topLine;
-      column = at?.column ?? 1;
+      // The preview's caret, where it was put; else the line at its top.
+      final caret = at ?? _preview?.caret;
+      line = caret?.line ?? _preview?.topLine;
+      column = caret?.column ?? 1;
       _markdownSources
         ..remove(doc.path)
         ..add(doc.path);
@@ -942,11 +943,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         if (line != null) _previewLines[doc] = line;
       },
       onEdited: () => widget.workspace.notifyDocumentChanged(doc),
-      onEdit: (line, column) => unawaited(
-        _setMarkdownPreview(false, at: (line: line, column: column)),
-      ),
+      onPaste: doc.readOnly ? null : () => _markdownPaste().paste(doc.path),
       onOpenFile: (path, fragment) => unawaited(_openLinked(path, fragment)),
       onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
+      onReveal: _local && WindowControls.canRevealInFileManager
+          ? (path) => unawaited(WindowControls.revealInFileManager(path))
+          : null,
     );
   }
 

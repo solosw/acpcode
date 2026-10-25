@@ -3,17 +3,19 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../theme/app_theme.dart';
+import '../../theme/workbench_theme.dart' show themeColors;
 import '../chat_column.dart';
 import '../chat_models.dart';
 import '../composer/composer_files.dart' show splitCodeAppendix;
 import '../user_message_style.dart';
-import 'user_message_bubble.dart' show UserMessageBubble;
+import 'user_message_bubble.dart' show UserMessageBubble, UserMessagePreview;
 
 /// Row [ChatMinimapRow.item] of a history as its minimap samples it: whether
 /// the item shows (a closed fold hides it), how many fold lines the row
@@ -130,10 +132,9 @@ class ChatMinimap extends StatefulWidget {
   static const _columnGap = 20.0;
   static const _maxColumnGap = 32.0;
 
-  /// The margin it takes either side of a conversation's column, from the
-  /// conversation's edges: a column with a minimap leaves it clear while it
-  /// can (see [ChatColumn.room]), the other side as much, to stay in the
-  /// middle.
+  /// The margin it takes left of a conversation's column, from the
+  /// conversation's edge: a column with a minimap leaves it clear while it
+  /// can (see [ChatColumn.room]); at the right it reaches the margin.
   static const room = _edgeGap + _narrow + _columnGap;
 
   /// The least a column keeps of its width to leave [room]; narrower than
@@ -263,6 +264,11 @@ class _ChatMinimapState extends State<ChatMinimap>
   Float64List _tops = Float64List(1);
   double get _extent => _tops.last;
 
+  /// The rows that are the user's messages, in order, and where each one's
+  /// mark is in the strokes.
+  List<int> _users = const [];
+  List<double> _usersAt = const [];
+
   /// What they were sampled for: the column's width (in steps of 16, not
   /// sampled anew at each width a pane is dragged through) and the user's
   /// messages' style.
@@ -286,6 +292,8 @@ class _ChatMinimapState extends State<ChatMinimap>
     final samples = Map<ChatItem, _Sample>.identity();
     final rows = <_Sample>[];
     final tops = Float64List(count + 1);
+    final users = <int>[];
+    final usersAt = <double>[];
     var y = 0.0;
     for (var index = 0; index < count; index++) {
       final row = widget.rowAt(index);
@@ -294,9 +302,15 @@ class _ChatMinimapState extends State<ChatMinimap>
       samples[row.item] = sample;
       rows.add(sample);
       tops[index] = y;
+      if (sample.user case final at?) {
+        users.add(index);
+        usersAt.add(y + at);
+      }
       y += sample.height;
     }
     tops[count] = y;
+    _users = users;
+    _usersAt = usersAt;
     // The tiles above the first row that changed (or moved) still hold.
     var same = 0;
     final common = math.min(count, _rows.length);
@@ -549,8 +563,16 @@ class _ChatMinimapState extends State<ChatMinimap>
     widget.onPointerDown?.call(event);
     if (event.buttons != kPrimaryButton || _top.isNaN || _rows.isEmpty) return;
     _show();
-    final glass = _glass(_viewHeight);
     final y = event.localPosition.dy;
+    if (_lit case final row?) {
+      // On a message's mark: to it, at the view's top; dragged on, as the
+      // glass is.
+      _pressedAt = y;
+      _snap();
+      widget.onSeek(row, 0);
+      return;
+    }
+    final glass = _glass(_viewHeight);
     if (y >= glass.top && y <= glass.top + glass.height) {
       _grab = y - glass.top;
     } else {
@@ -563,6 +585,11 @@ class _ChatMinimapState extends State<ChatMinimap>
   }
 
   void _handleMove(PointerMoveEvent event) {
+    if (_pressedAt case final from?) {
+      if ((event.localPosition.dy - from).abs() < 4) return;
+      _pressedAt = null;
+      _grab = _glass(_viewHeight).height / 2;
+    }
     final grab = _grab;
     if (grab == null) return;
     _dragged = true;
@@ -570,11 +597,169 @@ class _ChatMinimapState extends State<ChatMinimap>
   }
 
   void _handleUp(PointerEvent event) {
+    if (_pressedAt != null) {
+      _pressedAt = null;
+      _snap();
+      return;
+    }
     if (_grab == null) return;
     _grab = null;
     _dragged = false;
     _show();
     _repaint.ping();
+    _snap();
+  }
+
+  // --- The user's messages ---------------------------------------------------
+  //
+  // What a user looks for in a conversation is mostly what they asked: each
+  // of their messages is one mark over the strokes, never dimmed. The
+  // pointer over the minimap is drawn to the nearest within [_snapReach]: it
+  // lights up, a press goes to it, and beside the minimap a peek shows it
+  // and the start of what answered it, at once.
+
+  static const _snapReach = 26.0;
+
+  /// How far past the glass, either side, the pointer is still over the
+  /// minimap (to its left as far as the margin goes).
+  static const _reachOut = 12.0;
+  static const _reachIn = 10.0;
+
+  /// The marks as last painted: each one's row, and where it is down the
+  /// minimap.
+  final List<int> _drawnRows = [];
+  final List<double> _drawnAt = [];
+
+  /// Where the pointer is down the minimap, while it is over it.
+  double? _pointerAt;
+
+  /// The mark the pointer is drawn to (its row), and the one it left: the
+  /// one lights up as the other goes out.
+  int? _lit;
+  int? _unlit;
+  late final AnimationController _lighting = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 140),
+  );
+
+  /// What the peek shows: the message's row, and how far down the
+  /// minimap's box its mark is.
+  final ValueNotifier<({int row, double at})?> _peek = ValueNotifier(null);
+
+  /// Where a press on a mark was, until it is let go or dragged on.
+  double? _pressedAt;
+
+  bool _snapScheduled = false;
+
+  void _pointAt(double? y) {
+    _pointerAt = y;
+    _snap();
+  }
+
+  /// Lights the mark nearest the pointer, if one is near it, and peeks at
+  /// it; none while the glass is held.
+  void _snap() {
+    final pointer = _pointerAt;
+    int? row;
+    var at = 0.0;
+    if (pointer != null && _grab == null && _pressedAt == null) {
+      var nearest = _snapReach;
+      for (var i = 0; i < _drawnRows.length; i++) {
+        final distance = (_drawnAt[i] - pointer).abs();
+        if (distance < nearest) {
+          nearest = distance;
+          row = _drawnRows[i];
+          at = _drawnAt[i];
+        }
+      }
+    }
+    if (row != _lit) {
+      _unlit = _lit;
+      _lit = row;
+      _lighting.forward(from: 0);
+    }
+    _peek.value = row == null ? null : (row: row, at: at + ChatMinimap._inset);
+  }
+
+  /// [_snap] after this frame: the marks have been painted where they are
+  /// now, under a pointer that has not moved (a scroll, the glass going).
+  void _snapSoon() {
+    if (_snapScheduled) return;
+    _snapScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _snapScheduled = false;
+      if (mounted) _snap();
+    });
+  }
+
+  /// What the peek shows about the message at [row]: the end of the
+  /// agent's words before it, it, and the start of those after it; and how
+  /// far down it the message's first line is.
+  ({Widget card, double firstLine}) _peekAt(int row) {
+    final item = widget.rowAt(row).item;
+    if (item is! UserMessageItem) {
+      return (card: const SizedBox.shrink(), firstLine: 0);
+    }
+    String? said(int from, int step) {
+      for (var at = from, n = 0; at >= 0 && at < widget.rowCount; at += step) {
+        if (n++ == 400) break;
+        final other = widget.rowAt(at).item;
+        if (other is UserMessageItem) break;
+        if (other is AssistantTextItem) {
+          final text = _excerpt(other.text, end: step < 0);
+          if (text.isNotEmpty) return text;
+        }
+      }
+      return null;
+    }
+
+    final before = said(row - 1, -1);
+    return (
+      card: _PeekCard(message: item, before: before, after: said(row + 1, 1)),
+      firstLine: _PeekCard.firstLine(before: before != null),
+    );
+  }
+
+  static final _spaces = RegExp(r'\s+');
+  static final _fences = RegExp(r'^\s*(`{3,}|~{3,})', multiLine: true);
+
+  /// The agent's [text], its markup dropped, its code and tables' rules
+  /// left out: its first lines, or its last ([end]).
+  static String _excerpt(String text, {bool end = false}) {
+    const most = 8;
+    // Of a long text, only as much as is wanted; in a code block or not
+    // as the fences before the cut say.
+    var code = false;
+    if (end && text.length > 2400) {
+      final cut = text.lastIndexOf('\n', text.length - 2400);
+      if (cut > 0) {
+        code = _fences.allMatches(text.substring(0, cut)).length.isOdd;
+        text = text.substring(cut + 1);
+      }
+    }
+    final lines = <String>[];
+    for (final raw in text.split('\n')) {
+      final line = raw.trim();
+      if (_Sampler._fence.hasMatch(line)) {
+        code = !code;
+        continue;
+      }
+      if (code ||
+          line.isEmpty ||
+          _Sampler._tableRule.hasMatch(line) ||
+          _Sampler._rule.hasMatch(line)) {
+        continue;
+      }
+      final plain = _Sampler._plain(
+        line.replaceFirst(_Sampler._listOrHeading, ''),
+      ).replaceAll('|', ' ').replaceAll(_spaces, ' ').trim();
+      if (plain.isNotEmpty) lines.add(plain);
+      if (!end && lines.length == most) break;
+    }
+    return (end && lines.length > most
+            ? lines.sublist(lines.length - most)
+            : lines)
+        .join('\n');
   }
 
   @override
@@ -590,6 +775,8 @@ class _ChatMinimapState extends State<ChatMinimap>
     _dropTilesFrom(double.negativeInfinity);
     _reveal.dispose();
     _hover.dispose();
+    _lighting.dispose();
+    _peek.dispose();
     _repaint.dispose();
     super.dispose();
   }
@@ -613,24 +800,45 @@ class _ChatMinimapState extends State<ChatMinimap>
           constraints.maxHeight - 2 * ChatMinimap._inset,
         );
         final shown = fits && widget.scrolls && widget.rowCount > 0;
+        final left = math.max(0.0, place?.left ?? 0);
+        final out = math.max(
+          0.0,
+          math.min(_reachOut, left - ChatMinimap._outset),
+        );
         return Stack(
           children: [
-            // Wide enough for the glass, which is wider than the track.
+            // Wide enough for the glass, which is wider than the track, and
+            // a little more for the pointer.
             Positioned(
-              left: math.max(0.0, place?.left ?? 0) - ChatMinimap._outset,
+              left: left - ChatMinimap._outset - out,
               top: ChatMinimap._inset,
               bottom: ChatMinimap._inset,
-              width: _width + 2 * ChatMinimap._outset,
+              width: _width + 2 * ChatMinimap._outset + out + _reachIn,
               child: IgnorePointer(
                 ignoring: !shown,
                 child: AnimatedOpacity(
                   opacity: shown ? 1 : 0,
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeOut,
-                  child: MouseRegion(
-                    onEnter: (_) => _setHovered(true),
-                    onExit: (_) => _setHovered(false),
+                  child: ValueListenableBuilder(
+                    valueListenable: _peek,
+                    builder: (context, peek, child) => MouseRegion(
+                      cursor: peek != null
+                          ? SystemMouseCursors.click
+                          : MouseCursor.defer,
+                      onEnter: (event) {
+                        _setHovered(true);
+                        _pointAt(event.localPosition.dy);
+                      },
+                      onHover: (event) => _pointAt(event.localPosition.dy),
+                      onExit: (_) {
+                        _setHovered(false);
+                        _pointAt(null);
+                      },
+                      child: child,
+                    ),
                     child: Listener(
+                      behavior: HitTestBehavior.opaque,
                       onPointerDown: _handleDown,
                       onPointerMove: _handleMove,
                       onPointerUp: _handleUp,
@@ -639,17 +847,21 @@ class _ChatMinimapState extends State<ChatMinimap>
                       onPointerPanZoomStart: widget.onPointerPanZoomStart,
                       onPointerPanZoomUpdate: widget.onPointerPanZoomUpdate,
                       onPointerPanZoomEnd: widget.onPointerPanZoomEnd,
-                      child: RepaintBoundary(
-                        child: CustomPaint(
-                          painter: _MinimapPainter(
-                            this,
-                            Listenable.merge([
-                              widget.moved,
-                              _repaint,
-                              _hover,
-                              _reveal,
-                              ChatMinimap.glass,
-                            ]),
+                      child: Padding(
+                        padding: EdgeInsets.only(left: out, right: _reachIn),
+                        child: RepaintBoundary(
+                          child: CustomPaint(
+                            painter: _MinimapPainter(
+                              this,
+                              Listenable.merge([
+                                widget.moved,
+                                _repaint,
+                                _hover,
+                                _reveal,
+                                _lighting,
+                                ChatMinimap.glass,
+                              ]),
+                            ),
                           ),
                         ),
                       ),
@@ -658,6 +870,18 @@ class _ChatMinimapState extends State<ChatMinimap>
                 ),
               ),
             ),
+            // Over the column, from beside the minimap: nothing to point at.
+            if (shown)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: _Peek(
+                    target: _peek,
+                    left: left + _width + ChatMinimap._outset + 10,
+                    maxWidth: math.min(440.0, column.width * 0.8),
+                    content: _peekAt,
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -702,6 +926,10 @@ class _ChatMinimapState extends State<ChatMinimap>
 
   static const _tile = 256.0;
   static const _maxTiles = 24;
+
+  /// How thick a user's message's mark is.
+  static const _userMark = 3.0;
+  final Paint _userPaint = Paint();
 
   final Map<int, ui.Image> _tiles = {};
 
@@ -828,9 +1056,9 @@ class _ChatMinimapState extends State<ChatMinimap>
     canvas.saveLayer(layer, _layer);
     _placeTiles(canvas, offset, 0, size.height);
     final swell = _swell * shown;
+    final reach = glass.height / 2 + _swellReach;
+    final middle = glass.top + glass.height / 2;
     if (swell > 0) {
-      final reach = glass.height / 2 + _swellReach;
-      final middle = glass.top + glass.height / 2;
       // Taken out about the glass, and put back swollen.
       canvas.drawRect(
         Rect.fromLTRB(layer.left, middle - reach, layer.right, middle + reach),
@@ -857,6 +1085,19 @@ class _ChatMinimapState extends State<ChatMinimap>
       ..drawRect(layer, _masking)
       ..restore();
 
+    _paintUsers(
+      canvas,
+      size,
+      offset: offset,
+      middle: middle,
+      reach: reach,
+      swell: swell,
+      above: above,
+      below: below,
+      hover: hover,
+      accent: accent,
+    );
+
     if (lift > 0) {
       canvas
         ..save()
@@ -872,6 +1113,79 @@ class _ChatMinimapState extends State<ChatMinimap>
       canvas.restore();
     }
     _evictTiles(offset + size.height / 2);
+    if (_pointerAt != null) _snapSoon();
+  }
+
+  /// The user's messages' marks, each where its row's strokes are (swollen
+  /// as they are about the glass, faded as they are at the ends), not
+  /// dimmed with them; the one the pointer is drawn to wider, as wide as
+  /// the glass, and bolder.
+  void _paintUsers(
+    Canvas canvas,
+    Size size, {
+    required double offset,
+    required double middle,
+    required double reach,
+    required double swell,
+    required double above,
+    required double below,
+    required double hover,
+    required Color accent,
+  }) {
+    _drawnRows.clear();
+    _drawnAt.clear();
+    if (_users.isEmpty) return;
+    final snapped = (offset * _pixelRatio).roundToDouble() / _pixelRatio;
+    final lighting = Curves.easeOutCubic.transform(_lighting.value);
+    final height = size.height;
+    for (var i = 0; i < _users.length; i++) {
+      var y = _usersAt[i] - snapped;
+      if (y < -height) continue;
+      if (y > 2 * height) break;
+      if (swell > 0 && (y - middle).abs() < reach) {
+        final u = (y - middle) / reach;
+        y =
+            middle +
+            reach *
+                (u +
+                    swell /
+                        2 *
+                        (math.sin(math.pi * u) / math.pi +
+                            math.sin(2 * math.pi * u) / (2 * math.pi)));
+      }
+      var edge = 1.0;
+      if (y < _fade) edge *= 1 - above * (1 - y / _fade).clamp(0.0, 1.0);
+      if (y > height - _fade) {
+        edge *= 1 - below * (1 - (height - y) / _fade).clamp(0.0, 1.0);
+      }
+      if (edge <= 0.02 || y < -4 || y > height + 4) continue;
+      final row = _users[i];
+      // Too faded to be seen, not to be pointed at.
+      if (edge > 0.3) {
+        _drawnRows.add(row);
+        _drawnAt.add(y);
+      }
+      final lit = row == _lit
+          ? lighting
+          : row == _unlit
+          ? 1 - lighting
+          : 0.0;
+      final out = ChatMinimap._outset * lit;
+      final thickness = _userMark + 2 * lit;
+      _userPaint.color = accent.withValues(
+        alpha: edge * (0.78 + 0.1 * hover + (0.22 - 0.1 * hover) * lit),
+      );
+      canvas.drawRRect(
+        RRect.fromLTRBR(
+          1 - out,
+          y - thickness / 2,
+          size.width - 1 + out,
+          y + thickness / 2,
+          Radius.circular(thickness / 2),
+        ),
+        _userPaint,
+      );
+    }
   }
 
   /// The tiles of the strokes from [from] down to [to] in the minimap, the
@@ -1034,12 +1348,9 @@ class _ChatMinimapState extends State<ChatMinimap>
           _Tone.strong => paint(ink, 0.55),
           _Tone.faint => paint(ink, 0.2),
           _Tone.code => paint(ink, 0.26),
-          _Tone.user => paint(accent, 0.7),
-          _Tone.image => paint(accent, 0.32),
           _Tone.added => paint(AppColors.added.withValues(alpha: 1), 0.75),
           _Tone.removed => paint(AppColors.removed.withValues(alpha: 1), 0.75),
           _Tone.codeBlock => paint(ink, 0.06),
-          _Tone.userBlock => paint(accent, 0.15),
         },
     ];
   }
@@ -1213,6 +1524,306 @@ class _Repaint extends ChangeNotifier {
   void ping() => notifyListeners();
 }
 
+/// A user's message beside the minimap, as [target] says: its [content],
+/// [left] in, the message's first line level with its mark. It comes at once (a breath of a fade),
+/// glides from one message to the next, and goes as quickly.
+class _Peek extends StatefulWidget {
+  const _Peek({
+    required this.target,
+    required this.left,
+    required this.maxWidth,
+    required this.content,
+  });
+
+  final ValueListenable<({int row, double at})?> target;
+  final double left;
+  final double maxWidth;
+  final ({Widget card, double firstLine}) Function(int row) content;
+
+  @override
+  State<_Peek> createState() => _PeekState();
+}
+
+class _PeekState extends State<_Peek> with TickerProviderStateMixin {
+  late final AnimationController _fade = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 80),
+    reverseDuration: const Duration(milliseconds: 120),
+  )..addStatusListener(_faded);
+  late final AnimationController _glide = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 140),
+    value: 1,
+  );
+  final _Repaint _moved = _Repaint();
+
+  /// The message shown, kept while it fades out; where its mark was, and
+  /// where it glides from.
+  int? _row;
+  double _from = 0;
+  double _to = 0;
+
+  double get _at =>
+      ui.lerpDouble(_from, _to, Curves.easeOutCubic.transform(_glide.value))!;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.target.addListener(_changed);
+    if (widget.target.value case final target?) {
+      _row = target.row;
+      _from = _to = target.at;
+      _fade.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_Peek oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.target != widget.target) {
+      oldWidget.target.removeListener(_changed);
+      widget.target.addListener(_changed);
+    }
+  }
+
+  void _changed() {
+    final target = widget.target.value;
+    if (target == null) {
+      _fade.reverse();
+      return;
+    }
+    if (_row == null || _fade.value == 0) {
+      // Out of sight: straight there.
+      _from = _to = target.at;
+      _glide.value = 1;
+    } else if (target.row != _row) {
+      _from = _at;
+      _to = target.at;
+      _glide.forward(from: 0);
+    } else {
+      // The same, moved (the strokes scrolled under it): along with it.
+      _from = _to = target.at;
+    }
+    if (target.row != _row) {
+      setState(() => _row = target.row);
+    } else {
+      _moved.ping();
+    }
+    _fade.forward();
+  }
+
+  void _faded(AnimationStatus status) {
+    if (status == AnimationStatus.dismissed && mounted) {
+      setState(() => _row = null);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.target.removeListener(_changed);
+    _fade.dispose();
+    _glide.dispose();
+    _moved.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final row = _row;
+    if (row == null) return const SizedBox.shrink();
+    final content = widget.content(row);
+    return AnimatedBuilder(
+      animation: Listenable.merge([_fade, _glide, _moved]),
+      builder: (context, child) {
+        final fade = Curves.easeOut.transform(_fade.value);
+        return CustomSingleChildLayout(
+          delegate: _PeekLayout(
+            widget.left,
+            _at - content.firstLine,
+            widget.maxWidth,
+          ),
+          child: Opacity(
+            opacity: fade,
+            child: Transform.translate(
+              offset: Offset(-4 * (1 - fade), 0),
+              child: child,
+            ),
+          ),
+        );
+      },
+      child: RepaintBoundary(child: content.card),
+    );
+  }
+}
+
+/// The peek [left] in, its top at [top] as far as the box lets it (8
+/// from its edges), at most [maxWidth] wide.
+class _PeekLayout extends SingleChildLayoutDelegate {
+  _PeekLayout(this.left, this.top, this.maxWidth);
+
+  final double left;
+  final double top;
+  final double maxWidth;
+
+  static const _margin = 8.0;
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints(
+        maxWidth: math.max(
+          0.0,
+          math.min(maxWidth, constraints.maxWidth - left - _margin),
+        ),
+        maxHeight: math.max(0.0, constraints.maxHeight - 2 * _margin),
+      );
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) => Offset(
+    left,
+    top.clamp(
+      _margin,
+      math.max(_margin, size.height - childSize.height - _margin),
+    ),
+  );
+
+  @override
+  bool shouldRelayout(_PeekLayout oldDelegate) =>
+      oldDelegate.left != left ||
+      oldDelegate.top != top ||
+      oldDelegate.maxWidth != maxWidth;
+}
+
+/// A glimpse of the conversation about a user's message, on its page: the
+/// end of what the agent said [before] it, the message as its bubble
+/// ([UserMessagePreview]), the start of what it said [after]. Fading into
+/// the card at its top and bottom, as more goes on past them; nothing in
+/// it scrolls.
+class _PeekCard extends StatelessWidget {
+  const _PeekCard({required this.message, this.before, this.after});
+
+  final UserMessageItem message;
+  final String? before;
+  final String? after;
+
+  static const _pad = 12.0;
+  static const _gap = 10.0;
+
+  /// How much of what came before shows: its last lines, under the fade.
+  static const _before = 52.0;
+
+  /// How far into the fade the top and bottom are.
+  static const _fade = 28.0;
+
+  /// From the card's top to the middle of the message's first line: past
+  /// the room for what came before, the bubble's padding and half a line.
+  static double firstLine({required bool before}) =>
+      _pad + (before ? _before + _gap : 0) + 10 + 10;
+
+  @override
+  Widget build(BuildContext context) {
+    final contrast = themeColors.highContrast;
+    final style = TextStyle(
+      color: AppColors.text,
+      fontSize: 12.5,
+      height: 1.55,
+    );
+    final faded = before != null || after != null;
+    Widget body = Padding(
+      padding: const EdgeInsets.all(_pad),
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(decoration: TextDecoration.none),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (before case final before?) ...[
+              // Its end: a list held at its end, shorter than it is.
+              SizedBox(
+                height: _before,
+                child: ClipRect(
+                  child: OverflowBox(
+                    alignment: Alignment.bottomLeft,
+                    minHeight: 0,
+                    maxHeight: double.infinity,
+                    child: _said(before, style),
+                  ),
+                ),
+              ),
+              const SizedBox(height: _gap),
+            ],
+            UserMessagePreview(
+              text: message.text,
+              images: message.images,
+              maxLines: 4,
+            ),
+            if (after case final after?) ...[
+              const SizedBox(height: _gap),
+              _said(after, style, maxLines: 6),
+            ],
+          ],
+        ),
+      ),
+    );
+    if (faded) {
+      body = ShaderMask(
+        blendMode: BlendMode.dstIn,
+        shaderCallback: (bounds) {
+          final top = before != null ? _fade / bounds.height : 0.0;
+          final bottom = after != null ? _fade / bounds.height : 0.0;
+          return LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: const [
+              Color(0x00FFFFFF),
+              Color(0xFFFFFFFF),
+              Color(0xFFFFFFFF),
+              Color(0x00FFFFFF),
+            ],
+            stops: [0, top, 1 - bottom, 1],
+          ).createShader(bounds);
+        },
+        child: body,
+      );
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.code,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.partBorder),
+          boxShadow: contrast
+              ? null
+              : [
+                  BoxShadow(
+                    color: themeColors['widget.shadow'],
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
+                  ),
+                  const BoxShadow(
+                    color: Color(0x14000000),
+                    blurRadius: 3,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+        ),
+        child: ClipRRect(borderRadius: BorderRadius.circular(10), child: body),
+      ),
+    );
+  }
+
+  /// The agent's words, as the history's, a little smaller.
+  static Widget _said(String text, TextStyle style, {int? maxLines}) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 2),
+    child: Text(
+      text,
+      maxLines: maxLines,
+      overflow: TextOverflow.clip,
+      style: style,
+    ),
+  );
+}
+
 class _MinimapPainter extends CustomPainter {
   _MinimapPainter(this.state, Listenable repaint) : super(repaint: repaint);
 
@@ -1226,19 +1837,16 @@ class _MinimapPainter extends CustomPainter {
   bool shouldRepaint(_MinimapPainter oldDelegate) => true;
 }
 
-/// What a stroke is, for its color; the blocks (a code block's, a message's
-/// bubble) rounded, under the strokes in them.
+/// What a stroke is, for its color; the blocks (a code block's, a plan's)
+/// rounded, under the strokes in them.
 enum _Tone {
   text,
   strong,
   faint,
   code,
-  user,
-  image,
   added,
   removed,
-  codeBlock(block: true),
-  userBlock(block: true);
+  codeBlock(block: true);
 
   const _Tone({this.block = false});
 
@@ -1249,11 +1857,14 @@ enum _Tone {
 /// each: left and width across the column (0 to 1), top and height down
 /// from the row's top, and [_Tone] index.
 class _Sample {
-  _Sample(this.row, this.height, this.marks);
+  _Sample(this.row, this.height, this.marks, {this.user});
 
   final ChatMinimapRow row;
   final double height;
   final Float32List marks;
+
+  /// The user's message: where its mark is, down from the row's top.
+  final double? user;
 
   /// Whether it stands for [other], whose item is its own.
   bool fits(ChatMinimapRow other) =>
@@ -1288,9 +1899,11 @@ class _Sampler {
 
   final List<double> _marks = [];
   double _y = 0;
+  double? _userAt;
 
   _Sample sample(ChatMinimapRow row) {
     _marks.clear();
+    _userAt = null;
     _y = row.gap * _scale;
     for (var i = 0; i < row.foldLines; i++) {
       _step(20);
@@ -1326,7 +1939,7 @@ class _Sampler {
           _step(label.length.toDouble());
       }
     }
-    return _Sample(row, _y, Float32List.fromList(_marks));
+    return _Sample(row, _y, Float32List.fromList(_marks), user: _userAt);
   }
 
   void _mark(double x, double w, double y, double h, _Tone tone) {
@@ -1362,9 +1975,8 @@ class _Sampler {
   }
 
   /// [text] as lines from [x] to [right], wrapped there: each but the last
-  /// a little short of it, as words wrap. At most [maxRows] of them; how
-  /// many, back.
-  int _prose(
+  /// a little short of it, as words wrap.
+  void _prose(
     String text, {
     double x = 0,
     double? right,
@@ -1372,26 +1984,18 @@ class _Sampler {
     double char = _char,
     double line = _line,
     double thickness = _stroke,
-    int? maxRows,
   }) {
     final room = math.max(char * 4, (right ?? width) - x);
     var left = _units(text) * char;
     var row = text.length;
-    var rows = 0;
     while (left > room) {
-      if (maxRows != null && rows + 1 >= maxRows) {
-        left = room;
-        break;
-      }
       final full = room * _ragged(row++);
       _bar(x, full, line, thickness, tone);
       _y += line * _scale;
       left -= full;
-      rows++;
     }
     if (left > 0) _bar(x, left, line, thickness, tone);
     _y += line * _scale;
-    return rows + 1;
   }
 
   /// How far short of the column's end a wrapped line ends, by [seed].
@@ -1420,6 +2024,8 @@ class _Sampler {
     _y += _stepLine * _scale;
   }
 
+  /// The user's message: as tall as its bubble, but no strokes of its own;
+  /// the minimap marks it with one mark at its middle ([_Sample.user]).
   void _user(UserMessageItem item) {
     const padX = 14.0;
     const padY = 9.0;
@@ -1435,22 +2041,9 @@ class _Sampler {
     final bubble = bubbles
         ? math.min(most, math.max(widest, 40) + 2 * padX)
         : width;
-    final left = width - bubble;
-    final at = _marks.length;
     final top = _y;
     _y += padY * _scale;
-    if (item.images.isNotEmpty) {
-      for (var i = 0; i < item.images.length; i++) {
-        _mark(
-          left + padX + i * (thumb + 6),
-          thumb,
-          _y,
-          thumb * _scale,
-          _Tone.image,
-        );
-      }
-      _y += (thumb + 8) * _scale;
-    }
+    if (item.images.isNotEmpty) _y += (thumb + 8) * _scale;
     final room = math.max(_char * 4, bubble - 2 * padX);
     var rows = 0;
     for (final line in lines) {
@@ -1459,23 +2052,8 @@ class _Sampler {
     // Up to one line more than it collapses to shows whole.
     const collapsed = UserMessageBubble.collapsedLines;
     if (rows > collapsed + 1) rows = collapsed;
-    for (final line in lines) {
-      if (rows <= 0) break;
-      if (line.trim().isEmpty) {
-        _y += _line * _scale;
-        rows--;
-        continue;
-      }
-      rows -= _prose(
-        line,
-        x: left + padX,
-        right: left + bubble - padX,
-        tone: _Tone.user,
-        maxRows: rows,
-      );
-    }
-    _y += padY * _scale;
-    _block(at, top, left, bubble, _Tone.userBlock);
+    _y += (rows * _line + padY) * _scale;
+    _userAt = (top + _y) / 2;
   }
 
   void _plan(PlanItem plan) {

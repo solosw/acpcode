@@ -1,28 +1,19 @@
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/composer/suggestion_menu.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../composer_test.dart' show typeInto;
 import '../sidebar_test.dart' show KeptCatalog, kept, keptThread, pumpKept;
 
-QuillController composerController(WidgetTester tester) =>
-    tester.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+MarkdownController composerController(WidgetTester tester) =>
+    tester.widget<MarkdownEditor>(find.byType(MarkdownEditor)).controller;
 
 /// Types [text] at the end of the composer through the text input channel.
-Future<void> typeText(WidgetTester tester, String text) async {
-  final controller = composerController(tester);
-  final current = controller.document.toPlainText();
-  final body = current.substring(0, current.length - 1) + text;
-  tester.testTextInput.updateEditingValue(
-    TextEditingValue(
-      text: '$body\n',
-      selection: TextSelection.collapsed(offset: body.length),
-    ),
-  );
-  await tester.pump();
-}
+Future<void> typeText(WidgetTester tester, String text) =>
+    typeInto(tester, find.byType(MarkdownEditor), text);
 
 Future<void> pressKey(WidgetTester tester, LogicalKeyboardKey key) async {
   await tester.sendKeyEvent(key);
@@ -37,11 +28,10 @@ int highlighted(WidgetTester tester) =>
 
 /// The composer's content, tokens as their sent text in brackets.
 String content(WidgetTester tester) => [
-  for (final op in composerController(tester).document.toDelta().toList())
-    switch (op.data) {
-      final Map<dynamic, dynamic> data =>
-        '[${ComposerTokenEmbed.plainText(data[ComposerTokenEmbed.type])}]',
-      final data => '$data',
+  for (final piece in composerPieces(composerController(tester).text))
+    switch (piece) {
+      final ComposerEmbed embed => '[${embed.plainText}]',
+      final text => '$text',
     },
 ].join();
 
@@ -99,7 +89,7 @@ void main() {
     await pressKey(tester, LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(SuggestionMenu), findsNothing);
-    expect(content(tester), 'see [[Session b1: Chat b1]] \n');
+    expect(content(tester), 'see [[Session b1: Chat b1]] ');
 
     // Sent, it names the session for Claude Code to find.
     final session = workspace.selected.session;
@@ -137,7 +127,7 @@ void main() {
     await pressKey(tester, LogicalKeyboardKey.escape);
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(SuggestionMenu), findsNothing);
-    expect(content(tester), '@b1\n');
+    expect(content(tester), '@b1');
   });
 
   testWidgets('with no other conversation, @ offers the files alone', (
@@ -172,7 +162,7 @@ void main() {
     expect(highlighted(tester), 0);
 
     await pressKey(tester, LogicalKeyboardKey.enter);
-    expect(content(tester), 'see [@lib/chat/composer/composer.dart] \n');
+    expect(content(tester), 'see [@lib/chat/composer/composer.dart] ');
   });
 
   group('a session reference', () {
@@ -201,19 +191,20 @@ void main() {
     });
 
     test('pasted or shown again, is the conversation\'s tag', () {
-      final delta = composerDeltaFromPaste(
-        'see [Session b1: Chat b1] now',
-        ComposerVocabulary.fallback,
-        atStart: true,
-      );
-      final ops = delta.toList();
-      expect(ops, hasLength(3));
-      expect(ops[0].data, 'see ');
+      final pieces = composerPieces(
+        composerContentFromPaste(
+          'see [Session b1: Chat b1] now',
+          ComposerVocabulary.fallback,
+          atStart: true,
+        ),
+      ).toList();
+      expect(pieces, hasLength(3));
+      expect(pieces[0], 'see ');
       final token = ComposerTokenEmbed.decode(
-        (ops[1].data! as Map)[ComposerTokenEmbed.type],
+        (pieces[1] as ComposerEmbed).data,
       );
       expect((token.label, token.value), ('Chat b1', 'b1'));
-      expect(ops[2].data, ' now');
+      expect(pieces[2], ' now');
     });
   });
 }

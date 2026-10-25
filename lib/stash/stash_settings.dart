@@ -2,6 +2,12 @@
 /// the last made first, or by number.
 enum StashSort { manual, updated, created, number }
 
+/// Which of the projects' issues are stashes, kept in step with them (see
+/// StashForge.sync): every open one ([all]); only the user's ([mine]:
+/// assigned to them or opened by them); none ([off]: imported, or
+/// published, ones only).
+enum StashIssueSync { all, mine, off }
+
 /// The `stash.*` settings of settings.json (see docs/stash.md).
 class StashSettings {
   const StashSettings({
@@ -10,6 +16,7 @@ class StashSettings {
     this.directory,
     this.sort = StashSort.updated,
     this.pinned = false,
+    this.issueSync = StashIssueSync.all,
   });
 
   static const hotkeyKey = 'stash.hotkey';
@@ -17,6 +24,7 @@ class StashSettings {
   static const directoryKey = 'stash.directory';
   static const sortKey = 'stash.sort';
   static const pinnedKey = 'stash.pinned';
+  static const issueSyncKey = 'stash.issueSync';
 
   /// ⌃⇧Space, Ctrl+Shift+Space on Windows: offered in the settings, not
   /// taken unasked (a shortcut of every app's, it would take the keys from
@@ -40,6 +48,9 @@ class StashSettings {
   /// bar); else it is in front as it shows, and others may cover it.
   final bool pinned;
 
+  /// Which of the projects' issues are stashes.
+  final StashIssueSync issueSync;
+
   static StashSettings parse(Map<String, Object?> settings) => StashSettings(
     hotkey: switch (settings[hotkeyKey]) {
       final String hotkey => hotkey.trim(),
@@ -57,6 +68,11 @@ class StashSettings {
       _ => StashSort.updated,
     },
     pinned: settings[pinnedKey] == true,
+    issueSync: switch (settings[issueSyncKey]) {
+      final String mode =>
+        StashIssueSync.values.asNameMap()[mode] ?? StashIssueSync.all,
+      _ => StashIssueSync.all,
+    },
   );
 
   /// [hotkey] as the menus show one: `⌃⇧Space` on macOS, `Ctrl+Shift+Space`

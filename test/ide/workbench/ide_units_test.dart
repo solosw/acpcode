@@ -362,7 +362,8 @@ void main() {
     final paths = [
       for (var i = 0; i <= IdeFileIndex.backgroundAbove; i++)
         inRoot('src/f$i.dart'),
-    ]..add(inRoot('lib/phone.dart'));
+      inRoot('lib/phone.dart'),
+    ];
     final index = IdeFileIndex(
       IdeFileService(testRoot),
       testRoot,

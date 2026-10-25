@@ -262,6 +262,14 @@ jobs:
           name: windows
           if-no-files-found: error
           path: build/installers/BaoCode-*-setup.exe
+      # The Dart code's symbols, for a hang report's app.so+0x… frames
+      # (tool/build_windows.dart). Not released: kept with the run.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: symbols-windows
+          if-no-files-found: error
+          retention-days: 90
+          path: build/symbols/app.windows-x64.symbols
 
   linux:
     name: Build for Linux (${{ matrix.arch }}, ${{ matrix.edition }})

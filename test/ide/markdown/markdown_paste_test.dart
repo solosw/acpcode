@@ -272,4 +272,97 @@ void main() {
       expect(moved, 1);
     });
   });
+
+  group('where it goes, the files copied meanwhile', () {
+    test('only the range changes, byte for byte, as one undo step', () {
+      const text = '# Title\r\n\r\nOne\r\ntwo\r\n\r\n- a\r\n- b';
+      final model = EditorDocumentModel(text);
+      final spot = MarkdownPasteSpot(model, start: 16, end: 19);
+      // Put in with LF line breaks; the document keeps its CRLF.
+      expect(spot.commit('two\nthree'), isTrue);
+      expect(
+        model.text,
+        '# Title\r\n\r\nOne\r\ntwo\r\nthree\r\n\r\n- a\r\n- b',
+      );
+      expect(model.undo(), isTrue);
+      expect(model.text, text);
+      expect(model.redo(), isTrue);
+      expect(model.text, contains('three'));
+    });
+
+    test('lone CR line breaks are kept', () {
+      final model = EditorDocumentModel('a\rb\r\rc');
+      expect(MarkdownPasteSpot(model, start: 2, end: 3).commit('B\nb'), isTrue);
+      expect(model.text, 'a\rB\rb\r\rc');
+    });
+
+    test('the same text makes no edit', () {
+      final model = EditorDocumentModel('a\r\nb\r\n\r\nc');
+      final version = model.version;
+      expect(
+        MarkdownPasteSpot(model, start: 0, end: 4).commit('a\nb'),
+        isFalse,
+      );
+      expect(model.version, version);
+      expect(model.canUndo, isFalse);
+    });
+
+    test('edits elsewhere move it along', () {
+      final model = EditorDocumentModel('a\n\nb\n\nc');
+      final spot = MarkdownPasteSpot(model, start: 3, end: 4);
+      model.applyOffsetEdits([const EditorOffsetEdit(0, 1, 'first')]);
+      model.applyOffsetEdits([
+        EditorOffsetEdit(model.text.length, model.text.length, '!'),
+      ]);
+      expect(spot.conflicted, isFalse);
+      expect((spot.start, spot.end), (7, 8));
+      expect(spot.commit('B'), isTrue);
+      expect(model.text, 'first\n\nB\n\nc!');
+    });
+
+    test('a change to it, or touching it, leaves it unapplied', () {
+      final model = EditorDocumentModel('a\n\nb\n\nc');
+      final spot = MarkdownPasteSpot(model, start: 3, end: 4);
+      model.applyOffsetEdits([const EditorOffsetEdit(3, 4, 'B')]);
+      expect(spot.conflicted, isTrue);
+      expect(spot.commit('mine'), isFalse);
+      expect(model.text, 'a\n\nB\n\nc');
+
+      // Reloaded from disk (the whole text replaced) over it.
+      final reloaded = EditorDocumentModel('a\n\nb\n\nc');
+      final other = MarkdownPasteSpot(reloaded, start: 3, end: 4);
+      reloaded.replaceText('a\n\nchanged\n\nc');
+      expect(other.conflicted, isTrue);
+      // Reloaded elsewhere only: it goes on.
+      final elsewhere = EditorDocumentModel('a\n\nb\n\nc');
+      final third = MarkdownPasteSpot(elsewhere, start: 3, end: 4);
+      elsewhere.replaceText('a\n\nb\n\nc and more');
+      expect(third.conflicted, isFalse);
+      expect(third.commit('B'), isTrue);
+      expect(elsewhere.text, 'a\n\nB\n\nc and more');
+    });
+
+    test('a new block at the end, apart from the last', () {
+      for (final (text, expected) in [
+        ('', 'new'),
+        ('a', 'a\n\nnew'),
+        ('a\n', 'a\n\nnew'),
+        ('a\n\n', 'a\n\nnew'),
+        ('a\r\n', 'a\r\n\r\nnew'),
+      ]) {
+        final model = EditorDocumentModel(text);
+        insertMarkdownAtEnd(model, 'new');
+        expect(model.text, expected);
+      }
+      final model = EditorDocumentModel('a');
+      final blank = MarkdownPasteSpot(
+        model,
+        start: 1,
+        end: 1,
+        prefix: markdownBlockPrefix('a'),
+      );
+      expect(blank.commit('  \n'), isFalse);
+      expect(model.text, 'a');
+    });
+  });
 }

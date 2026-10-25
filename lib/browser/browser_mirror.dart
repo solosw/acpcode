@@ -297,7 +297,9 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
       _value = TextEditingValue.empty;
       _input = TextInput.attach(
         this,
-        const TextInputConfiguration(
+        TextInputConfiguration(
+          // Windows takes no client without the view it types into.
+          viewId: View.of(context).viewId,
           inputType: TextInputType.multiline,
           inputAction: TextInputAction.newline,
           autocorrect: false,

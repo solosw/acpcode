@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../ide/ide_button.dart';
+import '../../ide/ide_menu.dart';
 import '../../l10n/l10n.dart';
 import '../../stash/stash_controller.dart';
 import '../../stash/stash_settings.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../../workspace/window_controls.dart';
 import '../user_settings.dart';
+import 'settings_dropdown.dart';
 import 'settings_widgets.dart';
 import 'stash_hotkey_field.dart';
 
@@ -94,7 +96,40 @@ class _StashSettingsPageState extends State<StashSettingsPage> {
             ),
           ],
         ),
+        SettingsCard(
+          children: [
+            SettingsRow(
+              label: l10n.stashSettingsIssueSync,
+              description: l10n.stashSettingsIssueSyncDescription,
+              trailing: SettingsDropdown(
+                current: _issueSyncLabel(l10n, current.issueSync),
+                width: 220,
+                semanticLabel:
+                    '${l10n.stashSettingsIssueSync}: '
+                    '${_issueSyncLabel(l10n, current.issueSync)}',
+                entries: () => [
+                  for (final mode in StashIssueSync.values)
+                    IdeMenuAction(
+                      _issueSyncLabel(l10n, mode),
+                      checked: mode == current.issueSync,
+                      onSelected: () => _write(
+                        StashSettings.issueSyncKey,
+                        mode == StashIssueSync.all ? null : mode.name,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
+
+  static String _issueSyncLabel(AppLocalizations l10n, StashIssueSync mode) =>
+      switch (mode) {
+        StashIssueSync.all => l10n.stashIssueSyncAll,
+        StashIssueSync.mine => l10n.stashIssueSyncMine,
+        StashIssueSync.off => l10n.stashIssueSyncOff,
+      };
 }

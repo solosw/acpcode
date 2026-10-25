@@ -304,6 +304,14 @@ String claudeHaikuAnswer(String output, String stderr, int code) {
   } on FormatException {
     result = null;
   }
+  // With "viewMode": "verbose" in the user's settings, `json` prints every
+  // event as an array, the result last.
+  if (result is List) {
+    result = result.lastWhere(
+      (event) => event is Map && event['type'] == 'result',
+      orElse: () => null,
+    );
+  }
   if (result case {'is_error': false, 'result': final String text}
       when text.trim().isNotEmpty) {
     return text;

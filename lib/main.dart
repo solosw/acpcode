@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
 
@@ -24,6 +23,7 @@ import 'chat/resume_after_reset.dart';
 import 'chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import 'customize/customization_store.dart';
 import 'diagnostics/app_event_watch.dart';
+import 'diagnostics/frame_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
 import 'ide/git/git_repository.dart';
@@ -68,6 +68,7 @@ import 'models/model_welcome.dart';
 import 'network/network_proxy.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_settings.dart';
+import 'platform/memory_budget.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
@@ -159,7 +160,11 @@ Future<void> main(List<String> arguments) async {
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
   WidgetsFlutterBinding.ensureInitialized();
-  if (!kIsWeb) AppEventWatch.start();
+  MemoryBudget.apply();
+  if (!kIsWeb) {
+    AppEventWatch.start();
+    FrameWatch.start();
+  }
   // The Windows app's own logs go beside it.
   if (errors != null) unawaited(errors.shareWithHost());
   // The editor's language packs are the language servers' (README.md in
@@ -224,11 +229,15 @@ Future<void> main(List<String> arguments) async {
         ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
     // Settings → General → Claude Code: the core sessions run on (BaoCode's
     // own, or the CLI), read as each agent starts. Unset, the CLI where it
-    // is installed: looked for on the app's PATH, then the shell's.
+    // is installed (looked for on the app's PATH, then the shell's), else
+    // the built-in core, which suggests the CLI.
     ClaudeCore.cliInstalled = localClaudeInstalled;
     unawaited(lookForLocalClaude());
     ClaudeCore.current = () =>
         ClaudeCore.parse(files.settings[ClaudeCore.settingKey]);
+    ClaudeCore.changes = files.settings;
+    ClaudeCore.pick = (core) =>
+        files.settings.update(ClaudeCore.settingKey, core.name);
     // Settings → Models: the upstreams, kept in settings.json.
     ModelProviders.current = ModelProviders.settings(files.settings);
     // Claude Code's own models as it last listed them: in the picker
@@ -898,7 +907,6 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       GlobalMaterialLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
       GlobalWidgetsLocalizations.delegate,
-      FlutterQuillLocalizations.delegate,
     ],
     home: window.isStash
         ? Material(

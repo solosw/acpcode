@@ -68,12 +68,11 @@ abstract final class MockScript {
       path: 'lib/chat/composer/composer.dart',
       start: 88,
       lines: [
-        ' child: QuillEditor(',
-        '-  config: const QuillEditorConfig(),',
-        '+  config: QuillEditorConfig(',
-        '+    maxHeight: _maxEditorHeight,',
-        '+    onKeyPressed: _handleKey,',
-        '+  ),',
+        ' child: MarkdownEditor(',
+        '-  shrinkWrap: false,',
+        '+  shrinkWrap: true,',
+        '+  onKey: _handleKey,',
+        '+  onPaste: _paste,',
       ],
     ),
     (
@@ -105,7 +104,7 @@ abstract final class MockScript {
   static const testRunMs = 4000;
 
   static const summary =
-      '修改已完成：\n- 输入框使用 `QuillEditor`，随内容增高\n- 支持 `@` 提及和 `/` 命令\n'
+      '修改已完成：\n- 输入框使用 `MarkdownEditor`，随内容增高\n- 支持 `@` 提及和 `/` 命令\n'
       '- 测试正在后台运行，结束后会更新状态';
 
   static const codexSummary = '修改已完成：\n- 输入框随内容增高，最多 8 行\n- `flutter test` 已通过';

@@ -35,6 +35,7 @@ class ChangeTree extends StatefulWidget {
     this.onOpen,
     this.onKeep,
     this.onUndo,
+    this.fileActions,
   });
 
   /// The project's directory: the tree's top.
@@ -51,6 +52,10 @@ class ChangeTree extends StatefulWidget {
 
   /// Null when files cannot be undone one by one.
   final ValueChanged<List<FileChange>>? onUndo;
+
+  /// What else a file's menu offers, after opening its changes: the ways
+  /// to open it, its path.
+  final List<List<IdeMenuEntry>> Function(FileChange file)? fileActions;
 
   @override
   State<ChangeTree> createState() => _ChangeTreeState();
@@ -215,6 +220,8 @@ class _ChangeTreeState extends State<ChangeTree> {
             if ((widget.onOpen, file) case (final open?, final file?))
               IdeMenuAction(l10n.scmOpenChanges, onSelected: () => open(file)),
           ],
+          if ((widget.fileActions, file) case (final actions?, final file?))
+            ...actions(file),
           [
             if ((widget.onUndo, undoable) case (final undo?, [_, ...]))
               IdeMenuAction(l10n.stripUndo, onSelected: () => undo(undoable)),

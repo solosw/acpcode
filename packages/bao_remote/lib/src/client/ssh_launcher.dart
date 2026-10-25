@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import '../protocol.dart';
+import '../rpc/resumable_channel.dart';
 import '../rpc/rpc_peer.dart';
 import 'remote_client.dart';
 import 'ssh_askpass.dart';
@@ -167,41 +168,259 @@ class SshConnectOptions {
   ];
 }
 
-/// A connection to a host's server: [client] over the stdin and stdout of
-/// `ssh`, which ends with it.
+/// A connection to a host's server: [client] over a session there that
+/// outlives the `ssh` it runs over (see ServerSession). A connection lost
+/// (cut, or silent: see [ResumableChannel]) is made again, again and again
+/// while it cannot be, [linked] false meanwhile; what was asked waits for
+/// it, and what runs there carries on. [done] once the session is gone.
 class SshConnection {
-  SshConnection._(this.target, Process process, this.client, this._stderr)
-    : _ended = (() => process.exitCode.timeout(
+  SshConnection._(this.target, this.client, _SessionKeeper keeper)
+    : _keeper = keeper,
+      _ended = keeper.close;
+
+  /// A connection over [client] without `ssh` (one in memory, under test);
+  /// [ended] completes once its other end is gone after a shutdown.
+  SshConnection.over(this.target, this.client, {Future<void> Function()? ended})
+    : _keeper = null,
+      _ended = ended ?? (() async {});
+
+  final SshTarget target;
+  final RemoteClient client;
+  final _SessionKeeper? _keeper;
+  final Future<void> Function() _ended;
+
+  RemoteHello get hello => client.hello!;
+
+  /// Completes once the session is gone: its server ended, or no longer
+  /// there when connected again.
+  Future<void> get done => client.peer.done;
+
+  /// Whether the connection is up.
+  bool get linked => _keeper?.channel.linked ?? !client.peer.isClosed;
+
+  /// Whether connecting again stopped, for what would fail again alone (a
+  /// refused password, cancelled: see [lastError]) until [retryNow].
+  bool get stalled => _keeper?.stalled ?? false;
+
+  /// When the next attempt to connect again is, while not [linked].
+  DateTime? get retryAt => _keeper?.retryAt;
+
+  /// Why the last attempt to connect again failed.
+  SshConnectException? get lastError => _keeper?.lastError;
+
+  /// Each change of [linked], [stalled] and [retryAt].
+  Stream<void> get changes => _keeper?.changes.stream ?? const Stream.empty();
+
+  /// Connects again now, while not [linked]; completes once linked, or
+  /// fails with why not (the session gone: [RpcClosed]).
+  Future<void> retryNow() => _keeper?.retryNow() ?? Future.value();
+
+  /// The last lines `ssh` and the server said on stderr.
+  String get log => _keeper?.stderr.join('\n') ?? '';
+
+  /// Ends the server (and all it runs), then `ssh`.
+  Future<void> close() async {
+    _keeper?.closing = true;
+    if (linked) {
+      await client.shutdown();
+    } else {
+      // Not to be told: the session ends once its grace has.
+      client.peer.close();
+    }
+    await _ended();
+  }
+}
+
+/// Keeps a session's link up: `ssh` running the bridge to it, run again
+/// once lost (at once, then after 1, 2, 4… seconds up to [maxBackoff]).
+class _SessionKeeper {
+  _SessionKeeper(this._launcher, this.target, this._extra, this.id) {
+    channel.linkChanges.listen((up) {
+      if (up) {
+        _failures = 0;
+        lastError = null;
+        retryAt = null;
+      } else {
+        _schedule();
+      }
+      _changed();
+    });
+    unawaited(channel.ended.then((_) => _stop()));
+  }
+
+  final SshLauncher _launcher;
+  final SshTarget target;
+  final List<String> _extra;
+  final String id;
+  late final ResumableChannel channel = ResumableChannel(
+    heartbeat: _launcher.heartbeat,
+    silence: _launcher.silence,
+  );
+  final StreamController<void> changes = StreamController.broadcast();
+
+  /// The last lines `ssh` and the bridge said on stderr.
+  final List<String> stderr = [];
+
+  Process? _process;
+  Timer? _retry;
+  DateTime? retryAt;
+  SshConnectException? lastError;
+  bool stalled = false;
+  bool closing = false;
+  int _failures = 0;
+  Future<void>? _dialing;
+
+  Duration get maxBackoff => _launcher.maxBackoff;
+
+  /// Starts `ssh` running the bridge, its stdin and stdout the channel's
+  /// link: the process, what it says on stderr, and when the link is gone.
+  Future<(Process, AskpassRun?, List<String>, Future<void>)> dial({
+    required bool resume,
+  }) async {
+    final (process, askpass) = await _launcher._startSsh(
+      target,
+      _launcher.sessionCommand(id, resume: resume),
+      _extra,
+    );
+    _process = process;
+    final said = <String>[];
+    process.stderr
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .transform(const LineSplitter())
+        .listen((line) {
+          said.add(line);
+          stderr.add(line);
+          if (stderr.length > 50) stderr.removeAt(0);
+          if (said.length > 50) said.removeAt(0);
+        }, onError: (Object _) {});
+    process.stdin.done.then<void>((_) {}, onError: (Object _) {});
+    final gone = channel.attach(
+      ChannelLink(
+        input: process.stdout,
+        write: (bytes) => process.stdin.add(bytes),
+        close: process.kill,
+        // Signing in: the user is being asked (or just answered).
+        patient: () =>
+            !channel.linked &&
+            (askpass?.busy(const Duration(seconds: 30)) ?? false),
+      ),
+    );
+    return (process, askpass, said, gone);
+  }
+
+  Future<void> retryNow() async {
+    if (channel.isClosed) throw const RpcClosed();
+    if (channel.linked) return;
+    stalled = false;
+    _retry?.cancel();
+    _retry = null;
+    await _dialAgain();
+    if (channel.isClosed) throw const RpcClosed();
+    if (!channel.linked) throw lastError ?? const RpcClosed();
+  }
+
+  /// Connects again, unless it is being already; tried again later (see
+  /// [_schedule]) when it did not.
+  Future<void> _dialAgain() => _dialing ??= _redial().whenComplete(() {
+    _dialing = null;
+    _schedule();
+  });
+
+  Future<void> _redial() async {
+    if (closing || channel.isClosed || channel.linked) return;
+    retryAt = null;
+    _changed();
+    final linked = channel.linkChanges
+        .firstWhere((up) => up, orElse: () => false)
+        .catchError((Object _) => false);
+    final Process process;
+    final AskpassRun? askpass;
+    final List<String> said;
+    final Future<void> gone;
+    try {
+      (process, askpass, said, gone) = await dial(resume: true);
+    } on SshConnectException catch (error) {
+      _failed(error);
+      return;
+    }
+    await Future.any([linked, gone]);
+    await askpass?.close();
+    if (channel.linked || channel.isClosed || closing) return;
+    final code = await process.exitCode.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
+    if (channel.isClosed || closing) return;
+    _failed(
+      _launcher._failure(
+        code,
+        said.join('\n'),
+        cancelled: askpass?.cancelled ?? false,
+        fallback: 'The connection could not be made again (exit $code).',
+      ),
+    );
+  }
+
+  void _failed(SshConnectException error) {
+    lastError = error;
+    _failures++;
+    stalled = switch (error.failure) {
+      SshFailure.authentication ||
+      SshFailure.hostKey ||
+      SshFailure.hostKeyChanged ||
+      SshFailure.noSsh => true,
+      _ => false,
+    };
+    _changed();
+  }
+
+  /// The next attempt, unless one is being made (its end schedules the
+  /// next if need be).
+  void _schedule() {
+    if (closing || stalled || channel.isClosed || channel.linked) return;
+    if (_dialing != null) return;
+    final seconds = _failures == 0
+        ? 0
+        : min(pow(2, _failures - 1).toInt(), maxBackoff.inSeconds);
+    final delay = Duration(seconds: seconds);
+    retryAt = DateTime.now().add(delay);
+    _changed();
+    _retry?.cancel();
+    _retry = Timer(delay, () {
+      _retry = null;
+      unawaited(_dialAgain());
+    });
+  }
+
+  void _changed() {
+    if (!changes.isClosed) changes.add(null);
+  }
+
+  void _stop() {
+    _retry?.cancel();
+    _retry = null;
+    retryAt = null;
+    _changed();
+  }
+
+  Future<void> close() async {
+    closing = true;
+    _stop();
+    channel.close();
+    final process = _process;
+    if (process != null) {
+      await process.exitCode.timeout(
         const Duration(seconds: 3),
         onTimeout: () {
           process.kill();
           return -1;
         },
-      ));
-
-  /// A connection over [client] without `ssh` (one in memory, under test);
-  /// [ended] completes once its other end is gone after a shutdown.
-  SshConnection.over(this.target, this.client, {Future<void> Function()? ended})
-    : _stderr = const [],
-      _ended = ended ?? (() async {});
-
-  final SshTarget target;
-  final RemoteClient client;
-  final List<String> _stderr;
-  final Future<void> Function() _ended;
-
-  RemoteHello get hello => client.hello!;
-
-  /// Completes once the connection is gone.
-  Future<void> get done => client.peer.done;
-
-  /// The last lines `ssh` and the server said on stderr.
-  String get log => _stderr.join('\n');
-
-  /// Ends the server (and all it runs), then `ssh`.
-  Future<void> close() async {
-    await client.shutdown();
-    await _ended();
+      );
+    }
+    await changes.close();
   }
 }
 
@@ -221,6 +440,10 @@ class SshLauncher {
     this.prompter,
     this.optionsFor,
     SshAskpass? askpass,
+    this.sessionGrace,
+    this.maxBackoff = const Duration(seconds: 10),
+    this.heartbeat = const Duration(seconds: 5),
+    this.silence = const Duration(seconds: 30),
   }) : _start = start ?? Process.start,
        _askpass = askpass ?? SshAskpass();
 
@@ -241,6 +464,19 @@ class SshLauncher {
   /// is answered before [prompter].
   final SshConnectOptions Function(SshTarget target)? optionsFor;
   final SshAskpass _askpass;
+
+  /// How long the server's session waits for a lost connection to be made
+  /// again, its own default ([ServerSession.defaultGrace]) when null.
+  final Duration? sessionGrace;
+
+  /// The longest wait between attempts to connect again.
+  final Duration maxBackoff;
+
+  /// How often each side of a session says it is there, and how long the
+  /// app waits to hear from the host before taking the connection for
+  /// lost (a network gone silent: see [ResumableChannel]).
+  final Duration heartbeat;
+  final Duration silence;
 
   /// Whether what `ssh` asks is answered (by [SshAskpass]'s script).
   bool get _prompts => prompter != null && (!_askpass.windows || _forced);
@@ -503,6 +739,20 @@ class SshLauncher {
     }
   }
 
+  /// The command that runs the bridge to session [id]'s server (see
+  /// ServerSession), starting it unless [resume].
+  String sessionCommand(String id, {bool resume = false}) => [
+    serverPath,
+    '--session',
+    id,
+    if (resume) '--resume',
+    if (sessionGrace case final grace?) ...['--grace', '${grace.inSeconds}'],
+    if (heartbeat != const Duration(seconds: 5)) ...[
+      '--heartbeat',
+      '${heartbeat.inMilliseconds}',
+    ],
+  ].join(' ');
+
   /// What the host is asked first: its system and architecture, whether
   /// this build of the server is there, and whether it can unpack gzip.
   String get probeScript =>
@@ -612,32 +862,19 @@ exit 0
   }
 
   Future<SshConnection> _launch(SshTarget target, List<String> extra) async {
-    final (process, askpass) = await _startSsh(target, serverPath, extra);
-    final stderr = <String>[];
-    process.stderr
-        .transform(const Utf8Decoder(allowMalformed: true))
-        .transform(const LineSplitter())
-        .listen((line) {
-          stderr.add(line);
-          if (stderr.length > 50) stderr.removeAt(0);
-        }, onError: (Object _) {});
-    process.stdin.done.then<void>((_) {}, onError: (Object _) {});
-    final peer = RpcPeer(
-      process.stdout
-          .transform(const Utf8Decoder(allowMalformed: true))
-          .transform(const LineSplitter()),
-      (line) => process.stdin.writeln(line),
-    );
+    final keeper = _SessionKeeper(this, target, extra, _nonce(16));
+    final (process, askpass, said, gone) = await keeper.dial(resume: false);
+    final peer = RpcPeer(keeper.channel.messages, keeper.channel.send);
     final client = RemoteClient(peer);
-    final connection = SshConnection._(target, process, client, stderr);
-    unawaited(process.exitCode.then((_) => peer.close()));
     try {
-      // 30 seconds, and as long as the user is asked to sign in.
+      // 30 seconds, and as long as the user is asked to sign in; failed
+      // at once when ssh ends first.
       final initialized = client.initialize();
+      final lost = gone.then<void>((_) => throw const RpcClosed());
       const wait = Duration(seconds: 30);
       while (true) {
         try {
-          await initialized.timeout(wait);
+          await Future.any([initialized, lost]).timeout(wait);
           break;
         } on TimeoutException {
           if (!(askpass?.busy(wait) ?? false)) rethrow;
@@ -649,9 +886,10 @@ exit 0
         const Duration(seconds: 2),
         onTimeout: () => -1,
       );
+      await keeper.close();
       throw _failure(
         code,
-        stderr.join('\n'),
+        said.join('\n'),
         fallback: 'The server on ${target.text} did not start: $error',
         cancelled: askpass?.cancelled ?? false,
       );
@@ -659,7 +897,7 @@ exit 0
       // Signed in, or not to be.
       await askpass?.close();
     }
-    return connection;
+    return SshConnection._(target, client, keeper);
   }
 
   Future<({int exitCode, String stdout, String stderr})> _run(
@@ -700,10 +938,12 @@ exit 0
     return result;
   }
 
-  static String _nonce() {
+  static String _nonce([int bytes = 6]) {
     final random = Random.secure();
-    return [for (var i = 0; i < 6; i++) random.nextInt(256).toRadixString(16)]
-        .join();
+    return [
+      for (var i = 0; i < bytes; i++)
+        random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ].join();
   }
 
   static String _tail(String text) {

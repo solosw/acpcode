@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../workspace/window_controls.dart';
 import 'floating_placement.dart';
 
 /// A floating element (popover, menu, tooltip) anchored to [child], shown
@@ -73,6 +74,20 @@ class FloatingLayer extends StatefulWidget {
 
   /// Kept clear of the window edges.
   static const viewportPadding = 8.0;
+
+  /// Where it may show in an overlay of [size]: clear of the window's
+  /// edges, and below the header Windows draws (see
+  /// [WindowControls.headerInset]).
+  static Rect boundsIn(Size size) {
+    final bounds = (Offset.zero & size).deflate(viewportPadding);
+    final top = math.max(bounds.top, WindowControls.headerInset);
+    return Rect.fromLTRB(
+      bounds.left,
+      math.min(top, bounds.bottom),
+      bounds.right,
+      bounds.bottom,
+    );
+  }
 
   @override
   State<FloatingLayer> createState() => _FloatingLayerState();
@@ -282,9 +297,7 @@ class _FloatingLayerState extends State<FloatingLayer>
     return CustomSingleChildLayout(
       delegate: _FloatingLayoutDelegate(
         anchor: widget.anchorRect?.call(childRect) ?? childRect,
-        bounds: (Offset.zero & info.overlaySize).deflate(
-          FloatingLayer.viewportPadding,
-        ),
+        bounds: FloatingLayer.boundsIn(info.overlaySize),
         placement: widget.placement,
         gap: widget.gap,
       ),

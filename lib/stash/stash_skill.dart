@@ -87,6 +87,7 @@ The front matter is between the two `---` lines: one `key: value` a line, every 
 | `threads` | the conversations it is carried out in | BaoCode's: keep it as it is |
 | `issues` | the GitHub/GitLab issues and pull requests it is linked to, with their state as last seen | BaoCode's: keep it as it is |
 | `suggestedProject` | BaoCode's suggestion | keep it as it is |
+| `issue`, `local`, `synced`, `syncedRemote` | the issue it is (kept in step with it by BaoCode, which asks the user before anything is sent there), or that it is kept here alone | BaoCode's: keep them as they are |
 
 Keep the keys you do not change as they are, and an empty line after the closing `---`.
 

@@ -60,6 +60,34 @@ void main() {
     expect(h.permissionRequests.map((r) => r['tool_name']), ['ExitPlanMode']);
   });
 
+  test('in plan mode, the cache ends before the reminder: the next turn '
+      'reads it', () async {
+    h = await Harness.start(permissionMode: 'plan');
+    final path = p.join(h.cwd, 'f.txt');
+    File(path).writeAsStringSync('hello');
+    h.model.script.addAll([
+      Reply.tool('Read', {'file_path': path}),
+      Reply.tool('Read', {'file_path': path}),
+      Reply.text('done'),
+    ]);
+    await h.turn('look');
+    List<Map> messagesOf(ModelRequest request) => [
+      for (final m in request.body['messages'] as List) m as Map,
+    ];
+    final first = messagesOf(h.model.turns[1]);
+    final second = messagesOf(h.model.turns[2]);
+    final last = (first.last['content'] as List).cast<Map>();
+    expect('${last.last['text']}', contains('plan mode'));
+    expect(last.last.containsKey('cache_control'), isFalse);
+    expect(last[last.length - 2]['cache_control'], isNotNull);
+    // What the first wrote to the cache, the second sends the same.
+    final i = first.length - 1;
+    expect(
+      jsonEncode(second[i]),
+      jsonEncode({...first[i], 'content': last.sublist(0, last.length - 1)}),
+    );
+  });
+
   test('questions not answered; EnterPlanMode is not for subagents', () async {
     h = await Harness.start();
     h.model.route = (request) {

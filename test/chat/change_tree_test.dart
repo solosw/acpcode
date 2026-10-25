@@ -2,6 +2,7 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/panels/activity_strip.dart';
 import 'package:baocode/chat/panels/change_tree.dart';
 import 'package:baocode/ide/ide_list.dart';
+import 'package:baocode/ide/ide_menu.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ void main() {
     ValueChanged<List<FileChange>>? onKeep,
     ValueChanged<List<FileChange>>? onUndo,
     ValueChanged<FileChange>? onOpen,
+    List<List<IdeMenuEntry>> Function(FileChange file)? fileActions,
   }) => tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -30,6 +32,7 @@ void main() {
               onKeepFiles: onKeep ?? (_) {},
               onUndoFiles: onUndo,
               onOpenFile: onOpen,
+              fileActions: fileActions,
             ),
           ),
         ),
@@ -127,6 +130,37 @@ void main() {
     await hover(tester, find.text('lib/src'));
     await tester.tap(find.byIcon(Codicons.discard));
     expect(undone.single, ['/p/lib/src/a.dart', '/p/lib/src/b.dart']);
+  });
+
+  testWidgets('a file\'s menu has the ways to open it given, after its '
+      'changes; a folder\'s not (#207)', (tester) async {
+    final opened = <String>[];
+    await pump(
+      tester,
+      changes,
+      onOpen: (_) {},
+      fileActions: (file) => [
+        [IdeMenuAction('Open File', onSelected: () => opened.add(file.path))],
+      ],
+    );
+    await expand(tester);
+    await tester.tap(find.text('README.md'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('Open Changes')).dy,
+      lessThan(tester.getTopLeft(find.text('Open File')).dy),
+    );
+    expect(
+      tester.getTopLeft(find.text('Open File')).dy,
+      lessThan(tester.getTopLeft(find.text('Keep')).dy),
+    );
+    await tester.tap(find.text('Open File'));
+    await tester.pumpAndSettle();
+    expect(opened, ['/p/README.md']);
+
+    await tester.tap(find.text('lib/src'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Open File'), findsNothing);
   });
 
   testWidgets('no Undo where files cannot be undone', (tester) async {

@@ -2,11 +2,9 @@
 // search in place of the tree, the results come from the engine the IDE
 // searches with, and a result opens its file at its line.
 
-import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:baocode/ide/ide_notifications.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/side_panel/file_link.dart';
-import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/side_panel/side_panel_controller.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/ide/file_service.dart';
@@ -20,8 +18,6 @@ import 'package:baocode/theme/code_font.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -90,7 +86,6 @@ Future<({AgentSidePanel panel, ChatSession session})> _pump(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ValueListenableBuilder<double>(
         valueListenable: CodeFont.size,
         builder: (context, _, _) => Material(

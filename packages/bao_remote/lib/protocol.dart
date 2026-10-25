@@ -4,4 +4,5 @@ library;
 
 export 'src/protocol.dart';
 export 'src/rpc/rpc_error.dart';
+export 'src/rpc/resumable_channel.dart';
 export 'src/rpc/rpc_peer.dart';

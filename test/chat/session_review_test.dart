@@ -13,7 +13,6 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _NoStore implements ReviewStore {
@@ -116,7 +115,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );
@@ -261,7 +259,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );
@@ -298,7 +295,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );

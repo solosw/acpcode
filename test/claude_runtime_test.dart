@@ -246,6 +246,20 @@ void main() {
     expect(LocalClaude.installed(), isFalse);
   });
 
+  test('downloaded ahead, as the CLI is picked: once, where there is '
+      'none; its progress cleared after', () async {
+    LocalClaude.runtime = runtime;
+    expect(await LocalClaude.status(), isA<LocalClaudeMissing>());
+    await LocalClaude.install();
+    // Installed now: the core, unset, is the CLI from here on.
+    expect(LocalClaude.installed(), isTrue);
+    expect(await LocalClaude.status(), isA<LocalClaudeFound>());
+    expect(LocalClaudeInstall.instance.progress, isNull);
+    final served = releases.served.length;
+    await LocalClaude.install();
+    expect(releases.served, hasLength(served));
+  });
+
   test('its status: the one run, its version, whether BaoCode downloaded '
       'it; none yet', () async {
     LocalClaude.runtime = runtime;
@@ -288,8 +302,9 @@ void main() {
       await tester.pump();
     }
 
-    await show(const LocalClaudeFound('/usr/local/bin/claude', '2.1.3'));
-    // The core, unset, with no Claude Code installed: BaoCode's own.
+    // The core, unset, with no Claude Code installed: BaoCode's own,
+    // nothing downloaded unasked.
+    await show(const LocalClaudeMissing());
     expect(find.text('Built-in'), findsOneWidget);
     // With one installed: the CLI.
     ClaudeCore.cliInstalled = () => true;

@@ -340,6 +340,39 @@ class A {
     expect(unavailable.open('typescript', DocumentSnapshot('')), isNull);
   });
 
+  test('syntaxes share one worker until the last is done with it', () async {
+    final created = TextMateWorker.debugCreated;
+    Future<TextMateWorkerChannel?> launch() async =>
+        TextMateInProcessWorker.create();
+    TextMateSyntax make() =>
+        TextMateSyntax(themes: WorkbenchThemeService.instance, launch: launch);
+    final first = make();
+    final second = make();
+    await Future.wait([first.theme, second.theme]);
+    expect(TextMateWorker.debugCreated, created + 1);
+    expect(second.editorTheme.value, same(first.editorTheme.value));
+
+    final gone = first.open('typescript', DocumentSnapshot('let a = 1;'))!;
+    final kept = second.open('typescript', DocumentSnapshot('let b = 2;'))!;
+    addTearDown(kept.dispose);
+    await _settle(kept);
+    first.dispose();
+    gone.dispose();
+    // The other's document is still tokenized, through edits.
+    kept.update(DocumentSnapshot('/* let b = 2;'));
+    await _settle(kept);
+    expect(kept.lineTokens(1), isNotNull);
+    expect(await second.colorize('ts', 'let x;'), isNotNull);
+    expect(TextMateWorker.debugCreated, created + 1);
+
+    // With the last one done, the next starts a worker of its own.
+    second.dispose();
+    final third = make();
+    addTearDown(third.dispose);
+    await third.theme;
+    expect(TextMateWorker.debugCreated, created + 2);
+  });
+
   test('a background isolate tokenizes, not this one', () async {
     final created = TextMateWorker.debugCreated;
     final isolated = TextMateSyntax(

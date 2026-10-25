@@ -18,7 +18,7 @@ import 'package:path/path.dart' as p;
 
 void main() {
   test('the core: as picked; unset, the CLI where Claude Code is '
-      'installed, else built-in', () {
+      'installed, else built-in (nothing downloaded unasked)', () {
     expect(ClaudeCore.parse(null), ClaudeCore.builtin);
     expect(ClaudeCore.parse('builtin'), ClaudeCore.builtin);
     expect(ClaudeCore.parse('cli'), ClaudeCore.cli);

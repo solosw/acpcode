@@ -12,7 +12,6 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, Object?> _select(
@@ -161,7 +160,6 @@ Future<ChatSession> _pump(WidgetTester tester, _Transport transport) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -491,6 +489,12 @@ void main() {
       await tester.tap(find.text('High'));
       await tester.pumpAndSettle();
       expect(session.selected(KernelChoiceKind.effort), 'High');
+      expect(find.text('High'), findsOneWidget);
+      transport.report([
+        _select('thought_level', 'Max', ['Low', 'High', 'Max']),
+      ]);
+      await tester.pumpAndSettle();
+      expect(find.text('Max'), findsOneWidget);
       transport.report([]);
       await tester.pumpAndSettle();
       expect(find.byType(ComposerPicker), findsNothing);

@@ -12,9 +12,10 @@ typedef ProxyEndpoint = ({String baseUrl, String token});
 /// Both auth variables are always set, the one unused empty: a key of the
 /// user's own (for Anthropic) must not go to another upstream.
 ///
-/// Subagents on another upstream's model ([ModelProvider.subagentUpstream])
-/// take the session through the proxy whatever [provider] speaks, that
-/// model named as its [modelRef]: the proxy sends it there.
+/// Roles on another upstream's model ([ModelProvider.otherUpstreams]), and
+/// models of an endpoint of their own ([ProviderModel.protocol]), take the
+/// session through the proxy whatever [provider] speaks, a model elsewhere
+/// named as its [modelRef]: the proxy sends it there.
 Map<String, String> launchEnvironment({
   required ModelProvider provider,
   required String model,
@@ -54,10 +55,10 @@ Map<String, String> launchEnvironment({
     ClaudeModelVariables.authToken: token,
     ClaudeModelVariables.apiKey: apiKey,
     ClaudeModelVariables.model: model,
-    ClaudeModelVariables.opus: roles.opus ?? model,
-    ClaudeModelVariables.sonnet: roles.sonnet ?? model,
+    ClaudeModelVariables.opus: role(roles.opus) ?? model,
+    ClaudeModelVariables.sonnet: role(roles.sonnet) ?? model,
     // The background work: the model picked, unless one is set for it.
-    ClaudeModelVariables.haiku: roles.haiku ?? model,
+    ClaudeModelVariables.haiku: role(roles.haiku) ?? model,
     // Empty for none: not one the user's own settings name.
     ClaudeModelVariables.subagent: role(roles.subagent) ?? '',
     // Over the model a subagent's definition names, or the agent asks for
@@ -65,8 +66,7 @@ Map<String, String> launchEnvironment({
     // subagents is used only where neither says.
     ClaudeModelVariables.subagentForce: roles.subagent != null ? '1' : '',
     // Unknown Anthropic-compatible models can still accept output_config.effort.
-    if (!provider.protocol.proxied)
-      ClaudeModelVariables.alwaysEnableEffort: '1',
+    if (provider.speaksAnthropic) ClaudeModelVariables.alwaysEnableEffort: '1',
     if (provider.disableNonessentialTraffic)
       ClaudeModelVariables.nonessentialTraffic: '1',
     // The proxy is on this machine: never through the user's HTTP proxy.
@@ -98,21 +98,23 @@ String customHeadersEnvironment(Map<String, String> headers) => [
 
 const fastModelSuffix = ';fast';
 
-/// The model [modelId] of [provider] as Claude Code is told to ask for it:
-/// for a proxied model, the effort after it in parentheses (`gpt-5(high)`,
-/// `gpt-5(none)` for no reasoning), which the proxy takes off and asks the
-/// upstream for. Fast appends `;fast` inside those parentheses.
+/// The model [model] of [provider] as Claude Code is told to ask for it:
+/// for one spoken to through the proxy ([ModelProvider.protocolOf]), the
+/// effort after it in parentheses (`gpt-5(high)`, `gpt-5(none)` for no
+/// reasoning), which the proxy takes off and asks the upstream for. Fast
+/// appends `;fast` inside those parentheses.
 String requestedModel(
   ModelProvider provider,
   ProviderModel model, {
   String? effort,
   bool fast = false,
 }) {
+  final protocol = provider.protocolOf(model);
   final useFast =
       fast &&
-      (provider.protocol == ProviderProtocol.openaiResponses ||
-          provider.protocol == ProviderProtocol.codex);
-  if (!provider.protocol.proxied || (effort == null && !useFast)) {
+      (protocol == ProviderProtocol.openaiResponses ||
+          protocol == ProviderProtocol.codex);
+  if (!protocol.proxied || (effort == null && !useFast)) {
     return model.id;
   }
   return '${model.id}(${effort ?? ''}${useFast ? fastModelSuffix : ''})';

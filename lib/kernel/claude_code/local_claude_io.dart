@@ -108,13 +108,18 @@ abstract final class LocalClaude {
     // Downloaded through the proxy as it is now: Clash may be on since.
     await NetworkProxy.instance.resolve(maxAge: NetworkProxy.connectionMaxAge);
     try {
-      return await runtime.locate(onDownload: _progress);
+      final cli = await runtime.locate(onDownload: _progress);
+      _installed = true;
+      return cli;
     } on ClaudeDownloadFailed catch (error) {
       throw _downloadFailed(error);
     } finally {
       LocalClaudeInstall.instance.progress = null;
     }
   }
+
+  /// Downloads one where there is none, ahead of the session that runs it.
+  static Future<void> install() => locate();
 
   /// [executable] refused an option BaoCode starts it with: whether
   /// another, newer, may be run instead (see [ClaudeRuntime.rejectTooOld]).

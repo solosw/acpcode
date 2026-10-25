@@ -15,6 +15,9 @@ class FakeForgeHttp implements ForgeHttp {
   void on(String method, String url, Object? Function(FakeRequest) answer) =>
       routes['$method $url'] = answer;
 
+  /// What answers a request no route is for (else 404).
+  Object? Function(FakeRequest request)? fallback;
+
   @override
   Future<ForgeResponse> send(
     String method,
@@ -22,16 +25,19 @@ class FakeForgeHttp implements ForgeHttp {
     Map<String, String> headers = const {},
     Object? json,
     Map<String, String>? form,
+    List<int>? bytes,
   }) async {
-    final request = FakeRequest(method, url, headers, json, form);
+    final request = FakeRequest(method, url, headers, json, form, bytes);
     requests.add(request);
     final key = '$method ${url.toString()}';
     final route =
         routes[key] ??
         routes['$method ${url.replace(query: '').toString().replaceAll('?', '')}'];
-    if (route == null)
+    final answer = route ?? fallback;
+    if (answer == null) {
       return const ForgeResponse(404, '{"message":"Not Found"}');
-    return switch (route(request)) {
+    }
+    return switch (answer(request)) {
       final ForgeResponse response => response,
       final answer => ForgeResponse(200, jsonEncode(answer)),
     };
@@ -39,13 +45,21 @@ class FakeForgeHttp implements ForgeHttp {
 }
 
 class FakeRequest {
-  FakeRequest(this.method, this.url, this.headers, this.json, this.form);
+  FakeRequest(
+    this.method,
+    this.url,
+    this.headers,
+    this.json,
+    this.form, [
+    this.bytes,
+  ]);
 
   final String method;
   final Uri url;
   final Map<String, String> headers;
   final Object? json;
   final Map<String, String>? form;
+  final List<int>? bytes;
 }
 
 void main() {

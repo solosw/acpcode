@@ -146,7 +146,7 @@ printf '%s\n' "$*" >> "$FAKE_LOG.keygen"
 
   /// A "server build" that runs the real server from source.
   List<int> serverScript() => utf8.encode('''#!/bin/sh
-exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_server.dart')}' --data "\$HOME/server-data"
+exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_server.dart')}' --data "\$HOME/server-data" "\$@"
 ''');
 
   List<String> commands() => log.existsSync()
@@ -178,7 +178,9 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
     expect(commands(), [
       'sh -s',
       startsWith("sh -c 'mkdir -p .baocode-server/1-abc && gzip -dc >"),
-      '.baocode-server/1-abc/baocode-server',
+      matches(
+        r'^\.baocode-server/1-abc/baocode-server --session [0-9a-f]{32}$',
+      ),
     ]);
 
     // It answers: a file there.
@@ -194,7 +196,10 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
     log.deleteSync();
     final again = await launcher.connect(SshTarget.parse('dev'));
     expect(binaries.reads, ['linux-x64']);
-    expect(commands(), ['sh -s', '.baocode-server/1-abc/baocode-server']);
+    expect(commands(), [
+      'sh -s',
+      startsWith('.baocode-server/1-abc/baocode-server --session '),
+    ]);
     await again.close();
   }, timeout: const Timeout(Duration(minutes: 2)));
 
@@ -392,6 +397,49 @@ exec '$dartExecutable' '${p.absolute('packages', 'bao_remote', 'bin', 'baocode_s
       [first.path, second.path],
     );
   });
+
+  test('a lost connection is made again to the same session, what runs '
+      'there carrying on; a session gone ends it', () async {
+    final launcher = SshLauncher(
+      ssh: fakeSsh,
+      binaries: FakeBinaries('1-abc', {'linux-x64': serverScript()}),
+      start: starter(),
+      maxBackoff: const Duration(seconds: 1),
+    );
+    final connection = await launcher.connect(SshTarget.parse('dev'));
+    final id = RegExp(r'--session ([0-9a-f]+)')
+        .firstMatch(commands().last)!
+        .group(1)!;
+    final process = await connection.client.start('sh', [
+      '-c',
+      r'i=0; while [ $i -lt 40 ]; do echo $i; i=$((i+1)); sleep 0.05; done',
+    ], login: false);
+    final lines = <String>[];
+    process.stdout
+        .transform(const Utf8Decoder())
+        .transform(const LineSplitter())
+        .listen(lines.add);
+    final changes = <bool>[];
+    connection.changes.listen((_) => changes.add(connection.linked));
+
+    // The bridge gone (ssh's end of it), as a network cut ends it.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await Process.run('pkill', ['-f', 'session $id']);
+    expect(await process.exitCode.timeout(const Duration(seconds: 30)), 0);
+    expect(lines, [for (var i = 0; i < 40; i++) '$i']);
+    expect(changes, containsAllInOrder([false, true]));
+    expect(connection.linked, isTrue);
+    expect(
+      commands().last,
+      '.baocode-server/1-abc/baocode-server '
+      '--session $id --resume',
+    );
+
+    // The daemon gone: nothing to resume.
+    await Process.run('pkill', ['-f', 'daemon $id']);
+    await connection.done.timeout(const Duration(seconds: 30));
+    await connection.close();
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('a Mac is given the macOS build', () async {
     final binaries = FakeBinaries('1-abc', {'darwin-arm64': serverScript()});

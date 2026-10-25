@@ -316,6 +316,11 @@ void main() {
       );
       await installerOf(tools(signed: {'app', 'update'}))
           .prepare(zip, _release());
+      // Ad hoc, as every release was before the Developer ID (1.5.0 and
+      // earlier): takes the first one signed by a team.
+      await installerOf(
+        tools(signed: {'app', 'update'}, teams: {'update': 'TEAM1'}),
+      ).prepare(zip, _release());
       // By the same team.
       await expectLater(
         installerOf(

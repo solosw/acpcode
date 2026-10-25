@@ -25,6 +25,10 @@ external int onigNextStringId();
 @Native<Int32 Function()>(symbol: 'bao_onig_version', isLeaf: true)
 external int onigVersion();
 
+/// The patterns compiled now: each once, for every scanner that has it.
+@Native<Int64 Function()>(symbol: 'bao_onig_compiled_count', isLeaf: true)
+external int onigCompiledCount();
+
 /// A scanner over [count] UTF-8 patterns laid end to end, with the index of
 /// the first invalid one (or -1) in [invalid] and its message in [error]
 /// ([onigErrorLength] bytes). An invalid pattern still makes a scanner, as in

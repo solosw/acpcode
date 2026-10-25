@@ -2027,6 +2027,41 @@ void main() {
       kernel.dispose();
     });
 
+    test(
+      'renamed in the CLI (/rename): told; the names sent, not (#171)',
+      () async {
+        final cli = FakeCli();
+        final (:kernel, transcript: _, :events) = claude(cli);
+        Future<void> titled(String title) async {
+          cli.push({
+            'type': 'system',
+            'subtype': 'session_title_changed',
+            'title': title,
+          });
+          await pumpEventQueue();
+        }
+
+        kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+        await pumpEventQueue();
+        kernel
+          ..rename('First')
+          ..rename('Second');
+        await pumpEventQueue();
+        expect(cli.requests('rename_session'), hasLength(2));
+        await titled('First');
+        await titled('Second');
+        await titled(' Mine ');
+        expect(
+          [
+            for (final event in events)
+              if (event is SessionRenamed) event.title,
+          ],
+          ['Mine'],
+        );
+        kernel.dispose();
+      },
+    );
+
     test('out of view while busy, the process is freed once the CLI says it '
         'is idle; back in view, it is kept', () async {
       final cli = FakeCli();
@@ -4340,10 +4375,18 @@ void main() {
   });
 
   group('commit attribution', () {
-    /// What `--settings` gives Claude Code, if it is passed.
+    /// What `--settings` gives Claude Code besides the environment always
+    /// unset, if anything.
     Object? flagSettings(ClaudeLaunch launch) {
       final at = launch.arguments.indexOf('--settings');
-      return at < 0 ? null : jsonDecode(launch.arguments[at + 1]);
+      final settings = Map.of(
+        jsonDecode(launch.arguments[at + 1]) as Map<String, Object?>,
+      );
+      if (jsonEncode(settings['env']) ==
+          jsonEncode(ClaudeLaunch.unsetEnvironment)) {
+        settings.remove('env');
+      }
+      return settings.isEmpty ? null : settings;
     }
 
     test('is the setting\'s, BaoCode when unset or unknown', () {

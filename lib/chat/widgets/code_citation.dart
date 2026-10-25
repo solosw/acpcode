@@ -15,6 +15,7 @@ import '../chat_find.dart' show ChatFindMarks;
 import '../side_panel/file_link.dart' show FileLineRange, FileLink;
 import '../side_panel/file_open.dart' show FileOpenScope;
 import 'hover_builder.dart';
+import 'will_change_paint.dart';
 
 /// Code the agent cited from a file, as it is asked to
 /// (`ClaudeLaunch.citingCode`): a block fenced as ```` ```12:15:lib/a.dart ````.
@@ -662,7 +663,7 @@ class _CodeCardState extends State<_CodeCard> {
                   controller: _horizontal,
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.only(right: 12),
-                  child: code,
+                  child: WillChangePaint(child: code),
                 ),
               ),
             ],

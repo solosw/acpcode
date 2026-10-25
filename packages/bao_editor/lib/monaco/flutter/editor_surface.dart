@@ -321,6 +321,9 @@ abstract interface class EditorSurfaceView {
 
   double get lineHeight;
 
+  /// How far the text is scrolled, left and down.
+  Offset get scrollOffset;
+
   /// The first and last one-based model lines with a visible row; null
   /// before the first layout or when none is visible.
   ({int first, int last})? get visibleLineRange;
@@ -891,6 +894,9 @@ class _EditorSurfaceState extends State<EditorSurface>
 
   @override
   double get lineHeight => _layout?.lineHeight ?? 0;
+
+  @override
+  Offset get scrollOffset => Offset(_scrollLeft, _scrollTop);
 
   @override
   ({int first, int last})? get visibleLineRange {

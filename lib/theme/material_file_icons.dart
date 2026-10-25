@@ -86,8 +86,9 @@ class MaterialFileIcons {
         }
       }
     }
-    // The longest dotted extension first; a leading dot is not one.
-    var dot = name.indexOf('.', 1);
+    // The longest dotted extension first; a leading dot is not one. An
+    // empty name (a path of slashes) has none.
+    var dot = name.isEmpty ? -1 : name.indexOf('.', 1);
     while (dot >= 0 && dot < name.length - 1) {
       if (_fileExtensions[name.substring(dot + 1)] case final id?) return id;
       dot = name.indexOf('.', dot + 1);

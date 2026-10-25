@@ -12,6 +12,10 @@ import 'package:flutter/services.dart';
 /// selection is then rebuilt, a frame late, from where the selection's ends
 /// were on screen. The highlight blinks with every new chunk, and slides
 /// onto other characters once the text scrolls to follow new lines.
+///
+/// Laid out a block of lines at a time ([_ChunkedPainter]): text that grows
+/// at its end lays out only its last block again, not all of a thought of
+/// tens of thousands of characters with every few words.
 class LiveSelectableText extends LeafRenderObjectWidget {
   const LiveSelectableText(this.text, {super.key, this.style});
 
@@ -54,8 +58,9 @@ class RenderLiveSelectableText extends RenderBox {
     SelectionRegistrar? registrar,
   }) : _text = text,
        _style = style,
-       _painter = TextPainter(
-         text: TextSpan(text: text, style: style),
+       _painter = _ChunkedPainter(
+         text,
+         style,
          textDirection: textDirection,
          textScaler: textScaler,
        ) {
@@ -64,18 +69,23 @@ class RenderLiveSelectableText extends RenderBox {
     _selectable = _LiveSelectable(this);
   }
 
-  final TextPainter _painter;
+  final _ChunkedPainter _painter;
   late final _LiveSelectable _selectable;
 
   /// The selected range of [text], if any.
   TextSelection? get selection => _selectable.textSelection;
+
+  /// How many of its blocks of lines hold a laid out painter.
+  @visibleForTesting
+  int get debugHeldBlocks =>
+      _painter._chunks.where((chunk) => chunk.painter != null).length;
 
   String get text => _text;
   String _text;
   set text(String value) {
     if (value == _text) return;
     _text = value;
-    _painter.text = TextSpan(text: value, style: _style);
+    _painter.text = value;
     markNeedsLayout();
     markNeedsSemanticsUpdate();
   }
@@ -84,7 +94,7 @@ class RenderLiveSelectableText extends RenderBox {
   set style(TextStyle value) {
     if (value == _style) return;
     _style = value;
-    _painter.text = TextSpan(text: _text, style: value);
+    _painter.style = value;
     markNeedsLayout();
   }
 
@@ -178,14 +188,34 @@ class RenderLiveSelectableText extends RenderBox {
   void paint(PaintingContext context, Offset offset) {
     final selection = _selectable.textSelection;
     final color = _selectionColor;
+    final clip = _shown(context.canvas, offset);
     if (selection != null && color != null) {
       final paint = Paint()..color = color;
-      for (final box in _painter.getBoxesForSelection(selection)) {
+      for (final box in _painter.getBoxesForSelection(
+        selection,
+        within: clip,
+      )) {
         context.canvas.drawRect(box.toRect().shift(offset), paint);
       }
     }
-    _painter.paint(context.canvas, offset);
+    _painter.paint(context.canvas, offset, clip);
     _selectable.paintHandles(context, offset);
+  }
+
+  /// What of it shows, in its own coordinates: the canvas's clip, and its
+  /// scroll box's (a canvas of a layer of its own clips nothing).
+  Rect _shown(Canvas canvas, Offset offset) {
+    var shown = canvas.getLocalClipBounds().shift(-offset);
+    if (RenderAbstractViewport.maybeOf(this) case final RenderBox viewport
+        when viewport.hasSize) {
+      final toViewport = getTransformTo(viewport);
+      if (toViewport.invert() != 0) {
+        shown = shown.intersect(
+          MatrixUtils.transformRect(toViewport, Offset.zero & viewport.size),
+        );
+      }
+    }
+    return shown;
   }
 
   @override
@@ -208,7 +238,7 @@ class _LiveSelectable with Selectable, ChangeNotifier, SelectionRegistrant {
   LayerLink? _startHandle;
   LayerLink? _endHandle;
 
-  TextPainter get _painter => _render._painter;
+  _ChunkedPainter get _painter => _render._painter;
   String get _text => _render._text;
   Rect get _rect => Offset.zero & size;
 
@@ -292,7 +322,10 @@ class _LiveSelectable with Selectable, ChangeNotifier, SelectionRegistrant {
         handleType: endType,
       ),
       selectionRects: [
-        for (final box in _painter.getBoxesForSelection(selection))
+        for (final box in _painter.getBoxesForSelection(
+          selection,
+          exact: false,
+        ))
           box.toRect(),
       ],
       status: collapsed
@@ -377,7 +410,7 @@ class _LiveSelectable with Selectable, ChangeNotifier, SelectionRegistrant {
         SelectionUtils.adjustDragOffset(
           _rect,
           local,
-          direction: _painter.textDirection!,
+          direction: _painter.textDirection,
         ),
       )
       .offset;
@@ -449,7 +482,7 @@ class _LiveSelectable with Selectable, ChangeNotifier, SelectionRegistrant {
             ? boundary.getTrailingTextBoundaryAt(edge) ?? _text.length
             : boundary.getLeadingTextBoundaryAt(edge - 1) ?? 0;
       case TextGranularity.word:
-        final boundary = _painter.wordBoundaries.moveByWordBoundary;
+        final boundary = _painter.moveByWordBoundary;
         moved = forward
             ? boundary.getTrailingTextBoundaryAt(edge) ?? _text.length
             : boundary.getLeadingTextBoundaryAt(edge - 1) ?? 0;
@@ -540,5 +573,374 @@ class _LiveSelectable with Selectable, ChangeNotifier, SelectionRegistrant {
         Offset.zero,
       );
     }
+  }
+}
+
+/// [text] in blocks of lines, a [TextPainter] each, stacked: what a single
+/// painter of it would lay out, but each block only once while the text
+/// grows at its end. A block ends at the first line break past
+/// [_chunkLength] characters, the break between it and the next.
+///
+/// A block far from what was last painted lets go of its painter, its
+/// measures kept: a thought of 60,000 characters held the engine's
+/// paragraphs of all of it, while its box shows a few lines. Asked of
+/// again (a selection reaching it, scrolled to), it is laid out anew.
+class _ChunkedPainter {
+  _ChunkedPainter(
+    this._text,
+    this._style, {
+    required this._textDirection,
+    required this._textScaler,
+  }) {
+    _chunkFrom(0);
+  }
+
+  static const _chunkLength = 1000;
+
+  /// How far past what was painted blocks keep their painters.
+  static const _keepWithin = 1000.0;
+
+  String _text;
+  TextStyle _style;
+  TextDirection _textDirection;
+  TextScaler _textScaler;
+  final List<_Chunk> _chunks = [];
+  double _maxWidth = double.nan;
+  Size _size = Size.zero;
+
+  /// What was last painted, and some way past it: where blocks keep their
+  /// painters. Null until painted: all of them.
+  Rect? _kept;
+
+  /// For the height of a line, with no block laid out.
+  TextPainter? _probe;
+
+  set text(String value) {
+    final old = _text;
+    _text = value;
+    // The blocks (and the breaks after them) it still starts with stay.
+    var same = 0;
+    final shorter = math.min(old.length, value.length);
+    while (same < shorter && old.codeUnitAt(same) == value.codeUnitAt(same)) {
+      same++;
+    }
+    var kept = 0;
+    while (kept < _chunks.length && _chunks[kept].end < same) {
+      kept++;
+    }
+    _dropFrom(kept);
+    _chunkFrom(kept == 0 ? 0 : _chunks[kept - 1].end + 1);
+  }
+
+  set style(TextStyle value) {
+    _style = value;
+    _rebuild();
+  }
+
+  TextDirection get textDirection => _textDirection;
+  set textDirection(TextDirection value) {
+    _textDirection = value;
+    _rebuild();
+  }
+
+  TextScaler get textScaler => _textScaler;
+  set textScaler(TextScaler value) {
+    _textScaler = value;
+    _rebuild();
+  }
+
+  void _rebuild() {
+    _probe?.dispose();
+    _probe = null;
+    _dropFrom(0);
+    _chunkFrom(0);
+  }
+
+  void _dropFrom(int index) {
+    for (final chunk in _chunks.skip(index)) {
+      chunk.release();
+    }
+    _chunks.length = index;
+    _maxWidth = double.nan;
+  }
+
+  void _chunkFrom(int start) {
+    while (true) {
+      final cut = start + _chunkLength >= _text.length
+          ? -1
+          : _text.indexOf('\n', start + _chunkLength);
+      final end = cut == -1 ? _text.length : cut;
+      _chunks.add(_Chunk(start, end));
+      if (cut == -1) return;
+      start = cut + 1;
+    }
+  }
+
+  /// [chunk]'s painter, laid out as the others are.
+  TextPainter _painterOf(_Chunk chunk) {
+    final fresh = chunk.painter == null;
+    final painter = chunk.painter ??= TextPainter(
+      text: TextSpan(
+        text: _text.substring(chunk.start, chunk.end),
+        style: _style,
+      ),
+      textDirection: _textDirection,
+      textScaler: _textScaler,
+    );
+    if ((fresh || chunk.laidOutAt != _maxWidth) && _maxWidth == _maxWidth) {
+      painter.layout(maxWidth: _maxWidth);
+      chunk
+        ..laidOutAt = _maxWidth
+        ..height = painter.height
+        ..width = painter.width
+        ..minIntrinsicWidth = painter.minIntrinsicWidth
+        ..maxIntrinsicWidth = painter.maxIntrinsicWidth;
+    }
+    return painter;
+  }
+
+  bool _keeps(_Chunk chunk) => switch (_kept) {
+    final kept? =>
+      chunk.top <= kept.bottom && chunk.top + chunk.height >= kept.top,
+    null => true,
+  };
+
+  void layout({required double maxWidth}) {
+    _maxWidth = maxWidth;
+    var top = 0.0;
+    var width = 0.0;
+    for (final chunk in _chunks) {
+      chunk.top = top;
+      if (chunk.laidOutAt != maxWidth) {
+        _painterOf(chunk);
+        if (!_keeps(chunk)) chunk.release();
+      }
+      top += chunk.height;
+      width = math.max(width, chunk.width);
+    }
+    _size = Size(width, top);
+  }
+
+  Size get size => _size;
+  double get height => _size.height;
+
+  double get minIntrinsicWidth => _chunks.fold(
+    0,
+    (width, chunk) => math.max(width, chunk.minIntrinsicWidth),
+  );
+
+  double get maxIntrinsicWidth => _chunks.fold(
+    0,
+    (width, chunk) => math.max(width, chunk.maxIntrinsicWidth),
+  );
+
+  double get preferredLineHeight => (_probe ??= TextPainter(
+    text: TextSpan(text: ' ', style: _style),
+    textDirection: _textDirection,
+    textScaler: _textScaler,
+  )).preferredLineHeight;
+
+  /// The block [offset] is in, a break between two counting as the end of
+  /// the first.
+  _Chunk _chunkOf(int offset) {
+    var low = 0;
+    var high = _chunks.length - 1;
+    while (low < high) {
+      final mid = (low + high) ~/ 2;
+      if (_chunks[mid].end < offset) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return _chunks[low];
+  }
+
+  /// The block at [y], the first or last past the ends.
+  _Chunk _chunkAt(double y) {
+    var low = 0;
+    var high = _chunks.length - 1;
+    while (low < high) {
+      final mid = (low + high + 1) ~/ 2;
+      if (_chunks[mid].top <= y) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return _chunks[low];
+  }
+
+  TextPosition _local(_Chunk chunk, TextPosition position) => TextPosition(
+    offset: (position.offset - chunk.start).clamp(0, chunk.end - chunk.start),
+    affinity: position.affinity,
+  );
+
+  Offset getOffsetForCaret(TextPosition position, Rect caretPrototype) {
+    final chunk = _chunkOf(position.offset);
+    return _painterOf(chunk)
+            .getOffsetForCaret(_local(chunk, position), caretPrototype) +
+        Offset(0, chunk.top);
+  }
+
+  double getFullHeightForCaret(TextPosition position, Rect caretPrototype) {
+    final chunk = _chunkOf(position.offset);
+    return _painterOf(chunk)
+        .getFullHeightForCaret(_local(chunk, position), caretPrototype);
+  }
+
+  TextPosition getPositionForOffset(Offset offset) {
+    final chunk = _chunkAt(offset.dy);
+    final position = _painterOf(chunk)
+        .getPositionForOffset(offset - Offset(0, chunk.top));
+    return TextPosition(
+      offset: chunk.start + position.offset,
+      affinity: position.affinity,
+    );
+  }
+
+  /// The boxes of [selection], of the blocks [within] (all when null). A
+  /// block selected whole that has let go of its painter is a box of its
+  /// own, unless [exact].
+  List<TextBox> getBoxesForSelection(
+    TextSelection selection, {
+    Rect? within,
+    bool exact = true,
+  }) {
+    final start = math.min(selection.baseOffset, selection.extentOffset);
+    final end = math.max(selection.baseOffset, selection.extentOffset);
+    return [
+      for (final chunk in _chunks)
+        if (chunk.start < end &&
+            start <= chunk.end &&
+            (within == null ||
+                (chunk.top <= within.bottom &&
+                    chunk.top + chunk.height >= within.top)))
+          if (!exact &&
+              chunk.painter == null &&
+              start <= chunk.start &&
+              chunk.end <= end)
+            TextBox.fromLTRBD(
+              0,
+              chunk.top,
+              chunk.width,
+              chunk.top + chunk.height,
+              _textDirection,
+            )
+          else
+            for (final box in _painterOf(chunk).getBoxesForSelection(
+              TextSelection(
+                baseOffset: math.max(start - chunk.start, 0),
+                extentOffset: math.min(end, chunk.end) - chunk.start,
+              ),
+            ))
+              TextBox.fromLTRBD(
+                box.left,
+                box.top + chunk.top,
+                box.right,
+                box.bottom + chunk.top,
+                box.direction,
+              ),
+    ];
+  }
+
+  TextRange _shift(_Chunk chunk, TextRange range) =>
+      TextRange(start: chunk.start + range.start, end: chunk.start + range.end);
+
+  TextRange getWordBoundary(TextPosition position) {
+    final chunk = _chunkOf(position.offset);
+    return _shift(
+      chunk,
+      _painterOf(chunk).getWordBoundary(_local(chunk, position)),
+    );
+  }
+
+  TextRange getLineBoundary(TextPosition position) {
+    final chunk = _chunkOf(position.offset);
+    return _shift(
+      chunk,
+      _painterOf(chunk).getLineBoundary(_local(chunk, position)),
+    );
+  }
+
+  /// Moving by word, as [TextPainter.wordBoundaries] does, across blocks.
+  TextBoundary get moveByWordBoundary => _ChunkedWordBoundary(this);
+
+  /// Only the blocks in [clip], what shows: a long text's others are not
+  /// recorded each frame, and those far from it let go of their painters.
+  void paint(Canvas canvas, Offset offset, Rect clip) {
+    assert(_maxWidth == _maxWidth, 'paint before layout');
+    _kept = clip.inflate(_keepWithin);
+    for (final chunk in _chunks) {
+      if (chunk.top > clip.bottom || chunk.top + chunk.height < clip.top) {
+        if (!_keeps(chunk)) chunk.release();
+        continue;
+      }
+      _painterOf(chunk).paint(canvas, offset + Offset(0, chunk.top));
+    }
+  }
+
+  void dispose() {
+    _probe?.dispose();
+    _dropFrom(0);
+  }
+}
+
+class _Chunk {
+  _Chunk(this.start, this.end);
+
+  /// Its text in the whole: [start] to [end], the break (if any) after.
+  final int start;
+  final int end;
+
+  /// Laid out at [laidOutAt]; null once let go of, its measures kept.
+  TextPainter? painter;
+  double laidOutAt = double.nan;
+  double top = 0;
+  double height = 0;
+  double width = 0;
+  double minIntrinsicWidth = 0;
+  double maxIntrinsicWidth = 0;
+
+  void release() {
+    painter?.dispose();
+    painter = null;
+  }
+}
+
+class _ChunkedWordBoundary extends TextBoundary {
+  _ChunkedWordBoundary(this._painter);
+
+  final _ChunkedPainter _painter;
+
+  @override
+  int? getLeadingTextBoundaryAt(int position) {
+    if (position < 0) return null;
+    final chunk = _painter._chunkOf(position);
+    final local = _painter
+        ._painterOf(chunk)
+        .wordBoundaries
+        .moveByWordBoundary
+        .getLeadingTextBoundaryAt(position - chunk.start);
+    return local == null ? null : chunk.start + local;
+  }
+
+  @override
+  int? getTrailingTextBoundaryAt(int position) {
+    final text = _painter._text;
+    if (position >= text.length) return null;
+    final chunk = _painter._chunkOf(position);
+    if (position >= chunk.end) {
+      // The break after it: on into the next block.
+      return position + 1 >= text.length
+          ? text.length
+          : getTrailingTextBoundaryAt(position + 1);
+    }
+    final local = _painter
+        ._painterOf(chunk)
+        .wordBoundaries
+        .moveByWordBoundary
+        .getTrailingTextBoundaryAt(position - chunk.start);
+    return local == null ? chunk.end : chunk.start + local;
   }
 }

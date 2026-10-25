@@ -227,8 +227,8 @@ Future<void> main(List<String> arguments) async {
         // stapled to each is the one for its own signature.
         _step('Notarising the $arch disk image (a few minutes)');
         await signing.notarise(dmg);
-        await _run('xcrun', ['stapler', 'staple', dmg.path], root.path);
-        await _run('xcrun', ['stapler', 'staple', app.path], root.path);
+        await signing.staple(dmg.path);
+        await signing.staple(app.path);
       }
     }
 
@@ -408,6 +408,24 @@ class _Signing {
         ...credentials,
       ]);
       _fail('Apple did not notarise ${file.path}:\n${log.stdout}');
+    }
+  }
+
+  /// Staples the notarisation ticket to [path], trying again a few times:
+  /// stapler fetches the ticket from Apple's CloudKit, which can drop the
+  /// connection, or not have the ticket yet just after it is accepted.
+  Future<void> staple(String path) async {
+    for (var attempt = 1; ; attempt++) {
+      stdout.writeln('  \$ xcrun stapler staple $path');
+      final result = await Process.run('xcrun', ['stapler', 'staple', path]);
+      if (result.exitCode == 0) return;
+      stdout.writeln('${result.stdout}'.trim());
+      stderr.writeln('${result.stderr}'.trim());
+      if (attempt == 5) {
+        _fail('stapler exited with code ${result.exitCode}, $attempt times.');
+      }
+      stdout.writeln('  Trying again in ${attempt * 15} seconds');
+      await Future<void>.delayed(Duration(seconds: attempt * 15));
     }
   }
 }

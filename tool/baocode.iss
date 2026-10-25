@@ -283,6 +283,33 @@ begin
   CloseHandle(App);
 end;
 
+// The browser extension's host (baocode-browser-host.exe), which Chrome or
+// Edge keeps running while the extension is connected: it has no window,
+// so CloseApplications does not close it, and replacing or removing it
+// fails ("DeleteFile failed; code 5"). Ended first; the extension connects
+// again on its own (each minute), to the host installed.
+procedure EndBrowserHost;
+var
+  Code: Integer;
+begin
+  if Exec(ExpandConstant('{sys}\taskkill.exe'),
+    '/F /IM baocode-browser-host.exe', '', SW_HIDE,
+    ewWaitUntilTerminated, Code) then
+    Log(Format('taskkill baocode-browser-host.exe: %d', [Code]));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  EndBrowserHost;
+  Result := '';
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+    EndBrowserHost;
+end;
+
 // Whether the command line asks for the app to be opened after a silent
 // install (/RELAUNCH, an update's; see [Run]). Not silent, the finish
 // page's checkbox opens it.

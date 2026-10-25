@@ -24,14 +24,23 @@ class InlineCodeSpan extends TextSpan {
 /// before the paragraph, the background is under the selection instead, in
 /// every theme.
 class InlineCodeText extends StatelessWidget {
-  const InlineCodeText(this.span, {super.key});
+  const InlineCodeText(this.span, {super.key, this.maxLines});
 
   final InlineSpan span;
+
+  /// Cut to as many lines, an ellipsis at the end; all of it when null.
+  final int? maxLines;
 
   @override
   Widget build(BuildContext context) => _InlineCodeBackdrop(
     color: AppColors.inlineCodeBackground,
-    child: ChatFindMarks(child: Text.rich(span)),
+    child: ChatFindMarks(
+      child: Text.rich(
+        span,
+        maxLines: maxLines,
+        overflow: maxLines == null ? null : TextOverflow.ellipsis,
+      ),
+    ),
   );
 }
 

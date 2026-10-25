@@ -239,6 +239,130 @@ void main() {
         isNot(_gateway.launchFingerprint),
       );
     });
+
+    test('a model may be spoken to at an endpoint of its own', () {
+      const relay = ModelProvider(
+        id: 'rl',
+        name: 'Relay',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'https://relay.example/v1',
+        models: [
+          ProviderModel(id: 'gpt-5'),
+          ProviderModel(id: 'claude', protocol: ProviderProtocol.anthropic),
+        ],
+      );
+      final back = ModelProvider.fromJson(relay.toJson())!;
+      expect(back.models, relay.models);
+      expect(relay.models.last.toJson()['protocol'], 'anthropic');
+      expect(relay.models.first.toJson(), isNot(contains('protocol')));
+      // Codex's is signed in to, not one a model may take.
+      expect(
+        ProviderModel.fromJson({'id': 'm', 'protocol': 'codex'})!.protocol,
+        isNull,
+      );
+
+      expect(relay.protocolOf(relay.models.first), ProviderProtocol.openaiChat);
+      expect(relay.protocolOf(relay.models.last), ProviderProtocol.anthropic);
+      expect(relay.protocols, {
+        ProviderProtocol.openaiChat,
+        ProviderProtocol.anthropic,
+      });
+      expect(relay.speaksAnthropic, isTrue);
+      expect(relay.speakingFor('claude').protocol, ProviderProtocol.anthropic);
+      expect(relay.speakingFor('claude').baseUrl, relay.baseUrl);
+      expect(relay.speakingFor('gpt-5'), same(relay));
+      expect(relay.speakingFor('unknown'), same(relay));
+
+      // An Anthropic upstream with one model elsewhere: through the proxy.
+      const anthropic = ModelProvider(
+        id: 'an',
+        name: 'A',
+        baseUrl: 'https://relay.example',
+        models: [ProviderModel(id: 'claude')],
+      );
+      expect(anthropic.throughProxy, isFalse);
+      final mixed = anthropic.withModel(
+        const ProviderModel(
+          id: 'gpt-5',
+          protocol: ProviderProtocol.openaiResponses,
+        ),
+      );
+      expect(mixed.throughProxy, isTrue);
+      expect(mixed.launchFingerprint, isNot(anthropic.launchFingerprint));
+      expect(
+        mixed
+            .withModel(
+              const ProviderModel(
+                id: 'gpt-5',
+                protocol: ProviderProtocol.openaiChat,
+              ),
+            )
+            .launchFingerprint,
+        isNot(mixed.launchFingerprint),
+      );
+      // Its own protocol named for a model: as the upstream, no proxy.
+      expect(
+        anthropic
+            .withModel(
+              const ProviderModel(
+                id: 'claude',
+                protocol: ProviderProtocol.anthropic,
+              ),
+            )
+            .throughProxy,
+        isFalse,
+      );
+
+      // A ChatGPT (Codex) upstream's models all go as it does.
+      const codex = ModelProvider(
+        id: 'cx',
+        name: 'ChatGPT',
+        protocol: ProviderProtocol.codex,
+        models: [ProviderModel(id: 'm', protocol: ProviderProtocol.anthropic)],
+      );
+      expect(codex.protocolOf(codex.models.single), ProviderProtocol.codex);
+      expect(codex.speakingFor('m'), same(codex));
+      expect(codex.speaksAnthropic, isFalse);
+    });
+
+    test('every role but the main model may pick another upstream\'s', () {
+      const roles = ProviderRoles(
+        main: '@x/m',
+        opus: '@a/big',
+        sonnet: 'own',
+        haiku: '@b/small',
+        subagent: '@me/self',
+      );
+      expect(roles.upstreamsBesides('me'), {'a', 'b'});
+      expect(
+        const ModelProvider(id: 'me', name: 'Me', roles: roles).otherUpstreams,
+        {'a', 'b'},
+      );
+      // Its own, by ref: not another's.
+      expect(
+        const ModelProvider(
+          id: 'me',
+          name: 'Me',
+          baseUrl: 'https://api.anthropic.com',
+          roles: ProviderRoles(main: '@x/m', subagent: '@me/self'),
+        ).throughProxy,
+        isFalse,
+      );
+
+      expect(
+        roles.without('a'),
+        const ProviderRoles(
+          main: '@x/m',
+          sonnet: 'own',
+          haiku: '@b/small',
+          subagent: '@me/self',
+        ),
+      );
+      expect(roles.without('b', {'other'}), roles);
+      expect(roles.without('b', {'small'}).haiku, isNull);
+      // A plain id is the upstream's own: not another's to unset.
+      expect(roles.without('own'), roles);
+    });
   });
 
   group('ModelProviders', () {
@@ -267,6 +391,42 @@ void main() {
       expect(providers.providers, isEmpty);
       expect(providers.defaultModel, isNull);
       expect(await secrets.read('provider.gw'), isNull);
+    });
+
+    test('an upstream removed, or its models, takes the other upstreams\' '
+        'roles on them away', () async {
+      final providers = ModelProviders.memory(
+        providers: [
+          _gateway,
+          const ModelProvider(
+            id: 'an',
+            name: 'A',
+            roles: ProviderRoles(
+              opus: '@gw/gpt-5',
+              haiku: '@gw/mini',
+              subagent: '@ds/chat',
+            ),
+          ),
+        ],
+      );
+      var changes = 0;
+      providers.addListener(() => changes++);
+      await providers.forgetRoles('gw', {'nothing'});
+      expect(changes, 0);
+
+      await providers.forgetRoles('gw', {'mini'});
+      expect(
+        providers.provider('an')!.roles,
+        const ProviderRoles(opus: '@gw/gpt-5', subagent: '@ds/chat'),
+      );
+      // Its own roles are its own page's to unset.
+      expect(providers.provider('gw')!.roles.haiku, 'mini');
+
+      await providers.remove('gw');
+      expect(
+        providers.provider('an')!.roles,
+        const ProviderRoles(subagent: '@ds/chat'),
+      );
     });
 
     test('small jobs ask the auxiliary model; automatic, the model they '
@@ -737,7 +897,7 @@ void main() {
         headers: {'x-tenant': 'acme'},
         roles: ProviderRoles(subagent: '@ds/deepseek-chat'),
       );
-      expect(provider.subagentUpstream, 'ds');
+      expect(provider.otherUpstreams, {'ds'});
       expect(provider.throughProxy, isTrue);
       final env = launchEnvironment(
         provider: provider,
@@ -808,6 +968,130 @@ void main() {
       );
     });
 
+    test('Opus, Sonnet and Haiku on another upstream take an Anthropic '
+        'session through the proxy, their models as refs', () {
+      const provider = ModelProvider(
+        id: 'a',
+        name: 'A',
+        baseUrl: 'https://api.anthropic.com',
+        models: [ProviderModel(id: 'claude-opus-4-5')],
+        roles: ProviderRoles(
+          opus: '@gw/gpt-5',
+          sonnet: '@a/claude-opus-4-5',
+          haiku: '@ds/deepseek-chat',
+        ),
+      );
+      expect(provider.otherUpstreams, {'gw', 'ds'});
+      expect(provider.throughProxy, isTrue);
+      final env = launchEnvironment(
+        provider: provider,
+        model: 'claude-opus-4-5',
+        key: 'sk-ant',
+        proxy: (baseUrl: 'http://127.0.0.1:5000/p/a', token: 'tok'),
+      );
+      expect(env['ANTHROPIC_BASE_URL'], 'http://127.0.0.1:5000/p/a');
+      expect(env.values, isNot(contains('sk-ant')));
+      expect(env['ANTHROPIC_DEFAULT_OPUS_MODEL'], '@gw/gpt-5');
+      // Its own, by its id.
+      expect(env['ANTHROPIC_DEFAULT_SONNET_MODEL'], 'claude-opus-4-5');
+      expect(env['ANTHROPIC_DEFAULT_HAIKU_MODEL'], '@ds/deepseek-chat');
+      expect(env['CLAUDE_CODE_SUBAGENT_MODEL'], '');
+      expect(env['CLAUDE_CODE_ALWAYS_ENABLE_EFFORT'], '1');
+    });
+
+    test('a model at an endpoint of its own: through the proxy, the '
+        'effort after it only when it is translated', () {
+      const relay = ModelProvider(
+        id: 'rl',
+        name: 'Relay',
+        baseUrl: 'https://relay.example',
+        auth: ProviderAuth.apiKey,
+        models: [
+          ProviderModel(id: 'claude-sonnet-4-5'),
+          ProviderModel(
+            id: 'gpt-5',
+            protocol: ProviderProtocol.openaiResponses,
+          ),
+        ],
+      );
+      expect(relay.throughProxy, isTrue);
+      final env = launchEnvironment(
+        provider: relay,
+        model: 'claude-sonnet-4-5',
+        key: 'sk',
+        proxy: (baseUrl: 'http://127.0.0.1:5000/p/rl', token: 'tok'),
+      );
+      expect(env['ANTHROPIC_BASE_URL'], 'http://127.0.0.1:5000/p/rl');
+      expect(env['ANTHROPIC_API_KEY'], '');
+      expect(env['CLAUDE_CODE_ALWAYS_ENABLE_EFFORT'], '1');
+      expect(
+        () => launchEnvironment(provider: relay, model: 'm'),
+        throwsStateError,
+      );
+
+      final claude = relay.models.first;
+      final gpt = relay.models.last;
+      expect(
+        requestedModel(relay, claude, effort: 'high'),
+        'claude-sonnet-4-5',
+      );
+      expect(requestedModel(relay, gpt, effort: 'high'), 'gpt-5(high)');
+      expect(requestedModel(relay, gpt, fast: true), 'gpt-5(;fast)');
+
+      // An OpenAI upstream's Claude, at the Messages API: no effort after
+      // it; its GPT, as ever.
+      const gateway = ModelProvider(
+        id: 'gw',
+        name: 'Gateway',
+        protocol: ProviderProtocol.openaiChat,
+        models: [
+          ProviderModel(id: 'gpt-5'),
+          ProviderModel(id: 'claude', protocol: ProviderProtocol.anthropic),
+        ],
+      );
+      expect(
+        requestedModel(gateway, gateway.models.last, effort: 'high'),
+        'claude',
+      );
+      expect(
+        requestedModel(gateway, gateway.models.first, effort: 'high'),
+        'gpt-5(high)',
+      );
+      // Claude Code's effort for its Claude; none for an upstream all
+      // OpenAI's.
+      expect(
+        launchEnvironment(
+          provider: gateway,
+          model: 'claude',
+          proxy: (baseUrl: 'http://127.0.0.1:5000/p/gw', token: 'tok'),
+        )['CLAUDE_CODE_ALWAYS_ENABLE_EFFORT'],
+        '1',
+      );
+      expect(
+        launchEnvironment(
+          provider: _gateway,
+          model: 'gpt-5',
+          proxy: (baseUrl: 'http://127.0.0.1:5000/p/gw', token: 'tok'),
+        ),
+        isNot(contains('CLAUDE_CODE_ALWAYS_ENABLE_EFFORT')),
+      );
+    });
+
+    test('an x-api-key set goes only to the Messages API', () {
+      const relay = ModelProvider(
+        id: 'rl',
+        name: 'Relay',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'https://relay.example/v1',
+        auth: ProviderAuth.apiKey,
+      );
+      expect(sendsApiKeyHeader(relay), isFalse);
+      expect(upstreamHeaders(relay, 'k')['authorization'], 'Bearer k');
+      final messages = relay.copyWith(protocol: ProviderProtocol.anthropic);
+      expect(sendsApiKeyHeader(messages), isTrue);
+      expect(upstreamHeaders(messages, 'k')['x-api-key'], 'k');
+    });
+
     test('the effort goes after a proxied model', () {
       const thinking = ProviderModel(id: 'o3');
       expect(requestedModel(_gateway, thinking, effort: 'high'), 'o3(high)');
@@ -846,7 +1130,11 @@ void main() {
       );
       expect(launch.hasSecrets, isFalse);
       expect(launch.settings, {
-        'env': {'ANTHROPIC_BASE_URL': 'http://127.0.0.1:1', 'X': 'y'},
+        'env': {
+          'CLAUDE_CODE_EFFORT_LEVEL': '',
+          'ANTHROPIC_BASE_URL': 'http://127.0.0.1:1',
+          'X': 'y',
+        },
       });
       const keyed = ClaudeLaunch(
         cwd: '/p',
@@ -862,6 +1150,28 @@ void main() {
           env: {'ANTHROPIC_AUTH_TOKEN': ''},
         ).hasSecrets,
         isFalse,
+      );
+    });
+
+    test('the user\'s CLAUDE_CODE_EFFORT_LEVEL is set empty, Claude\'s own '
+        'session or a provider\'s: else it holds every request to it', () {
+      for (final launch in const [
+        ClaudeLaunch(cwd: '/p', effort: 'low'),
+        ClaudeLaunch(cwd: '/p', effort: 'low', env: {'X': 'y'}),
+      ]) {
+        final arguments = launch.arguments;
+        final settings =
+            jsonDecode(arguments[arguments.indexOf('--settings') + 1]) as Map;
+        expect((settings['env'] as Map)['CLAUDE_CODE_EFFORT_LEVEL'], '');
+      }
+      // Not over the provider's own env, should it set one.
+      expect(
+        (const ClaudeLaunch(
+              cwd: '/p',
+              env: {'CLAUDE_CODE_EFFORT_LEVEL': 'high'},
+            ).settings['env']
+            as Map)['CLAUDE_CODE_EFFORT_LEVEL'],
+        'high',
       );
     });
   });

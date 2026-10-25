@@ -35,6 +35,13 @@ SidebarStashes sidebarStashes(
   open: open,
   pulls: (session) => _pullsOf(controller, session),
   openPull: (url) => unawaited(openExternal(url)),
+  news: () => controller.forge == null
+      ? 0
+      : controller.store.notes
+            .where(
+              (note) => note.news != null && note.newsMine && !note.isBlank,
+            )
+            .length,
 );
 
 List<SidebarPull> _pullsOf(StashController controller, String session) {
@@ -153,12 +160,10 @@ class StashRowBox extends StatelessWidget {
   );
 }
 
-/// On a stash's card: the conversation it was last worked on in (its
-/// status, title, what its agent last said; how many more there are).
-/// Shown only: a click on it is the card's, opening the stash, not the
-/// conversation (its detail lists them, each a click away).
-class StashThreadChip extends StatelessWidget {
-  const StashThreadChip({
+/// In a stash's row: the conversation it was last worked on in, its status
+/// and title, on one line.
+class StashThreadInline extends StatelessWidget {
+  const StashThreadInline({
     super.key,
     required this.controller,
     required this.note,
@@ -188,50 +193,28 @@ class StashThreadChip extends StatelessWidget {
     final l10n = context.l10n;
     final shown = _shown(controller, link, l10n);
     final more = note.threads.length - 1;
-    final thread = shown.thread;
-    return StashRowBox(
-      onTap: null,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return IdeHover(
+      message: [shown.title, ?shown.said].join('\n'),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              _mark(thread),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  shown.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: AppColors.text,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              if (more > 0)
-                Text(
-                  '+$more',
-                  style: TextStyle(color: AppColors.textFaint, fontSize: 11),
-                ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Expanded(
+          _mark(shown.thread),
+          const SizedBox(width: 4),
+          Flexible(
             child: Text(
-              shown.said ?? l10n.stashThreadNoReply,
-              maxLines: 2,
+              shown.title,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: shown.said == null
-                    ? AppColors.textFaint
-                    : AppColors.textMuted,
-                fontSize: 11.5,
-                height: 1.4,
-              ),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
             ),
           ),
+          if (more > 0) ...[
+            const SizedBox(width: 4),
+            Text(
+              '+$more',
+              style: TextStyle(color: AppColors.textFaint, fontSize: 11),
+            ),
+          ],
         ],
       ),
     );

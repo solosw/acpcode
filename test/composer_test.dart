@@ -6,9 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/widgets/activity_row.dart';
 import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/workspace/workspace.dart';
@@ -30,6 +31,7 @@ import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/composer/composer_caret.dart';
+import 'package:baocode/chat/composer/composer_controller.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/composer/composer_files.dart';
 import 'package:baocode/chat/composer/composer_picker.dart';
@@ -51,7 +53,6 @@ Future<ChatSession> pumpScreen(
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session, embedded: embedded),
     ),
   );
@@ -59,18 +60,33 @@ Future<ChatSession> pumpScreen(
   return session;
 }
 
-QuillController composerController(WidgetTester tester) =>
-    tester.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+/// The editor of the composer (of the one composer there is).
+Finder composerEditor() => find.descendant(
+  of: find.byType(ChatComposer),
+  matching: find.byType(MarkdownEditor),
+);
+
+ComposerController composerController(WidgetTester tester) =>
+    tester.widget<MarkdownEditor>(composerEditor()).controller
+        as ComposerController;
 
 /// Types [text] at the end of the composer through the text input channel.
-Future<void> typeText(WidgetTester tester, String text) async {
-  final controller = composerController(tester);
-  final current = controller.document.toPlainText();
-  final body = current.substring(0, current.length - 1) + text;
+Future<void> typeText(WidgetTester tester, String text) =>
+    typeInto(tester, composerEditor(), text);
+
+/// Types [text] at the end of [editor] (a [MarkdownEditor]'s finder)
+/// through the text input channel, as an input method does: into what the
+/// platform was told of the text.
+Future<void> typeInto(WidgetTester tester, Finder editor, String text) async {
+  final state = tester.state<MarkdownEditorState>(editor);
+  final controller = state.controller;
+  controller.selection = TextSelection.collapsed(offset: controller.length);
+  final told = state.currentTextEditingValue!;
+  final at = told.selection.extentOffset;
   tester.testTextInput.updateEditingValue(
     TextEditingValue(
-      text: '$body\n',
-      selection: TextSelection.collapsed(offset: body.length),
+      text: told.text.replaceRange(at, at, text),
+      selection: TextSelection.collapsed(offset: at + text.length),
     ),
   );
   await tester.pump();
@@ -176,7 +192,7 @@ void main() {
     expect(session.itemCount, greaterThan(16));
     final sent = session.itemAt(16) as UserMessageItem;
     expect(sent.text, 'hello');
-    expect(composerController(tester).document.toPlainText(), '\n');
+    expect(composerController(tester).shownText, '');
     expect(session.isStreaming, isTrue);
 
     await tester.tap(find.byTooltip('Stop (Ctrl+Escape)'));
@@ -505,27 +521,50 @@ void main() {
   testWidgets('caret is text-height, centered on the line, never clipped', (
     tester,
   ) async {
-    // Quill nudges its caret on Apple platforms; ours must not inherit that.
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     await pumpScreen(tester);
     await tester.pump();
     final caret = tester.state<ComposerCaretState>(find.byType(ComposerCaret));
-    final editor = tester
-        .state<QuillRawEditorState>(find.byType(QuillRawEditor))
-        .renderEditor;
 
     void expectCentered(int offset) {
       final rect = caret.caretRect!;
-      final line = editor.getLocalRectForCaret(TextPosition(offset: offset));
+      // The line's box: its text's paragraph, 1.5 times the font's size.
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find
+            .descendant(
+              of: find.descendant(
+                of: composerEditor(),
+                matching: find.byType(MdLineBox),
+              ),
+              matching: find.byType(RichText),
+            )
+            .first,
+      );
       final caretBox = tester.renderObject<RenderBox>(
         find.byType(ComposerCaret),
       );
+      // Its line's box, as high as its highest glyph; an empty one's, the
+      // caret's.
+      var line = paragraph.getFullHeightForCaret(TextPosition(offset: offset));
+      var top = paragraph
+          .getOffsetForCaret(TextPosition(offset: offset), Rect.zero)
+          .dy;
+      if (offset > 0) {
+        final box = paragraph
+            .getBoxesForSelection(
+              TextSelection(baseOffset: 0, extentOffset: offset),
+              boxHeightStyle: ui.BoxHeightStyle.max,
+            )
+            .first;
+        line = box.bottom - box.top;
+        top = box.top;
+      }
       final lineTop = caretBox
-          .globalToLocal(editor.localToGlobal(line.topLeft))
+          .globalToLocal(paragraph.localToGlobal(Offset(0, top)))
           .dy;
       expect(rect.left, greaterThanOrEqualTo(0));
-      expect(rect.height, lessThan(line.height));
-      expect(rect.center.dy, moreOrLessEquals(lineTop + line.height / 2));
+      expect(rect.height, lessThan(line));
+      expect(rect.center.dy, moreOrLessEquals(lineTop + line / 2));
     }
 
     expectCentered(0);
@@ -540,6 +579,23 @@ void main() {
     await typeText(tester, 's');
     await tester.pump();
     expect(caret.caretRect, isNotNull);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('focused, the input does not draw on every frame: its caret '
+      'blinks by timers, no animation, on Apple platforms too', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    await pumpScreen(tester);
+    await typeText(tester, 'Plan');
+    // What typing set off (the send button's coming in) done.
+    await tester.pump(const Duration(milliseconds: 500));
+    // Over a few of the caret's blinks: no animation, only its timers.
+    var animating = 0;
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (SchedulerBinding.instance.transientCallbackCount > 0) animating++;
+    }
+    expect(animating, 0);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -570,11 +626,16 @@ void main() {
     controller.clear();
     await typeText(tester, '/rev');
     await pressKey(tester, LogicalKeyboardKey.enter);
-    controller.replaceText(1, 1, '', const TextSelection.collapsed(offset: 1));
+    controller.replace(
+      controller.offsetOfShown(1),
+      controller.offsetOfShown(2),
+      '',
+      selection: TextSelection.collapsed(offset: controller.offsetOfShown(1)),
+    );
     await tester.pump();
     expect(height(), empty);
-    expect(controller.selection.baseOffset, 1);
-    expect(controller.document.toPlainText(), '\uFFFC \n');
+    expect(controller.shownOffset(controller.selection.baseOffset), 1);
+    expect(controller.shownText, '\uFFFC ');
   });
 
   testWidgets('files put in the draft from outside (Open with BaoCode) go '
@@ -587,18 +648,17 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: ChatScreen(session: session),
       ),
     );
     await tester.pump();
     final controller = composerController(tester);
-    expect(controller.document.toPlainText(), '\uFFFC \n');
+    expect(controller.shownText, '\uFFFC ');
     expect(session.draft.pendingFiles, isEmpty);
 
     session.draft.insertFiles(const [ComposerFile('/work/b.dart')]);
     await tester.pump();
-    expect(controller.document.toPlainText(), '\uFFFC \uFFFC \n');
+    expect(controller.shownText, '\uFFFC \uFFFC ');
     expect(session.draft.pendingFiles, isEmpty);
   });
 
@@ -609,8 +669,8 @@ void main() {
     await typeText(tester, '/rev');
     await pressKey(tester, LogicalKeyboardKey.enter);
     final controller = composerController(tester);
-    expect(controller.document.toPlainText(), '\uFFFC \n');
-    expect(controller.selection.baseOffset, 2);
+    expect(controller.shownText, '\uFFFC ');
+    expect(controller.shownOffset(controller.selection.baseOffset), 2);
   });
 
   testWidgets('a right click opens the system menu: cut, copy, paste, '
@@ -648,7 +708,7 @@ void main() {
       final controller = composerController(tester);
       Future<void> rightClick() async {
         await tester.tapAt(
-          tester.getCenter(find.byType(QuillEditor)),
+          tester.getCenter(composerEditor()),
           buttons: kSecondaryMouseButton,
           kind: PointerDeviceKind.mouse,
         );
@@ -676,7 +736,7 @@ void main() {
       expect(controller.selection, isSelection(0, 11));
 
       await rightClick();
-      expect(controller.document.toPlainText(), 'pasted\n');
+      expect(controller.shownText, 'pasted');
       expect(menus, hasLength(3));
     } finally {
       messenger.setMockMethodCallHandler(
@@ -765,18 +825,16 @@ void main() {
           null,
         ),
       );
-      // ignore: experimental_member_use
-      await composerController(tester).clipboardPaste();
+      await tester.state<MarkdownEditorState>(composerEditor()).paste();
       await tester.pump();
     }
 
     /// The composer's content, tokens as their sent text in brackets.
     String content(WidgetTester tester) => [
-      for (final op in composerController(tester).document.toDelta().toList())
-        switch (op.data) {
-          final Map<dynamic, dynamic> data =>
-            '[${ComposerTokenEmbed.plainText(data[ComposerTokenEmbed.type])}]',
-          final data => '$data',
+      for (final piece in composerPieces(composerController(tester).text))
+        switch (piece) {
+          final ComposerEmbed embed => '[${embed.plainText}]',
+          final text => '$text',
         },
     ].join();
 
@@ -787,11 +845,11 @@ void main() {
       await paste(tester, '/plan 看一下 @lib/main.dart 和 @pubspec.yaml 里的用法');
       expect(
         content(tester),
-        '[/plan] 看一下 [@lib/main.dart] 和 [@pubspec.yaml] 里的用法\n',
+        '[/plan] 看一下 [@lib/main.dart] 和 [@pubspec.yaml] 里的用法',
       );
       // Caret after the pasted text; no menu from the @s in it.
       final controller = composerController(tester);
-      expect(controller.selection.baseOffset, controller.document.length - 1);
+      expect(controller.selection.baseOffset, controller.length);
       expect(find.byType(SuggestionMenu), findsNothing);
     });
 
@@ -801,27 +859,27 @@ void main() {
       await pumpScreen(tester);
       await typeText(tester, 'try ');
       await paste(tester, '/plan with @override and a@lib/main.dart');
-      expect(content(tester), 'try /plan with @override and a@lib/main.dart\n');
+      expect(content(tester), 'try /plan with @override and a@lib/main.dart');
     });
 
     testWidgets('replaces the selection', (tester) async {
       await pumpScreen(tester);
       await typeText(tester, 'see here');
-      composerController(tester).updateSelection(
-        const TextSelection(baseOffset: 4, extentOffset: 8),
-        ChangeSource.local,
+      composerController(tester).selection = const TextSelection(
+        baseOffset: 4,
+        extentOffset: 8,
       );
       await paste(tester, '@README.md');
-      expect(content(tester), 'see [@README.md] \n');
+      expect(content(tester), 'see [@README.md] ');
     });
 
     testWidgets('a composition in a URL stays where it is typed', (
       tester,
     ) async {
       await pumpScreen(tester);
-      // #99: Quill's rule that finds links put the text replacing another
-      // before it, not in its place: the composition went in the URL ahead
-      // of the caret, and the candidate picked left it there.
+      // #99: an editor's rule that found links put the text replacing
+      // another before it, not in its place: the composition went in the
+      // URL ahead of the caret, and the candidate picked left it there.
       const url = 'fetch("http://a.b/baf/attachment/download")';
       await paste(tester, url);
       final at = url.indexOf('/download');
@@ -835,22 +893,22 @@ void main() {
       ]) {
         tester.testTextInput.updateEditingValue(
           TextEditingValue(
-            text: '${typed(composition)}\n',
+            text: typed(composition),
             selection: TextSelection.collapsed(offset: at + caret),
             composing: TextRange(start: at, end: at + composition.length),
           ),
         );
         await tester.pump();
-        expect(content(tester), '${typed(composition)}\n');
+        expect(content(tester), typed(composition));
       }
       tester.testTextInput.updateEditingValue(
         TextEditingValue(
-          text: '${typed('你好')}\n',
+          text: typed('你好'),
           selection: TextSelection.collapsed(offset: at + 2),
         ),
       );
       await tester.pump();
-      expect(content(tester), '${typed('你好')}\n');
+      expect(content(tester), typed('你好'));
     });
 
     testWidgets('keeps a tag before a composition whose caret is not at its '
@@ -862,22 +920,22 @@ void main() {
       const composition = 'ni hc〔表情：👋〕';
       tester.testTextInput.updateEditingValue(
         const TextEditingValue(
-          text: '￼ $composition\n',
+          text: '￼ $composition',
           selection: TextSelection.collapsed(offset: 7),
           composing: TextRange(start: 2, end: 2 + composition.length),
         ),
       );
       await tester.pump();
-      expect(content(tester), '[@lib/main.dart] $composition\n');
+      expect(content(tester), '[@lib/main.dart] $composition');
       // The candidate picked ends the composition.
       tester.testTextInput.updateEditingValue(
         const TextEditingValue(
-          text: '￼ 你好\n',
+          text: '￼ 你好',
           selection: TextSelection.collapsed(offset: 4),
         ),
       );
       await tester.pump();
-      expect(content(tester), '[@lib/main.dart] 你好\n');
+      expect(content(tester), '[@lib/main.dart] 你好');
     });
 
     testWidgets('Shift+Cmd+V pastes the raw text, past the long-paste tag', (
@@ -909,14 +967,9 @@ void main() {
       });
 
       // The plain paste still tags it (too long for the text).
-      await composerController(tester).clipboardPaste();
+      await tester.state<MarkdownEditorState>(composerEditor()).paste();
       await tester.pump();
-      expect(
-        composerController(tester).document.toDelta().toList().where(
-          (op) => op.data is Map,
-        ),
-        hasLength(1),
-      );
+      expect(composerController(tester).embeds, hasLength(1));
 
       // The shortcut pastes the raw text in, with no tag.
       await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -927,16 +980,12 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.byType(SuggestionMenu), findsNothing);
-      final delta = composerController(tester).document.toDelta().toList();
       expect(
-        delta.where((op) => op.data is Map).map((op) => op.data),
+        composerController(tester).embeds,
         hasLength(1),
         reason: 'only the first (plain) paste is a tag',
       );
-      expect(
-        composerController(tester).document.toPlainText(),
-        contains('line 29'),
-      );
+      expect(composerController(tester).text, contains('line 29'));
     }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
   });
 
@@ -945,7 +994,7 @@ void main() {
     (tester) async {
       await pumpScreen(tester);
       await typeText(tester, 'hello world');
-      final editor = find.byType(QuillEditor);
+      final editor = composerEditor();
       final position = tester.getTopLeft(editor) + const Offset(95, 12);
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       Future<void> doubleClick() async {
@@ -958,8 +1007,7 @@ void main() {
       }
 
       final controller = composerController(tester);
-      String selected() =>
-          controller.selection.textInside(controller.document.toPlainText());
+      String selected() => controller.selection.textInside(controller.text);
       await doubleClick();
       expect(selected(), 'hello world');
       // With text selected, a double-click selects a word as usual.
@@ -981,10 +1029,10 @@ void main() {
   ) async {
     await pumpScreen(tester);
     await typeText(tester, 'hello world');
-    final editor = find.byType(QuillEditor);
+    final editor = composerEditor();
     final position = tester.getTopLeft(editor) + const Offset(95, 12);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-    // Past where Quill's drag recognizer takes the press from its tap.
+    // Past where a drag starts.
     Future<void> click() async {
       await mouse.down(position);
       await tester.pump(const Duration(milliseconds: 40));
@@ -998,10 +1046,7 @@ void main() {
     await click();
     await tester.pump(const Duration(milliseconds: 500));
     final controller = composerController(tester);
-    expect(
-      controller.selection.textInside(controller.document.toPlainText()),
-      'hello world',
-    );
+    expect(controller.selection.textInside(controller.text), 'hello world');
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('a mouse drag selection follows every move, unthrottled', (
@@ -1010,7 +1055,7 @@ void main() {
     await pumpScreen(tester);
     await typeText(tester, 'hello world, a line to select across');
     final controller = composerController(tester);
-    final editor = find.byType(QuillEditor);
+    final editor = composerEditor();
     final start = tester.getTopLeft(editor) + const Offset(2, 12);
     final gesture = await tester.startGesture(
       start,
@@ -1020,7 +1065,7 @@ void main() {
     var extent = 0;
     for (var dx = 20.0; dx <= 120; dx += 20) {
       await gesture.moveTo(start + Offset(dx, 0));
-      // One frame, well within Quill's 50ms throttle.
+      // One frame: the selection follows each move, none held back.
       await tester.pump(const Duration(milliseconds: 8));
       final selection = controller.selection;
       expect(selection.baseOffset, 0, reason: 'dx $dx');
@@ -1038,9 +1083,8 @@ void main() {
     await pumpScreen(tester);
     await typeText(tester, '/revi');
     expect(find.byType(SuggestionMenu), findsOneWidget);
-    composerController(tester).updateSelection(
-      const TextSelection.collapsed(offset: 3),
-      ChangeSource.local,
+    composerController(tester).selection = const TextSelection.collapsed(
+      offset: 3,
     );
     await settleAnimations(tester);
     expect(find.byType(SuggestionMenu), findsNothing);
@@ -1067,14 +1111,14 @@ void main() {
     await tester.pump();
     final capped = height();
     await typeText(tester, '\nmore\nand more');
-    // Quill animates the scroll to the caret (100ms).
+    // The caret scrolled to after the frame its line is laid out in.
     await settleAnimations(tester);
     expect(height(), capped);
     expect(capped, lessThan(resting + 13.5 * 1.5 * 10));
 
     final scroll = tester
-        .widget<QuillEditor>(find.byType(QuillEditor))
-        .scrollController;
+        .widget<MarkdownEditor>(composerEditor())
+        .scrollController!;
     expect(scroll.offset, greaterThan(0));
     expect(scroll.offset, scroll.position.maxScrollExtent);
     // One slim scrollbar, not a second default one from the scroll behavior.
@@ -1140,9 +1184,7 @@ void main() {
     await mouse.up();
     await settleAnimations(tester);
     expect(menuRow, findsOneWidget);
-    final focus = tester
-        .widget<QuillEditor>(find.byType(QuillEditor))
-        .focusNode;
+    final focus = tester.widget<MarkdownEditor>(composerEditor()).focusNode!;
     expect(focus.hasFocus, isTrue);
     await pressKey(tester, LogicalKeyboardKey.arrowDown); // Plan -> Agent
     await pressKey(tester, LogicalKeyboardKey.enter);
@@ -1153,7 +1195,7 @@ void main() {
       findsOneWidget,
     );
     expect(focus.hasFocus, isTrue);
-    expect(composerController(tester).document.toPlainText(), '\n');
+    expect(composerController(tester).shownText, '');
 
     // A click outside closes it.
     await mouse.down(tester.getCenter(modePill));
@@ -1170,9 +1212,7 @@ void main() {
   testWidgets('Shift+Tab in the input goes through the modes', (tester) async {
     await pumpScreen(tester);
     await settleAnimations(tester);
-    final focus = tester
-        .widget<QuillEditor>(find.byType(QuillEditor))
-        .focusNode;
+    final focus = tester.widget<MarkdownEditor>(composerEditor()).focusNode!;
     expect(focus.hasFocus, isTrue);
     await typeText(tester, 'hi');
     final modePill = find.byType(ComposerPicker).first;
@@ -1195,7 +1235,7 @@ void main() {
     );
     // The input keeps its focus and its text.
     expect(focus.hasFocus, isTrue);
-    expect(composerController(tester).document.toPlainText(), 'hi\n');
+    expect(composerController(tester).shownText, 'hi');
   });
 
   testWidgets('the suggestion menu shows on the next frame and fades out', (
@@ -1225,7 +1265,6 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: buildAppTheme(),
-          localizationsDelegates: const [FlutterQuillLocalizations.delegate],
           home: ChatScreen(key: ObjectKey(session), session: session),
         ),
       );
@@ -1235,7 +1274,7 @@ void main() {
     final away = other ?? ChatSession(historyCount: 0);
     if (other == null) addTearDown(away.dispose);
     await show(away);
-    expect(composerController(tester).document.toPlainText(), '\n');
+    expect(composerController(tester).shownText, '');
     await show(session);
   }
 
@@ -1246,12 +1285,12 @@ void main() {
     await typeText(tester, 'half a thought');
     await switchAwayAndBack(tester, session);
     final controller = composerController(tester);
-    expect(controller.document.toPlainText(), 'half a thought\n');
+    expect(controller.shownText, 'half a thought');
     expect(controller.selection.baseOffset, 'half a thought'.length);
 
     await pressKey(tester, LogicalKeyboardKey.enter);
     await switchAwayAndBack(tester, session);
-    expect(composerController(tester).document.toPlainText(), '\n');
+    expect(composerController(tester).shownText, '');
     session.stop();
     await tester.pump(const Duration(seconds: 5));
   });
@@ -1259,10 +1298,11 @@ void main() {
   group('editing a sent message', () {
     Finder editorInHistory() => find.descendant(
       of: find.byType(ChatHistoryView),
-      matching: find.byType(QuillEditor),
+      matching: find.byType(MarkdownEditor),
     );
-    QuillController editController(WidgetTester tester) =>
-        tester.widget<QuillEditor>(editorInHistory()).controller;
+    ComposerController editController(WidgetTester tester) =>
+        tester.widget<MarkdownEditor>(editorInHistory()).controller
+            as ComposerController;
     // The message in the list (not its copy stuck to the top).
     Finder inList(Finder finder) =>
         find.descendant(of: find.byType(SuperListView), matching: finder);
@@ -1322,19 +1362,15 @@ void main() {
       await tester.tap(bubble('第 2 轮'));
       await tester.pump();
       final controller = editController(tester);
-      controller.replaceText(controller.document.length - 1, 0, ' 再加一句', null);
+      controller.replace(controller.length, controller.length, ' 再加一句');
       await tester.pump();
 
       await switchAwayAndBack(tester, session);
       expect(editorInHistory(), findsOneWidget);
-      expect(editController(tester).document.toPlainText(), contains('再加一句'));
+      expect(editController(tester).text, contains('再加一句'));
       // The composer below (after the history) has its own, empty.
       expect(
-        tester
-            .widget<QuillEditor>(find.byType(QuillEditor).last)
-            .controller
-            .document
-            .toPlainText(),
+        tester.widget<MarkdownEditor>(composerEditor().last).controller.text,
         isNot(contains('再加一句')),
       );
     });
@@ -1354,7 +1390,7 @@ void main() {
       await tester.tap(bubble('第 12500 轮'));
       await tester.pump();
       final controller = editController(tester);
-      controller.replaceText(controller.document.length - 1, 0, ' 补充', null);
+      controller.replace(controller.length, controller.length, ' 补充');
       await tester.pump();
 
       await tester.tap(
@@ -1368,7 +1404,7 @@ void main() {
       await tester.tap(title);
       await tester.pump();
       expect(editorInHistory(), findsOneWidget);
-      expect(editController(tester).document.toPlainText(), contains('补充'));
+      expect(editController(tester).text, contains('补充'));
     });
 
     testWidgets('a click opens a full composer in place, focused', (
@@ -1391,22 +1427,16 @@ void main() {
         findsNWidgets(3), // Mode, approvals, model.
       );
       expect(
-        tester.widget<QuillEditor>(editorInHistory()).focusNode.hasFocus,
+        tester.widget<MarkdownEditor>(editorInHistory()).focusNode!.hasFocus,
         isTrue,
       );
 
       // Mentions come back as tokens; sending it unchanged yields the same
       // text: the message is its text.
-      final tokens = editController(tester).document
-          .toDelta()
-          .toList()
-          .map((op) => op.data)
-          .whereType<Map>()
-          .map(
-            (data) =>
-                ComposerTokenEmbed.plainText(data[ComposerTokenEmbed.type]),
-          )
-          .toList();
+      final tokens = [
+        for (final (:embed, start: _, end: _) in editController(tester).embeds)
+          if (embed.type == ComposerTokenEmbed.type) embed.plainText,
+      ];
       expect(tokens, ['@lib/main.dart']);
 
       // Esc cancels: the editor goes back into the message.
@@ -1492,11 +1522,12 @@ void main() {
       await tester.tap(bubble('第 2 轮'));
       await tester.pump();
       final controller = editController(tester);
-      controller.replaceText(
-        controller.document.length - 1,
-        0,
+      final end = controller.length;
+      controller.replace(
+        end,
+        end,
         ' 另外加上单元测试',
-        TextSelection.collapsed(offset: controller.document.length + 8),
+        selection: TextSelection.collapsed(offset: end + 9),
       );
       await tester.pump();
       await pressKey(tester, LogicalKeyboardKey.enter);
@@ -1519,11 +1550,11 @@ void main() {
       await tester.pump();
       final editor = editorInHistory();
       final controller = editController(tester);
-      controller.replaceText(
+      controller.replace(
         0,
-        controller.document.length - 1,
+        controller.length,
         'hello world',
-        const TextSelection.collapsed(offset: 11),
+        selection: const TextSelection.collapsed(offset: 11),
       );
       await tester.pump();
       final start = tester.getTopLeft(editor) + const Offset(14, 12);
@@ -1541,7 +1572,7 @@ void main() {
       expect(controller.selection.isCollapsed, isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
-      expect(controller.document.toPlainText(), 'h\n');
+      expect(controller.shownText, 'h');
     }, variant: TargetPlatformVariant.desktop());
 
     testWidgets('double-clicking in the message editor selects all', (
@@ -1553,11 +1584,11 @@ void main() {
       await tester.pump();
       final editor = editorInHistory();
       final controller = editController(tester);
-      controller.replaceText(
+      controller.replace(
         0,
-        controller.document.length - 1,
+        controller.length,
         'hello world',
-        const TextSelection.collapsed(offset: 0),
+        selection: const TextSelection.collapsed(offset: 0),
       );
       await tester.pump();
       final position = tester.getTopLeft(editor) + const Offset(95, 12);
@@ -1568,10 +1599,7 @@ void main() {
       await mouse.down(position);
       await mouse.up();
       await tester.pump();
-      expect(
-        controller.selection.textInside(controller.document.toPlainText()),
-        'hello world',
-      );
+      expect(controller.selection.textInside(controller.text), 'hello world');
     });
 
     testWidgets('dragging across a message selects instead of editing', (
@@ -1700,7 +1728,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(stuck, findsNothing);
-      expect(editController(tester).document.toPlainText(), contains('第 2 轮'));
+      expect(editController(tester).text, contains('第 2 轮'));
     });
 
     testWidgets('the editor sticks to the top while scrolled past', (
@@ -1863,10 +1891,7 @@ void main() {
       await tester.pump();
       // The editor opens over a moment.
       await tester.pump(const Duration(milliseconds: 300));
-      expect(
-        editController(tester).document.toPlainText(),
-        contains('7. 改完后简要说明取舍'),
-      );
+      expect(editController(tester).text, contains('7. 改完后简要说明取舍'));
     });
 
     testWidgets('a collapsed message shows no text below its fade', (

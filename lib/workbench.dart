@@ -47,7 +47,6 @@ import 'ide/file_service.dart'
         ideIsImagePath,
         readBytesThrough,
         readFileBytes;
-import 'ide/ide_agent_changes.dart';
 import 'ide/ide_agent_edits.dart';
 import 'ide/ide_chat_history.dart';
 import 'ide/ide_chat_title.dart';
@@ -425,6 +424,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     settings: widget.settings?.files?.settings,
   )..addListener(_sidePanelChanged);
   bool _sidePanelShown = false;
+  late bool _sidePanelAtLeft = _sidePanel.atLeft;
+
+  /// Whether the side panel shows at the conversations' left: at the
+  /// window's, the sidebar's toggle by the traffic lights is its.
+  bool get _sidePanelAtWindowLeft =>
+      _sidePanelShown &&
+      !_sidePanelHidden &&
+      !_replacingChat &&
+      _sidePanelAtLeft;
 
   /// The title bars' toggles follow it (not its width, as it is dragged).
   /// Asked for where it had given way, or with no room for it and the
@@ -432,7 +440,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// [_sidePanelLast]).
   void _sidePanelChanged() {
     final asked = _sidePanel.asks != _sidePanelAsks;
-    if (_sidePanel.shown == _sidePanelShown && !asked) return;
+    if (_sidePanel.shown == _sidePanelShown &&
+        _sidePanel.atLeft == _sidePanelAtLeft &&
+        !asked) {
+      return;
+    }
+    _sidePanelAtLeft = _sidePanel.atLeft;
     if (asked) {
       _sidePanelAsks = _sidePanel.asks;
       // Showing already, the sidebar gives way only to a narrower window.
@@ -2283,29 +2296,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       for (final thread in _workspace.threads)
         if (thread.project.path == folder) thread,
     ];
-    // Reads and writes the setting live, as the IDE's own do.
-    final settings = widget.settings?.files?.settings;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // The agent's changes open as diffs in the editor as it makes them
-        // (Cursor-like), while this IDE shows; see [IdeAgentChanges].
-        ListenableBuilder(
-          listenable: settings ?? Listenable.merge(const []),
-          builder: (context, _) => current == null
-              ? const SizedBox.shrink()
-              : IdeAgentChanges(
-                  session: current.session,
-                  enabled:
-                      _showsIde &&
-                      _ideFolder == folder &&
-                      IdeAgentChanges.enabledBy(
-                        settings?[IdeAgentChanges.enabledSetting],
-                      ),
-                  open: (change, original) =>
-                      _openChange(current, change, original),
-                ),
-        ),
         ValueListenableBuilder(
           valueListenable: _ideHistory,
           builder: (context, historyFolder, _) => IdeChatTitle(
@@ -2577,10 +2570,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       // With the sidebar, as the chat's window has it: over the
       // conversation while narrow, beside it once wide. Its toggle is the
       // header's on Windows, else by the traffic lights while it is hidden.
+      final showToggle = narrow || !_sidebarDocked;
       final chat = _withSidePanel(
-        _withTerminal(
-          _buildChat(showToggle: narrow || !_sidebarDocked, pane: thread),
-        ),
+        _withTerminal(_buildChat(showToggle: showToggle, pane: thread)),
+        showToggle: showToggle,
       );
       return narrow ? _buildNarrow(body: chat) : _buildWide(body: chat);
     }
@@ -3391,8 +3384,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// The open agents side by side (see [ChatGridView]), the terminal panel
   /// under them, the side panel at their right.
-  Widget _buildPanes({required bool showToggle}) =>
-      _withSidePanel(_withTerminal(_buildGrid(showToggle: showToggle)));
+  Widget _buildPanes({required bool showToggle}) => _withSidePanel(
+    _withTerminal(_buildGrid(showToggle: showToggle)),
+    showToggle: showToggle,
+  );
 
   void _showSidePanelSection(SidePanelSection section) {
     final thread = _agentThread ?? _workspace.current;
@@ -3429,7 +3424,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (_sidePanel.shown) _sidePanel.focusNode.requestFocus();
   }
 
-  Widget _withSidePanel(Widget child) => AgentSidePanelArea(
+  /// [showToggle]: the window's sidebar hidden, the panel at the
+  /// conversations' left is at the window's, under the traffic lights.
+  Widget _withSidePanel(
+    Widget child, {
+    required bool showToggle,
+  }) => AgentSidePanelArea(
     panel: _sidePanel,
     // Customize, in place of the conversations, isn't one of theirs.
     hidden: _sidePanelHidden || _replacingChat,
@@ -3447,6 +3447,18 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       _ => null,
     },
     builder: (context) => switch (_agentThread ?? _workspace.current) {
+      final thread?
+          when showToggle && _sidePanel.atLeft && !WindowControls.drawsHeader =>
+        _buildSidePanel(
+          thread,
+          titleBarInset: AppMetrics.trafficLightsWidth,
+          leading: SidebarIconButton(
+            icon: Codicons.layoutSidebarLeftOff,
+            tooltip: context.l10n.windowShowSidebar,
+            command: 'workbench.action.toggleSidebarVisibility',
+            onTap: _toggle,
+          ),
+        ),
       final thread? => _buildSidePanel(thread),
       null => const SizedBox.shrink(),
     },
@@ -3483,7 +3495,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     );
   }
 
-  Widget _buildSidePanel(AgentThread thread) {
+  Widget _buildSidePanel(
+    AgentThread thread, {
+    double titleBarInset = 0,
+    Widget? leading,
+  }) {
     final location = thread.project.path;
     final multi = _workspace.workspaceAt(location);
     // Its IDE's repositories, found in the folders' subfolders as they are
@@ -3491,13 +3507,25 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (_ideSpaces[multi?.path ?? location] case final space?) {
       return ListenableBuilder(
         listenable: space,
-        builder: (context, _) => _sidePanelView(thread),
+        builder: (context, _) => _sidePanelView(
+          thread,
+          titleBarInset: titleBarInset,
+          leading: leading,
+        ),
       );
     }
-    return _sidePanelView(thread);
+    return _sidePanelView(
+      thread,
+      titleBarInset: titleBarInset,
+      leading: leading,
+    );
   }
 
-  Widget _sidePanelView(AgentThread thread) {
+  Widget _sidePanelView(
+    AgentThread thread, {
+    double titleBarInset = 0,
+    Widget? leading,
+  }) {
     final (:files, :paths) = _projectFiles(thread);
     final location = thread.project.path;
     final multi = _workspace.workspaceAt(location);
@@ -3549,6 +3577,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       onRemoveFolder: multi == null
           ? null
           : (folder) => _workspace.removeWorkspaceFolder(multi, folder),
+      titleBarInset: titleBarInset,
+      leading: leading,
     );
   }
 
@@ -3673,6 +3703,20 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// Where the files [thread]'s conversation names open: the side panel,
   /// or the IDE for its chat ([embedded]).
+  /// The file of [thread]'s `/command` [name] (see [ChatScreen.commandFile]),
+  /// on the machine it works on.
+  Future<String?> _commandFileOf(AgentThread thread, String name) {
+    final location = thread.session.kernelContext.cwd ?? thread.project.path;
+    final host = RemoteLocation.hostOf(location);
+    final store = host == null
+        ? widget.customizations
+        : _hostCustomizations[host] ??= CustomizationStore(
+            disk: RemoteCustomizationDisk(SshHosts.instance[host]),
+          );
+    if (store == null) return Future.value();
+    return store.commandFile(name, project: RemoteLocation.pathOf(location));
+  }
+
   FileLinkTarget _fileLinks(AgentThread thread, {required bool embedded}) {
     final (:files, :paths) = _projectFiles(thread);
     return FileLinkTarget(
@@ -3694,6 +3738,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
               BrowserTools.show(tabId);
               _sidePanel.showSection(thread.session, SidePanelSection.browser);
             },
+      openFolder: embedded
+          ? null
+          : (path) => _sidePanel.openFolder(thread.session, path),
       exists: _projectFileChecks[thread.project.path] ??= fileExistsIn(
         files,
         paths: paths,
@@ -3919,7 +3966,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     // in the top left pane, by the traffic lights, and the pin and the
     // editor button in the top right one.
     final header = WindowControls.drawsHeader;
-    showToggle = showToggle && place.topLeft;
+    // The side panel at the window's left has it, by the traffic lights.
+    showToggle =
+        showToggle && place.topLeft && (embedded || !_sidePanelAtWindowLeft);
     final leading = !header && showToggle
         ? SidebarIconButton(
             icon: Codicons.layoutSidebarLeftOff,
@@ -4044,6 +4093,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         below: _branchBar(thread),
         sessions: () => _mentionable(thread),
         fileMentions: _fileMentionsOf(thread.project),
+        commandFile: widget.customizations == null
+            ? null
+            : (name) => _commandFileOf(thread, name),
         openEditor: openEditor ?? () => _sidePanelEditor(thread),
       ),
     );
@@ -4308,9 +4360,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       showGeneralDialog<void>(
         context: context,
         barrierColor: Colors.transparent,
+        // Over the whole window, header included: below it, as the IDE's.
         pageBuilder: (context, _, _) => Padding(
           padding: EdgeInsets.only(
-            top: WindowControls.drawsHeader ? 0 : AppMetrics.titleBarHeight,
+            top: WindowControls.drawsHeader
+                ? WindowControls.headerInset
+                : AppMetrics.titleBarHeight,
           ),
           child: IdeQuickInput.pick(key: key, pick: pick, onClose: hide),
         ),

@@ -69,7 +69,12 @@ class SshStatusIndicator implements IdeRemoteIndicator {
       SshHostState.reconnecting => IdeStatusBarItem(
         l10n.remoteStatusReconnecting(name),
         icon: Codicons.sync,
-        tooltip: tooltip(l10n.remoteStatusTooltipLost(name)),
+        // The session there kept, or gone too.
+        tooltip: tooltip(
+          host.client != null
+              ? l10n.remoteStatusTooltipResuming(name)
+              : l10n.remoteStatusTooltipLost(name),
+        ),
         onTapRect: onChoose,
       ),
       SshHostState.failed || SshHostState.idle => IdeStatusBarItem(

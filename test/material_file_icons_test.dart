@@ -26,6 +26,9 @@ void main() {
     expect(icons.fileIcon('.gitignore'), 'git');
     expect(icons.fileIcon('no_extension'), 'file');
     expect(icons.fileIcon('archive.unknownext'), 'file');
+    // No name at all: the plain file, not an error.
+    expect(icons.fileIcon(''), 'file');
+    expect(icons.fileIcon('/'), 'file');
     // Names given with a folder match the end of the path.
     expect(icons.fileIcon('/p/.config/stylelintrc'), 'stylelint');
   });

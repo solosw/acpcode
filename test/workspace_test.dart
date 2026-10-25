@@ -6,10 +6,10 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_quill/quill_delta.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
+import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/mock_claude_code_transport.dart';
@@ -128,14 +128,27 @@ Future<List<Map<String, Object?>>> _readHistory(SessionRecord session) async =>
         if (line.isNotEmpty) (jsonDecode(line) as Map).cast<String, Object?>(),
     ];
 
+/// The CLI's own messages and [say]'s; each name it is given told back,
+/// as Claude Code does.
 class _Renames implements ClaudeCodeTransport {
-  _Renames(this._cli, this._renames);
+  _Renames(this._cli, this._renames) {
+    last = this;
+    _cli.messages.listen(say, onDone: _out.close);
+  }
+
+  /// The one started last.
+  static _Renames? last;
 
   final ClaudeCodeTransport _cli;
   final List<String> _renames;
+  final _out = StreamController<Map<String, Object?>>();
+
+  void say(Map<String, Object?> message) {
+    if (!_out.isClosed) _out.add(message);
+  }
 
   @override
-  Stream<Map<String, Object?>> get messages => _cli.messages;
+  Stream<Map<String, Object?>> get messages => _out.stream;
 
   @override
   void write(Map<String, Object?> message) {
@@ -144,6 +157,13 @@ class _Renames implements ClaudeCodeTransport {
       'request': {'subtype': 'rename_session', 'title': final String title},
     }) {
       _renames.add(title);
+      scheduleMicrotask(
+        () => say({
+          'type': 'system',
+          'subtype': 'session_title_changed',
+          'title': title,
+        }),
+      );
     }
     _cli.write(message);
   }
@@ -222,13 +242,13 @@ void main() {
       number: 1,
     );
     keptThread().session.draft.save(
-      Delta()..insert('Half a question\n'),
+      'Half a question',
       const TextSelection.collapsed(offset: 4),
       [image],
     );
     workspace.create(project: keptThread().project);
     newThread().session.draft.save(
-      Delta()..insert('Not asked yet\n'),
+      'Not asked yet',
       const TextSelection(baseOffset: 0, extentOffset: 3),
       const [],
     );
@@ -242,14 +262,14 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     workspace = await pumpLoaded(tester, drafts: drafts);
     final kept = keptThread().session.draft;
-    expect(kept.content, Delta()..insert('Half a question\n'));
+    expect(kept.content, 'Half a question');
     expect(kept.selection, const TextSelection.collapsed(offset: 4));
     expect(kept.images.single.bytes, [1, 2, 3]);
     expect(kept.images.single.name, 'shot.png');
     expect(kept.images.single.number, 1);
     workspace.create(project: keptThread().project);
     final draft = newThread().session.draft;
-    expect(draft.content, Delta()..insert('Not asked yet\n'));
+    expect(draft.content, 'Not asked yet');
     expect(
       draft.selection,
       const TextSelection(baseOffset: 0, extentOffset: 3),
@@ -257,12 +277,47 @@ void main() {
 
     // Emptied: not kept.
     keptThread().session.draft.save(
-      Delta()..insert('\n'),
+      '',
       const TextSelection.collapsed(offset: 0),
       const [],
     );
     await tester.pump(const Duration(milliseconds: 600));
     expect((await drafts.read()).keys, {'new:/tmp/project'});
+  });
+
+  testWidgets('a draft kept by a version before, as the old editor\'s '
+      'operations, comes back as text, its tags tags', (tester) async {
+    final tag = ComposerTokenEmbed.file('/tmp/project/lib/main.dart');
+    final drafts = MemoryPreferenceStore({
+      FakeCatalog.kept.id: {
+        'content': [
+          {'insert': 'see '},
+          {
+            'insert': {tag.type: tag.data},
+          },
+          {
+            'insert': ' now',
+            'attributes': {'header': 2},
+          },
+          {'insert': '\n'},
+        ],
+        // After the tag: one character of the old text.
+        'base': 5,
+        'extent': 5,
+        'images': const [],
+      },
+    });
+    final workspace = await pumpLoaded(tester, drafts: drafts);
+    final draft = workspace.threads
+        .firstWhere((thread) => thread.id == FakeCatalog.kept.id)
+        .session
+        .draft;
+    expect(draft.content, 'see ${tag.atom} now');
+    expect(
+      draft.selection,
+      TextSelection.collapsed(offset: 'see ${tag.atom}'.length),
+    );
+    expect(composerPlainText(draft.content!), 'see ${tag.plainText} now');
   });
 
   testWidgets('an opened folder becomes the first project', (tester) async {
@@ -369,6 +424,39 @@ void main() {
     expect(thread.title, 'Login');
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     expect(renames, ['Login']);
+    thread.session.stop();
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('renamed in Claude Code (/rename), it is named so here too '
+      '(#171)', (tester) async {
+    final renames = <String>[];
+    final workspace = await pumpLoaded(
+      tester,
+      kernel: titledClaude(renames),
+      titler: (_, {model, location}) async => 'Generated',
+    );
+    final thread = workspace.selected;
+    thread.session.send(const ComposerMessage(text: 'Fix the login test'));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(thread.title, 'Generated');
+
+    _Renames.last!.say({
+      'type': 'system',
+      'subtype': 'session_title_changed',
+      'title': 'Login fix',
+    });
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(thread.title, 'Login fix');
+    expect(inSidebar(find.text('Login fix')), findsOneWidget);
+    // Kept as a name given here is; its echo not taken for another.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+    expect(renames, ['Generated', 'Login fix']);
+    expect(thread.title, 'Login fix');
     thread.session.stop();
     await tester.pump(const Duration(seconds: 1));
   });

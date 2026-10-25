@@ -365,6 +365,90 @@ void main() {
     await kernel.stopped;
   });
 
+  test('a subagent on the Haiku tier, set to another upstream\'s model: '
+      'there, with that one\'s key, through the proxy', () async {
+    // The proxy is in this isolate: real sockets, not the test binding's
+    // 400s.
+    final overrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = overrides);
+    final other = await FakeApi.start(
+      script: [Reply.text('nothing here')],
+      errands: (_) => Reply.text('Looking around'),
+    );
+    addTearDown(other.close);
+    await ModelProviders.current.save(
+      ModelProviders.current
+          .provider('up')!
+          .copyWith(roles: const ProviderRoles(haiku: '@other/small')),
+    );
+    await ModelProviders.current.save(
+      ModelProvider(
+        id: 'other',
+        name: 'Other',
+        baseUrl: other.baseUrl,
+        auth: ProviderAuth.apiKey,
+        models: const [ProviderModel(id: 'small')],
+      ),
+    );
+    await ModelProviders.current.setKey('other', 'sk-other');
+    api.model.script.addAll([
+      Reply.tool('Agent', {
+        'description': 'Look around',
+        'prompt': 'List the files',
+        'subagent_type': 'general-purpose',
+        'model': 'haiku',
+      }),
+      Reply.text('it found nothing'),
+    ]);
+    final (:kernel, :transcript, asked: _) = open(
+      KernelContext(cwd: cwd, settings: const {'mode': 'bypassPermissions'}),
+    );
+    kernel.send(
+      const KernelTurn(
+        id: '77777777-7777-4777-8777-777777777777',
+        text: 'look around',
+      ),
+    );
+    await until(() => transcript.lastTurnEndSeq > 0);
+    expect(shown(transcript).last, 'text: it found nothing');
+    // The session's own requests on its upstream, passed through.
+    onTheUpstream();
+    // The subagent's on the other, by that one's own name and key.
+    expect(other.model.requests, isNotEmpty);
+    expect(other.model.requests.map((r) => r.body['model']).toSet(), {'small'});
+    expect(other.headers.map((h) => h['x-api-key']).toSet(), {'sk-other'});
+    kernel.dispose();
+    await kernel.stopped;
+  });
+
+  test('an OpenAI upstream\'s Claude at its Messages API: the session '
+      'there, through the proxy, untranslated', () async {
+    final overrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = overrides);
+    await ModelProviders.current.save(
+      ModelProviders.current
+          .provider('up')!
+          .copyWith(
+            protocol: ProviderProtocol.openaiChat,
+            models: const [
+              ProviderModel(id: _model, protocol: ProviderProtocol.anthropic),
+            ],
+          ),
+    );
+    api.model.script.add(Reply.text('hello from Claude'));
+    final (:kernel, :transcript, asked: _) = open(KernelContext(cwd: cwd));
+    kernel.send(
+      const KernelTurn(id: '88888888-8888-4888-8888-888888888888', text: 'hi'),
+    );
+    await until(() => transcript.lastTurnEndSeq > 0);
+    expect(shown(transcript).last, 'text: hello from Claude');
+    onTheUpstream();
+    kernel.dispose();
+    await kernel.stopped;
+  });
+
   test('no upstream: not started on the machine\'s own setup; says where '
       'to add one; started on the first one added', () async {
     final store = ModelProviders.current = ModelProviders.memory();

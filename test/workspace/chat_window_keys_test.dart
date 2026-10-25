@@ -1,9 +1,9 @@
 // The chat window's keys as keybindings (see keybindings/chat_keybindings.dart):
 // its agents and panes, from anywhere in the window.
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/ide/ide_quick_input.dart';
@@ -90,10 +90,10 @@ bool inputFocused(WidgetTester tester, AgentThread thread) {
   );
   final editor = find.descendant(
     of: screen,
-    matching: find.byType(QuillEditor),
+    matching: find.byType(MarkdownEditor),
   );
   if (editor.evaluate().isEmpty) return false;
-  return tester.widget<QuillEditor>(editor.first).focusNode.hasFocus;
+  return tester.widget<MarkdownEditor>(editor.first).focusNode!.hasFocus;
 }
 
 void main() {

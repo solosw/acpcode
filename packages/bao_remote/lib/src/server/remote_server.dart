@@ -33,7 +33,8 @@ Map<String, Object?> paramsOf(Object? params) => switch (params) {
 /// The server's side of a connection: everything a remote project needs
 /// of this machine, answered over [peer]. Each process it starts (Claude
 /// Code, language servers, terminals, commands) is its own to end: all of
-/// them go with [shutdown], which the connection ending calls.
+/// them go with [shutdown], which the connection ending calls (a session's
+/// connection: see ServerSession).
 class RemoteServer {
   RemoteServer(
     this.peer, {

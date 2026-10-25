@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../ide/explorer_excludes.dart';
-import '../../ide/ide_agent_changes.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_menu.dart';
 import '../../ide/ide_notifications.dart' show IdeSeverity;
@@ -443,18 +442,6 @@ class GeneralSettingsPage extends StatelessWidget {
               children: [
                 SettingsCard(
                   children: [
-                    SettingsSwitchRow(
-                      label: l10n.generalSettingsAutoOpenChanges,
-                      description:
-                          l10n.generalSettingsAutoOpenChangesDescription,
-                      value: IdeAgentChanges.enabledBy(
-                        settings?[IdeAgentChanges.enabledSetting],
-                      ),
-                      onChanged: (on) => _write(
-                        IdeAgentChanges.enabledSetting,
-                        on ? true : null,
-                      ),
-                    ),
                     SettingsRow(
                       label: l10n.explorerExcludeSetting,
                       description: l10n.explorerExcludeSettingDescription,

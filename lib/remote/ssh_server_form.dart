@@ -358,7 +358,14 @@ class _SshServerFormState extends State<SshServerForm> {
             type: MaterialType.transparency,
             child: Container(
               width: width,
-              constraints: BoxConstraints(maxHeight: size.height - 48),
+              // A third of the room it leaves is above it: enough for its
+              // top to stay below the header Windows draws (see
+              // WindowControls.headerInset).
+              constraints: BoxConstraints(
+                maxHeight:
+                    size.height -
+                    math.max(48, (WindowControls.headerInset + 8) / .3),
+              ),
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: colors['editorWidget.background'],

@@ -1,15 +1,16 @@
 import 'dart:ui' as ui;
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer.dart';
+import 'package:baocode/chat/composer/composer_controller.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
 import 'package:baocode/chat/widgets/user_message_bubble.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
@@ -22,7 +23,6 @@ Future<ChatSession> _pump(WidgetTester tester) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       home: ChatScreen(session: session),
     ),
   );
@@ -30,25 +30,25 @@ Future<ChatSession> _pump(WidgetTester tester) async {
   return session;
 }
 
-QuillController _controller(WidgetTester tester) => tester
-    .widget<QuillEditor>(
-      find.descendant(
-        of: find.byType(ChatComposer).last,
-        matching: find.byType(QuillEditor),
-      ),
-    )
-    .controller;
+final _editor = find.descendant(
+  of: find.byType(ChatComposer).last,
+  matching: find.byType(MarkdownEditor),
+);
+
+ComposerController _controller(WidgetTester tester) =>
+    tester.widget<MarkdownEditor>(_editor).controller as ComposerController;
+
+Future<void> _clipboardPaste(WidgetTester tester) =>
+    tester.state<MarkdownEditorState>(_editor).paste();
 
 /// The composer's content, references as `<N>`, tokens as their text.
 String _content(WidgetTester tester) => [
-  for (final op in _controller(tester).document.toDelta().toList())
-    switch (op.data) {
-      {ComposerImageEmbed.type: final data} =>
+  for (final piece in composerPieces(_controller(tester).text))
+    switch (piece) {
+      ComposerEmbed(type: ComposerImageEmbed.type, :final data) =>
         '<${ComposerImageEmbed.decode(data)}>',
-      final Map<dynamic, dynamic> data => ComposerTokenEmbed.plainText(
-        data[ComposerTokenEmbed.type],
-      ),
-      final data => '$data',
+      final ComposerEmbed embed => embed.plainText,
+      final text => '$text',
     },
 ].join().trimRight();
 
@@ -89,8 +89,7 @@ Future<void> _pasteImages(WidgetTester tester, int count) async {
       null,
     ),
   );
-  // ignore: experimental_member_use
-  await tester.runAsync(() => _controller(tester).clipboardPaste());
+  await tester.runAsync(() => _clipboardPaste(tester));
   await tester.pump();
 }
 
@@ -130,11 +129,12 @@ Future<void> _openPreview(WidgetTester tester, Future<void> click) async {
 void _type(WidgetTester tester, String text) {
   final controller = _controller(tester);
   final at = controller.selection.baseOffset;
-  controller.replaceText(
+  controller.replace(
     at,
-    0,
+    at,
     text,
-    TextSelection.collapsed(offset: at + text.length),
+    selection: TextSelection.collapsed(offset: at + text.length),
+    kind: MdEditKind.typing,
   );
 }
 
@@ -159,7 +159,14 @@ void main() {
     // The first reference deleted (as backspace would): its image goes.
     await _apart(tester);
     final controller = _controller(tester);
-    controller.replaceText(2, 1, '', const TextSelection.collapsed(offset: 2));
+    final first = controller.embeds.first;
+    expect(first.start, 2);
+    controller.replace(
+      first.start,
+      first.end,
+      '',
+      selection: const TextSelection.collapsed(offset: 2),
+    );
     await tester.pump();
     expect(_content(tester), '看  <2>');
     expect(_shown(tester), [2]);
@@ -228,8 +235,7 @@ void main() {
         null,
       ),
     );
-    // ignore: experimental_member_use
-    await _controller(tester).clipboardPaste();
+    await _clipboardPaste(tester);
     await tester.pump();
     // Image 9 is not here: its words stay words. Image 1 goes once.
     expect(_content(tester), '<1> 还是 <1> 和 [Image #9]');
@@ -317,7 +323,7 @@ void main() {
     );
     final editor = find.descendant(
       of: find.byType(ChatHistoryView),
-      matching: find.byType(QuillEditor),
+      matching: find.byType(MarkdownEditor),
     );
     await _openPreview(
       tester,

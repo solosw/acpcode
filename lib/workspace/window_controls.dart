@@ -2,12 +2,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:quill_native_bridge/quill_native_bridge.dart';
 
 import '../chat/chat_models.dart';
 import '../chat/composer/composer_files.dart';
 import '../chat/composer/file_drop.dart';
 import '../platform/app_platform.dart';
 import '../platform/event_log.dart';
+import '../theme/app_theme.dart' show AppMetrics;
 
 /// One of the window's own buttons, over a header the app draws itself: the
 /// system hit-tests and acts on those pixels, so the header only paints them
@@ -64,6 +66,13 @@ abstract final class WindowControls {
   /// macOS with its traffic lights over a title bar Flutter paints under
   /// them.
   static bool get drawsHeader => AppPlatform.isWindows;
+
+  /// How far from the window's top what shows over everything (menus,
+  /// popovers, dialogs, quick picks) starts: below the header Windows draws,
+  /// whose strip the window drags itself by (see [setHitTestAreas]), so
+  /// nothing over it could be clicked (#198). In the overlay's own pixels,
+  /// as the header's height: the interface's zoom is outside both.
+  static double get headerInset => drawsHeader ? AppMetrics.headerHeight : 0;
 
   /// Whether the window can be kept on top.
   static bool get canKeepOnTop => isDesktop;
@@ -207,7 +216,10 @@ abstract final class WindowControls {
   /// Keeps the macOS traffic lights level with the title bar Flutter draws
   /// as the interface is zoomed: [drop] (the window's points) below where
   /// the system puts them. Said once a change; 0 is where they start.
-  static Future<void> setTitleBarDrop(double drop, {required int viewId}) async {
+  static Future<void> setTitleBarDrop(
+    double drop, {
+    required int viewId,
+  }) async {
     if (!AppPlatform.isMacOS) return;
     if ((_titleBarDrops[viewId] ?? 0) == drop) return;
     _titleBarDrops[viewId] = drop;
@@ -497,6 +509,24 @@ abstract final class WindowControls {
       }
     }
     return (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+  }
+
+  /// The clipboard's HTML (a web page's, a document's copied), where the
+  /// platform can say.
+  static Future<String?> readPasteboardHtml() async {
+    final bridge = QuillNativeBridge();
+    try {
+      if (!await bridge.isSupported(
+        QuillNativeBridgeFeature.getClipboardHtml,
+      )) {
+        return null;
+      }
+      return await bridge.getClipboardHtml();
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
   }
 
   /// Images on the clipboard, when what it holds is images rather than

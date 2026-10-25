@@ -930,6 +930,8 @@ class RemoteClient {
       return;
     }
     _sockets[conn] = socket;
+    // Reset by the other end: told by listen's onError.
+    unawaited(socket.done.then<void>((_) {}, onError: (Object _) {}));
     for (final data in _pendingData.remove(conn) ?? const <Uint8List>[]) {
       socket.add(data);
     }

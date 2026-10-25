@@ -19,6 +19,7 @@ import '../icons/project_icon_view.dart';
 import '../ide/ide_button.dart' show IdeButtonColors;
 import '../ide/ide_commands.dart' show ideUsesMacKeys;
 import '../ide/ide_hover.dart';
+import '../ide/ide_spinning.dart';
 import '../ide/ide_list.dart';
 import '../l10n/l10n.dart';
 import '../keybindings/chat_keybindings.dart';
@@ -772,12 +773,25 @@ class _SidebarState extends State<Sidebar>
                 onTap: customize,
               ),
             if (widget.onStash case final stash?)
-              _NavRow(
-                icon: Codicons.note,
-                label: context.l10n.stashTitle,
-                selected: widget.stashing,
-                onTap: stash,
-              ),
+              switch (widget.stashes) {
+                final stashes? => ListenableBuilder(
+                  listenable: stashes.changes,
+                  builder: (context, _) => _NavRow(
+                    icon: Codicons.note,
+                    label: context.l10n.stashTitle,
+                    selected: widget.stashing,
+                    badge: stashes.news(),
+                    badgeHover: context.l10n.stashNewsSidebar(stashes.news()),
+                    onTap: stash,
+                  ),
+                ),
+                null => _NavRow(
+                  icon: Codicons.note,
+                  label: context.l10n.stashTitle,
+                  selected: widget.stashing,
+                  onTap: stash,
+                ),
+              },
             if (widget.onSearch != null ||
                 widget.onCustomize != null ||
                 widget.onStash != null)
@@ -2071,11 +2085,18 @@ class _NavRow extends StatelessWidget {
     required this.onTap,
     this.hover,
     this.selected = false,
+    this.badge = 0,
+    this.badgeHover,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+
+  /// How many new things it has, at its end; none when 0. [badgeHover]
+  /// says what they are.
+  final int badge;
+  final String? badgeHover;
 
   /// Its hover's text, e.g. with the keys that do the same; none when null.
   final String? hover;
@@ -2128,6 +2149,7 @@ class _NavRow extends StatelessWidget {
                           style: TextStyle(color: foreground, fontSize: 12.5),
                         ),
                       ),
+                      if (badge > 0) _badge(),
                     ],
                   ),
                 ),
@@ -2137,7 +2159,8 @@ class _NavRow extends StatelessWidget {
         ),
       ),
     );
-    return switch (hover) {
+    final message = [?hover, if (badge > 0) ?badgeHover].join('\n');
+    return switch (message.isEmpty ? null : message) {
       final message? => IdeHover(
         message: message,
         excludeFromSemantics: true,
@@ -2146,6 +2169,28 @@ class _NavRow extends StatelessWidget {
       null => row,
     };
   }
+}
+
+extension on _NavRow {
+  Widget _badge() => Container(
+    constraints: const BoxConstraints(minWidth: 16),
+    height: 16,
+    padding: const EdgeInsets.symmetric(horizontal: 5),
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: AppColors.accent,
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Text(
+      badge > 99 ? '99+' : '$badge',
+      style: TextStyle(
+        color: themeColors.get('badge.foreground') ?? Colors.white,
+        fontSize: 10.5,
+        fontWeight: FontWeight.w600,
+        height: 1,
+      ),
+    ),
+  );
 }
 
 class _GroupHeader extends StatelessWidget {
@@ -3199,6 +3244,7 @@ class SidebarStashes {
     required this.open,
     this.pulls = _none,
     this.openPull,
+    this.news = _noNews,
   });
 
   final Listenable changes;
@@ -3210,7 +3256,12 @@ class SidebarStashes {
   final List<SidebarPull> Function(String session) pulls;
   final ValueChanged<String>? openPull;
 
+  /// How many stashes have news about the user not seen yet: on the
+  /// Stash row.
+  final int Function() news;
+
   static List<SidebarPull> _none(String session) => const [];
+  static int _noNews() => 0;
 }
 
 /// A pull (merge) request a conversation opened, as its row shows it: its
@@ -3396,9 +3447,13 @@ class SidebarIconButton extends StatelessWidget {
     this.size = 24,
     this.command,
     this.keyContext = ChatKeys.chatLayout,
+    this.spinning = false,
   });
 
   final IconData icon;
+
+  /// Its icon turning: what it started still goes on.
+  final bool spinning;
 
   /// What it does: its label, and its hover's text.
   final String tooltip;
@@ -3440,11 +3495,14 @@ class SidebarIconButton extends StatelessWidget {
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(5),
               ),
-              child: Icon(
+              child: switch (Icon(
                 icon,
                 size: size * 0.65,
                 color: hovered ? AppColors.text : AppColors.textMuted,
-              ),
+              )) {
+                final icon when spinning => IdeSpinning(icon),
+                final icon => icon,
+              },
             ),
           ),
         ),

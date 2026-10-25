@@ -16,10 +16,12 @@ import 'code_citation.dart';
 import 'content_image.dart';
 import 'hover_scrollbar.dart';
 import 'inline_code.dart';
+import 'lazy_segment.dart';
 import 'markdown_cjk.dart';
 import 'markdown_math.dart';
 import 'markdown_tags.dart';
 import 'mermaid_code_block.dart';
+import 'will_change_paint.dart';
 
 /// GitHub-flavored markdown as plain widgets (so a surrounding
 /// `SelectionArea` selects and copies it): headings, paragraphs, lists
@@ -54,13 +56,31 @@ class MarkdownView extends StatefulWidget {
   /// read (see the IDE's markdown preview). The chat's has [tags] too: a
   /// block between tags as a section that folds ([TagBlockSyntax]).
   static md.Document document({bool tags = false}) => md.Document(
-    extensionSet: md.ExtensionSet.gitHubFlavored,
+    extensionSet: _extensions,
     blockSyntaxes: [...blockSyntaxes, if (tags) const TagBlockSyntax()],
     inlineSyntaxes: inlineSyntaxes,
     encodeHtml: false,
   );
 
   static final _document = document(tags: true);
+
+  /// GitHub's, but struck through only between `~~`: a single `~` is how
+  /// a range is written (`10-12~10-16`), and two of them on a line would
+  /// strike out what is between.
+  static final _extensions = md.ExtensionSet(
+    md.ExtensionSet.gitHubFlavored.blockSyntaxes,
+    [
+      for (final syntax in md.ExtensionSet.gitHubFlavored.inlineSyntaxes)
+        if (syntax is! md.StrikethroughSyntax) syntax,
+      md.DelimiterSyntax(
+        '~+',
+        requiresDelimiterRun: true,
+        allowIntraWord: true,
+        startCharacter: 0x7E, // ~
+        tags: [md.DelimiterTag('del', 2)],
+      ),
+    ],
+  );
 
   @override
   State<MarkdownView> createState() => _MarkdownViewState();
@@ -73,10 +93,21 @@ class _MarkdownViewState extends State<MarkdownView> {
   Widget? _built;
   Object? _builtFrom;
 
+  /// A long text's segments ([markdownSegments]) as last built: as a reply
+  /// streams in, only its last is parsed and built again, not the hundreds
+  /// of blocks before it with every few words.
+  List<_Segment> _segments = const [];
+  Object? _segmentsFrom;
+
+  /// The message's image files, for a click on one to go through them:
+  /// kept up to date for the segments built before the last came.
+  final List<String> _gallery = [];
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _built = null;
+    _segments = const [];
   }
 
   @override
@@ -93,9 +124,79 @@ class _MarkdownViewState extends State<MarkdownView> {
   }
 
   Widget _build(BuildContext context) {
-    final MarkdownView(:data, :style) = widget;
+    final from = (widget.style, themeColors, WorkbenchThemeScope.restyles);
+    if (from != _segmentsFrom) _segments = const [];
+    _segmentsFrom = from;
+    final old = _segments;
+    final texts = markdownSegmentsGrown(widget.data, [
+      for (final segment in old) segment.text,
+    ]);
+    _segments = [
+      for (final (i, text) in texts.indexed)
+        i < old.length && old[i].text == text
+            ? old[i]
+            : _Segment(text, _parse(text, keep: old.isEmpty)),
+    ];
+    _gallery.clear();
+    final options = MarkdownOptions();
+    final children = <Widget>[];
+    for (final (i, segment) in _segments.indexed) {
+      final first = segment.nodes.where(_shows).firstOrNull;
+      if (first == null) continue;
+      if (children.isNotEmpty) {
+        children.add(SizedBox(height: _gapBefore(first, options)));
+      }
+      final blocks = segment.widget ??= _buildBlocks(context, segment);
+      children.add(
+        _segments.length == 1
+            ? blocks
+            : LazySegment(
+                key: ValueKey(i),
+                text: segment.text,
+                keep: i == _segments.length - 1,
+                child: blocks,
+              ),
+      );
+    }
+    final files = FileOpenScope.maybeOf(context);
+    if (files != null) {
+      for (final segment in _segments) {
+        for (final src in _imageSources(segment.nodes)) {
+          if (markdownImagePath(src, files) case final path?) {
+            _gallery.add(path);
+          }
+        }
+      }
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );
+  }
+
+  /// Segments parsed lately, by their text, the latest last: a message
+  /// scrolled out of the history and back (the minimap scrubbed through
+  /// it, back and forth) is not parsed again. Its nodes are only read.
+  static final Map<String, List<md.Node>> _parsed = {};
+  static const _parsedKept = 160;
+
+  /// [text] parsed, as lately if it was; kept for later if [keep] (not as a
+  /// reply streams in: each would be kept a moment, the others pushed out).
+  static List<md.Node> _parse(String text, {required bool keep}) {
+    if (_parsed.remove(text) case final nodes?) return _parsed[text] = nodes;
+    final nodes = MarkdownView._document.parse(text);
+    if (keep) {
+      _parsed[text] = nodes;
+      if (_parsed.length > _parsedKept) _parsed.remove(_parsed.keys.first);
+    }
+    return nodes;
+  }
+
+  Widget _buildBlocks(BuildContext context, _Segment segment) {
+    final _Segment(text: data, :nodes) = segment;
+    final style = widget.style;
     final baseStyle = MarkdownView.baseStyle;
-    final nodes = MarkdownView._document.parse(data);
     // In a chat whose files open (see FileOpenScope): links to them, and
     // inline code naming one once it is known to be there.
     final files = FileOpenScope.maybeOf(context);
@@ -110,10 +211,7 @@ class _MarkdownViewState extends State<MarkdownView> {
           : FileIcon(path, size: _fileIconSize);
     }
 
-    // The message's image files, for a click on one to go through them.
-    late final gallery = [
-      for (final src in _imageSources(nodes)) ?markdownImagePath(src, files),
-    ];
+    final gallery = _gallery;
     final options = MarkdownOptions(
       link: (href) =>
           _linkRecognizer(href) ?? files.linkRecognizer(href, context: context),
@@ -161,6 +259,156 @@ class _MarkdownViewState extends State<MarkdownView> {
     );
   }
 }
+
+/// [data] cut into segments to parse each on its own, the same blocks as
+/// all of it parsed at once: at a blank line, before a line at its start
+/// that begins a block of its own (not a list's item, which may belong to
+/// the list before), outside code, math, tag sections and HTML comments,
+/// once a segment has [_segmentLength] characters. A line still being
+/// written (the last) is never cut before. Footnotes and link definitions,
+/// which reach across the whole, leave it whole.
+@visibleForTesting
+List<String> markdownSegments(String data) =>
+    _whole(data) ? [data] : _cut(data, 0);
+
+/// [data]'s segments, as [markdownSegments] cuts it, [before] its segments
+/// as last cut: those but the last kept, not cut again, when [data] begins
+/// with them (a reply streaming on); only what follows is cut.
+@visibleForTesting
+List<String> markdownSegmentsGrown(String data, List<String> before) {
+  if (before.length > 1 && !_whole(data)) {
+    var at = 0;
+    var same = true;
+    for (var i = 0; same && i < before.length - 1; i++) {
+      same = data.startsWith(before[i], at);
+      at += before[i].length;
+    }
+    if (same) {
+      return [...before.take(before.length - 1), ..._cut(data, at)];
+    }
+  }
+  return markdownSegments(data);
+}
+
+/// Whether [data] is parsed whole: short, or with what reaches across it.
+bool _whole(String data) =>
+    data.length < 2 * _segmentLength ||
+    data.contains('[^') ||
+    _linkDefinition.hasMatch(data);
+
+/// The segments of [data] from [from], where one begins (or 0).
+List<String> _cut(String data, int from) {
+  final segments = <String>[];
+  var start = from;
+  var at = from;
+  var blankBefore = false;
+  String? fence;
+  String? mathClose;
+  var comment = false;
+  // The tag sections and HTML blocks open, innermost last: by their tag,
+  // and whether it is a section's (closed on a line of its own).
+  final tags = <(String, bool)>[];
+  while (true) {
+    final end = data.indexOf('\n', at);
+    if (end == -1) break;
+    final line = data.substring(at, end);
+    final open = fence == null && mathClose == null && !comment && tags.isEmpty;
+    if (open &&
+        blankBefore &&
+        at - start >= _segmentLength &&
+        _startsOwnBlock(line)) {
+      segments.add(data.substring(start, at));
+      start = at;
+    }
+    if (fence != null) {
+      final closing = _fenceLine.firstMatch(line);
+      if (closing != null &&
+          closing[2] == null &&
+          closing[1]![0] == fence[0] &&
+          closing[1]!.length >= fence.length) {
+        fence = null;
+      }
+    } else if (mathClose != null) {
+      if (line.trimRight().endsWith(mathClose)) mathClose = null;
+    } else if (comment) {
+      if (line.contains('-->')) comment = false;
+    } else if (_fenceLine.firstMatch(line) case final opening?) {
+      fence = opening[1];
+    } else if (_mathOpening.firstMatch(line) case final opening?) {
+      final close = opening[1] == r'$$' ? r'$$' : r'\]';
+      if (!opening[2]!.trimRight().endsWith(close)) mathClose = close;
+    } else if (_tagOpening.firstMatch(line) case final opening?) {
+      final name = opening[1]!.toLowerCase();
+      if (!_voidTags.contains(name)) tags.add((name, true));
+    } else if (_rawHtmlOpening.firstMatch(line) case final opening?) {
+      // HTML's blocks that blank lines do not end, unless closed on it.
+      final name = opening[1]!.toLowerCase();
+      if (!line.toLowerCase().contains('</$name')) tags.add((name, false));
+    } else if (tags.isNotEmpty && _closes(line, tags.last)) {
+      tags.removeLast();
+    } else if (line.lastIndexOf('<!--') > line.lastIndexOf('-->')) {
+      comment = true;
+    }
+    blankBefore = line.trim().isEmpty;
+    at = end + 1;
+  }
+  segments.add(data.substring(start));
+  return segments;
+}
+
+const _segmentLength = 2000;
+
+final _linkDefinition = RegExp(r'^ {0,3}\[[^\]]+\]:', multiLine: true);
+
+/// A fence: its run, and anything after it (none on a closing one).
+final _fenceLine = RegExp(r'^ {0,3}(`{3,}|~{3,})[ \t]*(\S.*)?$');
+final _mathOpening = RegExp(r'^ {0,3}(\$\$|\\\[)(.*)$');
+final _tagOpening = RegExp(r'^ {0,3}<([A-Za-z][\w-]*)(\s[^<>]*)?>\s*$');
+final _tagClosing = RegExp(r'^ {0,3}</([A-Za-z][\w-]*)\s*>\s*$');
+final _rawHtmlOpening = RegExp(
+  r'^ {0,3}<(script|pre|style|textarea)(\s|>|$)',
+  caseSensitive: false,
+);
+const _voidTags = {
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', //
+  'meta', 'source', 'track', 'wbr',
+};
+
+/// Whether [line] closes [open]: a tag section on a line of its own
+/// ([TagBlockSyntax]), an HTML block anywhere in it.
+bool _closes(String line, (String, bool) open) => switch (open) {
+  (final name, true) => _tagClosing.firstMatch(line)?[1]?.toLowerCase() == name,
+  (final name, false) => line.toLowerCase().contains('</$name'),
+};
+final _listItem = RegExp(r'^([-*+]|\d{1,9}[.)])(\s|$)');
+
+bool _startsOwnBlock(String line) =>
+    line.isNotEmpty &&
+    line[0] != ' ' &&
+    line[0] != '\t' &&
+    line[0] != '<' &&
+    !_listItem.hasMatch(line);
+
+class _Segment {
+  _Segment(this.text, this.nodes);
+
+  final String text;
+  final List<md.Node> nodes;
+  Widget? widget;
+}
+
+/// Whether [MarkdownBlocks] shows [node] as a block.
+bool _shows(md.Node node) => switch (node) {
+  md.Text(:final text) => text.trim().isNotEmpty && !isHtmlComment(text),
+  md.Element() => true,
+  _ => false,
+};
+
+/// The space before [node] after another block.
+double _gapBefore(md.Node node, MarkdownOptions options) => switch (node) {
+  md.Element(tag: 'h1' || 'h2' || 'h3') => options.headingGap,
+  _ => options.gap,
+};
 
 /// The `src` of each image in [nodes], in the order they come.
 List<String> _imageSources(List<md.Node> nodes) {
@@ -300,10 +548,7 @@ class MarkdownBlocks extends StatelessWidget {
     );
   }
 
-  double _gap(md.Node node) => switch (node) {
-    md.Element(tag: 'h1' || 'h2' || 'h3') => options.headingGap,
-    _ => options.gap,
-  };
+  double _gap(md.Node node) => _gapBefore(node, options);
 }
 
 Widget? _block(md.Node node, TextStyle style, MarkdownOptions options) {
@@ -616,7 +861,7 @@ class _TableState extends State<_Table> {
           child: SingleChildScrollView(
             controller: _scroll,
             scrollDirection: Axis.horizontal,
-            child: table,
+            child: WillChangePaint(child: table),
           ),
         ),
       ),

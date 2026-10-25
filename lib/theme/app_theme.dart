@@ -165,8 +165,8 @@ abstract final class AppColors {
   static Color get inlineCodeBackground => _colors['textPreformat.background'];
 
   /// Selected text's background: `editor.selectionBackground`, see-through
-  /// (see [seeThroughSelection]), as the composer's editor (flutter_quill)
-  /// paints it over the text rather than under.
+  /// (see [seeThroughSelection]), for editors that may paint it over the
+  /// text rather than under.
   static Color get textSelection => seeThroughSelection(
     _colors['editor.selectionBackground'],
     _colors['editor.background'],

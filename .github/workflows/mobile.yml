@@ -1,13 +1,13 @@
-# Builds the phone app, Android (APK) and iOS (IPA), and puts it on
-# dl.baocode.dev, where baocode.dev/download links to it (/dl/android,
-# /dl/ios). docs/release.md, 10.
+# Builds the phone app: Android (APK), put on dl.baocode.dev, where
+# baocode.dev/download links to it (/dl/android); iOS, uploaded to
+# TestFlight. docs/release.md, 10.
 #
 #   git tag mobile-v0.1.0 && git push origin mobile-v0.1.0
 #                           build and publish 0.1.0 (the version of the
 #                           phone app's pubspec.yaml, on its main branch)
 #   git tag mobile-test-foo && git push origin mobile-test-foo
-#                           build, and put both at dl.baocode.dev/test/…,
-#                           to send to testers
+#                           build, and put the APK at dl.baocode.dev/test/…,
+#                           to send to testers (iOS to TestFlight all the same)
 #
 # The phone app is checked out from baocode-dev/mobile beside this one
 # (its pubspec.yaml takes bao_link and bao_editor from ../monad).
@@ -123,13 +123,26 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
 
+  # iOS goes to TestFlight, not dl.baocode.dev: signed for the App Store
+  # (Apple Distribution certificate, App Store profile) and uploaded, every
+  # tag, mobile-test-* too. Its build number is this workflow's run number,
+  # each upload's own (TestFlight refuses one it has had).
   ios:
-    name: Build for iOS
+    name: Build for iOS, to TestFlight
     needs: check
-    runs-on: macos-15
+    # App Store Connect takes only apps built with the iOS 26 SDK or later
+    # (Xcode 26): macos-15's Xcode 16 builds are refused at upload.
+    runs-on: macos-26
     environment: release
     env:
       MARKETING: ${{ needs.check.outputs.marketing }}
+      IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROFILE: ${{ secrets.IOS_PROFILE }}
+      # The App Store Connect API key macOS is notarised with uploads too.
+      ASC_KEY: ${{ secrets.NOTARY_KEY }}
+      ASC_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+      ASC_ISSUER: ${{ secrets.NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,20 +158,88 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Put the certificate in a keychain, and the profile where Xcode finds it
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          echo "$IOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+
+          profile="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_PROFILE" | base64 --decode > "$profile"
+          uuid=$(security cms -D -i "$profile" | plutil -extract UUID raw -)
+          name=$(security cms -D -i "$profile" | plutil -extract Name raw -)
+          # Older Xcodes look in the first, Xcode 16 and later in the second.
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" \
+                     "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$profile" "$dir/$uuid.mobileprovision"
+          done
+          echo "IOS_PROFILE_NAME=$name" >> "$GITHUB_ENV"
+
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo "$ASC_KEY" > "$HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8"
+      - name: Sign the app manually, for the App Store
+        working-directory: mobile
+        run: |
+          # The project signs automatically (Xcode, a developer's own
+          # account), which needs an account here. Its Runner target alone
+          # takes the profile: the pods' targets cannot.
+          ruby -rxcodeproj -e '
+            project = Xcodeproj::Project.open("ios/Runner.xcodeproj")
+            runner = project.targets.find { |t| t.name == "Runner" }
+            runner.build_configurations.find { |c| c.name == "Release" }.build_settings.merge!(
+              "CODE_SIGN_STYLE" => "Manual",
+              "DEVELOPMENT_TEAM" => "77SLP2NCVR",
+              "CODE_SIGN_IDENTITY" => "Apple Distribution",
+              "CODE_SIGN_IDENTITY[sdk=iphoneos*]" => "Apple Distribution",
+              "PROVISIONING_PROFILE_SPECIFIER" => ENV.fetch("IOS_PROFILE_NAME"),
+            )
+            project.save
+          '
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>77SLP2NCVR</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict><key>dev.baocode.mobile</key><string>$IOS_PROFILE_NAME</string></dict>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
       - name: Build the IPA
         working-directory: mobile
         run: |
-          # Not signed: it is signed as it is installed, with the user's own
-          # Apple ID (AltStore, Sideloadly), as baocode.dev/download says.
-          flutter build ios --release --no-codesign
-          mkdir -p "$RUNNER_TEMP/ipa/Payload" ../out
-          cp -R build/ios/iphoneos/Runner.app "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/out/BaoCode-$MARKETING-ios.ipa" Payload)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios
-          if-no-files-found: error
-          path: out/BaoCode-*-ios.ipa
+          xcodebuild -version
+          flutter build ipa --release --build-number "$GITHUB_RUN_NUMBER" \
+            --export-options-plist "$RUNNER_TEMP/ExportOptions.plist"
+          mkdir -p ../out
+          cp build/ios/ipa/*.ipa "../out/BaoCode-$MARKETING-ios.ipa"
+      - name: Upload to TestFlight
+        run: |
+          xcrun altool --upload-app --type ios --file "out/BaoCode-$MARKETING-ios.ipa" \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER"
+          {
+            echo "## iOS: $MARKETING ($GITHUB_RUN_NUMBER) uploaded to TestFlight"
+            echo
+            echo "Apple processes it for a few minutes before testers see it (App Store Connect → BaoCode → TestFlight)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Forget the certificate and the key
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -rf "$HOME/.appstoreconnect/private_keys"
 
   share:
     name: Put it at dl.baocode.dev/test/ for testers
@@ -182,10 +263,7 @@ jobs:
           merge-multiple: true
       - name: Upload
         run: |
-          # R2 knows an .apk's type but not an .ipa's. A file it is given no
-          # type for is sniffed by the browser, which finds the zip inside
-          # the IPA and saves it as .zip: it has to be renamed back before
-          # Sideloadly will take it.
+          # The APK alone: iOS is in TestFlight.
           content_type() {
             case ${1##*.} in
               apk) echo application/vnd.android.package-archive ;;
@@ -232,8 +310,7 @@ jobs:
           merge-multiple: true
       - name: Upload the builds
         run: |
-          # As in the share job: the type R2 has to be told, or a browser
-          # sniffing the IPA saves it as .zip.
+          # As in the share job: the type R2 has to be told.
           content_type() {
             case ${1##*.} in
               apk) echo application/vnd.android.package-archive ;;
@@ -259,8 +336,7 @@ jobs:
           }
           jq -n --arg version "$VERSION" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson beta "$beta" \
             --argjson android "$(entry dist/BaoCode-$MARKETING-android.apk)" \
-            --argjson ios "$(entry dist/BaoCode-$MARKETING-ios.ipa)" \
-            '{version: $version, pubDate: $date, beta: $beta, downloads: {android: $android, ios: $ios}}' > latest.json
+            '{version: $version, pubDate: $date, beta: $beta, downloads: {android: $android}}' > latest.json
           cat latest.json
           jq -r '.downloads[] | "\(.url) \(.size)"' latest.json | while read -r url expected; do
             served=$(curl -fsSI "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" { print $2 }')

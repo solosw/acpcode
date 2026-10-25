@@ -244,7 +244,7 @@ class AgentSidePanel extends ChangeNotifier {
       return explorer;
     }
     explorer?.dispose();
-    return _explorers[key] = IdeExplorerController(
+    final made = _explorers[key] = IdeExplorerController(
       files: files,
       root: root,
       watch: watch,
@@ -252,6 +252,12 @@ class AgentSidePanel extends ChangeNotifier {
       multiRoot: multiRoot,
       paths: paths ?? p.context,
     );
+    if (_folderAsked case final folder? when made.shows(folder)) {
+      _folderAsked = null;
+      // Made as the page builds: changed after it.
+      scheduleMicrotask(() => _revealFolder(folder));
+    }
+    return made;
   }
 
   /// The files page's text search of each project (by its folder), kept
@@ -473,6 +479,35 @@ class AgentSidePanel extends ChangeNotifier {
     for (final explorer in _explorers.values) {
       if (explorer.shows(path)) unawaited(explorer.reveal(path));
     }
+  }
+
+  /// Shows the folder at [directory] for [conversation] (a folder the
+  /// conversation names): the files page, its tree beside, the folder
+  /// selected and expanded there; once the tree is made if it is not yet.
+  void openFolder(Object conversation, String directory) {
+    _listShown = true;
+    _listAway = false;
+    _changed = true;
+    tabsOf(conversation).section = SidePanelSection.files;
+    if (!_revealFolder(directory)) _folderAsked = directory;
+    _showAsked();
+    onSave?.call();
+  }
+
+  /// A folder asked for before the tree that shows it was made.
+  String? _folderAsked;
+
+  /// Whether a tree shows [directory]: selected and expanded in it.
+  bool _revealFolder(String directory) {
+    var shown = false;
+    for (final explorer in _explorers.values) {
+      if (!explorer.shows(directory)) continue;
+      shown = true;
+      unawaited(
+        explorer.reveal(directory).then((_) => explorer.expand(directory)),
+      );
+    }
+    return shown;
   }
 
   /// Keeps [tab] (a double click on it): the next look opens beside it.

@@ -1,33 +1,32 @@
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  Future<QuillController> pumpComposer(WidgetTester tester) async {
+  Future<MarkdownController> pumpComposer(WidgetTester tester) async {
     final session = ChatSession(historyCount: 0);
     addTearDown(session.dispose);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: Scaffold(
           body: ChatComposer(session: session, draft: session.draft),
         ),
       ),
     );
     await tester.pump();
-    final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
-    editor.focusNode.requestFocus();
+    final editor = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
+    editor.focusNode!.requestFocus();
     await tester.pump();
-    editor.controller.replaceText(
+    editor.controller.replace(
       0,
       0,
       'hello',
-      const TextSelection(baseOffset: 0, extentOffset: 5),
+      selection: const TextSelection(baseOffset: 0, extentOffset: 5),
     );
     await tester.pump();
     return editor.controller;
@@ -63,31 +62,51 @@ void main() {
     ('indent', LogicalKeyboardKey.keyM, false),
   ];
 
-  testWidgets('a style put on the text by other means is not taken', (
-    tester,
-  ) async {
-    final controller = await pumpComposer(tester);
-    controller
-      ..formatSelection(Attribute.h2)
-      ..formatSelection(Attribute.bold)
-      ..formatText(0, 0, Attribute.italic);
-    await tester.pump();
-    final ops = controller.document.toDelta().toList();
-    expect(ops.where((op) => op.attributes != null), isEmpty);
-  });
-
-  // Quill reads the platform once, for all its shortcuts: macOS's (⌘).
+  // A rich text editor's shortcuts for these: nothing here.
   for (final (name, key, shift) in shortcuts) {
     testWidgets(
-      'Quill\'s $name shortcut leaves the text plain',
+      'the $name shortcut leaves the text as it is',
       (tester) async {
         final controller = await pumpComposer(tester);
         await press(tester, key, shift: shift);
-        final ops = controller.document.toDelta().toList();
-        expect(ops.where((op) => op.attributes != null), isEmpty);
-        expect(controller.document.toPlainText(), 'hello\n');
+        expect(controller.text, 'hello');
       },
       variant: TargetPlatformVariant.only(TargetPlatform.macOS),
     );
   }
+
+  testWidgets('markdown typed is the text, not what it would make', (
+    tester,
+  ) async {
+    final controller = await pumpComposer(tester);
+    for (final text in ['# Title', '- [ ] task', '**bold**', '> quote']) {
+      controller.replace(0, controller.length, text);
+      await tester.pump();
+      // Every line a line of text, no runs of markdown in it.
+      expect(controller.infoOf(0).kind, MdLineKind.paragraph);
+      expect(controller.inlinesOf(0), isEmpty);
+      // Nothing of it hidden: shown as it is written.
+      final shown = tester
+          .widgetList<RichText>(
+            find.descendant(
+              of: find.byType(MdLineBox),
+              matching: find.byType(RichText),
+            ),
+          )
+          .first
+          .text
+          .toPlainText();
+      expect(shown, text);
+    }
+    // `[] ` typed at a line's start stays as typed, not a task's box.
+    controller.replace(0, controller.length, '[]');
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: '[] ',
+        selection: TextSelection.collapsed(offset: 3),
+      ),
+    );
+    await tester.pump();
+    expect(controller.text, '[] ');
+  });
 }

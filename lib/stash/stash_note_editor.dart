@@ -1,11 +1,10 @@
 import 'dart:async';
 
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter/widgets.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 
 import 'stash_ai.dart';
 import 'stash_editor.dart';
-import 'stash_markdown.dart';
 import 'stash_store.dart';
 
 /// One stash's text in a [StashEditor], written to its file as it is
@@ -53,9 +52,11 @@ class StashNoteEditor extends StatefulWidget {
 
 class StashNoteEditorState extends State<StashNoteEditor> {
   final GlobalKey<StashEditorState> _editorKey = GlobalKey();
-  late QuillController _controller;
-  StreamSubscription<DocChange>? _changes;
+  late MarkdownController _controller;
   Timer? _debounce;
+
+  /// The text's as last seen: a change of only the selection is none.
+  int _version = 0;
 
   /// The stash, once it is one.
   int? _id;
@@ -93,7 +94,7 @@ class StashNoteEditorState extends State<StashNoteEditor> {
     if (widget.id != oldWidget.id ||
         widget.generation != oldWidget.generation) {
       unawaited(flush());
-      _changes?.cancel();
+      _controller.removeListener(_changed);
       _controller.dispose();
       _load();
     }
@@ -104,7 +105,7 @@ class StashNoteEditorState extends State<StashNoteEditor> {
     _live.remove(this);
     unawaited(flush());
     widget.store.removeListener(_storeChanged);
-    _changes?.cancel();
+    _controller.removeListener(_changed);
     _controller.dispose();
     super.dispose();
   }
@@ -114,19 +115,17 @@ class StashNoteEditorState extends State<StashNoteEditor> {
     final note = _id == null ? null : widget.store.byId(_id!);
     final body = note?.body ?? '';
     _saved = body;
-    _controller = StashEditor.controllerFor(stashDocument(body));
-    _changes = _controller.document.changes.listen((_) => _changed());
-    final end = _controller.document.length - 1;
-    _controller.updateSelection(
-      TextSelection.collapsed(offset: end < 0 ? 0 : end),
-      ChangeSource.local,
-    );
+    _controller = StashEditor.controllerFor(body);
+    _version = _controller.textVersion;
+    _controller.addListener(_changed);
   }
 
-  /// The text as markdown.
-  String get markdown => stashDeltaToMarkdown(_controller.document.toDelta());
+  /// The text, its markdown as the file has it.
+  String get markdown => _controller.text;
 
   void _changed() {
+    if (_controller.textVersion == _version) return;
+    _version = _controller.textVersion;
     _debounce?.cancel();
     _debounce = Timer(
       const Duration(milliseconds: 400),
@@ -179,17 +178,12 @@ class StashNoteEditorState extends State<StashNoteEditor> {
     }
     final selection = _controller.selection;
     _saved = note.body;
-    _changes?.cancel();
-    _controller.dispose();
-    setState(() {
-      _controller = StashEditor.controllerFor(stashDocument(note.body));
-      _changes = _controller.document.changes.listen((_) => _changed());
-      final length = _controller.document.length - 1;
-      _controller.updateSelection(
-        TextSelection.collapsed(offset: selection.baseOffset.clamp(0, length)),
-        ChangeSource.local,
-      );
-    });
+    _controller.text = note.body;
+    // Read, not typed: nothing to write back.
+    _version = _controller.textVersion;
+    _controller.selection = TextSelection.collapsed(
+      offset: selection.baseOffset.clamp(0, _controller.length),
+    );
   }
 
   void focusEnd() => _editorKey.currentState?.focusEnd();

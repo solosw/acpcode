@@ -25,9 +25,8 @@ import 'package:baocode/theme/material_file_icons.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart'
-    show FlutterQuillLocalizations;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/icons/brand_logos.dart' show BaoCodeLogo;
 import 'package:baocode/workspace/pin_window_button.dart';
 import 'package:baocode/workspace/workspace.dart';
 
@@ -191,10 +190,7 @@ void main() {
         answer.future;
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashPanelView(controller: controller, viewId: 0),
         ),
@@ -259,10 +255,7 @@ void main() {
     controller.showAll = true;
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashPanelView(controller: controller, viewId: 0),
         ),
@@ -289,7 +282,10 @@ void main() {
     expect(inBar(find.text(l10n.stashAll)), findsNothing);
     expect(inBar(find.text(l10n.stashExpand)), findsNothing);
     expect(inBar(find.byIcon(Codicons.sparkle)), findsOneWidget);
-    expect(inBar(find.text('#${note.id}')), findsOneWidget);
+    // Implement in BaoCode stays, its icon at least: the stash's number
+    // gives way before it.
+    expect(inBar(find.byType(BaoCodeLogo)), findsOneWidget);
+    expect(inBar(find.text('#${note.id}')), findsNothing);
 
     // Wide, their words again.
     tester.view.physicalSize = const Size(1200, 600);
@@ -298,6 +294,7 @@ void main() {
     expect(inBar(find.text(l10n.stashNewButton)), findsOneWidget);
     expect(inBar(find.text(l10n.stashExpand)), findsOneWidget);
     expect(inBar(find.text(l10n.stashNoProject)), findsOneWidget);
+    expect(inBar(find.text(l10n.stashImplementShort)), findsOneWidget);
     expect(tester.getRect(close).right, 1200 - 8);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 3));
@@ -318,10 +315,7 @@ void main() {
     });
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashPanelView(controller: controller, viewId: 7),
         ),
@@ -354,10 +348,7 @@ void main() {
     controller.showAll = true;
     await tester.pumpWidget(
       MaterialApp(
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          FlutterQuillLocalizations.delegate,
-        ],
+        localizationsDelegates: const [AppLocalizations.delegate],
         home: Material(
           child: StashPanelView(controller: controller, viewId: 0),
         ),

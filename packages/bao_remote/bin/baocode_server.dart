@@ -1,6 +1,15 @@
-// The server of a remote project: started over SSH by the app, it answers
-// JSON-RPC on stdin and stdout (see RemoteProtocol), logs on stderr, and
-// ends, with every process it started, when the connection does.
+// The server of a remote project, started over SSH by the app:
+//
+//   baocode-server [--data <dir>]
+//       answers JSON-RPC on stdin and stdout (see RemoteProtocol), logs on
+//       stderr, and ends, with every process it started, when the
+//       connection does.
+//   baocode-server --session <id> [--resume] [--grace <s>] [--data <dir>]
+//       the same over a session that outlives the connection (see
+//       ServerSession): a bridge to the session's daemon, started first
+//       unless resuming one.
+//   baocode-server --daemon <id> …
+//       that daemon, out of the SSH session.
 
 import 'dart:async';
 import 'dart:convert';
@@ -28,17 +37,50 @@ Future<void> main(List<String> arguments) async {
     );
   }
   final home = Platform.environment['HOME'] ?? Directory.current.path;
-  final dataDir = arguments.length >= 2 && arguments.first == '--data'
-      ? arguments[1]
+  final at = arguments.indexOf('--data');
+  final dataDir = at >= 0 && at + 1 < arguments.length
+      ? arguments[at + 1]
       : '$home/.baocode-server/data';
   Directory(dataDir).createSync(recursive: true);
   // A key Claude Code is given stays in memory where there is a place for
-  // it, not on disk.
-  final runtime = Platform.environment['XDG_RUNTIME_DIR'];
+  // it, not on disk. A session's daemon outlives the login, whose
+  // XDG_RUNTIME_DIR systemd removes as the last connection goes: /dev/shm.
+  final runtime = arguments.contains('--daemon')
+      ? '/dev/shm'
+      : Platform.environment['XDG_RUNTIME_DIR'];
   if (runtime != null &&
       runtime.isNotEmpty &&
       Directory(runtime).existsSync()) {
     ClaudeSettingsFile.parent = Directory(runtime);
+  }
+  if (ServerSession.fromArguments(arguments, home) case final session?) {
+    if (arguments.contains('--daemon')) {
+      final log = File(session.logPath).openWrite(mode: FileMode.append);
+      final clean = await session.runDaemon(
+        serve: (peer) => RemoteServer(
+          peer,
+          dataDir: dataDir,
+          version: _version,
+          log: (message) => log.writeln('${DateTime.now()} $message'),
+        ),
+        log: (message) => log.writeln('${DateTime.now()} $message'),
+      );
+      await log.close();
+      if (clean) {
+        try {
+          await File(session.logPath).delete();
+        } on FileSystemException {
+          // Gone already.
+        }
+      }
+      exit(0);
+    }
+    exit(
+      await session.runBridge(
+        resume: arguments.contains('--resume'),
+        daemon: () => session.startDaemon(['--data', dataDir]),
+      ),
+    );
   }
   void log(String message) => stderr.writeln('baocode-server: $message');
 

@@ -31,7 +31,8 @@ enum SshHostState {
   connecting,
   connected,
 
-  /// Lost, and being made again (see [SshHost.retryAt]).
+  /// Lost, and being made again (see [SshHost.retryAt]): the session
+  /// there kept meanwhile (what is asked waits), unless it is gone too.
   reconnecting,
 
   /// Could not be made: [SshHost.error] says why. Retried only when asked
@@ -48,9 +49,10 @@ typedef SshConnector = Future<SshConnection> Function(
 });
 
 /// A host reached over SSH, and its projects' services ([ProjectHost]).
-/// The connection is made when first asked for, shared by all that host's
-/// projects, and made again (after 1, 2, 4… seconds, up to a minute) when
-/// it is lost.
+/// The connection is made when first asked for, and shared by all that
+/// host's projects. Lost, it is made again to the same session there
+/// (see [SshConnection]): what ran goes on. A session gone, a new one is
+/// made (after 1, 2, 4… seconds, up to a minute), and [reconnected] says so.
 class SshHost extends ChangeNotifier implements ProjectHost {
   SshHost(this.host, {required this._connect, this.maxBackoff = _max});
 
@@ -114,6 +116,7 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   DateTime? _retryAt;
 
   SshConnection? _connection;
+  StreamSubscription<void>? _changes;
   Future<RemoteClient>? _connecting;
   Timer? _retry;
   int _failures = 0;
@@ -126,9 +129,13 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   final StreamController<RemoteClient> _reconnected =
       StreamController.broadcast();
 
-  /// The connection's client while connected.
-  RemoteClient? get client =>
-      _state == SshHostState.connected ? _connection?.client : null;
+  /// The session's client while there is one: connected, or being
+  /// connected again to it (what is asked then waits).
+  RemoteClient? get client => switch (_connection) {
+    final connection? when !connection.client.peer.isClosed =>
+      connection.client,
+    _ => null,
+  };
 
   /// What the server said of itself, once connected.
   RemoteHello? get hello => _connection?.hello;
@@ -150,6 +157,9 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   /// (again, without trying, after a failure trying would not help: see
   /// [SshHostState.failed]).
   Future<RemoteClient> get ready {
+    if (_connection case final connection? when connection.stalled) {
+      return Future.error(connection.lastError ?? StateError('$host: lost'));
+    }
     if (client case final client?) return Future.value(client);
     if (_connecting case final connecting?) return connecting;
     if (_state == SshHostState.failed && _permanent) {
@@ -164,21 +174,22 @@ class SshHost extends ChangeNotifier implements ProjectHost {
     _retry = null;
     _closed = false;
     _permanent = false;
+    if (_connection case final connection?
+        when !connection.client.peer.isClosed) {
+      return connection.retryNow().then((_) => connection.client);
+    }
     return ready;
   }
+
+  /// Attempts at a first connection, when the network is what failed it.
+  static const _firstAttempts = 3;
 
   Future<RemoteClient> _attempt() async {
     final wasLost = _connection != null || _state == SshHostState.reconnecting;
     _set(wasLost ? SshHostState.reconnecting : SshHostState.connecting);
     _retryAt = null;
     try {
-      final connection = await _connect(
-        SshTarget.parse(host),
-        onProgress: (message) {
-          _progress = message;
-          notifyListeners();
-        },
-      );
+      final connection = await _connectPatiently(wasLost);
       if (_closed) {
         unawaited(connection.close());
         throw const SshConnectException(SshFailure.server, 'Closed');
@@ -189,6 +200,8 @@ class SshHost extends ChangeNotifier implements ProjectHost {
       _error = null;
       _progress = null;
       _set(SshHostState.connected);
+      unawaited(_changes?.cancel());
+      _changes = connection.changes.listen((_) => _linkChanged(connection));
       unawaited(connection.done.then((_) => _lost(connection)));
       if (wasLost) _reconnected.add(connection.client);
       return connection.client;
@@ -216,6 +229,57 @@ class SshHost extends ChangeNotifier implements ProjectHost {
       rethrow;
     } finally {
       _connecting = null;
+    }
+  }
+
+  /// A first connection made again after a failure of the network's
+  /// (a weak one's): up to [_firstAttempts], 1 and 2 seconds apart.
+  Future<SshConnection> _connectPatiently(bool wasLost) async {
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _connect(
+          SshTarget.parse(host),
+          onProgress: (message) {
+            _progress = message;
+            notifyListeners();
+          },
+        );
+      } on SshConnectException catch (error) {
+        if (wasLost ||
+            _closed ||
+            attempt >= _firstAttempts ||
+            error.failure != SshFailure.unreachable) {
+          rethrow;
+        }
+        _progress = null;
+        _error = error;
+        notifyListeners();
+        await Future<void>.delayed(Duration(seconds: attempt));
+        if (_closed) rethrow;
+      }
+    }
+  }
+
+  /// The connection lost, made again, or stalled (see
+  /// [SshConnection.stalled]), its session kept all along.
+  void _linkChanged(SshConnection connection) {
+    if (!identical(connection, _connection) ||
+        _closed ||
+        connection.client.peer.isClosed) {
+      return;
+    }
+    if (connection.linked) {
+      _error = null;
+      _retryAt = null;
+      _set(SshHostState.connected);
+    } else if (connection.stalled) {
+      _error = connection.lastError;
+      _retryAt = null;
+      _set(SshHostState.failed);
+    } else {
+      _error = connection.lastError ?? _error;
+      _retryAt = connection.retryAt;
+      _set(SshHostState.reconnecting);
     }
   }
 
@@ -253,6 +317,8 @@ class SshHost extends ChangeNotifier implements ProjectHost {
     _retry = null;
     final connection = _connection;
     _connection = null;
+    unawaited(_changes?.cancel());
+    _changes = null;
     _set(SshHostState.idle);
     await connection?.close();
   }

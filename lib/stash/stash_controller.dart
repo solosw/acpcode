@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_quill/flutter_quill.dart' show ChangeSource;
 import 'package:path/path.dart' as p;
 
 import '../forge/forge_accounts.dart';
@@ -18,7 +17,6 @@ import 'stash_ai.dart';
 import 'stash_editor.dart' show StashRefs, stashTextPart, stashTextRewrite;
 import 'stash_host.dart';
 import 'stash_io_stub.dart' if (dart.library.io) 'stash_io.dart' as io;
-import 'stash_markdown.dart';
 import 'stash_note.dart';
 import 'stash_note_editor.dart';
 import 'stash_settings.dart';
@@ -141,6 +139,7 @@ class StashController extends ChangeNotifier {
     host.onPressed = pressed;
     windows?.stashCloseRequested = () => unawaited(hide());
     settingsChanges?.addListener(_settingsChanged);
+    _issueSync = settings.issueSync;
     store.addListener(_storeChanged);
     await store.load();
     threads.start();
@@ -169,7 +168,16 @@ class StashController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _settingsChanged() => unawaited(_takeHotkey());
+  StashIssueSync? _issueSync;
+
+  void _settingsChanged() {
+    unawaited(_takeHotkey());
+    final issueSync = settings.issueSync;
+    if (_issueSync != null && issueSync != _issueSync) {
+      unawaited(forge?.sync());
+    }
+    _issueSync = issueSync;
+  }
 
   /// Lets the shortcut go while a new one is recorded: pressed, it would
   /// show the panel rather than reach the recorder. [resumeHotkey] takes
@@ -462,7 +470,7 @@ class StashController extends ChangeNotifier {
     if (note == null) return;
     final asked = switch (StashNoteEditorState.showing(id)?.editor) {
       final editor? => editor.textPart,
-      null => stashTextPart(stashDocument(note.body), store.absolute),
+      null => stashTextPart(note.body, store.absolute),
     };
     if (asked == null) return;
     final cancellation = StashClarifyCancellation();
@@ -513,11 +521,8 @@ class StashController extends ChangeNotifier {
     }
     final note = store.byId(id);
     if (note == null) return false;
-    final document = stashDocument(note.body);
-    final rewritten = stashTextRewrite(document, asked, reply, store.absolute);
-    if (rewritten == null) return false;
-    document.compose(rewritten.change, ChangeSource.local);
-    final body = stashDeltaToMarkdown(document.toDelta());
+    final body = stashTextRewrite(note.body, asked, reply, store.absolute);
+    if (body == null) return false;
     await store.update(id, (note) => note.body = body);
     return true;
   }
@@ -537,9 +542,20 @@ class StashController extends ChangeNotifier {
       store: store,
       workspace: workspace,
       accounts: accounts,
+      issueSync: () => settings.issueSync,
     ),
     null => null,
   };
+
+  /// Whether [note] is about [project]: its own, or (a workspace) about
+  /// one of its folders, as the issues of a folder that is a project of
+  /// its own are.
+  bool isAbout(StashNote note, String project) {
+    final own = note.project;
+    if (own == null) return false;
+    if (own == project) return true;
+    return workspace.workspaceAt(project)?.folders.contains(own) ?? false;
+  }
 
   /// What `[[`, `@` and `#` offer in a stash's text, links followed by
   /// [open].
@@ -673,11 +689,12 @@ class StashController extends ChangeNotifier {
 
   // Merges, suggested as the stash's page opens (once an hour at most).
 
-  /// Groups of stashes about the same thing, to merge.
+  /// Groups of stashes about the same thing, to merge: still two or more
+  /// (merged, their numbers lead to the one they are in).
   List<List<int>> get mergeSuggestions => [
     for (final group in _merges)
       if (!_dismissedMerges.contains(group.join(',')) &&
-          group.every((id) => store.byId(id) != null))
+          group.every((id) => store.byId(id)?.id == id))
         group,
   ];
   List<List<int>> _merges = const [];

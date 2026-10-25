@@ -102,14 +102,12 @@ TextSpan _messageSpan(
   List<ImageAttachment> images,
 ) {
   final byNumber = {for (final image in images) ?image.number: image};
-  final ops = composerDeltaFromText(
-    text,
-    vocabulary,
-    images: byNumber.keys.toSet(),
+  final pieces = composerPieces(
+    composerContentFromText(text, vocabulary, images: byNumber.keys.toSet()),
   ).toList();
   final tagged = {
-    for (final op in ops)
-      if (op.data case {ComposerImageEmbed.type: final data})
+    for (final piece in pieces)
+      if (piece case ComposerEmbed(type: ComposerImageEmbed.type, :final data))
         ComposerImageEmbed.decode(data),
   };
   // Numbered as they would be in the text; one sent before images were
@@ -121,33 +119,23 @@ TextSpan _messageSpan(
   return TextSpan(
     style: _messageStyle,
     children: [
-      for (final (i, op) in ops.indexed)
-        switch (op.data) {
-          // The document's closing newline is not part of the message.
-          final String data when i == ops.length - 1 => inlineCodeSpan(
-            data.substring(0, data.length - 1),
-            _messageStyle,
-          ),
+      for (final piece in pieces)
+        switch (piece) {
           final String data => inlineCodeSpan(data, _messageStyle),
-          {ComposerImageEmbed.type: final data} => ComposerImageChip.span(
-            ComposerImageEmbed.decode(data),
-            byNumber[ComposerImageEmbed.decode(data)],
-            _messageStyle,
-          ),
-          {ComposerCodeEmbed.type: final data} => ComposerCodeChip.span(
-            data,
-            _messageStyle,
-          ),
-          {ComposerPastedTextEmbed.type: final data} =>
+          ComposerEmbed(type: ComposerImageEmbed.type, :final data) =>
+            ComposerImageChip.span(
+              ComposerImageEmbed.decode(data),
+              byNumber[ComposerImageEmbed.decode(data)],
+              _messageStyle,
+            ),
+          ComposerEmbed(type: ComposerCodeEmbed.type, :final data) =>
+            ComposerCodeChip.span(data, _messageStyle),
+          ComposerEmbed(type: ComposerPastedTextEmbed.type, :final data) =>
             ComposerPastedTextChip.span(data, _messageStyle),
-          {ComposerStashEmbed.type: final data} => ComposerStashChip.span(
-            data,
-            _messageStyle,
-          ),
-          final Map<dynamic, dynamic> data => ComposerTokenChip.span(
-            data[ComposerTokenEmbed.type],
-            _messageStyle,
-          ),
+          ComposerEmbed(type: ComposerStashEmbed.type, :final data) =>
+            ComposerStashChip.span(data, _messageStyle),
+          ComposerEmbed(type: ComposerTokenEmbed.type, :final data) =>
+            ComposerTokenChip.span(data, _messageStyle),
           _ => const TextSpan(),
         },
       for (final (i, (number, image)) in untagged.indexed) ...[
@@ -266,6 +254,57 @@ class _UserMessageBubbleState extends State<UserMessageBubble> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A sent message as its bubble shows it, cut to [maxLines] and nothing in
+/// it to press: a glimpse of it elsewhere (the conversation's minimap). As
+/// wide as its text at the right, or as the room, as
+/// [UserMessageStyle.current] lays the bubbles out.
+class UserMessagePreview extends StatelessWidget {
+  const UserMessagePreview({
+    super.key,
+    required this.text,
+    this.images = const [],
+    this.maxLines = 4,
+  });
+
+  final String text;
+  final List<ImageAttachment> images;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    final fitted = UserMessageStyle.current.value == UserMessageStyle.bubble;
+    final bubble = Container(
+      constraints: fitted
+          ? const BoxConstraints()
+          : const BoxConstraints.tightFor(width: double.infinity),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+      decoration: fitted
+          ? ShapeDecoration(
+              color: AppColors.bubbleFill,
+              shape: _MessageShape(
+                side: BorderSide(color: AppColors.bubbleBorder()),
+              ),
+            )
+          : BoxDecoration(
+              color: AppColors.bubbleFill,
+              borderRadius: BorderRadius.circular(UserMessageBubble.radius),
+              border: Border.all(color: AppColors.bubbleBorder()),
+            ),
+      child: InlineCodeText(
+        _messageSpan(text, ComposerVocabulary.of(context), images),
+        maxLines: maxLines,
+      ),
+    );
+    return Align(
+      alignment: Alignment.centerRight,
+      child: _WidthFactor(
+        maxWidthFactor: fitted ? _UserMessageBubbleState._fittedWidth : 1,
+        child: bubble,
       ),
     );
   }

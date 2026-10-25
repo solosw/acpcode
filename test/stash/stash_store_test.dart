@@ -133,6 +133,24 @@ void main() {
       expect(again.byId(2)?.id, 1);
     });
 
+    test('merged, the issues each was are kept with it', () async {
+      const one = 'https://github.com/o/r/issues/1';
+      const two = 'https://github.com/o/r/issues/2';
+      final a = await store.create(body: 'Uploads fail');
+      final b = await store.create(body: 'Uploads time out');
+      await store.update(a.id, (note) {
+        note.issue = one;
+        note.issues.add(StashIssueLink(url: one));
+      });
+      await store.update(b.id, (note) {
+        note.issue = two;
+        note.issues.add(StashIssueLink(url: two));
+      });
+      final merged = (await store.merge([a.id, b.id]))!;
+      expect(merged.issue, one);
+      expect([for (final link in merged.issues) link.url], [one, two]);
+    });
+
     test('copies small files, links big ones', () async {
       final a = await store.create();
       disk.sizes['/tmp/small.pdf'] = 10;

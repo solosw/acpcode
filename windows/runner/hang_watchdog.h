@@ -12,6 +12,13 @@
 // the symbols are known) and a minidump beside it. A hang, told apart from
 // a slow close, and where it is.
 //
+// The Dart code's frames are app.so+offset: the release's symbols (CI's
+// symbols-windows artifact, see tool/build_windows.dart) name them, as
+// `llvm-symbolizer --obj=app.windows-x64.symbols 0x<offset>`. The other
+// lines between them are what the walk, without the Dart code's unwind
+// information, took for frames. The event log (lib/diagnostics/
+// frame_watch.dart) has the slow frames before the hang and its own.
+//
 // The folder is made as the app starts: there, it tells that the copy that
 // ran watched itself.
 namespace hang_watchdog {

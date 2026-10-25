@@ -60,6 +60,15 @@
 	     Mac mini while hovering the chat); the Skia renderer does not. -->
 	<key>FLTEnableImpeller</key>
 	<false/>
+	<!-- malloc keeps freed large blocks (a long text's paragraphs, a few
+	     MB each) for reuse, counted as the app's: 180MB of them while a long
+	     thought streams. Without that cache memory goes back as freed, for
+	     some 5% more time building such frames (tool/perf). -->
+	<key>LSEnvironment</key>
+	<dict>
+		<key>MallocLargeCache</key>
+		<string>0</string>
+	</dict>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<!-- Programs the app runs (an agent's commands, the terminal) count as

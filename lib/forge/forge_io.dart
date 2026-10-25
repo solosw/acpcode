@@ -21,6 +21,7 @@ class IoForgeHttp implements ForgeHttp {
     Map<String, String> headers = const {},
     Object? json,
     Map<String, String>? form,
+    List<int>? bytes,
   }) async {
     try {
       final request = await _client.openUrl(method, url);
@@ -35,9 +36,13 @@ class IoForgeHttp implements ForgeHttp {
       } else if (json != null) {
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(json));
+      } else if (bytes != null) {
+        request.contentLength = bytes.length;
+        request.add(bytes);
       }
+      // A picture uploaded may take its time.
       final response = await request.close().timeout(
-        const Duration(seconds: 30),
+        Duration(seconds: bytes == null ? 30 : 120),
       );
       final body = await response
           .transform(const Utf8Decoder(allowMalformed: true))

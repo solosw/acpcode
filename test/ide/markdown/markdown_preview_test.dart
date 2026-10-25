@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/ide/markdown/markdown_preview.dart';
+import 'package:baocode/ide/markdown/markdown_task_box.dart';
 import 'package:baocode/theme/app_theme.dart';
+import 'package:baocode/theme/codicons.dart';
 import 'package:baocode/theme/ui_zoom.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -38,7 +41,7 @@ const _path = '/project/docs/guide.md';
 class FakeHost {
   final reads = <String>[];
   final opened = <(String, String?)>[];
-  final edited = <(int, int)>[];
+  final revealed = <String>[];
   var edits = 0;
 
   Future<Uint8List> read(String path) async {
@@ -69,7 +72,7 @@ Future<FakeHost> pumpPreview(
           readBytes: host.read,
           onEdited: () => host.edits++,
           onOpenFile: (path, fragment) => host.opened.add((path, fragment)),
-          onEdit: (line, column) => host.edited.add((line, column)),
+          onReveal: host.revealed.add,
         ),
       ),
     ),
@@ -84,23 +87,28 @@ Future<FakeHost> pumpPreview(
   return host;
 }
 
-Finder _text(String text) => find.text(text, findRichText: true);
+/// The line shown as [text] (its marks hidden).
+Finder _text(String text) => find.byWidgetPredicate(
+  (widget) =>
+      widget is RichText &&
+      widget.text
+              .toPlainText(includeSemanticsLabels: false)
+              .replaceAll('\u200B', '') ==
+          text,
+);
 
 IdeMarkdownPreviewState _state(WidgetTester tester) =>
     tester.state(find.byType(IdeMarkdownPreview));
 
-/// Double clicks the [index]th character of [text] in the text shown as
-/// [within] ([text] by default).
-Future<void> _doubleClick(
-  WidgetTester tester,
-  String text, {
-  String? within,
-  int index = 0,
-}) async {
-  final paragraph = tester.renderObject<RenderParagraph>(
-    find.text(within ?? text, findRichText: true).first,
-  );
-  final start = paragraph.text.toPlainText().indexOf(text) + index;
+MarkdownController _controller(WidgetTester tester) =>
+    tester.state<MarkdownEditorState>(find.byType(MarkdownEditor)).controller;
+
+/// Where [index] of [text] is, in the line shown as [within].
+Offset _at(WidgetTester tester, String text, {String? within, int index = 0}) {
+  final paragraph = tester.renderObject<RenderParagraph>(_text(within ?? text));
+  final start =
+      paragraph.text.toPlainText(includeSemanticsLabels: false).indexOf(text) +
+      index;
   final box = paragraph
       .getBoxesForSelection(
         TextSelection(baseOffset: start, extentOffset: start + 1),
@@ -108,11 +116,7 @@ Future<void> _doubleClick(
       .first
       .toRect();
   // Just after its left edge: the caret goes before it.
-  final at = paragraph.localToGlobal(box.centerLeft + const Offset(1, 0));
-  await tester.tapAt(at);
-  await tester.pump(const Duration(milliseconds: 50));
-  await tester.tapAt(at);
-  await tester.pumpAndSettle();
+  return paragraph.localToGlobal(box.centerLeft + const Offset(1, 0));
 }
 
 void main() {
@@ -133,55 +137,38 @@ void main() {
     }
   });
 
-  testWidgets('a double click opens the source at the text clicked', (
-    tester,
-  ) async {
+  testWidgets('a click puts the caret at the text clicked: where the '
+      'source opens', (tester) async {
     const text =
         '# Guide\r\n\r\nSome **bold** and `code`, then bold.\r\n\r\n'
         '- one\r\n- two words\r\n';
     final model = EditorDocumentModel(text);
     final host = await pumpPreview(tester, model);
-    // Inline code is shown with room around it.
-    const paragraph = 'Some bold and  code , then bold.';
+    final state = _state(tester);
+    // Nowhere yet: the source opens where it was.
+    expect(state.caret, isNull);
 
-    await _doubleClick(tester, 'bold', within: paragraph);
-    // `bold` is the 8th column: after `Some **`.
-    expect(host.edited, [(3, 8)]);
-    await _doubleClick(tester, 'code', within: paragraph, index: 2);
-    expect(host.edited.last, (3, 22));
+    await tester.tapAt(_at(tester, 'words', within: 'two words'));
+    await tester.pumpAndSettle();
+    expect(state.caret, (line: 6, column: 7));
+    await tester.tapAt(_at(tester, 'Guide'));
+    await tester.pumpAndSettle();
+    expect(state.caret, (line: 1, column: 3));
     // The second `bold`, not the first.
-    await _doubleClick(tester, 'bold.', within: paragraph);
-    expect(host.edited.last, (3, 32));
-    await _doubleClick(tester, 'words', within: 'two words');
-    expect(host.edited.last, (6, 7));
-    await _doubleClick(tester, 'Guide');
-    expect(host.edited.last, (1, 3));
+    await tester.tapAt(
+      _at(tester, 'bold.', within: 'Some bold and code, then bold.'),
+    );
+    await tester.pumpAndSettle();
+    expect(state.caret, (line: 3, column: 32));
     // Nothing changed.
     expect(model.text, text);
     expect(host.edits, 0);
   });
 
-  test('where the text shown is in the source', () {
-    int? at(String source, String shown, int offset, [String? before]) =>
-        markdownSourceOffset(
-          source,
-          shown: shown,
-          offset: offset,
-          before: before ?? shown.substring(0, offset),
-        );
-
-    expect(at('a **b** c', 'a b c', 2), 4);
-    expect(at('a **b** c', 'a b c', 4), 8);
-    // At a line's end: after what leads to it.
-    expect(at('a **b**', 'a b', 3), 5);
-    expect(at('x [link](u) x', 'x link x', 7), 12);
-    expect(at('', '', 0), isNull);
-  });
-
   testWidgets('a task box ticks its line', (tester) async {
     final model = EditorDocumentModel('- [ ] write\n- [x] read');
     final host = await pumpPreview(tester, model);
-    await tester.tap(find.byIcon(Icons.check_box_outline_blank));
+    await tester.tap(find.byType(MarkdownTaskBox).first);
     await tester.pumpAndSettle();
     expect(model.text, '- [x] write\n- [x] read');
     expect(host.edits, 1);
@@ -190,7 +177,7 @@ void main() {
   testWidgets('read-only: its task boxes do not tick', (tester) async {
     final model = EditorDocumentModel('- [ ] write\n\nText.');
     await pumpPreview(tester, model, readOnly: true);
-    await tester.tap(find.byIcon(Icons.check_box_outline_blank));
+    await tester.tap(find.byType(MarkdownTaskBox).first);
     await tester.pumpAndSettle();
     expect(model.text, '- [ ] write\n\nText.');
   });
@@ -206,6 +193,8 @@ void main() {
     expect(model.text, '# Title\n\n![](shot.png)\n\nText.\n');
     _state(tester).insert('[a](a.md)');
     expect(model.text, '# Title\n\n![](shot.png)\n\nText.\n\n[a](a.md)');
+    // Told once each is made.
+    await tester.pump();
     expect(host.edits, 2);
   });
 
@@ -219,7 +208,7 @@ void main() {
     expect(find.byType(InteractiveViewer), findsOneWidget);
     expect(find.byType(Image), findsNWidgets(2));
     expect(model.text, '![shot](img/shot.png)');
-    expect(host.edited, isEmpty);
+    expect(host.edits, 0);
     final viewer = find.byType(InteractiveViewer);
     final enlarged = find.descendant(of: viewer, matching: find.byType(Image));
     expect(tester.getSize(enlarged).width, greaterThan(160));
@@ -247,7 +236,9 @@ void main() {
     expect(host.reads, ['/project/docs/img/shot.png']);
   });
 
-  testWidgets('an image double click does not open the source', (tester) async {
+  testWidgets('an image double click opens it, and edits nothing', (
+    tester,
+  ) async {
     final model = EditorDocumentModel('![shot](shot.png)');
     final host = await pumpPreview(tester, model);
     final at = tester.getCenter(find.byType(Image));
@@ -255,7 +246,8 @@ void main() {
     await tester.tapAt(at);
     await tester.tapAt(at);
     await tester.pumpAndSettle();
-    expect(host.edited, isEmpty);
+    expect(model.text, '![shot](shot.png)');
+    expect(host.edits, 0);
     expect(find.byType(InteractiveViewer), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
@@ -329,9 +321,8 @@ void main() {
     expect(find.byType(InteractiveViewer), findsNothing);
   });
 
-  testWidgets('links: anchors scroll to their heading, files open', (
-    tester,
-  ) async {
+  testWidgets('links: clicked, the caret in them and their bubble (none of '
+      'their marks); from it, or ⌘-clicked, they open', (tester) async {
     final filler = [for (var i = 0; i < 60; i++) 'Paragraph $i.'].join('\n\n');
     final model = EditorDocumentModel(
       '[Go](#the-end) [Other](../README.md#Usage) [Line](src/a.dart#L3)\n\n'
@@ -339,19 +330,84 @@ void main() {
     );
     final host = await pumpPreview(tester, model);
     expect(_text('The End'), findsNothing);
-    await tester.tapOnText(find.textRange.ofSubstring('Go'));
+    await tester.tapAt(_at(tester, 'Go', within: 'Go Other Line', index: 1));
     await tester.pumpAndSettle();
+    // Not gone to; shown as it was, the caret in it.
+    expect(_text('The End'), findsNothing);
+    expect(_text('Go Other Line'), findsOneWidget);
+    expect(
+      _controller(tester).selection,
+      const TextSelection.collapsed(offset: 2),
+    );
+    await tester.tap(find.text('#the-end'));
+    await tester.pumpAndSettle();
+    // There, and left there.
     expect(_text('The End'), findsOneWidget);
     expect(tester.getTopLeft(_text('The End')).dy, lessThan(100));
 
+    // ⌘-clicked, gone to at once, and left there as the click ends (not
+    // brought back to the caret, where it was).
     _state(tester).revealLine(1);
     await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    final click = await tester.startGesture(
+      _at(tester, 'Go', within: 'Go Other Line', index: 1),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await click.up();
+    await tester.pumpAndSettle();
+    expect(_text('The End'), findsOneWidget);
+    expect(tester.getTopLeft(_text('The End')).dy, lessThan(100));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+
+    _state(tester).revealLine(1);
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
     await tester.tapOnText(find.textRange.ofSubstring('Other'));
     await tester.tapOnText(find.textRange.ofSubstring('Line'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     expect(host.opened, [
       ('/project/README.md', 'Usage'),
       ('/project/docs/src/a.dart', 'L3'),
     ]);
+
+    // Right-clicked: its link's menu, and the rest.
+    await tester.tapAt(
+      _at(tester, 'Go', within: 'Go Other Line', index: 1),
+      buttons: kSecondaryButton,
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Copy link address'), findsOneWidget);
+    expect(find.text('Select All'), findsOneWidget);
+    await tester.tap(find.text('Remove link'));
+    await tester.pumpAndSettle();
+    expect(model.text, startsWith('Go [Other]'));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('taken away, it tells the line at its top', (tester) async {
+    final model = EditorDocumentModel(
+      [for (var i = 0; i < 60; i++) 'Paragraph $i.'].join('\n\n'),
+    );
+    int? left;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: IdeMarkdownPreview(
+            path: _path,
+            model: model,
+            pathContext: p.posix,
+            readBytes: (_) async => _png,
+            initialLine: 41,
+            onLeave: (line) => left = line,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+    expect(left, 41);
   });
 
   testWidgets('the line at the top, and a line revealed', (tester) async {
@@ -423,20 +479,235 @@ void main() {
     await gesture.up();
     await tester.pumpAndSettle();
 
-    final selected = [
-      for (final paragraph in tester.renderObjectList<RenderParagraph>(
-        find.byType(RichText),
-      ))
-        // ignore: invalid_use_of_visible_for_testing_member
-        for (final selection in paragraph.selections)
-          if (!selection.isCollapsed)
-            selection.textInside(paragraph.text.toPlainText()),
-    ];
-    expect(selected.where((text) => text != '•'), [
+    final editor = tester.state<MarkdownEditorState>(
+      find.byType(MarkdownEditor),
+    );
+    final selection = _controller(tester).selection;
+    final selected = editor.plainText(selection.start, selection.end);
+    expect(selected.split('\n').map((line) => line.trim()), [
       '必要性检查：',
       '申请人必须在系统中存在且已设置工号',
       '报表必须设置负责人',
       '如果不满足以上条件，申请将直接失败',
     ]);
   });
+
+  testWidgets('selected, the stash\'s bar is over it: its marks, a link '
+      'typed in it, ⌘B; read-only, none', (tester) async {
+    final model = EditorDocumentModel('Some text here.');
+    final host = await pumpPreview(tester, model);
+    await tester.tapAt(_at(tester, 'text', within: 'Some text here.'));
+    await tester.pump();
+    final controller = _controller(tester);
+    controller.selection = const TextSelection(baseOffset: 5, extentOffset: 9);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Codicons.bold));
+    await tester.pumpAndSettle();
+    expect(model.text, 'Some **text** here.');
+    expect(host.edits, greaterThan(0));
+
+    // ⌘B takes it back.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(model.text, 'Some text here.');
+
+    await tester.tap(find.byIcon(Codicons.link));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'https://example.com');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(model.text, 'Some [text](https://example.com) here.');
+
+    // Shown only: no bar.
+    await pumpPreview(
+      tester,
+      EditorDocumentModel('Some text.'),
+      readOnly: true,
+    );
+    _controller(tester).selection = const TextSelection(
+      baseOffset: 0,
+      extentOffset: 4,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Codicons.bold), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('selected in code, the bar only proofreads; ⌘B marks nothing', (
+    tester,
+  ) async {
+    const text = 'Text.\n\n```js\nconst a = 1;\n```\n';
+    final model = EditorDocumentModel(text);
+    await pumpPreview(tester, model);
+    await tester.tapAt(_at(tester, 'Text.'));
+    await tester.pump();
+    final controller = _controller(tester);
+    // In the code block: its fences shown, its text selected.
+    controller.selection = const TextSelection(
+      baseOffset: 13,
+      extentOffset: 18,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Codicons.sparkle), findsOneWidget);
+    expect(find.byIcon(Codicons.bold), findsNothing);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(model.text, text);
+
+    // In text, all of it.
+    controller.selection = const TextSelection(baseOffset: 0, extentOffset: 4);
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Codicons.bold), findsOneWidget);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('right-clicked, a file shown in the file manager: a link\'s '
+      'where it goes, else the document', (tester) async {
+    final model = EditorDocumentModel('See [the guide](../README.md) here.');
+    final host = await pumpPreview(tester, model);
+    Future<void> reveal(String text) async {
+      await tester.tapAt(
+        _at(tester, text, within: 'See the guide here.', index: 1),
+        buttons: kSecondaryButton,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Reveal in Finder'));
+      await tester.pumpAndSettle();
+    }
+
+    await reveal('guide');
+    await reveal('here');
+    expect(host.revealed, ['/project/README.md', _path]);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('scrolled, the bar goes with the selection at once; out of '
+      'view, none until it is back', (tester) async {
+    final text = [for (var i = 0; i < 80; i++) 'Line $i here.'].join('\n\n');
+    final model = EditorDocumentModel(text);
+    await pumpPreview(tester, model);
+    await tester.tapAt(_at(tester, 'Line 6 here.'));
+    await tester.pump();
+    final start = text.indexOf('Line 6');
+    _controller(tester).selection = TextSelection(
+      baseOffset: start,
+      extentOffset: start + 6,
+    );
+    await tester.pumpAndSettle();
+    final bold = find.byIcon(Codicons.bold);
+    double gap() =>
+        tester.getRect(_text('Line 6 here.')).top - tester.getRect(bold).top;
+    final before = tester.getRect(bold).top;
+    final over = gap();
+    final position = tester
+        .state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byType(MarkdownEditor),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        )
+        .position;
+    position.jumpTo(position.pixels + 60);
+    await tester.pump();
+    expect(tester.getRect(bold).top, closeTo(before - 60, 0.5));
+    await tester.pumpAndSettle();
+    expect(gap(), closeTo(over, 0.5));
+
+    position.jumpTo(position.pixels + 1500);
+    await tester.pumpAndSettle();
+    expect(bold, findsNothing);
+    position.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(tester.getRect(bold).top, closeTo(before, 0.5));
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('a table is edited in its cells, its rows put in from its '
+      'handle\'s menu', (tester) async {
+    final model = EditorDocumentModel('| x | y |\n|---|---|\n| 1 | 2 |\n');
+    await pumpPreview(tester, model);
+    await tester.tapAt(tester.getCenter(find.text('1')));
+    await tester.pumpAndSettle();
+    final editors = find.byType(MarkdownEditor);
+    expect(editors, findsNWidgets(2));
+    final cell = tester.state<MarkdownEditorState>(editors.last).controller;
+    expect(cell.text, '1');
+    cell.selection = const TextSelection.collapsed(offset: 1);
+    await tester.pump();
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: '12',
+        selection: TextSelection.collapsed(offset: 2),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(model.text, '| x | y |\n|---|---|\n| 12 | 2 |\n');
+
+    // Its row's handle, on its left edge while the pointer is over it.
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    addTearDown(mouse.removePointer);
+    final row = tester.getRect(find.text('2'));
+    await mouse.moveTo(row.center);
+    await tester.pumpAndSettle();
+    final table = tester.getRect(find.byType(Table));
+    await tester.tapAt(Offset(table.left + 2, row.center.dy));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Insert row below'));
+    await tester.pumpAndSettle();
+    expect(model.text, '| x | y |\n| --- | --- |\n| 12 | 2 |\n|  |  |\n');
+
+    // A column's, on its top edge: moved, aligned.
+    await mouse.moveTo(tester.getCenter(find.text('x')));
+    await tester.pumpAndSettle();
+    final head = tester.getRect(find.byType(Table));
+    await tester.tapAt(
+      Offset(tester.getCenter(find.text('x')).dx, head.top + 2),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Move column right'));
+    await tester.pumpAndSettle();
+    expect(model.text, '| y | x |\n| --- | --- |\n| 2 | 12 |\n|  |  |\n');
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('a link in a table\'s cell: the caret in it, its bubble over '
+      'it (none of its marks); its address edited and taken off there', (
+    tester,
+  ) async {
+    final model = EditorDocumentModel(
+      '| x | y |\n|---|---|\n| [Docs](a.md) | 2 |\n',
+    );
+    await pumpPreview(tester, model);
+    await tester.tapAt(tester.getCenter(find.text('Docs')));
+    await tester.pumpAndSettle();
+    final editors = find.byType(MarkdownEditor);
+    expect(editors, findsNWidgets(2));
+    final text = tester.state<MarkdownEditorState>(editors.last).controller;
+    expect(text.text, '[Docs](a.md)');
+    text.selection = const TextSelection.collapsed(offset: 3);
+    await tester.pumpAndSettle();
+    expect(_text('Docs'), findsOneWidget);
+    expect(find.text('a.md'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Codicons.edit));
+    await tester.pumpAndSettle();
+    // Still typed in, its link's text picked while the address is typed.
+    expect(find.byType(MarkdownEditor), findsNWidgets(2));
+    await tester.enterText(find.byType(EditableText).last, 'b.md');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(model.text, '| x | y |\n|---|---|\n| [Docs](b.md) | 2 |\n');
+
+    final again = tester.state<MarkdownEditorState>(editors.last).controller;
+    again.selection = const TextSelection.collapsed(offset: 3);
+    await tester.pumpAndSettle();
+    expect(find.text('b.md'), findsOneWidget);
+    await tester.tap(find.byIcon(Codicons.close));
+    await tester.pumpAndSettle();
+    expect(model.text, '| x | y |\n|---|---|\n| Docs | 2 |\n');
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

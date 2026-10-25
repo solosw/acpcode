@@ -20,6 +20,9 @@ import '../../ide/ide_hover.dart';
 import '../../ide/ide_image_preview.dart';
 import '../../ide/ide_status_bar.dart' show IdeLanguageNames;
 import '../../ide/language_mode.dart';
+import '../../ide/ide_dialog.dart';
+import '../../ide/ide_editor_placeholder.dart' show ideFormatSize;
+import '../../ide/markdown/markdown_paste.dart';
 import '../../ide/markdown/markdown_preview.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
@@ -29,7 +32,9 @@ import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import '../../workspace/editor_launcher.dart' show openExternal;
-import '../composer/composer_files.dart' show CopiedCode;
+import '../../workspace/window_controls.dart';
+import '../composer/composer_files.dart' show ComposerFile, CopiedCode;
+import '../composer/file_drop.dart';
 import '../widgets/code_citation.dart' show CodeColorizer;
 import '../widgets/hover_builder.dart';
 import '../widgets/hover_scrollbar.dart';
@@ -181,7 +186,11 @@ class _FilePreviewState extends State<FilePreview> {
 
   /// An image shows as it is, its changes too: there is no text to compare.
   bool get _image => ideIsImagePath(_request.path);
-  bool get _isMarkdown => !_request.diff && isMarkdownPath(_request.path);
+
+  /// A markdown file rendered: its changes not, unless the text before is
+  /// not known and the file shows as it is.
+  bool get _isMarkdown =>
+      isMarkdownPath(_request.path) && (!_request.diff || _loaded is _Text);
 
   /// The file's own text shows, to edit: not its changes, nor the index's,
   /// nor what is only shown ([FileOpenRequest.readOnly]).
@@ -512,7 +521,7 @@ class _FilePreviewState extends State<FilePreview> {
             ),
           if (_isMarkdown && _markdown != null)
             _TextButton(
-              label: _source ? l10n.sidePanelPreview : l10n.sidePanelEdit,
+              label: _source ? l10n.sidePanelPreview : l10n.sidePanelSource,
               onPressed: () => setState(() => _source = !_source),
             ),
           if ((widget.agentEdit, _agent) case (final edit?, _?)
@@ -575,16 +584,41 @@ class _FilePreviewState extends State<FilePreview> {
         );
       case _Text(:final lines):
         if (_markdown case final model? when !_source) {
-          return IdeMarkdownPreview(
-            key: ValueKey((_request.path, widget.reveal)),
+          // The file's own text, its edit's: edited here, as in its source.
+          final edit = _edit;
+          final editable =
+              edit != null &&
+              !_request.agentChange &&
+              identical(model, edit.controller.document);
+          final preview = IdeMarkdownPreview(
+            key: _previewKey,
             path: _request.path,
             model: model,
             readBytes: widget.readBytes ?? readFileBytes,
             pathContext: widget.paths,
-            readOnly: true,
+            readOnly: !editable,
+            // Its source's editor told, which keeps whether it is saved.
+            onEdited: edit?.controller.syncFromDocument,
+            // Pictures and files pasted: copied beside it, linked to.
+            onPaste: editable
+                ? () => _markdownPaste().paste(_request.path)
+                : null,
             initialLine: _request.range?.start,
             onOpenFile: _openLinked,
             onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
+            // This machine's files only, not a remote project's host's.
+            onReveal:
+                widget.files is! IdeHostFiles &&
+                    WindowControls.canRevealInFileManager
+                ? (path) => unawaited(WindowControls.revealInFileManager(path))
+                : null,
+          );
+          if (!editable) return preview;
+          // Files dropped on it from other apps: as pasted, where they are
+          // let go.
+          return _saved(
+            edit,
+            FileDropRegion(delegate: _markdownDrop, child: preview),
           );
         }
         if (_edit case final edit?) return _editing(edit);
@@ -613,20 +647,28 @@ class _FilePreviewState extends State<FilePreview> {
     }
   }
 
+  /// [child], where [edit] is edited, saving it with the IDE's keys.
+  Widget _saved(SidePanelFileEdit edit, Widget child) => CallbackShortcuts(
+    bindings: {
+      AppPlatform.isMacOS
+          ? const SingleActivator(LogicalKeyboardKey.keyS, meta: true)
+          : const SingleActivator(LogicalKeyboardKey.keyS, control: true): () =>
+          unawaited(edit.save()),
+    },
+    child: child,
+  );
+
   /// The file's text in the IDE's editor, the lines asked for marked until
   /// it is edited; saved with the IDE's keys.
   Widget _editing(SidePanelFileEdit edit) {
-    final save = AppPlatform.isMacOS
-        ? const SingleActivator(LogicalKeyboardKey.keyS, meta: true)
-        : const SingleActivator(LogicalKeyboardKey.keyS, control: true);
     final range = _range;
     final marked =
         range != null &&
         !_request.agentChange &&
         identical(_markedIn, edit.controller.document.snapshot);
-    return CallbackShortcuts(
-      bindings: {save: () => unawaited(edit.save())},
-      child: IdeCodeEditor(
+    return _saved(
+      edit,
+      IdeCodeEditor(
         key: _editor,
         controller: edit.controller,
         path: _request.path,
@@ -656,6 +698,70 @@ class _FilePreviewState extends State<FilePreview> {
     end: end,
     code: text,
   );
+
+  // --- A markdown file's pastes and drops ------------------------------------------
+
+  /// Its preview: a new one for another file, or the same asked for again
+  /// (scrolled back to the lines asked for).
+  GlobalKey<IdeMarkdownPreviewState> get _previewKey {
+    final shows = (_request.path, widget.reveal);
+    if (shows != _previewShows) {
+      _previewShows = shows;
+      _previewKeyNow = GlobalKey();
+    }
+    return _previewKeyNow;
+  }
+
+  (String, int)? _previewShows;
+  GlobalKey<IdeMarkdownPreviewState> _previewKeyNow = GlobalKey();
+
+  /// Pastes and drops of pictures and files: copied beside the file (to
+  /// the project's host, a remote one), as the IDE's preview does.
+  MarkdownPaste _markdownPaste() {
+    final l10n = context.l10n;
+    final files = widget.files;
+    final remote = files is IdeHostFiles;
+    return MarkdownPaste(
+      files: files,
+      l10n: l10n,
+      root: widget.root,
+      context: widget.paths ?? (remote ? p.posix : p.context),
+      remote: remote,
+      confirmLarge: (name, size) async {
+        if (!mounted) return false;
+        final pick = await showIdeDialog(
+          context,
+          type: IdeDialogType.question,
+          message: l10n.markdownPasteLargeTitle,
+          detail: l10n.markdownPasteLargeMessage(name, ideFormatSize(size)),
+          buttons: [l10n.markdownPasteLargeConfirm],
+        );
+        return pick == 0;
+      },
+      report: (message) {
+        if (!mounted) return;
+        unawaited(
+          showIdeDialog(
+            context,
+            type: IdeDialogType.error,
+            message: message,
+            buttons: const [],
+            cancel: l10n.commonOk,
+          ),
+        );
+      },
+    );
+  }
+
+  late final _markdownDrop = _MarkdownDrop((position, files) async {
+    final path = _request.path;
+    final outcome = await _markdownPaste().drop(path, files);
+    if (!mounted || outcome is! MarkdownPasteLinks) return;
+    if (_previewKeyNow.currentState case final preview?
+        when _request.path == path) {
+      preview.insert(outcome.text, position: position);
+    }
+  });
 
   /// A link in a markdown file: to a file beside it.
   void _openLinked(String path, String? fragment) {
@@ -916,7 +1022,12 @@ class _LinesSelection extends StaticSelectionContainerDelegate {
     if (content == null || _rows.isEmpty) return content;
     final rows = [..._rows]..sort((a, b) => a.$1.compareTo(b.$1));
     _rows.clear();
-    final text = [for (final (_, text) in rows) text].join('\n');
+    // An empty line selects nothing of its own: kept, between the others.
+    final byRow = {for (final (row, text) in rows) row: text};
+    final text = [
+      for (var row = rows.first.$1; row <= rows.last.$1; row++)
+        byRow[row] ?? '',
+    ].join('\n');
     onCopy(rows.first.$1, rows.last.$1, text);
     return SelectedContent(plainText: text);
   }
@@ -1131,4 +1242,22 @@ class _TextButton extends StatelessWidget {
     }
     return button;
   }
+}
+
+/// Files dropped on a markdown file's preview (see
+/// [_FilePreviewState._markdownDrop]).
+class _MarkdownDrop implements FileDropDelegate {
+  _MarkdownDrop(this.onDrop);
+
+  final void Function(Offset position, List<ComposerFile> files) onDrop;
+
+  @override
+  void fileDragOver(Offset position, List<ComposerFile> files) {}
+
+  @override
+  void fileDragLeave() {}
+
+  @override
+  void fileDrop(Offset position, List<ComposerFile> files) =>
+      onDrop(position, files);
 }

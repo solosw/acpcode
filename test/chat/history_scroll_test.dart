@@ -107,6 +107,38 @@ Finder _text(String text) => find.textContaining(text, findRichText: true);
 const _frame = Duration(microseconds: 16667);
 
 void main() {
+  testWidgets('a conversation shown again is where it was left: read up '
+      'from its end, there; at its end, followed (#215)', (tester) async {
+    final feed = _Feed([for (var n = 0; n < 40; n++) ..._turn(n)]);
+    await _pump(tester, feed);
+    await _wheelUp(tester, 900);
+    await _wheelUp(tester, 900);
+    final viewTop = tester.getTopLeft(find.byType(ChatHistoryView)).dy;
+    // The first answer in view, and where.
+    final (answer, top) = [
+      for (var n = 0; n < 40; n++)
+        if (_text('Answer $n.').evaluate().isNotEmpty)
+          ('Answer $n.', tester.getTopLeft(_text('Answer $n.')).dy),
+    ].firstWhere((shown) => shown.$2 >= viewTop);
+
+    // Another conversation shown in its place, then it again.
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, feed);
+    await tester.pump();
+    expect(tester.getTopLeft(_text(answer)).dy, moreOrLessEquals(top));
+
+    // Back at its end: followed there when shown again.
+    await tester.pumpWidget(const SizedBox());
+    final followed = _Feed([for (var n = 0; n < 40; n++) ..._turn(n)]);
+    await _pump(tester, followed);
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, followed);
+    await tester.pump();
+    final position = _position(tester);
+    expect(position.pixels, moreOrLessEquals(position.maxScrollExtent));
+    expect(_text('Answer 39.'), findsOneWidget);
+  });
+
   testWidgets('folded work counts for nothing before it is laid out', (
     tester,
   ) async {

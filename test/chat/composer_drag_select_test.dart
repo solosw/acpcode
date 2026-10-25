@@ -4,7 +4,7 @@ import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_quill/flutter_quill.dart';
+import 'package:bao_markdown/bao_markdown.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -17,7 +17,6 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildAppTheme(),
-        localizationsDelegates: const [FlutterQuillLocalizations.delegate],
         home: Scaffold(
           body: Column(
             children: [
@@ -32,21 +31,21 @@ void main() {
       ),
     );
     await tester.pump();
-    final editor = tester.widget<QuillEditor>(find.byType(QuillEditor));
+    final editor = tester.widget<MarkdownEditor>(find.byType(MarkdownEditor));
     final controller = editor.controller;
-    controller.replaceText(
+    controller.replace(
       0,
       0,
       'hello world',
-      const TextSelection.collapsed(offset: 11),
+      selection: const TextSelection.collapsed(offset: 11),
     );
     await tester.pump();
     elsewhere.requestFocus();
     await tester.pumpAndSettle();
-    expect(editor.focusNode.hasFocus, isFalse);
+    expect(editor.focusNode!.hasFocus, isFalse);
 
     final start =
-        tester.getTopLeft(find.byType(QuillEditor)) + const Offset(1, 8);
+        tester.getTopLeft(find.byType(MarkdownEditor)) + const Offset(1, 8);
     final mouse = await tester.startGesture(
       start,
       kind: PointerDeviceKind.mouse,
@@ -59,9 +58,9 @@ void main() {
     await mouse.up();
     await tester.pumpAndSettle();
     expect(controller.selection.isCollapsed, isFalse);
-    expect(editor.focusNode.hasFocus, isTrue);
+    expect(editor.focusNode!.hasFocus, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     await tester.pumpAndSettle();
-    expect(controller.document.toPlainText(), isNot(contains('hello')));
+    expect(controller.text, isNot(contains('hello')));
   });
 }
