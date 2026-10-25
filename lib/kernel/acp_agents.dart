@@ -70,6 +70,12 @@ class AcpAgents extends ChangeNotifier {
         if (entry.key is String && entry.value is String)
           entry.key as String: entry.value as String,
     },
+    skillsDirectory: value['skillsDirectory'] is String
+        ? value['skillsDirectory'] as String
+        : '',
+    rulesDirectory: value['rulesDirectory'] is String
+        ? value['rulesDirectory'] as String
+        : '',
     description: value['description'] is String
         ? value['description'] as String
         : 'Agent Client Protocol agent',
@@ -82,6 +88,9 @@ class AcpAgents extends ChangeNotifier {
     if (agent.arguments.isNotEmpty) 'arguments': agent.arguments,
     if (agent.environment.isNotEmpty) 'environment': agent.environment,
     if (agent.description.isNotEmpty) 'description': agent.description,
+    if (agent.skillsDirectory.isNotEmpty)
+      'skillsDirectory': agent.skillsDirectory,
+    if (agent.rulesDirectory.isNotEmpty) 'rulesDirectory': agent.rulesDirectory,
   };
 
   @override

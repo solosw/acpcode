@@ -39,6 +39,12 @@ class CustomizationStore {
   /// Whether there are files to read and write here (not on the web).
   bool get supported => _disk != null;
 
+  /// Binary-safe copying, where the disk implements the strict copy API.
+  CustomizationCopyDisk? get copyDisk => switch (_disk) {
+    final CustomizationCopyDisk disk => disk,
+    _ => null,
+  };
+
   /// Whether the files are this machine's (not a remote host's): shown in
   /// its file manager, opened in its IDE.
   bool get isLocal => _disk?.isLocal ?? true;

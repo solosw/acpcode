@@ -41,6 +41,31 @@ abstract interface class CustomizationDisk {
   Future<void> delete(String path);
 }
 
+/// File information for copying without following symbolic links.
+enum CustomizationFileType { file, directory, link, other }
+
+typedef CustomizationFileInfo = ({CustomizationFileType type, bool executable});
+
+/// Optional strict, binary-safe operations for managed directory copies.
+/// Unlike the browsing API, errors must not be treated as missing files.
+abstract interface class CustomizationCopyDisk implements CustomizationDisk {
+  Future<CustomizationFileInfo?> inspect(String path);
+  Future<List<String>> copyEntries(String directory);
+
+  /// Resolves existing ancestors too, when the final path does not exist yet.
+  Future<String> resolveCopyPath(String path);
+  Future<List<int>> readCopyBytes(String path);
+  Future<void> createCopyDirectory(String path);
+
+  /// Replaces a file atomically, with owner-only read/write and, if needed,
+  /// execute permissions. Callers check conflicts immediately before writing.
+  Future<void> writeCopyBytes(
+    String path,
+    List<int> bytes, {
+    required bool executable,
+  });
+}
+
 /// Disks which can replace a configuration without exposing partial writes.
 abstract interface class AtomicCustomizationDisk implements CustomizationDisk {
   Future<void> writeAtomically(String path, String text);

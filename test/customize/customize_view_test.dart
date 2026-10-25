@@ -8,6 +8,7 @@ import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
+import 'package:baocode/customize/customization_disk.dart';
 import 'package:baocode/customize/customization_store.dart';
 import 'package:baocode/customize/customizations.dart';
 import 'package:baocode/customize/customize_view.dart';
@@ -36,6 +37,9 @@ class _MemoryStore implements CustomizationStore {
 
   @override
   bool get supported => true;
+
+  @override
+  CustomizationCopyDisk? get copyDisk => null;
 
   @override
   bool get isLocal => true;

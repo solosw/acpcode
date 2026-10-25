@@ -9,7 +9,7 @@ import 'customization_disk.dart';
 CustomizationDisk? localCustomizationDisk() => const _LocalDisk();
 
 /// This machine's files.
-class _LocalDisk implements AtomicCustomizationDisk {
+class _LocalDisk implements AtomicCustomizationDisk, CustomizationCopyDisk {
   const _LocalDisk();
 
   @override
@@ -88,6 +88,73 @@ class _LocalDisk implements AtomicCustomizationDisk {
         }
       }
       await staged.rename(file.path);
+    } finally {
+      await temporary.delete(recursive: true);
+    }
+  }
+
+  @override
+  Future<CustomizationFileInfo?> inspect(String path) async {
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return null;
+    return (
+      type: switch (type) {
+        FileSystemEntityType.file => CustomizationFileType.file,
+        FileSystemEntityType.directory => CustomizationFileType.directory,
+        FileSystemEntityType.link => CustomizationFileType.link,
+        _ => CustomizationFileType.other,
+      },
+      executable:
+          !Platform.isWindows &&
+          type == FileSystemEntityType.file &&
+          (await File(path).stat()).mode & 0x49 != 0,
+    );
+  }
+
+  @override
+  Future<List<String>> copyEntries(String directory) async => [
+    await for (final entry in Directory(directory).list(followLinks: false))
+      entry.path,
+  ];
+
+  @override
+  Future<String> resolveCopyPath(String path) async {
+    if (await inspect(path) != null) return File(path).resolveSymbolicLinks();
+    final parent = p.dirname(path);
+    if (parent == path) throw FileSystemException('Cannot resolve path', path);
+    return p.join(await resolveCopyPath(parent), p.basename(path));
+  }
+
+  @override
+  Future<List<int>> readCopyBytes(String path) => File(path).readAsBytes();
+
+  @override
+  Future<void> createCopyDirectory(String path) async {
+    await Directory(path).create(recursive: true);
+  }
+
+  @override
+  Future<void> writeCopyBytes(
+    String path,
+    List<int> bytes, {
+    required bool executable,
+  }) async {
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    final temporary = await file.parent.createTemp('.baocode-copy-');
+    try {
+      final staged = File(p.join(temporary.path, 'content'));
+      await staged.writeAsBytes(bytes, flush: true);
+      if (!Platform.isWindows) {
+        final result = await Process.run('chmod', [
+          executable ? '700' : '600',
+          staged.path,
+        ]);
+        if (result.exitCode != 0) {
+          throw FileSystemException('Cannot set copy permissions', path);
+        }
+      }
+      await staged.rename(path);
     } finally {
       await temporary.delete(recursive: true);
     }

@@ -176,7 +176,14 @@ class AppSettings {
           workspace: workspace,
         );
       case SettingsSection.agents:
-        return AgentsSettingsPage(agents: acpAgents);
+        return AgentsSettingsPage(
+          agents: acpAgents,
+          customizations: customizations,
+          hosts: {
+            for (final project in workspace?.projects ?? const <Project>[])
+              ?project.host,
+          }.toList()..sort(),
+        );
       case SettingsSection.network:
         return NetworkSettingsPage(settings: files?.settings);
       case SettingsSection.ssh:

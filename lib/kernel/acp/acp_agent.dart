@@ -10,6 +10,8 @@ class AcpAgentConfig {
     this.arguments = const [],
     this.environment = const {},
     this.description = 'Agent Client Protocol agent',
+    this.skillsDirectory = '',
+    this.rulesDirectory = '',
   });
 
   final String id;
@@ -18,6 +20,10 @@ class AcpAgentConfig {
   final List<String> arguments;
   final Map<String, String> environment;
   final String description;
+
+  /// User customization destinations on the agent's host. Empty disables copying.
+  final String skillsDirectory;
+  final String rulesDirectory;
 
   /// On the project's host: this machine, or the remote one an `ssh://`
   /// project names. Slash commands come from that process.

@@ -8,7 +8,7 @@ import 'ssh_host.dart';
 
 /// The files of [host], where its agents run and read their
 /// customizations: through its server, on the connection already made.
-class RemoteCustomizationDisk implements CustomizationDisk {
+class RemoteCustomizationDisk implements CustomizationCopyDisk {
   RemoteCustomizationDisk(this.host);
 
   final SshHost host;
@@ -119,6 +119,105 @@ class RemoteCustomizationDisk implements CustomizationDisk {
     }
     for (final dir in missing.reversed) {
       await client.create(_root, dir, directory: true);
+    }
+  }
+
+  @override
+  Future<CustomizationFileInfo?> inspect(String path) async {
+    // The path is a positional argument, never interpolated into shell code.
+    final result = await (await _client).run('sh', [
+      '-c',
+      r'''if [ -L "$1" ]; then echo link
+elif [ -d "$1" ]; then echo directory
+elif [ -f "$1" ]; then
+  if [ -x "$1" ]; then echo executable; else echo file; fi
+elif [ -e "$1" ]; then echo other
+else
+  parent=$(dirname "$1")
+  while [ ! -e "$parent" ] && [ ! -L "$parent" ]; do
+    next=$(dirname "$parent")
+    [ "$next" != "$parent" ] || exit 1
+    parent=$next
+  done
+  [ -d "$parent" ] && [ -x "$parent" ] || exit 1
+  echo missing
+fi''',
+      'baocode-copy',
+      path,
+    ], login: false);
+    if (result.exitCode != 0) throw StateError('Cannot inspect $path');
+    final type = result.stdout.trim();
+    if (type == 'missing') return null;
+    return (
+      type: switch (type) {
+        'directory' => CustomizationFileType.directory,
+        'file' || 'executable' => CustomizationFileType.file,
+        'link' => CustomizationFileType.link,
+        _ => CustomizationFileType.other,
+      },
+      executable: type == 'executable',
+    );
+  }
+
+  @override
+  Future<List<String>> copyEntries(String directory) async => [
+    for (final name in await (await _client).entries(directory))
+      p.posix.join(directory, name),
+  ];
+
+  @override
+  Future<String> resolveCopyPath(String path) async {
+    if (await inspect(path) != null) return (await _client).realPath(path);
+    final parent = p.posix.dirname(path);
+    if (parent == path) throw StateError('Cannot resolve $path');
+    return p.posix.join(await resolveCopyPath(parent), p.posix.basename(path));
+  }
+
+  @override
+  Future<List<int>> readCopyBytes(String path) async =>
+      (await _client).readBytes(path);
+
+  @override
+  Future<void> createCopyDirectory(String path) async {
+    final result = await (await _client).run('mkdir', [
+      '-p',
+      path,
+    ], login: false);
+    if (result.exitCode != 0) throw StateError('Cannot create $path');
+  }
+
+  @override
+  Future<void> writeCopyBytes(
+    String path,
+    List<int> bytes, {
+    required bool executable,
+  }) async {
+    final client = await _client;
+    await createCopyDirectory(p.posix.dirname(path));
+    final result = await client.run('mktemp', [
+      '-d',
+      p.posix.join(p.posix.dirname(path), '.baocode-copy-XXXXXX'),
+    ], login: false);
+    if (result.exitCode != 0) throw StateError('Cannot stage $path');
+    final temporary = result.stdout.trim();
+    final staged = p.posix.join(temporary, 'content');
+    try {
+      await client.writeBytes(_root, staged, bytes);
+      final mode = await client.run('chmod', [
+        executable ? '700' : '600',
+        staged,
+      ], login: false);
+      if (mode.exitCode != 0) throw StateError('Cannot set permissions: $path');
+      final moved = await client.run('sh', [
+        '-c',
+        r'if [ -d "$2" ] || [ -L "$2" ]; then exit 1; fi; mv -f "$1" "$2"',
+        'baocode-copy',
+        staged,
+        path,
+      ], login: false);
+      if (moved.exitCode != 0) throw StateError('Cannot replace $path');
+    } finally {
+      await client.delete(_root, temporary);
     }
   }
 

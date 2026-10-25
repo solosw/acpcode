@@ -2,17 +2,26 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../customize/customization_store.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_input.dart';
 import '../../kernel/acp/acp_agent.dart';
 import '../../kernel/acp_agents.dart';
 import '../../theme/codicons.dart';
+import 'agent_customization_copy.dart';
 import 'settings_widgets.dart';
 
 class AgentsSettingsPage extends StatelessWidget {
-  const AgentsSettingsPage({super.key, required this.agents});
+  const AgentsSettingsPage({
+    super.key,
+    required this.agents,
+    this.customizations,
+    this.hosts = const [],
+  });
 
   final AcpAgents agents;
+  final CustomizationStore? customizations;
+  final List<String> hosts;
 
   Future<void> _add(BuildContext context) async {
     final id = agents.newId('ACP Agent');
@@ -37,6 +46,8 @@ class AgentsSettingsPage extends StatelessWidget {
               _AgentSettingsRow(
                 key: ValueKey(agent.id),
                 agent: agent,
+                customizations: customizations ?? CustomizationStore(),
+                hosts: hosts,
                 onSave: (updated) => unawaited(
                   agents.save([
                     for (final item in agents.agents)
@@ -66,8 +77,12 @@ class _AgentSettingsRow extends StatefulWidget {
     required this.agent,
     required this.onSave,
     required this.onDelete,
+    required this.customizations,
+    required this.hosts,
   });
 
+  final CustomizationStore customizations;
+  final List<String> hosts;
   final AcpAgentConfig agent;
   final ValueChanged<AcpAgentConfig> onSave;
   final VoidCallback onDelete;
@@ -89,6 +104,12 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
   late final TextEditingController _environment = TextEditingController(
     text: formatEnvironment(widget.agent.environment),
   );
+  late final TextEditingController _skillsDirectory = TextEditingController(
+    text: widget.agent.skillsDirectory,
+  );
+  late final TextEditingController _rulesDirectory = TextEditingController(
+    text: widget.agent.rulesDirectory,
+  );
   bool _dirty = false;
 
   @override
@@ -97,6 +118,8 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
     _command.dispose();
     _arguments.dispose();
     _environment.dispose();
+    _skillsDirectory.dispose();
+    _rulesDirectory.dispose();
     super.dispose();
   }
 
@@ -108,11 +131,15 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
             oldWidget.agent.label != widget.agent.label ||
             oldWidget.agent.command != widget.agent.command ||
             oldWidget.agent.arguments != widget.agent.arguments ||
-            oldWidget.agent.environment != widget.agent.environment)) {
+            oldWidget.agent.environment != widget.agent.environment ||
+            oldWidget.agent.skillsDirectory != widget.agent.skillsDirectory ||
+            oldWidget.agent.rulesDirectory != widget.agent.rulesDirectory)) {
       _label.text = widget.agent.label;
       _command.text = widget.agent.command;
       _arguments.text = widget.agent.arguments.join(' ');
       _environment.text = formatEnvironment(widget.agent.environment);
+      _skillsDirectory.text = widget.agent.skillsDirectory;
+      _rulesDirectory.text = widget.agent.rulesDirectory;
     }
   }
 
@@ -130,11 +157,15 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
         id: widget.agent.id,
         label: label,
         command: command,
-        arguments: _arguments.text.trim().isEmpty
+        arguments: _arguments.text == widget.agent.arguments.join(' ')
+            ? widget.agent.arguments
+            : _arguments.text.trim().isEmpty
             ? const []
             : _arguments.text.trim().split(RegExp(r'\s+')),
         environment: parseEnvironment(_environment.text),
         description: widget.agent.description,
+        skillsDirectory: _skillsDirectory.text.trim(),
+        rulesDirectory: _rulesDirectory.text.trim(),
       ),
     );
     setState(() => _dirty = false);
@@ -146,10 +177,7 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
       SettingsRow(label: 'Name', trailing: _field(_label, 'Agent name')),
       SettingsRow(
         label: 'Command',
-        trailing: _field(
-          _command,
-          'Executable on the project machine',
-        ),
+        trailing: _field(_command, 'Executable on the project machine'),
       ),
       SettingsRow(
         label: 'Arguments',
@@ -166,6 +194,23 @@ class _AgentSettingsRowState extends State<_AgentSettingsRow> {
             onChanged: _markDirty,
           ),
         ],
+      ),
+      SettingsRow(
+        label: 'User skills directory',
+        trailing: _field(
+          _skillsDirectory,
+          'Skills destination on selected host',
+        ),
+      ),
+      SettingsRow(
+        label: 'User rules directory',
+        trailing: _field(_rulesDirectory, 'Rules destination on selected host'),
+      ),
+      AgentCustomizationCopy(
+        agent: widget.agent,
+        store: widget.customizations,
+        hosts: widget.hosts,
+        enabled: !_dirty,
       ),
       SettingsRow(
         label: 'Actions',
