@@ -74,6 +74,29 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.5.0">
+    <h2 class="plain"><a href="#v1.5.0">1.5.0</a></h2>
+    <p>New</p>
+    <ul>
+    <li>Sync Stash with GitHub / GitLab issues in both directions, follow comments and linked pull requests, and confirm before publishing or merging issues.</li>
+    <li>Use the new Markdown editor in Stash, previews and the chat composer, with editable table cells, link actions and front matter properties.</li>
+    <li>Reconnect SSH to the same session after a network interruption, keeping remote terminals, agents and language servers running and replaying missed output.</li>
+    <li>Configure model roles across upstreams, set per-model APIs, duplicate configurations and remove delisted models; preview and jump to user messages from the conversation minimap.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Reduce memory used by long conversations, syntax highlighting, images and layout caches, improve streaming and fast scrolling, and render Windows with Skia.</li>
+    <li>Open file and folder chips, inspect command details, and send queued messages while an agent is working.</li>
+    <li>Preserve local ACP model, mode and reasoning selectors, shared and headless MCP, change review, saved SSH settings and the GitHub update channel.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Prevent Markdown images from shifting scroll positions as they load, improve table link actions and fix Windows input issues.</li>
+    <li>Stop environment variables from pinning Claude Code effort, synchronize renamed sessions, and restore prompt cache reuse in plan mode.</li>
+    <li>Refresh the cached composer toolbar when an ACP agent exposes reasoning settings without a model selector.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.4.1">
     <h2 class="plain"><a href="#v1.4.1">1.4.1</a></h2>
     <p>New</p>
