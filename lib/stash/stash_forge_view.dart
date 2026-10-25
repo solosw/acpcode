@@ -1180,7 +1180,9 @@ class _StashImportDialogState extends State<StashImportDialog> {
         _pasting = false;
         _pasted.removeWhere((pasted) => pasted.ref.url.toString() == url);
         _pasted.insert(0, item);
-        if (widget.forge.stashOf(url) == null) _checked.add(url);
+        if (widget.forge.stashOf(url, project: _projectOf(item)) == null) {
+          _checked.add(url);
+        }
         _link.clear();
       });
     } on Object catch (error) {
@@ -1191,6 +1193,14 @@ class _StashImportDialogState extends State<StashImportDialog> {
       });
     }
   }
+
+  // A pasted issue from an unknown repository is unassigned, not silently
+  // attached to whichever project the cards happen to be filtered by.
+  String? _projectOf(ForgeItem item) => _repos
+      ?.where((repo) => repo.repo == item.ref.repo)
+      .firstOrNull
+      ?.project
+      .path;
 
   Future<void> _import() async {
     final items = <String, ForgeItem>{
@@ -1203,13 +1213,7 @@ class _StashImportDialogState extends State<StashImportDialog> {
     final notes = <StashNote>[];
     // Each about its repository's project.
     for (final item in items.values) {
-      final project =
-          _repos
-              ?.where((repo) => repo.repo == item.ref.repo)
-              .firstOrNull
-              ?.project
-              .path ??
-          widget.project;
+      final project = _projectOf(item);
       notes.addAll(await widget.forge.import([item], project: project));
     }
     if (mounted) Navigator.pop(context, notes);
@@ -1414,7 +1418,7 @@ class _StashImportDialogState extends State<StashImportDialog> {
 
   Widget _item(AppLocalizations l10n, ForgeItem item) {
     final url = item.ref.url.toString();
-    final known = widget.forge.stashOf(url);
+    final known = widget.forge.stashOf(url, project: _projectOf(item));
     final checked = known != null || _checked.contains(url);
     void toggle() => setState(() {
       if (!_checked.remove(url)) _checked.add(url);

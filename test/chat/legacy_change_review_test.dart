@@ -152,6 +152,30 @@ void main() {
           : (await LocalReviewStore.open(root, checkpoints: checkpoints))!;
 
       test(
+        'a session absent from a legacy repository can still discover edits',
+        () async {
+          await legacy.seed('another-session');
+          final store = await open();
+          expect(await store.load(session), isNull);
+          final review = await ChangeReview.resume(store, session);
+          addTearDown(review.dispose);
+          expect(review.failure, isNull);
+          await review.begin();
+          legacy.write('edit.txt', 'fresh agent edit\n');
+          await review.observe();
+          expect(review.failure, isNull);
+          expect(review.changes.map((change) => change.path), [
+            p.join(root, 'edit.txt'),
+          ]);
+          expect(await review.original(p.join(root, 'edit.txt'))!(), 'after\n');
+          await review.undoAll();
+          expect(File(p.join(root, 'edit.txt')).readAsStringSync(), 'after\n');
+          // The unrelated legacy session remains available for migration.
+          expect(await store.load('another-session'), isNotNull);
+        },
+      );
+
+      test(
         'rehashes only pending files and preserves originals and Undo',
         () async {
           final old = await legacy.seed(session);

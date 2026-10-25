@@ -775,16 +775,30 @@ class StashForge extends ChangeNotifier {
   final Set<String> _findingRepos = {};
 
   /// The repositories the projects are of (by their folders' Git remotes,
-  /// on hosts known), each with its project: a folder's own, before a
-  /// workspace it is in; those with an account first.
+  /// on hosts known), each with its project: a folder's own before a
+  /// workspace, and an origin before another project's upstream.
+  /// Those with an account are listed first.
   Future<List<({ForgeRepo repo, Project project})>> repositories() async {
     final found = <ForgeRepo, Project>{};
+    final priority = <ForgeRepo, int>{};
     final projects = workspace.projects;
     for (final workspaces in [false, true]) {
       for (final project in projects) {
         if ((workspace.workspaceOf(project) != null) != workspaces) continue;
-        for (final repo in await reposOf(project.path)) {
-          found.putIfAbsent(repo, () => project);
+        for (final folder in foldersOf(project.path)) {
+          // _reposIn keeps Git's origin-first remote order, per folder.
+          for (final (rank, repo) in (await _reposIn(folder)).indexed) {
+            final previous = found[repo];
+            if (previous != null &&
+                workspaces &&
+                workspace.workspaceOf(previous) == null) {
+              continue;
+            }
+            if (previous == null || rank < priority[repo]!) {
+              found[repo] = project;
+              priority[repo] = rank;
+            }
+          }
         }
       }
     }
@@ -890,13 +904,14 @@ class StashForge extends ChangeNotifier {
         for (final MapEntry(key: url, value: item) in items.entries) {
           if (_disposed) return;
           if (store.ignoredIssues.contains(url)) continue;
-          if (stashOf(url) case final note?) {
+          if (stashOf(url, project: project.path) case final note?) {
             answers[url] = item;
             // Imported before it was kept: it is the issue.
             if (note.issue == null && note.ownIssue == url) {
               // Each as it is now: what changes after is kept in step
               // (what differs already, left as it is).
               await store.update(note.id, (note) {
+                note.project ??= project.path;
                 note
                   ..issue = url
                   ..synced = StashNote.syncHash(note.title, note.issueText)
@@ -1146,9 +1161,21 @@ class StashForge extends ChangeNotifier {
 
   // --- Imported ------------------------------------------------------------------
 
-  /// The stash [url]'s issue is in, if one is.
-  StashNote? stashOf(String url) {
-    for (final note in store.notes) {
+  /// The stash that is [url]'s issue, before any that merely links it.
+  /// With [project], links from unrelated projects cannot claim its issue.
+  StashNote? stashOf(String url, {String? project}) {
+    final notes = store.notes;
+    for (final note in notes) {
+      if (note.ownIssue == url) return note;
+    }
+    for (final note in notes) {
+      if (note.ownIssue != null) continue;
+      if (project != null &&
+          note.project != null &&
+          note.project != project &&
+          !foldersOf(project).contains(note.project)) {
+        continue;
+      }
       if (note.issueOf(url) != null) return note;
     }
     return null;
@@ -1164,7 +1191,7 @@ class StashForge extends ChangeNotifier {
     final notes = <StashNote>[];
     for (final item in items) {
       final url = item.ref.url.toString();
-      if (stashOf(url) case final known?) {
+      if (stashOf(url, project: project) case final known?) {
         notes.add(known);
         continue;
       }

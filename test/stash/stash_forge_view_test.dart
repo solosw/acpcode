@@ -191,6 +191,52 @@ void main() {
     expect(store.byId(note.id)!.issueOf(issueUrl)!.answered, isTrue);
   });
 
+  testWidgets(
+    'pasted issues of unknown repositories do not inherit the project filter',
+    (tester) async {
+      await setUpStash('Existing stash');
+      const external = 'https://github.com/other/repo/issues/3';
+      http.on(
+        'GET',
+        'https://api.github.com/repos/other/repo/issues/3',
+        (_) => issue(3, 'External issue'),
+      );
+      List<StashNote>? imported;
+      await tester.pumpWidget(
+        app(
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () async => imported = await showStashImportDialog(
+                context,
+                forge: forge,
+                project: '~/code/baocode',
+              ),
+              child: const Text('import'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('import'));
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+      await tester.enterText(find.byType(EditableText).first, external);
+      await tester.tap(find.text(englishLocalizations.stashImportAdd));
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+      expect(find.text('External issue'), findsOneWidget);
+      await tester.tap(find.text('Import 1'));
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+      expect(imported!.single.ownIssue, external);
+      expect(imported!.single.project, isNull);
+      expect(sent(), isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('issues imported: the project\'s repository\'s listed, those '
       'checked made stashes, those imported before marked', (tester) async {
     await setUpStash('Fix $issueUrl');

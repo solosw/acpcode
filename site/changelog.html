@@ -74,6 +74,20 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.5.4">
+    <h2 class="plain"><a href="#v1.5.4">1.5.4</a></h2>
+    <p>Fixes</p>
+    <ul>
+    <li>Scope Stash @ mentions to the current project and workspace instead of showing entries from other projects.</li>
+    <li>Prevent cross-project Stash reuse during issue imports and synchronization. Prefer origin when assigning repositories, and leave issues from unknown repositories unassigned.</li>
+    <li>Fix file-change tracking failing to start, leaving the chat changes sidebar empty, when a legacy checkpoint repository has no record for the current session.</li>
+    </ul>
+    <p>Notes</p>
+    <ul>
+    <li>Existing Stash project assignments are not rewritten in bulk. Historical file diffs that were not recorded during the failure may not be recoverable automatically.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.5.3">
     <h2 class="plain"><a href="#v1.5.3">1.5.3</a></h2>
     <p>New</p>

@@ -48,11 +48,19 @@ Widget stashProjectIcon(Workspace workspace, Project project) =>
       fallback: Codicons.folder,
     );
 
-/// What `@` offers of the stashes in a composer: those not done, the
-/// newest first.
-List<Suggestion> stashSuggestions(StashStore store, String heading) => [
+/// What `@` offers: unfinished stashes of this project (or its workspace
+/// folders), newest first. A chat without a project only offers unassigned ones.
+List<Suggestion> stashSuggestions(
+  StashStore store,
+  String heading, {
+  required String? project,
+  List<String> folders = const [],
+}) => [
   for (final note in store.notes)
-    if (note.status != StashStatus.done && !note.isBlank)
+    if (note.status != StashStatus.done &&
+        !note.isBlank &&
+        (note.project == project ||
+            project != null && folders.contains(note.project)))
       Suggestion.stash(
         number: note.id,
         title: note.displayTitle,

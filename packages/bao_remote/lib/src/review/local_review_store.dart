@@ -409,8 +409,14 @@ class LocalReviewStore implements ReviewStore, ScanningReviewStore {
       name = 'h${_folderName(name).split('-').last}';
     }
     final ref = 'refs/baocode/sessions/$name';
+    // Without --quiet, a missing ref exits 128, the same as a broken repo.
+    // A project with legacy checkpoints may have no record for this session.
+    final exists = await _legacyGit(['show-ref', '--verify', '--quiet', ref]);
+    if (exists.exitCode == 1) return null;
+    if (exists.exitCode != 0) {
+      throw const ReviewUnavailable('Invalid legacy repository.');
+    }
     final resolved = await _legacyGit(['show-ref', '--verify', '--hash', ref]);
-    if (resolved.exitCode == 1) return null;
     if (resolved.exitCode != 0) {
       throw const ReviewUnavailable('Invalid legacy repository.');
     }

@@ -201,6 +201,142 @@ void main() {
         });
     });
 
+    test('a link in another project cannot capture a synced issue', () async {
+      final foreign = await store.create(
+        body: 'See $issueUrl',
+        project: '/other',
+      );
+      await store.update(
+        foreign.id,
+        (note) => note.issues.add(const StashIssueLink(url: issueUrl)),
+      );
+      await forge.sync();
+      final own = forge.stashOf(issueUrl)!;
+      expect(own.id, isNot(foreign.id));
+      expect(own.project, '~/code/baocode');
+      expect(own.ownIssue, issueUrl);
+      expect(store.byId(foreign.id)!.project, '/other');
+      expect(store.byId(foreign.id)!.ownIssue, isNull);
+      await forge.sync();
+      expect(
+        store.notes.where((note) => note.ownIssue == issueUrl),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'import prefers the issue owner over newer cross-project references',
+      () async {
+        final item = await accounts
+            .apiOf(ForgeRef.parse(issueUrl)!)!
+            .item(ForgeRef.parse(issueUrl)!);
+        final foreign = await store.create(
+          body: 'See $issueUrl',
+          project: '/other',
+        );
+        await store.update(
+          foreign.id,
+          (note) => note.issues.add(const StashIssueLink(url: issueUrl)),
+        );
+        final own = (await forge.import([
+          item,
+        ], project: '~/code/baocode')).single;
+        expect(own.id, isNot(foreign.id));
+        final newer = await store.create(
+          body: 'Another link',
+          project: '/third',
+        );
+        await store.update(
+          newer.id,
+          (note) => note.issues.add(const StashIssueLink(url: issueUrl)),
+        );
+        expect(forge.stashOf(issueUrl)!.id, own.id);
+        expect(
+          (await forge.import([item], project: '~/code/baocode')).single.id,
+          own.id,
+        );
+      },
+    );
+
+    test(
+      'matching issue numbers in different repositories keep their projects',
+      () async {
+        final workspace = Workspace(
+          projects: const [Project('A', '/a'), Project('B', '/b')],
+        );
+        addTearDown(workspace.dispose);
+        forge.dispose();
+        forge = StashForge(
+          store: store,
+          workspace: workspace,
+          accounts: accounts,
+          remotes: (folder) async => [
+            'git@github.com:o/${folder == '/a' ? 'a' : 'b'}.git',
+          ],
+        );
+        for (final name in ['a', 'b']) {
+          http.on(
+            'GET',
+            'https://api.github.com/repos/o/$name/issues',
+            (_) => [issue(3, 'Issue $name', 'Body $name')],
+          );
+        }
+        await forge.sync();
+        expect(store.notes, hasLength(2));
+        expect(forge.stashOf('https://github.com/o/a/issues/3')!.project, '/a');
+        expect(forge.stashOf('https://github.com/o/b/issues/3')!.project, '/b');
+        await forge.sync();
+        expect(store.notes, hasLength(2));
+      },
+    );
+
+    test(
+      'an upstream remote cannot take another project origin issues',
+      () async {
+        final workspace = Workspace(
+          projects: const [
+            Project('Fork', '/fork'),
+            Project('Upstream', '/upstream'),
+          ],
+        );
+        addTearDown(workspace.dispose);
+        forge.dispose();
+        forge = StashForge(
+          store: store,
+          workspace: workspace,
+          accounts: accounts,
+          remotes: (folder) async => folder == '/fork'
+              ? ['git@github.com:o/fork.git', 'git@github.com:o/upstream.git']
+              : ['git@github.com:o/upstream.git'],
+        );
+        for (final name in ['fork', 'upstream']) {
+          http.on(
+            'GET',
+            'https://api.github.com/repos/o/$name/issues',
+            (_) => [issue(3, 'Issue $name', 'Body $name')],
+          );
+        }
+        expect(
+          {
+            for (final entry in await forge.repositories())
+              entry.repo.path: entry.project.path,
+          },
+          {'o/fork': '/fork', 'o/upstream': '/upstream'},
+        );
+        await forge.sync();
+        expect(
+          forge.stashOf('https://github.com/o/fork/issues/3')!.project,
+          '/fork',
+        );
+        expect(
+          forge.stashOf('https://github.com/o/upstream/issues/3')!.project,
+          '/upstream',
+        );
+        await forge.sync();
+        expect(store.notes, hasLength(2));
+      },
+    );
+
     test('each open issue a stash, once; one deleted never again', () async {
       await forge.sync();
       expect(
@@ -320,6 +456,7 @@ void main() {
       expect(store.notes, hasLength(2));
       final adopted = store.byId(imported.id)!;
       expect(adopted.issue, 'https://github.com/o/r/issues/4');
+      expect(adopted.project, '~/code/baocode');
       // Not taken over: what differs stays till either changes.
       expect(adopted.issueText, 'Mine now.');
       expect(adopted.changedHere, isFalse);

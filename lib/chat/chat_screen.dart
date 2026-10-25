@@ -788,6 +788,10 @@ class _ChatScreenState extends State<ChatScreen>
               final store? => () => stashSuggestions(
                 store,
                 context.l10n.stashHeading,
+                project: _session.kernelContext.cwd,
+                folders:
+                    _session.kernelContext.workspace?.call()?.folders ??
+                    const [],
               ),
               null => null,
             },

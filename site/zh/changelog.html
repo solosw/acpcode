@@ -74,6 +74,20 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.5.4">
+    <h2 class="plain"><a href="#v1.5.4">1.5.4</a></h2>
+    <p>修复</p>
+    <ul>
+    <li>聊天中通过 @ 引用 Stash 时，按当前项目和工作区筛选，避免出现其他项目的条目。</li>
+    <li>修复 Issue 导入和同步时的 Stash 跨项目混用；仓库归属优先采用 origin，未知仓库的 Issue 不再自动归入当前项目。</li>
+    <li>修复旧检查点仓库中缺少当前会话记录时，文件变更跟踪无法启动、聊天侧栏不显示变更的问题。</li>
+    </ul>
+    <p>说明</p>
+    <ul>
+    <li>不批量改写已有 Stash 的项目归属；故障期间未记录的历史文件差异不保证自动恢复。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.5.3">
     <h2 class="plain"><a href="#v1.5.3">1.5.3</a></h2>
     <p>新功能</p>
