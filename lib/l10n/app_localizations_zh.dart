@@ -8887,11 +8887,11 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsAccountsKeywords =>
-      'GitHub GitLab 登录 令牌 token issue PR 合并请求';
+      'GitHub GitLab 登录 令牌 token issue PR 合并请求 Gitea HTTP';
 
   @override
   String get accountsDescription =>
-      '登录 GitHub 或 GitLab 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
+      '登录 GitHub、GitLab 或 Gitea 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
 
   @override
   String get accountsSignedIn => '已登录';
@@ -8901,7 +8901,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub 或 GitLab。未经你确认，不会发布任何内容。';
+      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub、GitLab 或 Gitea。未经你确认，不会发布任何内容。';
 
   @override
   String get accountsGitHubHosts => 'github.com，或公司的 GitHub Enterprise';
@@ -10244,4 +10244,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String stashDeleteAndCloseMany(int count) {
     return '删除并关闭 $count 个 issue…';
   }
+
+  @override
+  String get accountsGiteaHosts => '你的 Gitea 实例（HTTP 或 HTTPS）';
+
+  @override
+  String get accountsGiteaAddressHint => '填写完整实例地址，使用 HTTP 时请包含 http://';
+
+  @override
+  String get accountsTokenGiteaScopes =>
+      '使用个人访问令牌，按所需功能授予用户读取、Issue 和仓库权限，并允许访问需要同步的仓库。暂不支持上传本地图片。';
+
+  @override
+  String get accountsHttpTitle => '使用未加密的 HTTP 连接？';
+
+  @override
+  String accountsHttpDetail(String host) {
+    return '令牌和议题内容将通过未加密连接发送到 $host。请仅在可信网络中使用，建议改用 HTTPS。';
+  }
+
+  @override
+  String get accountsHttpContinue => '继续使用 HTTP';
+
+  @override
+  String get stashIssuePicturesGitea =>
+      'Gitea 暂不支持上传本地图片。请先移除本地图片或换成远程图片链接，再发布或推送。';
 }

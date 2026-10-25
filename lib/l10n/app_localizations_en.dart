@@ -9398,11 +9398,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsAccountsKeywords =>
-      'GitHub GitLab sign in login token issue pull request merge request';
+      'GitHub GitLab sign in login token issue pull request merge request Gitea HTTP';
 
   @override
   String get accountsDescription =>
-      'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
+      'Sign in to GitHub, GitLab or Gitea to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
 
   @override
   String get accountsSignedIn => 'Signed in';
@@ -9412,7 +9412,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.';
+      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitea they are for. Nothing is posted without your confirmation.';
 
   @override
   String get accountsGitHubHosts =>
@@ -10831,4 +10831,30 @@ class AppLocalizationsEn extends AppLocalizations {
   String stashDeleteAndCloseMany(int count) {
     return 'Delete and close $count issues…';
   }
+
+  @override
+  String get accountsGiteaHosts => 'Your Gitea instance (HTTP or HTTPS)';
+
+  @override
+  String get accountsGiteaAddressHint =>
+      'Enter the full instance address, including http:// if needed';
+
+  @override
+  String get accountsTokenGiteaScopes =>
+      'Use a personal access token with user read access and issue/repository permissions for the features you use. Grant access to the repositories you want to sync. Local image upload is not supported yet.';
+
+  @override
+  String get accountsHttpTitle => 'Use an unencrypted HTTP connection?';
+
+  @override
+  String accountsHttpDetail(String host) {
+    return 'The token and issue content will be sent to $host without encryption. Use only on a network you trust. HTTPS is recommended.';
+  }
+
+  @override
+  String get accountsHttpContinue => 'Continue with HTTP';
+
+  @override
+  String get stashIssuePicturesGitea =>
+      'Gitea local image upload is not supported yet. Remove local images or replace them with remote image links before publishing.';
 }

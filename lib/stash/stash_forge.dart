@@ -723,7 +723,11 @@ class StashForge extends ChangeNotifier {
     final repos = <ForgeRepo>{};
     try {
       for (final remote in await _remotes(folder)) {
-        if (ForgeRepo.fromRemote(remote, kindOf: accounts.kindOf)
+        if (ForgeRepo.fromRemote(
+              remote,
+              kindOf: accounts.kindOf,
+              originOf: accounts.originOf,
+            )
             case final repo?) {
           repos.add(repo);
         }
@@ -1077,6 +1081,12 @@ class StashForge extends ChangeNotifier {
     for (final match in _links.allMatches(text)) {
       final target = _targetOf(match);
       if (_remote(target)) continue;
+      if (repo.kind == ForgeKind.gitea &&
+          (match[1]!.isNotEmpty || _isImage(target))) {
+        throw const ForgeException(
+          'Gitea image upload is not supported yet. Remove local images or use remote image links before publishing.',
+        );
+      }
       out.write(text.substring(at, match.start));
       at = match.end;
       final bytes = await store.disk.readAsset(_decoded(target));

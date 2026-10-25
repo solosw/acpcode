@@ -10,6 +10,8 @@ import 'package:flutter/foundation.dart';
 
 import 'forge_ref.dart';
 
+part 'gitea_api.dart';
+
 /// A response: its status and its body, as text.
 @immutable
 class ForgeResponse {
@@ -193,7 +195,7 @@ class ForgeUser {
 abstract class ForgeApi {
   ForgeApi({required this.host, required this.http, required this.token});
 
-  /// The forge's host (`github.com`, `gitlab.example.com`).
+  /// The forge's host (`github.com`, `gitlab.example.com`), or Gitea origin.
   final String host;
   final ForgeHttp http;
 
@@ -287,7 +289,14 @@ abstract class ForgeApi {
         status: response.status,
       );
     }
-    return response.json;
+    try {
+      return response.json;
+    } on FormatException {
+      throw ForgeException(
+        'The server returned an invalid JSON response.',
+        status: response.status,
+      );
+    }
   }
 
   static DateTime? _date(Object? value) =>

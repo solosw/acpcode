@@ -1,4 +1,4 @@
-// The user's accounts on forges (GitHub, GitLab; theirs, or a company's
+// The user's accounts on forges (GitHub, GitLab, Gitea; theirs, or a company's
 // own): signed in from the browser (OAuth's device flow, no secret on
 // this machine but the token) or with a token they made. The tokens are
 // kept in the system's keychain (SecretStore), the rest in the app's
@@ -48,6 +48,8 @@ class ForgeAccount {
   });
 
   final ForgeKind kind;
+
+  /// Hostname for existing forges; full origin (scheme and port) for Gitea.
   final String host;
   final String login;
   final String? name;
@@ -146,7 +148,7 @@ class _Token {
   );
 }
 
-/// The user's forge accounts, one a host; what asks a forge goes through
+/// The user's forge accounts, one per instance; requests go through
 /// [apiFor].
 class ForgeAccounts extends ChangeNotifier {
   ForgeAccounts({
@@ -188,11 +190,37 @@ class ForgeAccounts extends ChangeNotifier {
 
   List<ForgeAccount> get accounts => List.unmodifiable(_accounts.values);
 
-  ForgeAccount? accountFor(String host) => _accounts[host.toLowerCase()];
+  ForgeAccount? accountFor(String host) {
+    final text = host.trim().toLowerCase();
+    if (text.contains('://')) {
+      final uri = Uri.tryParse(text);
+      if (uri == null ||
+          !(uri.isScheme('http') || uri.isScheme('https')) ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty) {
+        return null;
+      }
+      final exact = _accounts[uri.origin];
+      if (exact != null) return exact;
+      final legacy = _accounts[uri.host];
+      return legacy?.kind == ForgeKind.gitea ? null : legacy;
+    }
+    final exact = _accounts[text];
+    if (exact != null) return exact;
+    final matches = _accounts.values.where(
+      (account) =>
+          account.kind == ForgeKind.gitea &&
+          Uri.parse(account.host).host == text,
+    );
+    return matches.length == 1 ? matches.single : null;
+  }
+
+  /// Resolve SSH remotes only when a hostname identifies one instance.
+  String? originOf(String host) => accountFor(host)?.host;
 
   /// What [host] is: its account's forge, else github.com's or gitlab.com's.
   ForgeKind? kindOf(String host) =>
-      _accounts[host.toLowerCase()]?.kind ?? publicForgeKind(host);
+      accountFor(host)?.kind ?? publicForgeKind(host);
 
   /// Whether signing in from the browser works for [kind] on [host]: on
   /// its public service, with BaoCode's app registered.
@@ -201,6 +229,7 @@ class ForgeAccounts extends ChangeNotifier {
       switch (kind) {
         ForgeKind.github => githubClient.isNotEmpty,
         ForgeKind.gitlab => gitlabClient.isNotEmpty,
+        ForgeKind.gitea => false,
       };
 
   static String _secretId(String host) => 'forge.$host';
@@ -221,11 +250,15 @@ class ForgeAccounts extends ChangeNotifier {
         http: http,
         token: token,
       ),
+      ForgeKind.gitea => GiteaApi(host: account.host, http: http, token: token),
     };
   }
 
   /// [ref]'s API: its host's, signed in; null without an account there.
-  ForgeApi? apiOf(ForgeRef ref) => apiFor(ref.repo.host);
+  ForgeApi? apiOf(ForgeRef ref) {
+    final api = apiFor(ref.repo.host);
+    return api?.kind == ref.repo.kind ? api : null;
+  }
 
   Future<String> _accessToken(ForgeAccount account) async {
     final token = _Token.decode(await _secrets.read(_secretId(account.host)));
@@ -269,7 +302,12 @@ class ForgeAccounts extends ChangeNotifier {
     ForgeKind kind,
     String host,
     String token,
-  ) => _signIn(kind, _hostOf(host), _Token(token.trim()), ForgeSignIn.token);
+  ) => _signIn(
+    kind,
+    kind == ForgeKind.gitea ? giteaOrigin(host) : _hostOf(host),
+    _Token(token.trim()),
+    ForgeSignIn.token,
+  );
 
   Future<ForgeAccount> _signIn(
     ForgeKind kind,
@@ -281,6 +319,7 @@ class ForgeAccounts extends ChangeNotifier {
     final api = switch (kind) {
       ForgeKind.github => GitHubApi(host: host, http: http, token: access),
       ForgeKind.gitlab => GitLabApi(host: host, http: http, token: access),
+      ForgeKind.gitea => GiteaApi(host: host, http: http, token: access),
     };
     final me = await api.me();
     await _secrets.write(_secretId(host), token.encode());
@@ -300,8 +339,10 @@ class ForgeAccounts extends ChangeNotifier {
   /// Signs out of [host]: its token deleted from this machine (the user is
   /// told to revoke it on the forge too).
   Future<void> signOut(String host) async {
-    host = _hostOf(host);
-    if (_accounts.remove(host) == null) return;
+    final account = accountFor(host);
+    if (account == null) return;
+    host = account.host;
+    _accounts.remove(host);
     await _secrets.delete(_secretId(host));
     await _keep();
     notifyListeners();
@@ -322,22 +363,28 @@ class ForgeAccounts extends ChangeNotifier {
   /// Starts signing in to [kind]'s public service from the browser: the
   /// code the user enters there. Throws [ForgeException].
   Future<ForgeDeviceCode> startDeviceFlow(ForgeKind kind) async {
+    if (kind == ForgeKind.gitea) {
+      throw const ForgeException('Gitea supports personal access tokens only.');
+    }
     final host = kind.publicHost;
     final response = await http.send(
       'POST',
       switch (kind) {
         ForgeKind.github => Uri.https(host, '/login/device/code'),
         ForgeKind.gitlab => Uri.https(host, '/oauth/authorize_device'),
+        ForgeKind.gitea => throw StateError('Token sign-in only'),
       },
       headers: const {'Accept': 'application/json'},
       form: {
         'client_id': switch (kind) {
           ForgeKind.github => githubClient,
           ForgeKind.gitlab => gitlabClient,
+          ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
         'scope': switch (kind) {
           ForgeKind.github => _githubScopes,
           ForgeKind.gitlab => _gitlabScopes,
+          ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
       },
     );
@@ -373,6 +420,9 @@ class ForgeAccounts extends ChangeNotifier {
     bool Function()? cancelled,
     Future<void> Function(Duration)? wait,
   }) async {
+    if (code.kind == ForgeKind.gitea) {
+      throw const ForgeException('Gitea supports personal access tokens only.');
+    }
     final sleep = wait ?? (duration) => Future<void>.delayed(duration);
     var interval = code.interval;
     while (true) {
@@ -391,12 +441,14 @@ class ForgeAccounts extends ChangeNotifier {
         switch (code.kind) {
           ForgeKind.github => Uri.https(code.host, '/login/oauth/access_token'),
           ForgeKind.gitlab => Uri.https(code.host, '/oauth/token'),
+          ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
         headers: const {'Accept': 'application/json'},
         form: {
           'client_id': switch (code.kind) {
             ForgeKind.github => githubClient,
             ForgeKind.gitlab => gitlabClient,
+            ForgeKind.gitea => throw StateError('Token sign-in only'),
           },
           'device_code': code.deviceCode,
           'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',

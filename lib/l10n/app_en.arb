@@ -6721,11 +6721,11 @@
     "description": "Tooltip and menu title of the branch picker under the chat input of a multi-folder workspace."
   },
   "settingsSectionAccounts": "Git Accounts",
-  "settingsAccountsKeywords": "GitHub GitLab sign in login token issue pull request merge request",
-  "accountsDescription": "Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
+  "settingsAccountsKeywords": "GitHub GitLab sign in login token issue pull request merge request Gitea HTTP",
+  "accountsDescription": "Sign in to GitHub, GitLab or Gitea to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
   "accountsSignedIn": "Signed in",
   "accountsAdd": "Add an account",
-  "accountsKeptLocally": "Tokens are kept in this computer's keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.",
+  "accountsKeptLocally": "Tokens are kept in this computer's keychain and are sent only to the GitHub, GitLab or Gitea they are for. Nothing is posted without your confirmation.",
   "accountsGitHubHosts": "github.com, or your company's GitHub Enterprise",
   "accountsGitLabHosts": "gitlab.com, or a self-managed GitLab",
   "accountsSignInBrowser": "Sign in with Browser",
@@ -7546,5 +7546,13 @@
         "type": "int"
       }
     }
-  }
+  },
+  "accountsGiteaHosts": "Your Gitea instance (HTTP or HTTPS)",
+  "accountsGiteaAddressHint": "Enter the full instance address, including http:// if needed",
+  "accountsTokenGiteaScopes": "Use a personal access token with user read access and issue/repository permissions for the features you use. Grant access to the repositories you want to sync. Local image upload is not supported yet.",
+  "accountsHttpTitle": "Use an unencrypted HTTP connection?",
+  "accountsHttpDetail": "The token and issue content will be sent to {host} without encryption. Use only on a network you trust. HTTPS is recommended.",
+  "accountsHttpContinue": "Continue with HTTP",
+  "@accountsHttpDetail": {"placeholders": {"host": {"type": "String"}}},
+  "stashIssuePicturesGitea": "Gitea local image upload is not supported yet. Remove local images or replace them with remote image links before publishing."
 }

@@ -25,6 +25,8 @@ class IoForgeHttp implements ForgeHttp {
   }) async {
     try {
       final request = await _client.openUrl(method, url);
+      // Do not forward credentials or downgrade transport on a redirect.
+      request.followRedirects = false;
       headers.forEach(request.headers.set);
       if (form != null) {
         request.headers.contentType = ContentType(

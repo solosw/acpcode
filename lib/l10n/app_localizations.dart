@@ -15348,13 +15348,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsAccountsKeywords.
   ///
   /// In en, this message translates to:
-  /// **'GitHub GitLab sign in login token issue pull request merge request'**
+  /// **'GitHub GitLab sign in login token issue pull request merge request Gitea HTTP'**
   String get settingsAccountsKeywords;
 
   /// No description provided for @accountsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
+  /// **'Sign in to GitHub, GitLab or Gitea to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
   String get accountsDescription;
 
   /// No description provided for @accountsSignedIn.
@@ -15372,7 +15372,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsKeptLocally.
   ///
   /// In en, this message translates to:
-  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.'**
+  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitea they are for. Nothing is posted without your confirmation.'**
   String get accountsKeptLocally;
 
   /// No description provided for @accountsGitHubHosts.
@@ -17672,6 +17672,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete and close {count} issues…'**
   String stashDeleteAndCloseMany(int count);
+
+  /// No description provided for @accountsGiteaHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'Your Gitea instance (HTTP or HTTPS)'**
+  String get accountsGiteaHosts;
+
+  /// No description provided for @accountsGiteaAddressHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the full instance address, including http:// if needed'**
+  String get accountsGiteaAddressHint;
+
+  /// No description provided for @accountsTokenGiteaScopes.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a personal access token with user read access and issue/repository permissions for the features you use. Grant access to the repositories you want to sync. Local image upload is not supported yet.'**
+  String get accountsTokenGiteaScopes;
+
+  /// No description provided for @accountsHttpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Use an unencrypted HTTP connection?'**
+  String get accountsHttpTitle;
+
+  /// No description provided for @accountsHttpDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The token and issue content will be sent to {host} without encryption. Use only on a network you trust. HTTPS is recommended.'**
+  String accountsHttpDetail(String host);
+
+  /// No description provided for @accountsHttpContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue with HTTP'**
+  String get accountsHttpContinue;
+
+  /// No description provided for @stashIssuePicturesGitea.
+  ///
+  /// In en, this message translates to:
+  /// **'Gitea local image upload is not supported yet. Remove local images or replace them with remote image links before publishing.'**
+  String get stashIssuePicturesGitea;
 }
 
 class _AppLocalizationsDelegate

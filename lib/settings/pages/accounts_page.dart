@@ -62,6 +62,7 @@ class AccountsSettingsPage extends StatelessWidget {
                   description: switch (kind) {
                     ForgeKind.github => l10n.accountsGitHubHosts,
                     ForgeKind.gitlab => l10n.accountsGitLabHosts,
+                    ForgeKind.gitea => l10n.accountsGiteaHosts,
                   },
                   trailing: SettingsButtons(
                     children: [
@@ -144,6 +145,9 @@ class _AccountRow extends StatelessWidget {
 /// in from the browser) or the tokens' page.
 Uri forgeRevokePage(ForgeAccount account) =>
     switch ((account.kind, account.via)) {
+      (ForgeKind.gitea, _) => Uri.parse(
+        giteaOrigin(account.host),
+      ).replace(path: '/user/settings/applications'),
       (ForgeKind.github, ForgeSignIn.browser) => Uri.https(
         account.host,
         '/settings/applications',
@@ -164,6 +168,9 @@ Uri forgeRevokePage(ForgeAccount account) =>
 
 /// Where a token for BaoCode is made on [host], what it needs checked.
 Uri forgeNewTokenPage(ForgeKind kind, String host) => switch (kind) {
+  ForgeKind.gitea => Uri.parse(
+    giteaOrigin(host),
+  ).replace(path: '/user/settings/applications'),
   ForgeKind.github => Uri.https(host, '/settings/tokens/new', {
     'scopes': 'repo,read:user',
     'description': 'BaoCode',
@@ -234,7 +241,9 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
     super.dispose();
   }
 
-  String get _hostTyped => _host.text.trim().isEmpty
+  String get _hostTyped => widget.kind == ForgeKind.gitea
+      ? _host.text.trim()
+      : _host.text.trim().isEmpty
       ? widget.kind.publicHost
       : Uri.tryParse(
               _host.text.contains('://')
@@ -243,6 +252,14 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
             )?.host ??
             _host.text.trim();
 
+  Uri? get _tokenPage {
+    try {
+      return forgeNewTokenPage(widget.kind, _hostTyped);
+    } on FormatException {
+      return null;
+    }
+  }
+
   Future<void> _signIn() async {
     if (_signingIn || _token.text.trim().isEmpty) return;
     setState(() {
@@ -250,10 +267,30 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
       _error = null;
     });
     try {
+      final host = widget.kind == ForgeKind.gitea
+          ? giteaOrigin(_hostTyped)
+          : _hostTyped;
+      final token = _token.text;
+      if (widget.kind == ForgeKind.gitea && Uri.parse(host).isScheme('http')) {
+        final answer = await showIdeDialog(
+          context,
+          message: context.l10n.accountsHttpTitle,
+          detail: context.l10n.accountsHttpDetail(host),
+          buttons: [
+            context.l10n.accountsHttpContinue,
+            context.l10n.commonCancel,
+          ],
+        );
+        if (!mounted) return;
+        if (answer != 0) {
+          setState(() => _signingIn = false);
+          return;
+        }
+      }
       final account = await widget.accounts.signInWithToken(
         widget.kind,
-        _hostTyped,
-        _token.text,
+        host,
+        token,
       );
       if (mounted) Navigator.pop(context, account);
     } on ForgeException catch (error) {
@@ -303,7 +340,9 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
             IdeInputBox(
               controller: _host,
               semanticsLabel: l10n.accountsHost,
-              placeholder: kind.publicHost,
+              placeholder: kind == ForgeKind.gitea
+                  ? l10n.accountsGiteaAddressHint
+                  : kind.publicHost,
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 10),
@@ -321,6 +360,7 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
             Text(switch (kind) {
               ForgeKind.github => l10n.accountsTokenGitHubScopes,
               ForgeKind.gitlab => l10n.accountsTokenGitLabScopes,
+              ForgeKind.gitea => l10n.accountsTokenGiteaScopes,
             }, style: _muted()),
             const SizedBox(height: 8),
             Align(
@@ -329,9 +369,9 @@ class _ForgeTokenDialogState extends State<ForgeTokenDialog> {
                 label: l10n.accountsTokenCreate(_hostTyped),
                 icon: Codicons.linkExternal,
                 secondary: true,
-                onPressed: () => unawaited(
-                  openExternal('${forgeNewTokenPage(kind, _hostTyped)}'),
-                ),
+                onPressed: _tokenPage == null
+                    ? null
+                    : () => unawaited(openExternal('$_tokenPage')),
               ),
             ),
             if (_error case final error?) ...[

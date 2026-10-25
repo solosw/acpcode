@@ -26,6 +26,7 @@ class ForgeLogo extends StatelessWidget {
     final color = this.color ?? IconTheme.of(context).color;
     return switch (kind) {
       ForgeKind.github => Icon(Codicons.github, size: size, color: color),
+      ForgeKind.gitea => Icon(Codicons.repo, size: size, color: color),
       ForgeKind.gitlab => SizedBox.square(
         dimension: size,
         child: Center(

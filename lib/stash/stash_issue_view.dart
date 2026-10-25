@@ -439,6 +439,7 @@ class _StashIssueDialogState extends State<StashIssueDialog> {
     final title = note.displayTitle;
     final sensitive = StashForge.sensitive('$title\n$text');
     final pictures = StashForge.localPictures(text);
+    final unsupportedPictures = repo?.kind == ForgeKind.gitea && pictures > 0;
     final account = repo == null
         ? null
         : widget.forge.accounts.accountFor(repo.host);
@@ -458,7 +459,9 @@ class _StashIssueDialogState extends State<StashIssueDialog> {
               ? l10n.stashIssuePublish
               : l10n.stashIssuePushShort,
           spinning: _sending,
-          onPressed: _sending ? null : () => unawaited(_send()),
+          onPressed: _sending || unsupportedPictures
+              ? null
+              : () => unawaited(_send()),
         ),
         IdeButton(
           label: l10n.commonCancel,
@@ -500,7 +503,9 @@ class _StashIssueDialogState extends State<StashIssueDialog> {
           if (pictures > 0) ...[
             const SizedBox(height: 10),
             Text(
-              repo?.kind == ForgeKind.gitlab
+              unsupportedPictures
+                  ? l10n.stashIssuePicturesGitea
+                  : repo?.kind == ForgeKind.gitlab
                   ? l10n.stashIssuePicturesGitLab(pictures)
                   : l10n.stashIssuePicturesGitHub(
                       pictures,

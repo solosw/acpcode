@@ -2,6 +2,7 @@ import 'package:baocode/forge/forge_accounts.dart';
 import 'package:baocode/forge/forge_api.dart';
 import 'package:baocode/forge/forge_ref.dart';
 import 'package:baocode/l10n/l10n.dart';
+import 'package:baocode/ide/ide_button.dart';
 import 'package:baocode/models/secret_store.dart';
 import 'package:baocode/stash/stash_disk.dart';
 import 'package:baocode/stash/stash_forge.dart';
@@ -103,6 +104,46 @@ void main() {
     expect(sent(), ['POST']);
     expect(store.byId(note.id)!.issue, 'https://github.com/o/r/issues/9');
     expect(find.text('o/r#9'), findsOneWidget);
+  });
+
+  testWidgets('Gitea preview warns and disables publishing local pictures', (
+    tester,
+  ) async {
+    final note = (await tester.runAsync(
+      () => store.create(body: '![Local](assets/a.png)'),
+    ))!;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showStashIssueDialog(
+                context,
+                forge: forge,
+                note: note,
+                repo: const ForgeRepo(
+                  kind: ForgeKind.gitea,
+                  host: 'http://git.example:3000',
+                  path: 'o/r',
+                ),
+              ),
+              child: const Text('Open preview'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open preview'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Gitea local image upload is not supported yet'),
+      findsOneWidget,
+    );
+    final publish = tester.widget<IdeButton>(
+      find.widgetWithText(IdeButton, 'Publish'),
+    );
+    expect(publish.onPressed, isNull);
+    expect(sent(), isEmpty);
   });
 
   testWidgets('kept local, it is not offered again', (tester) async {

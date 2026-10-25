@@ -1,5 +1,6 @@
 import 'package:baocode/forge/forge_accounts.dart';
 import 'package:baocode/forge/forge_api.dart';
+import 'package:baocode/forge/forge_ref.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/models/secret_store.dart';
 import 'package:baocode/settings/pages/accounts_page.dart';
@@ -110,6 +111,69 @@ void main() {
     expect(await secrets.read('forge.github.com'), isNull);
     expect(find.text('leo (Leo)'), findsNothing);
   });
+
+  testWidgets('Gitea HTTP requires confirmation before sending the token', (
+    tester,
+  ) async {
+    const origin = 'http://git.example:3000';
+    http.on('GET', '$origin/api/v1/user', (_) => {'login': 'gitea-user'});
+    final accounts = accountsWith();
+    await pumpPage(tester, accounts);
+    expect(find.text('Gitea'), findsOneWidget);
+    expect(find.text('Sign in with Browser'), findsNothing);
+    await tester.tap(find.text('Use a Token…').last);
+    await tester.pumpAndSettle();
+    final fields = find.byType(EditableText);
+    await tester.enterText(fields.first, origin);
+    await tester.enterText(fields.last, 'gitea-secret');
+    await tester.tap(find.text('Sign In'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Use an unencrypted HTTP connection?'), findsOneWidget);
+    expect(http.requests, isEmpty);
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+    expect(accounts.accounts, isEmpty);
+    expect(http.requests, isEmpty);
+    await tester.tap(find.text('Sign In'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Continue with HTTP'));
+    await tester.pumpAndSettle();
+    expect(accounts.accountFor(origin)?.login, 'gitea-user');
+    expect(find.textContaining('Gitea · $origin'), findsOneWidget);
+    expect('$kept', isNot(contains('gitea-secret')));
+    expect(await secrets.read('forge.$origin'), contains('gitea-secret'));
+    await tester.tap(find.text('Sign Out'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sign Out').last);
+    await tester.pumpAndSettle();
+    expect(accounts.accounts, isEmpty);
+    expect(await secrets.read('forge.$origin'), isNull);
+  });
+
+  testWidgets(
+    'Gitea validates addresses and HTTPS needs no HTTP confirmation',
+    (tester) async {
+      const origin = 'https://git.example:3443';
+      http.on('GET', '$origin/api/v1/user', (_) => {'login': 'secure-user'});
+      final accounts = accountsWith();
+      await pumpPage(tester, accounts);
+      await tester.tap(find.text('Use a Token…').last);
+      await tester.pumpAndSettle();
+      final fields = find.byType(EditableText);
+      await tester.enterText(fields.last, 'secret');
+      await tester.enterText(fields.first, '$origin/subpath');
+      await tester.tap(find.text('Sign In'));
+      await tester.pumpAndSettle();
+      expect(http.requests, isEmpty);
+      expect(accounts.accounts, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.enterText(fields.first, origin);
+      await tester.tap(find.text('Sign In'));
+      await tester.pumpAndSettle();
+      expect(find.text('Continue with HTTP'), findsNothing);
+      expect(accounts.accountFor(origin)?.kind, ForgeKind.gitea);
+    },
+  );
 
   testWidgets('signed in from the browser: the code shown, the account '
       'once it is entered', (tester) async {
