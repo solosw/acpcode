@@ -74,24 +74,38 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.5.2">
+    <h2 class="plain"><a href="#v1.5.2">1.5.2</a></h2>
+    <p>New</p>
+    <ul>
+    <li>Configure per-agent user Skills and Rules directories for ACP agents, then preview and confirm copies on this machine or a selected SSH host. Skills include complete resources; rules are copied unchanged, without prompt injection.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Track customization copies for incremental updates, protect existing and externally modified files, retain stale copies after source removal, and check overlapping directories and symbolic links.</li>
+    <li>Require explicit preview and confirmation before copying. Saving settings or starting an agent never writes to the destination automatically, and failed SSH connections never fall back to local copying.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Preserve existing ACP arguments containing spaces when saving directory or other settings without editing the arguments.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.5.1">
     <h2 class="plain"><a href="#v1.5.1">1.5.1</a></h2>
     <p>New</p>
     <ul>
-    <li>Configure per-agent user Skills and Rules directories for ACP agents, then preview and confirm copies on this machine or a selected SSH host. Skills include complete resources; rules are copied unchanged, without prompt injection.</li>
     <li>Add Gitea to Git Accounts with personal access token sign-in, HTTP or HTTPS instances, custom Web ports, saved sign-in and sign-out.</li>
     <li>Connect Gitea to core Stash workflows: import and sync issues, filter all or personal issues, publish, edit, comment, close, and follow pull request states, merges and available checks or reviews.</li>
     </ul>
     <p>Improved</p>
     <ul>
-    <li>Track customization copies for incremental updates, protect existing and externally modified files, retain stale copies after source removal, and check overlapping directories and symbolic links.</li>
     <li>Isolate Gitea accounts and credentials by protocol, host and port, preserve HTTP links, and resolve unambiguous SSH remotes to configured Web instances.</li>
     <li>Require confirmation before HTTP sign-in because tokens and content travel unencrypted; forge API requests do not follow redirects to unintended destinations.</li>
     <li>Gitea local image upload is not supported yet. Publishing local images is explicitly blocked with an explanation; remote image links remain unchanged.</li>
     </ul>
     <p>Fixed</p>
     <ul>
-    <li>Preserve existing ACP arguments containing spaces when saving directory or other settings without editing the arguments.</li>
     <li>Treat unavailable or inaccessible pull request checks and reviews as unknown instead of reporting success.</li>
     <li>Report non-JSON forge responses as recoverable errors while preserving local Stash data.</li>
     </ul>
