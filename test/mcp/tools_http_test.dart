@@ -270,6 +270,54 @@ void main() {
     },
   );
 
+  test(
+    'SSE serializes bursts and closes during an outstanding flush',
+    () async {
+      final connection = server.open(cwd: '/project');
+      await rpc(connection, 'initialize');
+      await rpc(connection, 'notifications/initialized', id: null);
+      final request = await http.getUrl(server.url!);
+      request.headers.set(
+        'Authorization',
+        (connection.configuration['headers'] as Map)['Authorization'] as String,
+      );
+      request.headers.set('Accept', 'text/event-stream');
+      final response = await request.close();
+      final lines = StreamIterator(
+        response.transform(utf8.decoder).transform(const LineSplitter()),
+      );
+      expect(await lines.moveNext(), isTrue);
+      expect(lines.current, ': connected');
+      for (var i = 0; i < 40; i++) {
+        ClaudeSdkTools.register(
+          ClaudeSdkTool(
+            name: 'http_changed',
+            description: 'Change $i',
+            inputSchema: const {'type': 'object'},
+            run: (_, _) async => 'ok',
+          ),
+        );
+        await Future<void>.value();
+      }
+      connection.close();
+      // Buffered events drain and the stream terminates, without close/flush
+      // racing or leaving the heartbeat alive. The capability is revoked too.
+      var events = 0;
+      while (await lines.moveNext().timeout(const Duration(seconds: 3))) {
+        if (lines.current.startsWith('data:')) events++;
+      }
+      expect(events, greaterThan(0));
+      await lines.cancel();
+      final denied = await post(connection, {
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'ping',
+      });
+      expect(denied.statusCode, 401);
+      await denied.drain<void>();
+    },
+  );
+
   test('server stop revokes old capabilities after restart', () async {
     final old = server.open(cwd: '/old');
     await server.stop();

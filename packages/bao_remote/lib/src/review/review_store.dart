@@ -34,9 +34,13 @@ class ReviewBlob {
 
 /// Why a project's changes cannot be reviewed.
 class ReviewUnavailable implements Exception {
-  const ReviewUnavailable(this.message);
+  const ReviewUnavailable(this.message, {this.retryable = false});
 
   final String message;
+
+  /// A resource shortage before discovery changed the review, not corruption.
+  /// The next scan may retry; a missing baseline must never be guessed.
+  final bool retryable;
 
   @override
   String toString() => message;

@@ -87,7 +87,7 @@ class _Transport implements AcpTransport {
   });
 
   @override
-  void close() => unawaited(_messages.close());
+  Future<void> close() => _messages.close();
 }
 
 void main() {

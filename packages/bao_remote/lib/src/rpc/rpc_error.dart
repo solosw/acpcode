@@ -81,9 +81,11 @@ class RpcError {
       'lspInstall',
       {'message': message, 'detail': ?detail},
     ),
-    ReviewUnavailable(:final message) => _typed(error, 'reviewUnavailable', {
-      'message': message,
-    }),
+    ReviewUnavailable(:final message, :final retryable) => _typed(
+      error,
+      'reviewUnavailable',
+      {'message': message, if (retryable) 'retryable': true},
+    ),
     FormatException(:final message) => _typed(error, 'format', {
       'message': message,
     }),
@@ -163,7 +165,10 @@ class RpcError {
         text(),
         detail: data['detail'] as String?,
       ),
-      'reviewUnavailable' => ReviewUnavailable(text()),
+      'reviewUnavailable' => ReviewUnavailable(
+        text(),
+        retryable: data['retryable'] == true,
+      ),
       'format' => FormatException(text()),
       _ => RemoteException(message, type: data['remoteType'] as String?),
     };

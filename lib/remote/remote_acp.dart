@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:bao_remote/client.dart';
 
 import '../kernel/acp/acp_transport.dart';
+import '../kernel/acp/acp_process_shutdown.dart';
 import '../kernel/acp/acp_transport_io.dart';
 import 'remote_location.dart';
 import 'ssh_host.dart';
@@ -46,11 +47,19 @@ Future<AcpTransport> startAcpAgent(
 /// JSON-RPC over a process the remote server started.
 class RemoteAcpTransport implements AcpTransport {
   RemoteAcpTransport._(this._process) {
-    _process.stdout
+    _stdout = _process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_readLine, onError: _out.addError, onDone: _out.close);
-    _process.stderr.transform(utf8.decoder).listen((_) {});
+        .listen(
+          _readLine,
+          onError: (Object error) {
+            if (!_closed) _out.addError(error);
+          },
+          onDone: () {
+            if (!_out.isClosed) unawaited(_out.close());
+          },
+        );
+    _stderr = _process.stderr.listen((_) {}, onError: (Object _) {});
   }
 
   /// A transport over [process], e.g. a fake under test.
@@ -100,6 +109,9 @@ class RemoteAcpTransport implements AcpTransport {
   final StreamController<Map<String, Object?>> _out =
       StreamController<Map<String, Object?>>.broadcast(sync: true);
   bool _closed = false;
+  Future<void>? _closing;
+  late final StreamSubscription<String> _stdout;
+  late final StreamSubscription<List<int>> _stderr;
 
   @override
   Stream<Map<String, Object?>> get messages => _out.stream;
@@ -121,10 +133,22 @@ class RemoteAcpTransport implements AcpTransport {
   }
 
   @override
-  void close() {
-    if (_closed) return;
+  Future<void> close() {
+    if (_closing case final closing?) return closing;
     _closed = true;
-    _process.kill();
-    unawaited(_out.close());
+    return _closing = _close();
+  }
+
+  Future<void> _close() async {
+    unawaited(Future<void>.sync(_process.closeStdin).catchError((Object _) {}));
+    try {
+      await stopAcpProcess(
+        exitCode: _process.exitCode,
+        kill: (force) => _process.kill(force: force),
+      );
+    } finally {
+      await Future.wait([_stdout.cancel(), _stderr.cancel()]);
+      if (!_out.isClosed) unawaited(_out.close());
+    }
   }
 }

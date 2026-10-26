@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../claude_code/claude_environment.dart';
 import 'acp_transport.dart';
+import 'acp_process_shutdown.dart';
 
 /// JSON-RPC over newline-delimited stdin/stdout.
 class StdioAcpTransport implements AcpTransport {
@@ -11,15 +12,25 @@ class StdioAcpTransport implements AcpTransport {
     _subscription = _process.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_readLine, onError: _out.addError, onDone: _out.close);
-    _process.stderr.transform(utf8.decoder).listen((_) {});
+        .listen(
+          _readLine,
+          onError: (Object error) {
+            if (!_closed) _out.addError(error);
+          },
+          onDone: () {
+            if (!_out.isClosed) unawaited(_out.close());
+          },
+        );
+    _stderr = _process.stderr.listen((_) {}, onError: (Object _) {});
   }
 
   final Process _process;
   final StreamController<Map<String, Object?>> _out =
       StreamController<Map<String, Object?>>.broadcast(sync: true);
   late final StreamSubscription<String> _subscription;
+  late final StreamSubscription<List<int>> _stderr;
   bool _closed = false;
+  Future<void>? _closing;
 
   static Future<StdioAcpTransport> start(
     String command, {
@@ -110,11 +121,27 @@ class StdioAcpTransport implements AcpTransport {
   }
 
   @override
-  void close() {
-    if (_closed) return;
+  Future<void> close() {
+    if (_closing case final closing?) return closing;
     _closed = true;
-    _subscription.cancel();
-    _process.kill();
-    _out.close();
+    return _closing = _close();
+  }
+
+  Future<void> _close() async {
+    // Do not await stdin before signalling: a non-reading peer may block it.
+    unawaited(
+      Future<void>.sync(_process.stdin.close).catchError((Object _) {}),
+    );
+    try {
+      await stopAcpProcess(
+        exitCode: _process.exitCode,
+        kill: (force) => _process.kill(
+          force ? ProcessSignal.sigkill : ProcessSignal.sigterm,
+        ),
+      );
+    } finally {
+      await Future.wait([_subscription.cancel(), _stderr.cancel()]);
+      if (!_out.isClosed) unawaited(_out.close());
+    }
   }
 }

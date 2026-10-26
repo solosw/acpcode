@@ -107,7 +107,7 @@ class _Transport implements AcpTransport {
   }
 
   @override
-  void close() => _out.close();
+  Future<void> close() => _out.close();
 }
 
 KernelDescriptor _descriptor(AcpTransport Function() transport) {

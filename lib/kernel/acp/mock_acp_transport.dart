@@ -234,7 +234,7 @@ class MockAcpTransport implements AcpTransport {
   }
 
   @override
-  void close() {
-    if (!_out.isClosed) _out.close();
+  Future<void> close() async {
+    if (!_out.isClosed) await _out.close();
   }
 }

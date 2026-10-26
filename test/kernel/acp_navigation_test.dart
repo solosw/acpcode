@@ -71,7 +71,7 @@ class _StalledTransport implements AcpTransport {
   }
 
   @override
-  void close() => _messages.close();
+  Future<void> close() => _messages.close();
 }
 
 class _Catalog implements SessionCatalog {
@@ -132,13 +132,15 @@ Finder _picker(String label) =>
 
 Future<Workspace> _pumpApp(
   WidgetTester tester,
-  _StalledTransport transport,
-) async {
+  _StalledTransport transport, {
+  AcpTransportFactory? start,
+}) async {
   tester.view.physicalSize = const Size(1400, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   KeybindingService.instance = KeybindingService();
   addTearDown(() => KeybindingService.instance = KeybindingService());
+  var started = false;
   late final KernelDescriptor acp;
   acp = KernelDescriptor(
     id: 'navigation-acp',
@@ -146,7 +148,16 @@ Future<Workspace> _pumpApp(
     icon: Icons.hub,
     description: 'Test ACP agent',
     catalog: _Catalog(),
-    create: (context) => AcpKernel(acp, context, (_) async => transport),
+    create: (context) => AcpKernel(
+      acp,
+      context,
+      start ??
+          (_) async {
+            if (started) return _StalledTransport(transport.stalledMethod);
+            started = true;
+            return transport;
+          },
+    ),
   );
   final workspace = Workspace(kernels: [MockKernels.codex, acp]);
   await workspace.load();
@@ -212,7 +223,13 @@ void main() {
     tester,
   ) async {
     final transport = _StalledTransport('session/load');
-    final workspace = await _pumpApp(tester, transport);
+    final replacement = _StalledTransport('session/load');
+    var launches = 0;
+    final workspace = await _pumpApp(
+      tester,
+      transport,
+      start: (_) async => launches++ == 0 ? transport : replacement,
+    );
     final local = workspace.selected;
     await tester.tap(_inSidebar('Saved ACP conversation'));
     await tester.pump(const Duration(milliseconds: 100));
@@ -230,7 +247,11 @@ void main() {
       tester.widget<ChatScreen>(find.byType(ChatScreen)).session,
       same(local.session),
     );
-    expect(acp.session.health.status, KernelHealthStatus.ready);
+    // Loading finished out of view: keep its transcript, release the process.
+    expect(acp.session.health.status, KernelHealthStatus.idle);
+    // StreamSubscription.cancel may finish on the real event loop. Await
+    // actual cleanup before asking the replacement to start.
+    await tester.runAsync(() => acp.session.stopped);
     expect(acp.session.itemCount, 96);
     expect(tester.takeException(), isNull);
     await _openSkills(tester);
@@ -245,6 +266,15 @@ void main() {
     await click.up(timeStamp: const Duration(seconds: 1, milliseconds: 10));
     await tester.pump(const Duration(milliseconds: 100));
     expect(workspace.selected, same(acp));
+    expect(
+      launches,
+      2,
+      reason: '${acp.session.health.status}: ${acp.session.health.message}',
+    );
+    replacement.replayHistory(96);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(acp.session.health.status, KernelHealthStatus.ready);
+    expect(acp.session.itemCount, 96);
     expect(find.byType(CustomizeView), findsNothing);
     expect(
       tester.widget<ChatScreen>(find.byType(ChatScreen)).session,

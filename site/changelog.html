@@ -74,6 +74,22 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.5.5">
+    <h2 class="plain"><a href="#v1.5.5">1.5.5</a></h2>
+    <p>Improved</p>
+    <ul>
+    <li>ACP tasks keep running when you leave a conversation. Idle sessions without an open view release their process, including after background work completes.</li>
+    <li>Reopening an ACP conversation restores its original session without appending duplicate history. Unsupported restoration now reports an error instead of silently creating a new session.</li>
+    <li>Closing ACP waits for local or remote process exit and escalates termination on timeout. App exit also waits for sessions that are still shutting down.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Raised the macOS app file-descriptor soft limit and coalesced concurrent keychain reads for the same account to reduce resource exhaustion.</li>
+    <li>Fixed races between MCP SSE writes, heartbeats and connection closure that could cause repeated errors.</li>
+    <li>Preserved existing file changes when scans encounter temporary descriptor exhaustion, and blocked unsafe undo when a reliable baseline cannot be captured.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.5.4">
     <h2 class="plain"><a href="#v1.5.4">1.5.4</a></h2>
     <p>Fixes</p>

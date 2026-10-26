@@ -175,21 +175,39 @@ class ChangeReview extends ChangeNotifier {
   /// Establishes an ACP baseline before a turn, without attributing user
   /// edits between turns to the agent. Sending never waits for this.
   Future<void> begin() => _enqueue(() async {
-    await _scan(agent: false);
+    if (!await _scan(agent: false)) return;
     await _look(_entries.keys.toList());
   });
 
   /// Discovers shell edits while ACP works, including its final writes.
   Future<void> observe() => _enqueue(() async {
-    await _scan(agent: true);
+    if (!await _scan(agent: true)) return;
     await _look(_entries.keys.toList());
   });
 
-  Future<void> _scan({required bool agent}) async {
+  Future<bool> _scan({required bool agent}) async {
     final store = _store;
-    if (store is! ScanningReviewStore) return;
+    if (store is! ScanningReviewStore) return true;
     _scanStarted = true;
-    final next = await (store as ScanningReviewStore).scan(_scanSession);
+    final Map<String, ReviewBlob?> next;
+    try {
+      next = await (store as ScanningReviewStore).scan(_scanSession);
+    } on ReviewUnavailable catch (error) {
+      if (!error.retryable) rethrow;
+      if (!agent) {
+        // A failed turn baseline cannot separate user edits from agent edits.
+        // Start afresh next time; never let Undo erase an intervening user edit.
+        _scanned = null;
+        for (final entry in _entries.values) {
+          entry
+            ..unsafe = true
+            ..conflict = true;
+        }
+      }
+      // Keep the last known changes and retry on the next scan, rather than
+      // permanently abandoning the review after temporary descriptor pressure.
+      return false;
+    }
     final before = _scanned;
     final session = _session;
     if (agent && before != null && session != null) {
@@ -233,6 +251,7 @@ class ChangeReview extends ChangeNotifier {
     _scanned = next;
     // Only the latest baseline is needed, even during a long-running turn.
     await _store.save(_scanSession, '{}', blobs: next.values.nonNulls);
+    return true;
   }
 
   /// A null file or an ignored ancestor directory has no safe baseline.

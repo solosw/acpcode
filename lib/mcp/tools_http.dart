@@ -212,6 +212,8 @@ class _Client {
   final String session;
   final _cancelled = Completer<void>();
   final _events = <HttpResponse>{};
+  final _writes = <HttpResponse, Future<void>>{};
+  final _heartbeats = <HttpResponse, Timer>{};
   late final StreamSubscription<void> _changes;
   bool initialized = false;
   bool get closed => _cancelled.isCompleted;
@@ -224,7 +226,7 @@ class _Client {
     response.bufferOutput = false;
     _events.add(response);
     // Flush headers immediately; comments also keep idle channels alive.
-    final heartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
+    _heartbeats[response] = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(_write(response, ': keepalive\n\n'));
     });
     try {
@@ -233,28 +235,48 @@ class _Client {
     } on Object {
       // A reconnect does not cancel calls or revoke this conversation.
     } finally {
-      heartbeat.cancel();
-      _events.remove(response);
+      _closeEvent(response);
     }
   }
 
-  Future<void> _write(HttpResponse response, String event) async {
-    try {
-      response.write(event);
-      await response.flush();
-    } on Object {
-      _events.remove(response);
-      unawaited(response.close().then<void>((_) {}, onError: (Object _) {}));
-    }
+  Future<void> _write(HttpResponse response, String event) {
+    if (!_events.contains(response)) return Future.value();
+    // HttpResponse is bound while flush is pending. Notifications, heartbeats
+    // and shutdown must all wait for that flush instead of writing over it.
+    return _writes[response] = (_writes[response] ?? Future<void>.value()).then(
+      (_) async {
+        if (!_events.contains(response)) return;
+        try {
+          response.write(event);
+          await response.flush();
+        } on Object {
+          _closeEvent(response);
+        }
+      },
+    );
+  }
+
+  void _closeEvent(HttpResponse response) {
+    if (!_events.remove(response)) return;
+    _heartbeats.remove(response)?.cancel();
+    final pending = _writes.remove(response) ?? Future<void>.value();
+    unawaited(
+      pending.then((_) async {
+        try {
+          await response.close();
+        } on Object {
+          // Both a synchronous close failure and a disconnected peer are quiet.
+        }
+      }),
+    );
   }
 
   void close() {
     if (closed) return;
     _cancelled.complete();
     unawaited(_changes.cancel());
-    for (final response in _events) {
-      unawaited(response.close().then<void>((_) {}, onError: (Object _) {}));
+    for (final response in [..._events]) {
+      _closeEvent(response);
     }
-    _events.clear();
   }
 }

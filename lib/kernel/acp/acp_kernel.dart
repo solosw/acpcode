@@ -29,7 +29,25 @@ class AcpKernel
     this._transportFactory, {
     this._catalog,
     this._loadMcpServers,
-  });
+  }) {
+    _live.add(this);
+  }
+
+  static final _live = <AcpKernel>{};
+
+  /// Normal app exit also waits for ACP, not just the native Claude runtime.
+  static Future<void> stopAll() async {
+    final kernels = [..._live];
+    for (final kernel in kernels) {
+      kernel.dispose();
+    }
+    await Future.wait([
+      for (final kernel in kernels)
+        kernel.stopped.catchError((Object error) {
+          debugPrint('Could not stop ACP agent: $error');
+        }),
+    ]);
+  }
 
   @override
   final KernelDescriptor descriptor;
@@ -66,6 +84,13 @@ class AcpKernel
   bool _starting = false;
   bool _disposed = false;
   bool _cancelling = false;
+  bool _released = false;
+  bool _sessionLoaded = false;
+  bool _everLoaded = false;
+  bool _retainedLoad = false;
+  final _queuedTurns = <String>{};
+  Future<void> _startTask = Future.value();
+  Future<void> _stopping = Future.value();
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
   final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
@@ -114,13 +139,23 @@ class AcpKernel
   String? get sessionId => _sessionId;
 
   @override
-  Future<void> get stopped async {
-    final subscription = _subscription;
-    if (subscription != null && !_disposed) await subscription.asFuture<void>();
+  Future<void> get stopped =>
+      _waitForStop().timeout(const Duration(seconds: 6));
+
+  Future<void> _waitForStop() async {
+    // A launch that was cancelled before it returned must close its late
+    // transport too. Merely cancelling the message stream proves no exit.
+    await _startTask;
+    await _stopping;
   }
 
   @override
   void prepare() {
+    _released = false;
+    _prepare();
+  }
+
+  void _prepare() {
     if (_disposed || _initialized || _starting) return;
     _starting = true;
     _health = const KernelHealth(KernelHealthStatus.starting);
@@ -129,19 +164,25 @@ class AcpKernel
     scheduleMicrotask(() {
       if (!_disposed) emitInfoChanged();
     });
-    unawaited(_start());
+    final previous = _startTask;
+    _startTask = _start(previous);
   }
 
-  Future<void> _start() async {
+  Future<void> _start(Future<void> previous) async {
     final generation = ++_startGeneration;
     bool obsolete() => _disposed || generation != _startGeneration;
     try {
+      // Never overlap a replacement with a late launch or a closing process.
+      await previous;
+      await _stopping;
+      if (obsolete()) return;
+      _hasConfigOptions = false;
       // Also keep a synchronous factory failure out of the mounting frame.
       final transport = await Future<AcpTransport>.sync(
         () => _transportFactory(_context),
       );
       if (obsolete()) {
-        transport.close();
+        await _closeTransport(transport);
         return;
       }
       _transport = QueuedAcpTransport(transport);
@@ -190,6 +231,7 @@ class AcpKernel
       _starting = false;
       _health = KernelHealth.ready;
       emitInfoChanged();
+      _releaseIfIdle();
     } on Object catch (error) {
       if (obsolete()) return;
       _starting = false;
@@ -198,16 +240,19 @@ class AcpKernel
   }
 
   Future<void> _ensureSession() async {
-    if (_sessionId != null) return;
+    if (_sessionLoaded) return;
+    final generation = _startGeneration;
     final resume = _context.resume;
+    final retainedId = _sessionId ?? resume?.id;
     final Map<String, Object?> session;
-    if (resume != null) {
-      _sessionId = resume.id;
-      _replaying = true;
+    if (retainedId != null) {
+      _sessionId = retainedId;
+      _retainedLoad = _everLoaded;
+      _replaying = !_retainedLoad;
       _closeAssistantStream();
       session = await _request('session/load', {
-        'sessionId': resume.id,
-        'cwd': _agentCwd(_context.cwd ?? resume.cwd),
+        'sessionId': retainedId,
+        'cwd': _agentCwd(_context.cwd ?? resume?.cwd),
         'mcpServers': _mcp.servers,
       });
     } else {
@@ -217,6 +262,7 @@ class AcpKernel
       });
       _sessionId = session['sessionId'] as String?;
     }
+    if (_disposed || generation != _startGeneration) return;
     _applyModes(session['modes']);
     _setCommands(
       session['availableCommands'] ??
@@ -228,10 +274,13 @@ class AcpKernel
     // response. Apply it now, while _replaying is still set for resume,
     // or replies are treated as a live turn and land out of order.
     _flushQueued();
-    if (resume != null) _finishReplay();
+    if (retainedId != null) _finishReplay();
+    _retainedLoad = false;
     if (_sessionId == null) {
       throw StateError('ACP session returned no sessionId');
     }
+    _sessionLoaded = true;
+    _everLoaded = true;
     _rememberSession(title: resume?.title);
   }
 
@@ -263,20 +312,22 @@ class AcpKernel
 
   @override
   void send(KernelTurn turn) {
-    if (_disposed || turn.id == _turnId) return;
-    prepare();
-    unawaited(_sendWhenReady(turn));
+    if (_disposed || turn.id == _turnId || !_queuedTurns.add(turn.id)) return;
+    _prepare();
+    unawaited(_sendWhenReady(turn, _startGeneration));
   }
 
-  Future<void> _sendWhenReady(KernelTurn turn) async {
+  Future<void> _sendWhenReady(KernelTurn turn, int generation) async {
+    bool obsolete() => _disposed || generation != _startGeneration;
     try {
       while (!_initialized &&
-          !_disposed &&
+          !obsolete() &&
           _health.status != KernelHealthStatus.failed) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
-      if (!_initialized || _disposed) return;
+      if (!_initialized || obsolete()) return;
       await _ensureSession();
+      if (obsolete()) return;
       final sessionId = _sessionId!;
       _turnId = turn.id;
       _cancelling = false;
@@ -302,6 +353,7 @@ class AcpKernel
           {'type': 'text', 'text': turn.text},
         ],
       });
+      if (obsolete()) return;
       // /sessions may queue history until the prompt result arrives.
       if (loadsHistory) {
         _flushQueued();
@@ -311,8 +363,10 @@ class AcpKernel
         _endTurn(result['stopReason'] == 'cancelled');
       }
     } on Object catch (error) {
-      _fail(error);
-      if (_turnId == turn.id) _endTurn(false);
+      if (!obsolete()) _fail(error);
+    } finally {
+      _queuedTurns.remove(turn.id);
+      _releaseIfIdle();
     }
   }
 
@@ -421,13 +475,19 @@ class AcpKernel
   }
 
   void _selectMode(String modeId) {
+    final generation = _startGeneration;
     final sessionId = _sessionId;
     if (sessionId == null) return;
     unawaited(
       _request('session/set_mode', {
         'sessionId': sessionId,
         'modeId': modeId,
-      }).then((_) {}, onError: (Object error) => _fail(error)),
+      }).then(
+        (_) {},
+        onError: (Object error) {
+          if (generation == _startGeneration) _fail(error);
+        },
+      ),
     );
   }
 
@@ -470,6 +530,7 @@ class AcpKernel
         _replyCancelled(rpcId);
         emit(InteractionResolved(nextSeq, requestId));
       }
+      _releaseIfIdle();
     } on Object catch (error) {
       _fail(error);
     }
@@ -508,6 +569,7 @@ class AcpKernel
       _endTurn(false);
     }
     emit(InteractionResolved(nextSeq, requestId));
+    _releaseIfIdle();
   }
 
   /// Maps the panel's choice back to the option the agent advertised.
@@ -557,15 +619,21 @@ class AcpKernel
         method == 'session/set_config_option') {
       _configRequests.add(id);
     }
-    _transport?.write({
-      'jsonrpc': '2.0',
-      'id': id,
-      'method': method,
-      'params': params,
-    });
-    // ACP turns and startup wait on the agent. A client timeout would end a
-    // still-running prompt and look like a protocol failure.
-    return completer.future;
+    try {
+      final transport = _transport;
+      if (transport == null) throw StateError('ACP connection closed');
+      transport.write({
+        'jsonrpc': '2.0',
+        'id': id,
+        'method': method,
+        'params': params,
+      });
+      // ACP turns and startup wait on the agent, not a request timeout.
+      return await completer.future;
+    } finally {
+      _pending.remove(id);
+      _configRequests.remove(id);
+    }
   }
 
   void _flushQueued() {
@@ -752,6 +820,17 @@ class AcpKernel
     }
     final update =
         (params['update'] as Map?)?.cast<String, Object?>() ?? const {};
+    // This kernel's transcript survives an idle release. session/load still
+    // restores agent context, but must not append that same history again.
+    if (_retainedLoad &&
+        !const {
+          'available_commands_update',
+          'config_option_update',
+          'current_mode_update',
+          'usage_update',
+        }.contains(update['sessionUpdate'])) {
+      return;
+    }
     switch (update['sessionUpdate']) {
       case 'agent_message_chunk':
       case 'agent_thought_chunk':
@@ -1172,6 +1251,7 @@ class AcpKernel
     _turnStarted = null;
     _cancelling = false;
     _closeAssistantStream();
+    if (!_starting) _releaseIfIdle();
   }
 
   void _closeMcp() {
@@ -1182,68 +1262,127 @@ class AcpKernel
 
   void _fail(Object error) {
     if (_disposed || _health.status == KernelHealthStatus.failed) return;
-    _closeMcp();
     _health = KernelHealth(KernelHealthStatus.failed, message: '$error');
+    _endTurn(false);
+    _disconnect();
+    emitInfoChanged();
+  }
+
+  Future<void> _closeTransport(AcpTransport transport) {
+    final closing = Future<void>.sync(transport.close);
+    _stopping = Future.wait([_stopping, closing]).then((_) {});
+    // Observe errors even when nobody is awaiting stopped yet. Keep the
+    // original failure on _stopping so a replacement cannot overlap it.
+    unawaited(
+      _stopping.catchError((Object error) {
+        debugPrint('Could not close ACP transport: $error');
+      }),
+    );
+    return closing;
+  }
+
+  void _disconnect() {
+    if (_replaying && !_everLoaded) {
+      // An interrupted initial load is only a partial transcript. Remove its
+      // items so the next session/load can replay the complete history once.
+      if (_replayTurnId != null) _endTurn(true);
+      for (final id in {..._messages.keys, ..._tools.keys}) {
+        emit(ItemRemoved(nextSeq, id));
+      }
+      emit(TodosReported(nextSeq, const []));
+      emit(TasksReported(nextSeq, const []));
+    }
+    _startGeneration++;
+    _starting = false;
+    _initialized = false;
+    _sessionLoaded = false;
+    _retainedLoad = false;
+    _replaying = false;
+    _replayTurnId = null;
+    _receiveTimer?.cancel();
+    _receiveTimer = null;
+    _receivedInBatch = 0;
+    final transport = _transport;
+    _transport = null;
+    unawaited(_subscription?.cancel());
+    _subscription = null;
+    _closeMcp();
+    _mcp = const AcpMcpServers();
     for (final completer in _pending.values) {
-      if (!completer.isCompleted) completer.completeError(error);
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('ACP connection closed'));
+      }
     }
     _pending.clear();
     _configRequests.clear();
-    emitInfoChanged();
+    _permissionRpcIds.clear();
+    _permissionOptions.clear();
+    _permissionKinds.clear();
+    _commandInteractionIds.clear();
+    _configChanges = Future.value();
+    _closeAssistantStream();
+    _messages.clear();
+    _tools.clear();
+    _todoToolIds.clear();
+    if (transport != null) {
+      unawaited(_closeTransport(transport).catchError((Object _) {}));
+    }
   }
 
   @override
   void restart() {
     if (_disposed) return;
-    _startGeneration++;
-    _receiveTimer?.cancel();
-    _receiveTimer = null;
-    _receivedInBatch = 0;
+    _endTurn(true);
     for (final (index, _) in _mcp.warnings.indexed) {
       emit(ItemRemoved(nextSeq, 'acp_mcp_warning_$index'));
     }
-    _transport?.close();
-    _transport = null;
-    _subscription?.cancel();
-    _subscription = null;
-    _sessionId = null;
+    _disconnect();
     _hasConfigOptions = false;
-    _configRequests.clear();
-    _configChanges = Future.value();
     for (final option in _configOptions.values) {
       option.replace(null);
     }
     _modeOptions.clear();
     _legacyMode.options = const [];
     _legacyMode.reported = null;
-    _initialized = false;
-    _closeMcp();
-    _mcp = const AcpMcpServers();
-    _starting = false;
-    _turnCount = 0;
-    _cancelling = false;
-    _closeAssistantStream();
-    _messages.clear();
-    _tools.clear();
-    _todoToolIds.clear();
     _health = KernelHealth.idle;
-    prepare();
+    _prepare();
   }
 
   @override
-  void release() {}
+  void release() {
+    _released = true;
+    _releaseIfIdle();
+  }
+
+  void _releaseIfIdle() {
+    if (!_released ||
+        _disposed ||
+        (_turnId != null && !_replaying) ||
+        _queuedTurns.isNotEmpty ||
+        _permissionRpcIds.isNotEmpty ||
+        _health.status == KernelHealthStatus.failed) {
+      return;
+    }
+    if (_transport == null && !_starting) return;
+    _disconnect();
+    _health = KernelHealth.idle;
+    emitInfoChanged();
+  }
 
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _tools.clear();
-    _configRequests.clear();
-    _closeMcp();
-    _receiveTimer?.cancel();
-    _receiveTimer = null;
-    _transport?.close();
-    _subscription?.cancel();
+    _disconnect();
+    // App exit must still find disposed sessions whose process is closing.
+    unawaited(
+      _waitForStop().then<void>(
+        (_) => _live.remove(this),
+        onError: (Object _) {
+          _live.remove(this);
+        },
+      ),
+    );
     closeEvents();
   }
 }

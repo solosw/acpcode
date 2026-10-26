@@ -46,7 +46,7 @@ class _BurstTransport implements AcpTransport {
   }
 
   @override
-  void close() => unawaited(_messages.close());
+  Future<void> close() => _messages.close();
 }
 
 AcpKernel _kernel(_BurstTransport transport) => AcpKernel(

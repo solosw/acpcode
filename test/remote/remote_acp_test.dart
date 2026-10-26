@@ -110,6 +110,7 @@ void main() {
       await subscription.cancel();
     } finally {
       kernel?.dispose();
+      await kernel?.stopped;
       await SshHosts.instance.closeAll();
       SshHosts.instance = previous;
       for (final dir in [dataDir, project]) {

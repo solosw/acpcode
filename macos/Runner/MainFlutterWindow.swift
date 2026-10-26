@@ -525,7 +525,22 @@ class MainFlutterWindow: BaoWindow {
   /// launch.
   private static let frameName = "BaoCodeMainWindow"
 
+  /// Finder launches inherit a soft limit of only 256. Agents, terminals and
+  /// Git share it; a burst of process pipes can exhaust it before Dart can
+  /// report the error safely. Change this process only, never the hard limit.
+  private static func prepareFileDescriptors() {
+    var limit = rlimit()
+    guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else { return }
+    let target = min(rlim_t(4096), limit.rlim_max)
+    guard limit.rlim_cur < target else { return }
+    limit.rlim_cur = target
+    if setrlimit(RLIMIT_NOFILE, &limit) != 0 {
+      NSLog("BaoCode: could not raise the file descriptor soft limit: %d", errno)
+    }
+  }
+
   override func awakeFromNib() {
+    Self.prepareFileDescriptors()
     if Self.isToolsStdio {
       holdingBack = true
       shownAtLaunch = false

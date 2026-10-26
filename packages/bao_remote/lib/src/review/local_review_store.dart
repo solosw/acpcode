@@ -257,6 +257,29 @@ class LocalReviewStore implements ReviewStore, ScanningReviewStore {
   /// Nested repositories are visited as folders, never followed through links.
   @override
   Future<Map<String, ReviewBlob?>> scan(String session) async {
+    try {
+      return await _scan(session);
+    } on ProcessException catch (error) {
+      if (_descriptorExhausted(error.errorCode)) {
+        throw ReviewUnavailable(
+          'ACP file discovery paused: ${error.message}',
+          retryable: true,
+        );
+      }
+      throw const ReviewUnavailable('Git is required to discover ACP edits.');
+    } on FileSystemException catch (error) {
+      if (!_descriptorExhausted(error.osError?.errorCode)) rethrow;
+      throw ReviewUnavailable(
+        'ACP file discovery paused: ${error.osError?.message ?? error.message}',
+        retryable: true,
+      );
+    }
+  }
+
+  static bool _descriptorExhausted(int? code) =>
+      Platform.isWindows ? code == 4 : code == 23 || code == 24;
+
+  Future<Map<String, ReviewBlob?>> _scan(String session) async {
     final temp = await Directory.systemTemp.createTemp('baocode-scan-');
     try {
       final initialized = await Process.run('git', [
@@ -351,8 +374,6 @@ class LocalReviewStore implements ReviewStore, ScanningReviewStore {
 
       await visit(root);
       return found;
-    } on ProcessException {
-      throw const ReviewUnavailable('Git is required to discover ACP edits.');
     } finally {
       await temp.delete(recursive: true);
     }

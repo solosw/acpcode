@@ -11,7 +11,8 @@ abstract interface class AcpTransport {
 
   void write(Map<String, Object?> message);
 
-  void close();
+  /// Completes after the managed process exits; fails if shutdown times out.
+  Future<void> close();
 }
 
 /// Queues messages until a listener is attached, then forwards live ones.
@@ -21,7 +22,7 @@ abstract interface class AcpTransport {
 /// client is still awaiting the response.
 class QueuedAcpTransport implements AcpTransport {
   QueuedAcpTransport(this._inner) {
-    _inner.messages.listen(
+    _subscription = _inner.messages.listen(
       (message) {
         final controller = _out;
         if (controller == null || !controller.hasListener) {
@@ -40,12 +41,14 @@ class QueuedAcpTransport implements AcpTransport {
       },
       onDone: () {
         _done = true;
-        _out?.close();
+        if (_out case final out? when !out.isClosed) unawaited(out.close());
       },
     );
   }
 
   final AcpTransport _inner;
+  late final StreamSubscription<Map<String, Object?>> _subscription;
+  Future<void>? _closing;
   final List<Map<String, Object?>> _queued = [];
   final List<(Object, StackTrace)> _queuedErrors = [];
   StreamController<Map<String, Object?>>? _out;
@@ -77,9 +80,18 @@ class QueuedAcpTransport implements AcpTransport {
   void write(Map<String, Object?> message) => _inner.write(message);
 
   @override
-  void close() {
-    _inner.close();
-    _out?.close();
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
+    try {
+      await _inner.close();
+    } finally {
+      await _subscription.cancel();
+      _done = true;
+      _queued.clear();
+      _queuedErrors.clear();
+      if (_out case final out? when !out.isClosed) unawaited(out.close());
+    }
   }
 }
 

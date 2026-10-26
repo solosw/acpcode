@@ -40,6 +40,7 @@ import 'icons/icon_library.dart';
 import 'icons/icon_storage.dart';
 import 'icons/site_icons.dart';
 import 'kernel/acp_agents.dart';
+import 'kernel/acp/acp_kernel.dart';
 import 'kernel/claude_code/claude_code_kernel.dart';
 import 'kernel/claude_code/claude_core_setting.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
@@ -761,6 +762,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
         return AppExitResponse.cancel;
       }
       await Future.wait([
+        AcpKernel.stopAll(),
         stopClaudeProcesses(),
         RemoteClaudeTransport.stopAll(),
         stopModelProxy(),

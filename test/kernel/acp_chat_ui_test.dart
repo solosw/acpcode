@@ -94,7 +94,7 @@ class _Transport implements AcpTransport {
   }
 
   @override
-  void close() => _messages.close();
+  Future<void> close() => _messages.close();
 }
 
 Future<ChatSession> _pump(

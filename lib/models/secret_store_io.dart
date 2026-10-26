@@ -65,8 +65,20 @@ class KeychainSecretStore implements SecretStore {
   /// `security`'s "not found".
   static const _notFound = 44;
 
+  // Issue refreshes can ask for one account hundreds of times together.
+  // Share only the in-flight read, not the secret after it completes.
+  final _reading = <String, Future<String?>>{};
+
   @override
-  Future<String?> read(String id) async {
+  Future<String?> read(String id) => _reading.putIfAbsent(id, () {
+    late final Future<String?> pending;
+    pending = _read(id).whenComplete(() {
+      if (identical(_reading[id], pending)) _reading.remove(id);
+    });
+    return pending;
+  });
+
+  Future<String?> _read(String id) async {
     final result = await _command('/usr/bin/security', [
       'find-generic-password',
       '-s',
@@ -94,6 +106,7 @@ class KeychainSecretStore implements SecretStore {
     if (result.exitCode != 0 || '${result.stderr}'.contains('error')) {
       throw _failed('kept', result);
     }
+    _reading.remove(id);
   }
 
   @override
@@ -108,6 +121,7 @@ class KeychainSecretStore implements SecretStore {
     if (result.exitCode != 0 && result.exitCode != _notFound) {
       throw _failed('removed', result);
     }
+    _reading.remove(id);
   }
 
   static String _quote(String text) => '"${text.replaceAll('"', '')}"';
