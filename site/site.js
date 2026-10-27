@@ -281,6 +281,8 @@ for (const button of document.querySelectorAll('[data-sound]')) {
 function showDownloads(downloads, v) {
   for (const [os, file] of Object.entries(downloads || {})) {
     if (!file?.url) continue;
+    // What waits for a release that has it (Windows on Arm's installer).
+    for (const el of document.querySelectorAll(`[data-shown="${os}"]`)) el.hidden = false;
     for (const a of document.querySelectorAll(`[data-file="${os}"]`)) {
       a.href = file.url;
       if (a.classList.contains('button')) a.title = `≈ ${Math.round(file.size / 1e6)} MB`;

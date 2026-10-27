@@ -58,13 +58,14 @@ void main() {
                 focusNode: focus,
                 searchPlaceholder: 'Search models',
                 settingsOf: settingsOf,
-                footer: footer
-                    ? (
-                        label: 'Manage Models…',
-                        icon: Icons.tune_rounded,
-                        onTap: () => managed++,
-                      )
-                    : null,
+                footers: [
+                  if (footer)
+                    (
+                      label: 'Manage Models…',
+                      icon: Icons.tune_rounded,
+                      onTap: () => managed++,
+                    ),
+                ],
                 onSelected: (option) => picked.add(option.id),
               ),
             ),
@@ -429,9 +430,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the menu opens scrolled to the option checked', (
-    tester,
-  ) async {
+  testWidgets('the menu opens scrolled to the option checked', (tester) async {
     tester.view
       ..devicePixelRatio = 1
       ..physicalSize = const Size(800, 900);

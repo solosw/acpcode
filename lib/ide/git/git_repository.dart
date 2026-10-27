@@ -20,6 +20,24 @@ import 'package:flutter/foundation.dart';
 import 'git_model.dart';
 import 'git_service.dart';
 
+/// [IdeGitRepository.graphBranch] for the current branch and its upstream.
+const ideGraphCurrentBranch = 'HEAD';
+
+/// [IdeGitRepository.graphBranch] for the commits [to] has that [from] has
+/// not (`from..to`), as JetBrains IDEs' Compare with Current lists them.
+String ideGraphRange(String from, String to) => '$from..$to';
+
+/// The two ends of [graphBranch], where it is a range ([ideGraphRange]); a
+/// ref's name cannot have `..` in it.
+({String from, String to})? ideGraphRangeOf(String? graphBranch) {
+  final at = graphBranch?.indexOf('..') ?? -1;
+  if (at < 0) return null;
+  return (
+    from: graphBranch!.substring(0, at),
+    to: graphBranch.substring(at + 2),
+  );
+}
+
 class IdeGitRepository extends ChangeNotifier {
   IdeGitRepository(
     this.service, {
@@ -105,6 +123,7 @@ class IdeGitRepository extends ChangeNotifier {
       }
       _loaded = true;
       _graphStale = true;
+      _worktreesStale = true;
       _notify();
     });
     if (!force) _pendingRefresh = run;
@@ -193,6 +212,43 @@ class IdeGitRepository extends ChangeNotifier {
     ], unborn: _state?.head.unborn ?? false),
   );
 
+  /// Resolves the conflicts of [resources] with the current side's
+  /// version ([ours]) or the incoming side's; a file that side deleted is
+  /// removed.
+  Future<void> acceptSide(
+    Iterable<IdeGitResource> resources, {
+    required bool ours,
+  }) => _operate(() {
+    bool deletedOnSide(IdeGitStatus status) => switch (status) {
+      IdeGitStatus.bothDeleted => true,
+      IdeGitStatus.deletedByUs => ours,
+      IdeGitStatus.deletedByThem => !ours,
+      // The other side added it: this side has none.
+      IdeGitStatus.addedByUs => !ours,
+      IdeGitStatus.addedByThem => ours,
+      _ => false,
+    };
+    return service.acceptSide(
+      [
+        for (final resource in resources)
+          if (!deletedOnSide(resource.status)) resource.path,
+      ],
+      ours: ours,
+      deleted: [
+        for (final resource in resources)
+          if (deletedOnSide(resource.status)) resource.path,
+      ],
+    );
+  });
+
+  /// Continue, Abort or Skip of the operation under way.
+  Future<void> continueOperation({bool abort = false, bool skip = false}) =>
+      _operate(() async {
+        final operation = _state?.operation;
+        if (operation == null) return;
+        await service.continueOperation(operation, abort: abort, skip: skip);
+      });
+
   /// Stage All Changes: everything in the working tree, untracked files
   /// included.
   Future<void> stageAll() => _operate(() => service.stage(null));
@@ -231,6 +287,94 @@ class IdeGitRepository extends ChangeNotifier {
     () => service.commit(message, all: all, amend: amend, empty: empty),
   );
 
+  /// Commits [resources] as they are in the working tree (the files
+  /// checked in the commit panel), untracked ones added first; [amend]
+  /// replaces the last commit. With none, only the message is amended.
+  Future<void> commitResources(
+    String message,
+    Iterable<IdeGitResource> resources, {
+    bool amend = false,
+    IdeGitCommitOptions options = const IdeGitCommitOptions(),
+  }) => _operate(() async {
+    final untracked = [
+      for (final resource in resources)
+        if (resource.status == IdeGitStatus.untracked) resource.path,
+    ];
+    if (untracked.isNotEmpty) await service.stage(untracked);
+    await service.commitPaths(
+      message,
+      {
+        for (final resource in resources) ...[
+          resource.path,
+          ?resource.originalPath,
+        ],
+      },
+      amend: amend,
+      options: options,
+    );
+  });
+
+  /// Commits [resources] as [commitResources] does, and each of [partial]'s
+  /// files with its text there: some of its changes, the others left in
+  /// the working tree.
+  Future<void> commitPartial(
+    String message,
+    Iterable<IdeGitResource> resources,
+    Map<String, String> partial, {
+    bool amend = false,
+    IdeGitCommitOptions options = const IdeGitCommitOptions(),
+  }) => _operate(
+    () => service.commitPartial(
+      message,
+      {
+        for (final resource in resources) ...[
+          resource.path,
+          ?resource.originalPath,
+        ],
+      },
+      partial,
+      amend: amend,
+      options: options,
+    ),
+  );
+
+  /// Rolls [resources] back to the last commit (JetBrains' Rollback):
+  /// untracked files deleted, or moved to the Trash when [trash] does;
+  /// files added since left untracked; the others as they were committed.
+  Future<void> rollback(
+    Iterable<IdeGitResource> resources, {
+    Future<bool> Function(String path)? trash,
+  }) => _operate(() async {
+    final untracked = <IdeGitResource>[];
+    final added = <String>[];
+    final restored = <String>[];
+    final unborn = _state?.head.unborn ?? false;
+    for (final resource in resources) {
+      switch (resource.status) {
+        case IdeGitStatus.untracked:
+          if (trash == null || !await trash(resource.path)) {
+            untracked.add(resource);
+          }
+        case IdeGitStatus.indexAdded || IdeGitStatus.intentToAdd:
+          added.add(resource.path);
+        case IdeGitStatus.indexRenamed || IdeGitStatus.indexCopied:
+          added.add(resource.path);
+          if (resource.originalPath case final original?
+              when resource.status == IdeGitStatus.indexRenamed) {
+            restored.add(original);
+          }
+        case _ when unborn:
+          added.add(resource.path);
+        case _:
+          restored.add(resource.path);
+      }
+    }
+    if (added.isNotEmpty || restored.isNotEmpty) {
+      await service.rollback(restored, added: added);
+    }
+    if (untracked.isNotEmpty) await service.discard(untracked);
+  });
+
   /// The last commit, or null before the first.
   Future<IdeGitCommit?> headCommit() async {
     if (_state?.head.unborn ?? true) return null;
@@ -241,6 +385,86 @@ class IdeGitRepository extends ChangeNotifier {
   /// Undoes [head] (from [headCommit]), keeping its changes.
   Future<void> undoCommit(IdeGitCommit head) =>
       _operate(() => service.undoCommit(head));
+
+  /// Cherry-picks [commits] (oldest first) onto HEAD.
+  Future<void> cherryPick(List<String> commits) =>
+      _operate(() => service.cherryPick(commits));
+
+  /// Reverts [commits] (newest first), a commit each.
+  Future<void> revert(List<String> commits) =>
+      _operate(() => service.revert(commits));
+
+  /// Reset Current Branch to Here.
+  Future<void> reset(String commit, IdeGitResetMode mode) =>
+      _operate(() => service.reset(commit, mode));
+
+  /// New Tag at [commit].
+  Future<List<IdeGitStash>> stashes() => service.stashes();
+
+  Future<void> stash({
+    String message = '',
+    Iterable<String>? paths,
+    bool untracked = false,
+    bool keepIndex = false,
+  }) => _operate(
+    () => service.stash(
+      message: message,
+      paths: paths,
+      untracked: untracked,
+      keepIndex: keepIndex,
+    ),
+  );
+
+  Future<void> unstash(String ref, {bool pop = false, bool index = false}) =>
+      _operate(() => service.unstash(ref, pop: pop, index: index));
+
+  Future<void> dropStash(String ref) => _operate(() => service.dropStash(ref));
+
+  Future<void> clearStashes() => _operate(service.clearStashes);
+
+  Future<void> stashBranch(String name, String ref) =>
+      _operate(() => service.stashBranch(name, ref));
+
+  Future<void> tag(String name, String commit, {String? message}) =>
+      _operate(() => service.tag(name, commit, message: message));
+
+  /// Edit Commit Message of [commit] in the current branch.
+  Future<void> reword(IdeGitCommit commit, String message) =>
+      _operate(() => service.reword(commit, message));
+
+  /// Squash Commits: [commits] (oldest first, one after another) made one.
+  Future<void> squash(List<IdeGitCommit> commits) =>
+      _operate(() => service.squash(commits));
+
+  /// Fixup: the `fixup!` commit at HEAD squashed into [commit].
+  Future<void> autosquash(IdeGitCommit commit) =>
+      _operate(() => service.autosquash(commit));
+
+  /// Drop Commit: [commit] taken out of the current branch.
+  Future<void> drop(IdeGitCommit commit) =>
+      _operate(() => service.drop(commit));
+
+  /// Interactively Rebase from Here: the commits from [from] on as [steps]
+  /// say; true where the rebase stopped, still under way.
+  Future<bool> interactiveRebase(
+    IdeGitCommit from,
+    List<IdeGitRebaseStep> steps,
+  ) async {
+    var stopped = false;
+    await _operate(
+      () async => stopped = await service.interactiveRebase(from, steps),
+    );
+    return stopped;
+  }
+
+  /// Push All up to Here: the current branch's commits up to [commit].
+  Future<void> pushUpTo(String commit) => _operate(() async {
+    final upstream = _state?.head.upstream;
+    if (upstream == null) {
+      throw const IdeGitException('The branch has no upstream.');
+    }
+    await service.pushUpTo(commit, upstream);
+  });
 
   /// Stages the untracked changes too, then commits everything: VS Code's
   /// smart commit with `git.smartCommitChanges: all`. Past the status's
@@ -267,6 +491,109 @@ class IdeGitRepository extends ChangeNotifier {
   /// The local branches tracking the remote branch [upstream].
   Future<List<String>> trackingBranches(String upstream) =>
       service.trackingBranches(upstream);
+
+  // --- Branches (JetBrains' branch popup, the log's branch tree) ----------
+
+  Future<void> renameBranch(String from, String to) =>
+      _operate(() => service.renameBranch(from, to));
+
+  /// Deletes the branch [name]; see [IdeGitService.deleteBranch].
+  Future<void> deleteBranch(String name, {bool force = false}) =>
+      _operate(() => service.deleteBranch(name, force: force));
+
+  Future<void> deleteRemoteBranch(String remote, String name) =>
+      _operate(() => service.deleteRemoteBranch(remote, name));
+
+  Future<void> deleteTag(String name) =>
+      _operate(() => service.deleteTag(name));
+
+  Future<void> pushTag(String remote, String name) =>
+      _operate(() => service.pushTag(remote, name));
+
+  Future<void> deleteRemoteTag(String remote, String name) =>
+      _operate(() => service.deleteRemoteTag(remote, name));
+
+  Future<void> addRemote(String name, String url) =>
+      _operate(() => service.addRemote(name, url));
+
+  Future<void> editRemote(String name, {String? to, String? url}) =>
+      _operate(() => service.editRemote(name, to: to, url: url));
+
+  Future<void> removeRemote(String name) =>
+      _operate(() => service.removeRemote(name));
+
+  Future<void> createBranchAt(String name, String commit) =>
+      _operate(() => service.createBranchAt(name, commit));
+
+  Future<void> merge(String ref) => _operate(() => service.merge(ref));
+
+  /// Rebases [branch] (the current one when null) onto [onto].
+  Future<void> rebaseOnto(String onto, {String? branch}) =>
+      _operate(() => service.rebaseOnto(onto, branch: branch));
+
+  /// Pulls the remote branch [ref] (`origin/main`) into the current one.
+  Future<void> pullInto(String ref, {required bool rebase}) =>
+      _whileSyncing(() async {
+        final (remote, name) = splitUpstream(ref, await service.remotes());
+        await service.pullInto(remote, name, rebase: rebase);
+      });
+
+  /// The Push dialog's push: the current branch to [target] on [remote],
+  /// made its upstream where it has none; [force] with lease (the remote
+  /// branch only overwritten as last fetched); [tags], the annotated tags
+  /// of the commits pushed.
+  Future<void> pushTo(
+    String remote,
+    String target, {
+    bool force = false,
+    bool tags = false,
+  }) => _whileSyncing(() async {
+    final head = _state?.head;
+    final branch = head?.branch;
+    if (branch == null) {
+      throw const IdeGitException('HEAD is on no branch: nothing to push.');
+    }
+    await service.push(
+      remote,
+      '$branch:$target',
+      setUpstream: head?.upstream == null,
+      forceWithLease: force,
+      followTags: tags,
+    );
+  });
+
+  /// Update Project: fetches from every remote, then brings the current
+  /// branch up to its upstream, by rebase or by merge, local changes
+  /// stashed meanwhile. Throws where the branch has no upstream.
+  Future<void> updateProject({required bool rebase}) => _whileSyncing(() async {
+    await service.fetch();
+    final (remote, name) = await _upstream('update');
+    await service.pullInto(remote, name, rebase: rebase);
+  });
+
+  /// Fast-forwards the branch [name], not checked out, to [upstream].
+  Future<void> updateBranch(String name, String upstream) =>
+      _whileSyncing(() => service.updateBranch(name, upstream));
+
+  /// Pushes the branch [name]: to its [upstream] (`remote/branch`), else
+  /// to [remote] as its upstream (`git push -u`).
+  Future<void> pushBranch(String name, {String? upstream, String? remote}) =>
+      _whileSyncing(() async {
+        final remotes = await service.remotes();
+        if (upstream != null) {
+          final (to, branch) = splitUpstream(upstream, remotes);
+          await service.push(to, '$name:$branch');
+          return;
+        }
+        final to =
+            remote ??
+            (remotes.contains('origin') ? 'origin' : remotes.firstOrNull);
+        if (to == null) throw const IdeGitException('There is no remote.');
+        await service.push(to, '$name:$name', setUpstream: true);
+      });
+
+  Future<void> setUpstream(String name, String? upstream) =>
+      _operate(() => service.setUpstream(name, upstream));
 
   /// Checks [treeish] out (`Repository.checkout`); [detached] detaches HEAD
   /// there.
@@ -381,14 +708,39 @@ class IdeGitRepository extends ChangeNotifier {
   /// Whether older commits can be loaded ([loadMoreGraph]).
   bool get graphHasMore => _graphHasMore;
 
-  /// Whether the graph has every branch's commits, local and remote, not
-  /// only the current branch's and its upstream's.
-  bool get graphAllBranches => _graphAllBranches;
-  bool _graphAllBranches = false;
-  set graphAllBranches(bool value) {
-    if (value == _graphAllBranches) return;
-    _graphAllBranches = value;
-    // After a load that started with the other refs, another.
+  /// Whose commits the graph has: every branch's, local and remote (null);
+  /// the current branch's and its upstream's ([ideGraphCurrentBranch]);
+  /// one branch's, by its ref (`refs/heads/main`); or those one has that
+  /// another has not ([ideGraphRange]).
+  String? get graphBranch => _graphBranch;
+  String? _graphBranch;
+  set graphBranch(String? value) {
+    if (value == _graphBranch) return;
+    _graphBranch = value;
+    _reloadGraphFor();
+  }
+
+  /// Which of their commits it has.
+  IdeGitLogFilter get graphFilter => _graphFilter;
+  IdeGitLogFilter _graphFilter = const IdeGitLogFilter();
+  set graphFilter(IdeGitLogFilter value) {
+    if (value == _graphFilter) return;
+    _graphFilter = value;
+    _reloadGraphFor();
+  }
+
+  /// Newest first by date rather than in topological order.
+  bool get graphDateOrder => _graphDateOrder;
+  bool _graphDateOrder = false;
+  set graphDateOrder(bool value) {
+    if (value == _graphDateOrder) return;
+    _graphDateOrder = value;
+    _reloadGraphFor();
+  }
+
+  /// Loads the graph again for what it now has: after a load that started
+  /// with the others, another.
+  void _reloadGraphFor() {
     _graphStale = true;
     unawaited(_graphLoad ?? _reloadGraph());
     _notify();
@@ -428,10 +780,14 @@ class IdeGitRepository extends ChangeNotifier {
           ? await service.mergeBase(headRevision, remoteRevision)
           : null;
       final commits = await service.log(
-        refs: _graphAllBranches
-            ? const ['HEAD', '--branches', '--remotes']
-            : ['HEAD', ?remoteRef],
+        refs: switch (_graphBranch) {
+          null => const ['HEAD', '--branches', '--remotes'],
+          ideGraphCurrentBranch => ['HEAD', ?remoteRef],
+          final ref => [ref],
+        },
         limit: _graphLimit + 1,
+        filter: _graphFilter,
+        dateOrder: _graphDateOrder,
       );
       if (_disposed) return;
       _graphHasMore = commits.length > _graphLimit;
@@ -453,6 +809,57 @@ class IdeGitRepository extends ChangeNotifier {
     _notify();
   }
 
+  /// The repository's working trees, its own first; read as they are
+  /// asked for, again after each status read (one may have been added or
+  /// removed meanwhile). Empty until read, or where Git cannot tell.
+  List<IdeGitWorktree> get worktrees {
+    if (_worktreesStale && _worktreesLoad == null && isRepository) {
+      _worktreesStale = false;
+      _worktreesLoad = _loadWorktrees().whenComplete(
+        () => _worktreesLoad = null,
+      );
+    }
+    return _worktrees;
+  }
+
+  List<IdeGitWorktree> _worktrees = const [];
+  bool _worktreesStale = true;
+  Future<void>? _worktreesLoad;
+
+  Future<void> _loadWorktrees() async {
+    List<IdeGitWorktree> worktrees;
+    try {
+      worktrees = await service.worktrees();
+    } catch (_) {
+      worktrees = const [];
+    }
+    if (_disposed || listEquals(worktrees, _worktrees)) return;
+    _worktrees = worktrees;
+    _notify();
+  }
+
+  /// Adds a working tree at [path] ([IdeGitService.addWorktree]), and
+  /// reads the worktrees again.
+  Future<void> addWorktree(
+    String path, {
+    String? newBranch,
+    String? branch,
+  }) async {
+    await _operate(
+      () => service.addWorktree(path, newBranch: newBranch, branch: branch),
+    );
+    await reloadWorktrees();
+  }
+
+  /// Reads the worktrees again now (one was just made where the agent
+  /// works).
+  Future<void> reloadWorktrees() {
+    _worktreesStale = false;
+    return _worktreesLoad ??= _loadWorktrees().whenComplete(
+      () => _worktreesLoad = null,
+    );
+  }
+
   /// [path]'s commits, newest first (the timeline).
   Future<List<IdeGitCommit>> fileHistory(String path) async {
     if (!isRepository) return const [];
@@ -461,6 +868,21 @@ class IdeGitRepository extends ChangeNotifier {
 
   Future<List<IdeGitCommitChange>> commitChanges(String commit) =>
       service.commitChanges(commit);
+
+  /// The lines [commit] added and deleted in each of its files.
+  Future<Map<String, ({int? added, int? deleted})>> commitStats(
+    String commit,
+  ) => service.commitStats(commit);
+
+  /// The branches that have [commit].
+  Future<List<String>> branchesContaining(String commit) =>
+      service.branchesContaining(commit);
+
+  /// The user's email as Git commits with it (`user.email`), read once.
+  Future<String?> get userEmail => _userEmail ??= service
+      .config('user.email')
+      .catchError((Object _) => null);
+  Future<String?>? _userEmail;
 
   void _notify() {
     if (!_disposed) notifyListeners();

@@ -18,9 +18,7 @@ void main() {
     'README.md': 'r',
   };
 
-  Future<IdeExplorerController> controller(
-    IdeExplorerExcludes excludes,
-  ) async {
+  Future<IdeExplorerController> controller(IdeExplorerExcludes excludes) async {
     final explorer = IdeExplorerController(
       root: testRoot,
       files: TreeFiles({

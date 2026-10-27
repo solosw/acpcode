@@ -28,6 +28,9 @@ const _curveRadius = 5.0;
 const _circleRadius = 4.0;
 const _circleStroke = 2.0;
 
+/// How far apart the lanes are.
+const ideGraphLaneWidth = _laneWidth;
+
 /// The width of [row]'s graph.
 double ideGraphWidth(IdeGraphRow row) =>
     _laneWidth *
@@ -43,6 +46,7 @@ class IdeGraphPainter extends CustomPainter {
     required this.background,
     this.hovered = false,
     this.expanded = false,
+    this.height = _laneHeight,
   }) : colors = themeColors;
 
   final IdeGraphRow row;
@@ -60,6 +64,10 @@ class IdeGraphPainter extends CustomPainter {
   /// An expanded commit's line down to its changes is 3px wide.
   final bool expanded;
 
+  /// The row's: the circle at its middle, the lanes from its top to its
+  /// bottom.
+  final double height;
+
   static Paint _stroke(Color color, [double width = 1]) => Paint()
     ..style = PaintingStyle.stroke
     ..strokeWidth = width
@@ -69,7 +77,9 @@ class IdeGraphPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const w = _laneWidth;
-    const h = _laneHeight;
+    final h = height;
+    // The circle's middle: where the lanes turn.
+    final cy = h / 2;
     final commit = row.commit;
     final input = row.inputLanes;
     final output = row.outputLanes;
@@ -85,8 +95,8 @@ class IdeGraphPainter extends CustomPainter {
           // The base commit's lane curves into its circle: / then -.
           final path = Path()
             ..moveTo(w * (index + 1), 0)
-            ..arcToPoint(Offset(w * index, w), radius: const Radius.circular(w))
-            ..lineTo(w * (circleIndex + 1), w);
+            ..arcToPoint(Offset(w * index, cy), radius: const Radius.circular(w))
+            ..lineTo(w * (circleIndex + 1), cy);
           canvas.drawPath(path, _stroke(color));
         } else {
           outputIndex++;
@@ -103,14 +113,14 @@ class IdeGraphPainter extends CustomPainter {
           // A lane moving left: | / - / |.
           final path = Path()
             ..moveTo(w * (index + 1), 0)
-            ..lineTo(w * (index + 1), 6)
+            ..lineTo(w * (index + 1), cy - _curveRadius)
             ..arcToPoint(
-              Offset(w * (index + 1) - _curveRadius, h / 2),
+              Offset(w * (index + 1) - _curveRadius, cy),
               radius: const Radius.circular(_curveRadius),
             )
-            ..lineTo(w * (outputIndex + 1) + _curveRadius, h / 2)
+            ..lineTo(w * (outputIndex + 1) + _curveRadius, cy)
             ..arcToPoint(
-              Offset(w * (outputIndex + 1), h / 2 + _curveRadius),
+              Offset(w * (outputIndex + 1), cy + _curveRadius),
               radius: const Radius.circular(_curveRadius),
               clockwise: false,
             )
@@ -126,13 +136,14 @@ class IdeGraphPainter extends CustomPainter {
       final parentIndex = output.lastIndexWhere((lane) => lane.id == parent);
       if (parentIndex < 0) continue;
       final path = Path()
-        ..moveTo(w * parentIndex, h / 2)
+        ..moveTo(w * parentIndex, cy)
         ..arcToPoint(
-          Offset(w * (parentIndex + 1), h),
+          Offset(w * (parentIndex + 1), cy + w),
           radius: const Radius.circular(w),
         )
-        ..moveTo(w * parentIndex, h / 2)
-        ..lineTo(w * (circleIndex + 1), h / 2);
+        ..lineTo(w * (parentIndex + 1), h)
+        ..moveTo(w * parentIndex, cy)
+        ..lineTo(w * (circleIndex + 1), cy);
       canvas.drawPath(path, _stroke(colors[output[parentIndex].color]));
     }
 
@@ -140,13 +151,13 @@ class IdeGraphPainter extends CustomPainter {
     if (inputIndex >= 0) {
       canvas.drawLine(
         Offset(x, 0),
-        Offset(x, h / 2),
+        Offset(x, cy),
         _stroke(colors[input[inputIndex].color]),
       );
     }
     if (commit.parentIds.isNotEmpty) {
       canvas.drawLine(
-        Offset(x, h / 2),
+        Offset(x, cy),
         Offset(x, h),
         _stroke(circleColor, expanded ? 3 : 1),
       );
@@ -154,7 +165,7 @@ class IdeGraphPainter extends CustomPainter {
 
     // The circles, as the SVG paints them: a fill, then a stroke centered
     // on the radius. The first circle's stroke is the outline around it.
-    final center = Offset(x, w);
+    final center = Offset(x, cy);
     final outline = hovered ? const Color(0x00000000) : background;
     void circle(double radius, double stroke, Color? fill, Color strokeColor) {
       if (fill != null) {
@@ -209,17 +220,22 @@ class IdeGraphPainter extends CustomPainter {
       oldDelegate.colors != colors ||
       oldDelegate.background != background ||
       oldDelegate.hovered != hovered ||
-      oldDelegate.expanded != expanded;
+      oldDelegate.expanded != expanded ||
+      oldDelegate.height != height;
 }
 
 /// The lanes beside an expanded commit's changes: straight down, the
 /// commit's own ([highlight]) 3px wide.
 class IdeGraphPlaceholderPainter extends CustomPainter {
-  IdeGraphPlaceholderPainter(this.lanes, {this.highlight})
-    : colors = themeColors;
+  IdeGraphPlaceholderPainter(
+    this.lanes, {
+    this.highlight,
+    this.height = _laneHeight,
+  }) : colors = themeColors;
 
   final List<IdeGraphLane> lanes;
   final int? highlight;
+  final double height;
 
   /// The color theme's colors, which the lanes' ids name.
   final WorkbenchColors colors;
@@ -230,7 +246,7 @@ class IdeGraphPlaceholderPainter extends CustomPainter {
       final x = _laneWidth * (index + 1);
       canvas.drawLine(
         Offset(x, 0),
-        Offset(x, _laneHeight),
+        Offset(x, height),
         IdeGraphPainter._stroke(colors[lane.color], index == highlight ? 3 : 1),
       );
     }
@@ -240,5 +256,6 @@ class IdeGraphPlaceholderPainter extends CustomPainter {
   bool shouldRepaint(IdeGraphPlaceholderPainter oldDelegate) =>
       oldDelegate.lanes != lanes ||
       oldDelegate.colors != colors ||
-      oldDelegate.highlight != highlight;
+      oldDelegate.highlight != highlight ||
+      oldDelegate.height != height;
 }

@@ -307,7 +307,8 @@ void main() {
       await pumpStep(
         tester,
         const ThinkingItem(
-          text: '**Planning the fix**\n\nFirst read the kernel.\n\n'
+          text:
+              '**Planning the fix**\n\nFirst read the kernel.\n\n'
               '**Checking tests**\n\nThen run them.\n\n',
           tokens: 40,
           seconds: 4,
@@ -702,10 +703,7 @@ void main() {
     await tester.tap(find.text('10 background tasks running'));
     await tester.pump();
     // That line and four rows, the strip's padding and top border.
-    expect(
-      tester.getSize(find.byType(ActivityStrip)).height,
-      28 * 5 + 6 + 1,
-    );
+    expect(tester.getSize(find.byType(ActivityStrip)).height, 28 * 5 + 6 + 1);
     expect(find.text('task 0').hitTestable(), findsOneWidget);
     expect(find.text('task 9').hitTestable(), findsNothing);
 
@@ -716,11 +714,63 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('live output stays where it was once it stops following its '
+      'end', (tester) async {
+    Future<void> pump({required bool followEnd, int lines = 40}) =>
+        tester.pumpWidget(
+          MaterialApp(
+            home: Align(
+              alignment: Alignment.topCenter,
+              child: StepBody(
+                followEnd: followEnd,
+                child: Column(
+                  children: [
+                    for (var i = 0; i < lines; i++)
+                      SizedBox(height: 20, child: Text('line $i')),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+    ScrollPosition position() =>
+        tester.state<ScrollableState>(find.byType(Scrollable)).position;
+
+    await pump(followEnd: true);
+    expect(find.text('line 39').hitTestable(), findsOneWidget);
+    // The command ended: still its end, not its start.
+    await pump(followEnd: false);
+    expect(find.text('line 39').hitTestable(), findsOneWidget);
+    expect(find.text('line 0').hitTestable(), findsNothing);
+    expect(position().pixels, position().maxScrollExtent);
+
+    // Following its end, it printed more as it ended: its new end.
+    await pump(followEnd: true);
+    await pump(followEnd: false, lines: 45);
+    await tester.pump();
+    expect(find.text('line 44').hitTestable(), findsOneWidget);
+    expect(position().pixels, position().maxScrollExtent);
+
+    // Scrolled up a little while it ran: what was in view stays put.
+    await pump(followEnd: true, lines: 45);
+    position().jumpTo(100);
+    await tester.pump();
+    final shown = find.text('line 39').hitTestable();
+    expect(shown, findsOneWidget);
+    final top = tester.getTopLeft(shown).dy;
+    await pump(followEnd: false, lines: 50);
+    await tester.pump();
+    expect(tester.getTopLeft(find.text('line 39')).dy, top);
+  });
+
   group('wheel latch', () {
     late ScrollController outer;
     late ScrollController inner;
 
-    Future<void> pumpNested(WidgetTester tester) async {
+    Future<void> pumpNested(
+      WidgetTester tester, {
+      bool innerReversed = false,
+    }) async {
       outer = ScrollController();
       inner = ScrollController();
       addTearDown(outer.dispose);
@@ -735,6 +785,7 @@ void main() {
                 height: 200,
                 child: SingleChildScrollView(
                   controller: inner,
+                  reverse: innerReversed,
                   child: const WheelLatch(child: SizedBox(height: 400)),
                 ),
               ),
@@ -786,6 +837,26 @@ void main() {
       await wheel(tester, const Offset(400, 200), 30);
       expect(inner.offset, 0);
       expect(outer.offset, 50);
+    });
+
+    testWidgets('a reversed inner view (live output) scrolls the way the '
+        'wheel goes', (tester) async {
+      await pumpNested(tester, innerReversed: true);
+      pause();
+      const over = Offset(400, 200);
+      // Wheel up: toward the start, which in a reversed view is further on.
+      await wheel(tester, over, -60);
+      expect(inner.offset, 60);
+      expect(outer.offset, 0);
+      // Wheel down, back to the end it opened at.
+      await wheel(tester, over, 60);
+      expect(inner.offset, 0);
+
+      // Already at that end: a new gesture down scrolls the outer view.
+      pause();
+      await wheel(tester, over, 60);
+      expect(inner.offset, 0);
+      expect(outer.offset, 60);
     });
   });
 }

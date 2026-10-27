@@ -38,6 +38,7 @@ class DiffEditorModel extends ChangeNotifier {
     required this.original,
     required this.modified,
     this.ignoreTrimWhitespace = true,
+    this.ignoreAllWhitespace = false,
     this.maxComputationTimeMs = 5000,
   }) {
     original.addListener(_originalChanged);
@@ -51,6 +52,9 @@ class DiffEditorModel extends ChangeNotifier {
   /// `diffEditor.ignoreTrimWhitespace` and `diffEditor.maxComputationTime`.
   final bool ignoreTrimWhitespace;
   final int maxComputationTimeMs;
+
+  /// Whitespace anywhere ignored ([LinesDiffComputerOptions.ignoreAllWhitespace]).
+  final bool ignoreAllWhitespace;
 
   /// How long after an edit the diff is computed again.
   static const debounce = Duration(milliseconds: 200);
@@ -73,6 +77,11 @@ class DiffEditorModel extends ChangeNotifier {
   /// The changes, in order; null until first computed.
   List<DetailedLineRangeMapping>? get mappings => _mappings;
   List<DetailedLineRangeMapping>? _mappings;
+
+  /// The modified side's text [mappings] were computed for (it may have
+  /// been edited since); null until first computed.
+  DocumentSnapshot? get mappedSnapshot => _mappedSnapshot;
+  DocumentSnapshot? _mappedSnapshot;
 
   /// Whether the last computation ran out of time.
   bool get hitTimeout => _hitTimeout;
@@ -106,9 +115,11 @@ class DiffEditorModel extends ChangeNotifier {
     }
     final request = ++_request;
     final originalLines = _lines(originalSnapshot);
-    final modifiedLines = _lines(modified.snapshot);
+    final modifiedSnapshot = modified.snapshot;
+    final modifiedLines = _lines(modifiedSnapshot);
     final options = LinesDiffComputerOptions(
       ignoreTrimWhitespace: ignoreTrimWhitespace,
+      ignoreAllWhitespace: ignoreAllWhitespace,
       maxComputationTimeMs: maxComputationTimeMs,
     );
     LinesDiff diff;
@@ -135,6 +146,7 @@ class DiffEditorModel extends ChangeNotifier {
     // theirs.
     if (request == _request) {
       _mappings = diff.changes;
+      _mappedSnapshot = modifiedSnapshot;
       _hitTimeout = diff.hitTimeout;
       notifyListeners();
     }
@@ -357,6 +369,8 @@ class DiffEditorColors {
     required this.signForeground,
     this.insertedTextBorder,
     this.removedTextBorder,
+    this.unchangedBackground,
+    this.unchangedForeground,
   });
 
   /// From a color registry lookup, with `style.css`' fallbacks.
@@ -387,6 +401,13 @@ class DiffEditorColors {
       signForeground: color('editor.foreground'),
       insertedTextBorder: color('diffEditor.insertedTextBorder'),
       removedTextBorder: color('diffEditor.removedTextBorder'),
+      unchangedBackground:
+          color('diffEditor.unchangedRegionBackground') ??
+          color('sideBar.background'),
+      unchangedForeground:
+          color('diffEditor.unchangedRegionForeground') ??
+          color('descriptionForeground') ??
+          color('editor.foreground'),
     );
   }
 
@@ -408,6 +429,11 @@ class DiffEditorColors {
   final Color? insertedTextBorder;
   final Color? removedTextBorder;
 
+  /// `diffEditor.unchangedRegionBackground` and `…Foreground`: the bar
+  /// standing for hidden unchanged lines.
+  final Color? unchangedBackground;
+  final Color? unchangedForeground;
+
   @override
   bool operator ==(Object other) =>
       other is DiffEditorColors &&
@@ -422,7 +448,9 @@ class DiffEditorColors {
       other.overviewRemoved == overviewRemoved &&
       other.signForeground == signForeground &&
       other.insertedTextBorder == insertedTextBorder &&
-      other.removedTextBorder == removedTextBorder;
+      other.removedTextBorder == removedTextBorder &&
+      other.unchangedBackground == unchangedBackground &&
+      other.unchangedForeground == unchangedForeground;
 
   @override
   int get hashCode => Object.hash(
@@ -438,7 +466,41 @@ class DiffEditorColors {
     signForeground,
     insertedTextBorder,
     removedTextBorder,
+    unchangedBackground,
+    unchangedForeground,
   );
+}
+
+/// How much of a changed line a diff marks, as JetBrains IDEs offer: the
+/// characters changed (VS Code's), the words they are in, the lines alone,
+/// or nothing but the gutter and the overview.
+enum DiffHighlight { characters, words, lines, none }
+
+/// [start]..[end] of [text] grown to the words it starts and ends in.
+(int, int) diffWordRange(String text, int start, int end) {
+  bool word(int i) {
+    if (i < 0 || i >= text.length) return false;
+    final c = text.codeUnitAt(i);
+    return (c >= 0x30 && c <= 0x39) ||
+        (c >= 0x41 && c <= 0x5a) ||
+        (c >= 0x61 && c <= 0x7a) ||
+        c == 0x5f ||
+        c > 0x7f;
+  }
+
+  while (word(start - 1) && word(start)) {
+    start--;
+  }
+  // An insertion point in a word: the whole word.
+  if (start == end) {
+    while (word(start - 1)) {
+      start--;
+    }
+  }
+  while (word(end) && (word(end - 1) || end == start)) {
+    end++;
+  }
+  return (start, end);
 }
 
 /// `diff-insert` and `diff-remove`: the codicons `add` and `remove`.
@@ -454,8 +516,10 @@ computeDiffDecorations(
   List<DetailedLineRangeMapping> diffs,
   DocumentSnapshot original,
   DocumentSnapshot modified,
-  DiffEditorColors colors,
-) {
+  DiffEditorColors colors, {
+  DiffHighlight highlight = DiffHighlight.characters,
+}) {
+  final background = highlight != DiffHighlight.none;
   final originalDecorations = <EditorDecoration>[];
   final modifiedDecorations = <EditorDecoration>[];
   (int, int)? lines(DocumentSnapshot snapshot, LineRange range) {
@@ -485,7 +549,7 @@ computeDiffDecorations(
           start: start,
           end: end,
           isWholeLine: true,
-          backgroundColor: colors.removedLine,
+          backgroundColor: background ? colors.removedLine : null,
           marginColor: colors.removedGutter,
           lineDecorationIcon: diffRemoveIcon,
           lineDecorationColor: colors.signForeground,
@@ -499,7 +563,7 @@ computeDiffDecorations(
           start: start,
           end: end,
           isWholeLine: true,
-          backgroundColor: colors.insertedLine,
+          backgroundColor: background ? colors.insertedLine : null,
           marginColor: colors.insertedGutter,
           lineDecorationIcon: diffInsertIcon,
           lineDecorationColor: colors.signForeground,
@@ -507,6 +571,7 @@ computeDiffDecorations(
         ),
       );
     }
+    if (!background) continue;
     if (m.modified.isEmpty || m.original.isEmpty) {
       if (originalLines case (final start, final end)) {
         originalDecorations.add(
@@ -532,14 +597,23 @@ computeDiffDecorations(
       }
       continue;
     }
+    if (highlight == DiffHighlight.lines) continue;
+    final words = highlight == DiffHighlight.words;
+    (int, int) span(DocumentSnapshot snapshot, Range range) {
+      final start = offset(snapshot, range, end: false);
+      final end = offset(snapshot, range, end: true);
+      return words ? diffWordRange(snapshot.text, start, end) : (start, end);
+    }
+
     for (final i in m.innerChanges ?? const <RangeMapping>[]) {
       // Don't show empty markers outside the line range.
       if (_contains(m.original, i.originalRange.startLineNumber) &&
           i.originalRange.endLineNumber <= original.lineCount) {
+        final (start, end) = span(original, i.originalRange);
         originalDecorations.add(
           EditorDecoration(
-            start: offset(original, i.originalRange, end: false),
-            end: offset(original, i.originalRange, end: true),
+            start: start,
+            end: end,
             backgroundColor: colors.removedText,
             borderColor: colors.removedTextBorder,
             fillsLineOnLineBreak: true,
@@ -549,10 +623,11 @@ computeDiffDecorations(
       }
       if (_contains(m.modified, i.modifiedRange.startLineNumber) &&
           i.modifiedRange.endLineNumber <= modified.lineCount) {
+        final (start, end) = span(modified, i.modifiedRange);
         modifiedDecorations.add(
           EditorDecoration(
-            start: offset(modified, i.modifiedRange, end: false),
-            end: offset(modified, i.modifiedRange, end: true),
+            start: start,
+            end: end,
             backgroundColor: colors.insertedText,
             borderColor: colors.insertedTextBorder,
             fillsLineOnLineBreak: true,

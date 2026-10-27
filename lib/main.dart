@@ -26,6 +26,7 @@ import 'diagnostics/app_event_watch.dart';
 import 'diagnostics/frame_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
+import 'ide/editor_word_wrap.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
 import 'ide/language_mode.dart';
@@ -307,6 +308,8 @@ Future<void> main(List<String> arguments) async {
     CodeFont.follow(files.settings, (key) => files.settings[key]);
     SshHostSettings.instance = SshHostSettings(settings: files.settings);
     unawaited(SshHostSettings.instance.load());
+    // Whether the editors wrap long lines.
+    EditorWordWrap.follow(files.settings);
   }
   // Emoji as pictures: fetched into the cache the first run, in the
   // background, through the proxy.

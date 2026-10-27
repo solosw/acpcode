@@ -287,7 +287,7 @@ void main() {
       for (final name in ['a', 'b', 'c']) {
         File(at('$name.txt')).writeAsStringSync(name);
       }
-      const status = ['status', '-z', '--porcelain=v1'];
+      const status = ['status', '-z', '--porcelain'];
       final cut = await client().git(status, cwd: root, limit: 2);
       expect(cut.truncated, isTrue);
       expect(cut.stdout, '?? a.txt\x00?? b.txt\x00');
@@ -857,31 +857,33 @@ printf '%s\n' "$line"
   });
 
   group('review', () {
-    test('keeps, counts and restores what a session kept there', () async {
+    test('snapshots, diffs and restores a project there', () async {
       File(at('a.txt')).writeAsStringSync('one\n');
       final store = (await client().openReview(root))!;
       expect(store.root, root);
-      final old = (await store.take('s1', 'a.txt'))!;
+      final before = (await store.snapshot())!;
       File(at('a.txt')).writeAsStringSync('one\ntwo\n');
       File(at('b.txt')).writeAsStringSync('new\n');
-      expect(await store.current('a.txt'), isNot(old));
-      final counts = await store.lineCounts('s1', {
-        'a.txt': old,
-        'b.txt': null,
-      });
+      final after = (await store.snapshot())!;
+      final changes = await store.diff(before, after);
+      expect([for (final c in changes) c.path], ['a.txt', 'b.txt']);
+      final counts = await store.lineCounts(before, after);
       expect(counts['a.txt'], (added: 1, removed: 0));
-      expect(counts['b.txt'], (added: 1, removed: 0));
-      expect(utf8.decode(await store.read('s1', old)), 'one\n');
-      await store.restore('s1', 'a.txt', old);
+      final old = changes.first.before!;
+      expect(utf8.decode(await store.read(old)), 'one\n');
+      final taken = (await store.take('b.txt'))!;
+      expect(utf8.decode(await store.read(taken)), 'new\n');
+      await store.restore('a.txt', old);
       expect(File(at('a.txt')).readAsStringSync(), 'one\n');
-      await store.restore('s1', 'b.txt', null);
+      await store.restore('b.txt', null);
       expect(File(at('b.txt')).existsSync(), isFalse);
       expect(await store.exists('a.txt'), isTrue);
+      expect(await store.contains(after, 'b.txt'), isTrue);
       await store.save('s1', 'data', blobs: [old]);
       expect(await store.load('s1'), 'data');
       await store.forget('s1');
       expect(await store.load('s1'), isNull);
-      // Kept in the server's data folder, not the project.
+      // Its repository is the server's, not the project's.
       expect(Directory(at('.git')).existsSync(), isFalse);
       expect(
         Directory(p.join(remote.dataDir.path, 'checkpoints')).existsSync(),

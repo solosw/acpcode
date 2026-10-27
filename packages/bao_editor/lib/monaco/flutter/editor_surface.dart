@@ -33,6 +33,7 @@ import 'wheel_glide.dart';
 
 export 'editor_decorations.dart'
     show
+        EditorChangeBar,
         EditorDecoration,
         EditorDecorationKind,
         EditorDecorationProvider,
@@ -40,6 +41,8 @@ export 'editor_decorations.dart'
         EditorGutterIcon,
         EditorInjectedText,
         EditorInjectedTextTarget,
+        EditorLineAnnotation,
+        EditorLineAnnotations,
         EditorUnderlineStyle;
 export 'editor_view_styles.dart';
 export 'editor_view_painters.dart' show EditorRenderWhitespace;
@@ -118,6 +121,7 @@ class EditorSurface extends StatefulWidget {
     this.lineNumbers = true,
     this.glyphMargin = true,
     this.folding = true,
+    this.hiddenLines,
     this.foldingRules,
     this.brackets,
     this.matchBrackets = true,
@@ -134,6 +138,8 @@ class EditorSurface extends StatefulWidget {
     this.onContentPointerDown,
     this.onContextMenu,
     this.onViewChanged,
+    this.onChangeBarTap,
+    this.lineAnnotations,
     this.contentCursor,
   });
 
@@ -145,7 +151,13 @@ class EditorSurface extends StatefulWidget {
   /// Selection fill while focused (`editor.selectionBackground`).
   final Color selectionColor;
   final Color caretColor;
+
+  /// Whether long lines wrap at the text area's width; documents longer
+  /// than [maxWrappedLines] do not (a wrapped layout shapes every line).
   final bool wrap;
+
+  /// The most lines a document may have and still wrap.
+  static const maxWrappedLines = 5000;
 
   /// Optional one-based token spans, supplied by the active theme/tokenizer.
   /// Read lazily for painted lines; spans whose text no longer matches a
@@ -206,6 +218,10 @@ class EditorSurface extends StatefulWidget {
   /// Indentation-based folding with chevrons in the gutter.
   final bool folding;
 
+  /// Lines hidden besides collapsed folds' (a diff's unchanged ones), with
+  /// no placeholder: the embedder shows what stands for them, in a zone.
+  final HiddenLineRanges? hiddenLines;
+
   /// Folding markers/off-side rule; defaults to the controller's
   /// `languageConfiguration.folding`.
   final FoldingRules? foldingRules;
@@ -254,6 +270,14 @@ class EditorSurface extends StatefulWidget {
   /// Called after the view scrolls or is laid out anew, so overlays anchored
   /// with [EditorSurfaceView] can follow.
   final VoidCallback? onViewChanged;
+
+  /// A press on a change mark ([EditorChangeBar]) by [lineNumber], at
+  /// [globalPosition]: VS Code's dirty diff peek, JetBrains' change popup.
+  /// The mark shows a pointer while there is one.
+  final void Function(int lineNumber, Offset globalPosition)? onChangeBarTap;
+
+  /// A column of text by the line numbers, if any (JetBrains' Annotate).
+  final EditorLineAnnotations? lineAnnotations;
 
   /// Overrides the text cursor over the content (e.g. a pointer on a link).
   final MouseCursor? contentCursor;
@@ -426,6 +450,25 @@ class _EditorSurfaceState extends State<EditorSurface>
   ScrollbarPart _hoveredScrollbar = ScrollbarPart.none;
   bool _pointerInside = false;
   _Part _hover = _Part.none;
+
+  /// Whether the pointer is on a change mark [EditorSurface.onChangeBarTap]
+  /// takes presses on, or an annotation pressed likewise.
+  bool _hoverChangeBar = false;
+
+  /// The line whose annotation the pointer is on.
+  int? _hoverAnnotation;
+
+  /// Tells [EditorLineAnnotations.onHover] of the pointer coming onto
+  /// [line]'s annotation, or off them (null).
+  void _hoverAnnotationAt(int? line, Offset position) {
+    if (line == _hoverAnnotation) return;
+    _hoverAnnotation = line;
+    final box = context.findRenderObject();
+    final global = box is RenderBox && box.hasSize
+        ? box.localToGlobal(position)
+        : position;
+    widget.lineAnnotations?.onHover?.call(line, global);
+  }
 
   // Pointer interaction.
   _DragMode _dragMode = _DragMode.none;
@@ -1475,6 +1518,44 @@ class _EditorSurfaceState extends State<EditorSurface>
     onContextMenu(event.position);
   }
 
+  /// The line whose annotation is under [position], if any.
+  int? _annotationAt(Offset position) {
+    final annotations = widget.lineAnnotations;
+    final layout = _layout;
+    final geometry = _geometry;
+    if (annotations == null || layout == null || geometry == null) {
+      return null;
+    }
+    if (position.dx < geometry.annotationsLeft ||
+        position.dx >= geometry.decorationsLeft) {
+      return null;
+    }
+    final line = _lineAtY(layout, position.dy)!;
+    return annotations.of(line) == null ? null : line;
+  }
+
+  /// The line whose change mark is under [position], if any.
+  int? _changeBarAt(Offset position) {
+    final layout = _layout;
+    final geometry = _geometry;
+    if (layout == null || geometry == null) return null;
+    final left = geometry.changeBarLeft;
+    if (position.dx < left - 2 || position.dx >= left + 6) return null;
+    if (position.dx >= geometry.contentLeft) return null;
+    final line = _lineAtY(layout, position.dy)!;
+    final snapshot = layout.snapshot;
+    final start = snapshot.lineStarts[line - 1];
+    final end = snapshot.contentEnds[line - 1];
+    for (final decoration in _decorations.intersecting(start, end)) {
+      if (decoration.changeBar != null &&
+          decoration.start <= end &&
+          decoration.end >= start) {
+        return line;
+      }
+    }
+    return null;
+  }
+
   int? _lineAtY(ViewportLayout layout, double y) {
     final offset = layout.hitTest(Offset(-1e6, y));
     return layout.snapshot.positionAtOffset(offset).lineNumber;
@@ -1487,6 +1568,18 @@ class _EditorSurfaceState extends State<EditorSurface>
   ) {
     final position = event.localPosition;
     final line = _lineAtY(layout, position.dy)!;
+    if (widget.lineAnnotations?.onTap case final onTap?
+        when _annotationAt(position) != null) {
+      _dragPointer = null;
+      onTap(line, event.position);
+      return;
+    }
+    if (widget.onChangeBarTap case final onTap?
+        when _changeBarAt(position) != null) {
+      _dragPointer = null;
+      onTap(line, event.position);
+      return;
+    }
     if (widget.folding &&
         position.dx >= geometry.decorationsLeft &&
         _folding.regionAt(line) >= 0) {
@@ -1819,10 +1912,22 @@ class _EditorSurfaceState extends State<EditorSurface>
         }
       }
     }
-    if (part != _hover || scrollbar != _hoveredScrollbar) {
+    final changeBar =
+        part == _Part.gutter &&
+        widget.onChangeBarTap != null &&
+        _changeBarAt(position) != null;
+    final annotations = widget.lineAnnotations;
+    final annotation = part == _Part.gutter ? _annotationAt(position) : null;
+    _hoverAnnotationAt(annotation, position);
+    final pressable =
+        changeBar || (annotation != null && annotations?.onTap != null);
+    if (part != _hover ||
+        scrollbar != _hoveredScrollbar ||
+        pressable != _hoverChangeBar) {
       setState(() {
         _hover = part;
         _hoveredScrollbar = scrollbar;
+        _hoverChangeBar = pressable;
       });
     }
   }
@@ -1835,6 +1940,7 @@ class _EditorSurfaceState extends State<EditorSurface>
 
   void _onExit(PointerExitEvent event) {
     _pointerInside = false;
+    _hoverAnnotationAt(null, event.localPosition);
     _hoverInjection(null);
     _reportTextHover(null);
     _scheduleScrollbarHide();
@@ -2175,13 +2281,24 @@ class _EditorSurfaceState extends State<EditorSurface>
     TextScaler scaler,
   ) {
     final size = Size(geometry.contentWidth, geometry.size.height);
-    final hidden = _folding.hiddenLines;
+    final hidden = switch ((_folding.hiddenLines, widget.hiddenLines)) {
+      (final folds, null) => folds,
+      (final folds, final other?) when other.isEmpty => folds,
+      (final folds, final other?) when folds.isEmpty => other,
+      (final folds, final other?) => HiddenLineRanges([
+        ...folds.ranges,
+        ...other.ranges,
+      ]),
+    };
     final lineHeight = _glyphs!.lineHeight;
     final zones = [
       for (final zone in _zones)
         ViewportZone(zone.afterLineNumber, zone.heightInLines * lineHeight),
     ];
-    final wrap = widget.wrap && size.width > 0;
+    final wrap =
+        widget.wrap &&
+        size.width > 0 &&
+        snapshot.lineCount <= EditorSurface.maxWrappedLines;
     // Lines are decorated only while some decoration changes their layout.
     final decorations = _decorationsAffectLayout ? _decorations : null;
     final current = _layout;
@@ -2318,6 +2435,7 @@ class _EditorSurfaceState extends State<EditorSurface>
           lineNumbers: lineNumbers != EditorLineNumbersStyle.off,
           folding: widget.folding,
           minimapWidth: widget.showMinimap ? widget.minimapWidth : 0,
+          annotationsWidth: widget.lineAnnotations?.width ?? 0,
         );
         _geometry = geometry;
         _zones = _computeZones(glyphs.lineHeight);
@@ -2459,6 +2577,7 @@ class _EditorSurfaceState extends State<EditorSurface>
                     showFoldingControls: _hover == _Part.gutter,
                     foldingEnabled: widget.folding,
                     decorations: _decorations,
+                    annotations: widget.lineAnnotations,
                   ),
                 ),
               ),
@@ -2534,6 +2653,8 @@ class _EditorSurfaceState extends State<EditorSurface>
                         ? _injectionCursor ?? widget.contentCursor
                         : null) ??
                     SystemMouseCursors.text
+              : _hoverChangeBar && _dragMode == _DragMode.none
+              ? SystemMouseCursors.click
               : MouseCursor.defer,
           onEnter: _onEnter,
           onExit: _onExit,

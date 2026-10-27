@@ -55,17 +55,31 @@ Future<void> main(List<String> arguments) async {
   }
   if (ServerSession.fromArguments(arguments, home) case final session?) {
     if (arguments.contains('--daemon')) {
-      final log = File(session.logPath).openWrite(mode: FileMode.append);
+      // Where the log cannot be (a folder of the user's alone, refused
+      // there), none is kept.
+      IOSink? log;
+      try {
+        Directory(File(session.logPath).parent.path)
+            .createSync(recursive: true);
+        log = File(session.logPath).openWrite(mode: FileMode.append);
+        unawaited(log.done.then((_) {}, onError: (Object _) {}));
+      } on FileSystemException {
+        log = null;
+      }
+      void say(String message) {
+        try {
+          log?.writeln('${DateTime.now()} $message');
+        } on Object {
+          // Gone with its file.
+        }
+      }
+
       final clean = await session.runDaemon(
-        serve: (peer) => RemoteServer(
-          peer,
-          dataDir: dataDir,
-          version: _version,
-          log: (message) => log.writeln('${DateTime.now()} $message'),
-        ),
-        log: (message) => log.writeln('${DateTime.now()} $message'),
+        serve: (peer) =>
+            RemoteServer(peer, dataDir: dataDir, version: _version, log: say),
+        log: say,
       );
-      await log.close();
+      await log?.close().then((_) {}, onError: (Object _) {});
       if (clean) {
         try {
           await File(session.logPath).delete();
@@ -79,6 +93,12 @@ Future<void> main(List<String> arguments) async {
       await session.runBridge(
         resume: arguments.contains('--resume'),
         daemon: () => session.startDaemon(['--data', dataDir]),
+        serve: (peer) => RemoteServer(
+          peer,
+          dataDir: dataDir,
+          version: _version,
+          log: (message) => stderr.writeln('baocode-server: $message'),
+        ),
       ),
     );
   }

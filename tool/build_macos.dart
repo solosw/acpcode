@@ -411,21 +411,29 @@ class _Signing {
     }
   }
 
-  /// Staples the notarisation ticket to [path], trying again a few times:
-  /// stapler fetches the ticket from Apple's CloudKit, which can drop the
-  /// connection, or not have the ticket yet just after it is accepted.
+  /// Staples the notarisation ticket to [path], trying again for about
+  /// twelve minutes: stapler fetches the ticket from Apple's CloudKit, which
+  /// can drop the connection (-1005, stapler's error 68) for minutes on
+  /// end, or not have the ticket yet just after it is accepted. Within two
+  /// and a half minutes it had failed builds four times in a week (all the
+  /// failures there were), while notarising never did.
   Future<void> staple(String path) async {
+    const waits = [15, 30, 60, 90, 120, 180, 240];
     for (var attempt = 1; ; attempt++) {
       stdout.writeln('  \$ xcrun stapler staple $path');
       final result = await Process.run('xcrun', ['stapler', 'staple', path]);
       if (result.exitCode == 0) return;
       stdout.writeln('${result.stdout}'.trim());
       stderr.writeln('${result.stderr}'.trim());
-      if (attempt == 5) {
+      if (attempt > waits.length) {
         _fail('stapler exited with code ${result.exitCode}, $attempt times.');
       }
-      stdout.writeln('  Trying again in ${attempt * 15} seconds');
-      await Future<void>.delayed(Duration(seconds: attempt * 15));
+      final wait = waits[attempt - 1];
+      stdout.writeln(
+        '  Trying again in $wait seconds '
+        '(attempt ${attempt + 1} of ${waits.length + 1})',
+      );
+      await Future<void>.delayed(Duration(seconds: wait));
     }
   }
 }

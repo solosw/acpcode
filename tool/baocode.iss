@@ -5,7 +5,7 @@
 ;   AppVersion the version pubspec.yaml carries, as it writes it (1.0.0+1)
 ;   OutDir     where to write the installer (build/installers)
 ;
-; Output: BaoCode-<version>-setup.exe
+; Output: BaoCode-<version>-setup.exe (-setup-arm64.exe for Arm)
 
 #ifndef BundleDir
   #error BundleDir is not defined: pass /DBundleDir=<release bundle folder>
@@ -21,6 +21,18 @@
 ; the installer's name. The same app either way, installed over the other.
 #ifndef Edition
   #define Edition ""
+#endif
+
+; The processor the bundle was built for (tool/build_windows.dart passes
+; it): x64, or arm64, whose installer's name says so ("-arm64", before the
+; edition's). The same app either way: one installs over the other.
+#ifndef Arch
+  #define Arch "x64"
+#endif
+#if Arch == "arm64"
+  #define ArchSuffix "-arm64"
+#else
+  #define ArchSuffix ""
 #endif
 
 ; The part of the version Windows records, without the build number pubspec
@@ -44,7 +56,7 @@ DefaultDirName={autopf}\BaoCode
 DefaultGroupName=BaoCode
 UninstallDisplayName=BaoCode
 UninstallDisplayIcon={app}\baocode.exe
-OutputBaseFilename=BaoCode-{#VersionNumber}-setup{#Edition}
+OutputBaseFilename=BaoCode-{#VersionNumber}-setup{#ArchSuffix}{#Edition}
 OutputDir={#OutDir}
 ; What Explorer shows for the installer itself. Windows wants four numbers,
 ; where pubspec's version has three.
@@ -52,9 +64,15 @@ VersionInfoVersion={#VersionNumber}.0
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-; The app is 64-bit only (flutter build windows is x64 here).
+; The app is 64-bit only: x64 (which Windows on Arm runs too, emulated),
+; or arm64.
+#if Arch == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 ; Per user by default ({autopf} is then %LOCALAPPDATA%\Programs): neither
 ; the install nor the app's updates ask for elevation, which a machine may
 ; not grant (no admin; UAC set to elevate signed programs only, and Setup is
@@ -94,8 +112,19 @@ Name: "contextmenu"; \
 ; run on their host, and where the app downloads it; tool/build_windows.dart
 ; puts them there), and openssh\ (OpenSSH for Windows, for remote projects
 ; where the system's ssh is too old to ask for a password).
-Source: "{#BundleDir}\*"; DestDir: "{app}"; \
-  Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BundleDir}\*"; Excludes: "\baocode-browser-host.exe"; \
+  DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The browser extension's host, which a browser may have started again since
+; PrepareToInstall: see ReplaceBrowserHost.
+Source: "{#BundleDir}\baocode-browser-host.exe"; DestDir: "{app}"; \
+  Flags: ignoreversion; BeforeInstall: ReplaceBrowserHost
+
+[InstallDelete]
+; A host ReplaceBrowserHost moved out of the way, at an install before.
+Type: files; Name: "{app}\baocode-browser-host.exe.*.old"
+
+[UninstallDelete]
+Type: files; Name: "{app}\baocode-browser-host.exe.*.old"
 
 [Icons]
 Name: "{group}\BaoCode"; Filename: "{app}\baocode.exe"
@@ -296,6 +325,28 @@ begin
     '/F /IM baocode-browser-host.exe', '', SW_HIDE,
     ewWaitUntilTerminated, Code) then
     Log(Format('taskkill baocode-browser-host.exe: %d', [Code]));
+end;
+
+// Right before the host is replaced, ended again: the extension connects
+// each minute, and the install takes long enough for it to have started the
+// host anew since PrepareToInstall, whose file then could not be replaced.
+// Started again in between, or not quite gone yet, it is moved out of the
+// way, as Windows lets a running program's file be; [InstallDelete] removes
+// it at the next install.
+procedure ReplaceBrowserHost;
+var
+  Host: String;
+  Old: String;
+begin
+  EndBrowserHost;
+  Host := ExpandConstant('{app}\baocode-browser-host.exe');
+  if (not FileExists(Host)) or DeleteFile(Host) then
+    Exit;
+  Old := Host + '.' + GetDateTimeString('yyyymmddhhnnsszzz', #0, #0) + '.old';
+  if RenameFile(Host, Old) then
+    Log(Format('%s is in use: moved to %s', [Host, Old]))
+  else
+    Log(Format('%s is in use, and could not be moved', [Host]));
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

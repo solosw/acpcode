@@ -6,13 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import '../../base/shown_when_ready.dart';
 import '../../browser/browser_bridge.dart';
 import '../../browser/browser_mirror.dart';
 import '../../ide/file_service.dart';
 import '../../ide/git/git_model.dart';
 import '../../ide/git/commit_message.dart';
 import '../../ide/git/git_repository.dart';
-import '../../ide/git/ide_scm_view.dart' show IdeScmView;
+import '../../ide/git/ide_git_log_view.dart'
+    show IdeGitLogView, IdeGitWorktreeChoice;
+import '../../ide/git/ide_git_commit_panel.dart';
 import '../../ide/git/scm_host.dart';
 import '../../ide/ide_dialog.dart';
 import '../../ide/ide_explorer.dart';
@@ -397,6 +400,7 @@ class AgentSidePanelView extends StatelessWidget {
     this.workspaceName,
     this.roots = const [],
     this.repositories = const [],
+    this.worktreesOf,
     this.onAddFolder,
     this.onRemoveFolder,
     this.titleBarInset = 0,
@@ -427,6 +431,10 @@ class AgentSidePanelView extends StatelessWidget {
   /// Control lists them): the changes page lists them to pick from, [git]
   /// then ignored.
   final List<(String root, IdeGitRepository git)> repositories;
+
+  /// For the repository shown: where the agent works, and how to show
+  /// another of its worktrees' changes (see [IdeGitWorktreeChoice]).
+  final IdeGitWorktreeChoice Function(IdeGitRepository git)? worktreesOf;
 
   /// Add Folder to Workspace..., and Remove Folder from Workspace, as the
   /// IDE's explorer has them.
@@ -660,76 +668,92 @@ class AgentSidePanelView extends StatelessWidget {
       tabs: _fileTabs(context, tabs, tabs.files, active),
       body: active == null
           ? _EmptySection(l10n.sidePanelSelectFile)
-          : _preview(context, active),
+          : ShownWhenReady(child: _preview(context, active)),
     );
   }
 
-  /// The project's Git changes in the IDE's Source Control view (one
-  /// view for both: its commit box, its changes as a tree or a list, its
-  /// graph; a workspace's repositories each under its header), and the
-  /// changes opened from it or from the conversation.
+  /// The project's Git log (one view for this and the IDE's Source
+  /// Control): its filters, its history, the row's details (the local
+  /// changes' commit box and groups, a commit's files), a workspace's
+  /// repositories to pick from; the changes opened, from it or from the
+  /// conversation, in its table's place.
   Widget _changesPage(BuildContext context, SidePanelTabs tabs) {
-    final l10n = context.l10n;
     final git = _git;
     final active = tabs.activeDiff;
     final local = files is! IdeHostFiles;
-    final total = _gits.fold(0, (sum, git) => sum + (git.state?.count ?? 0));
-    // No change anywhere: the view keeps its commit box, whose button then
-    // publishes or syncs; the body says so where a change would show.
-    final none =
-        _gits.isNotEmpty &&
-        _gits.every((git) => git.state != null) &&
-        total == 0;
-    final terminals = this.terminals;
-    final list = git == null
-        ? const _NoRepository()
-        : IdeScmView(
-            key: ValueKey(('scm', session.root)),
-            host: _SidePanelScmHost(this),
-            session: panel.scmOf(git),
-            sessionOf: panel.scmOf,
-            notifications: notifications,
-            // The page names it already.
-            showTitle: false,
-            background: AppColors.code,
-            onOpen: (path, {focusEditor = false}) async =>
-                panel.open(session, FileOpenRequest(path)),
-            // Its diff; its HEAD side is the diff's left.
-            onOpenChange:
-                (resource, {head = false, focusEditor = false}) async {
-                  final of = _gitOf(resource.path);
-                  if (of?.state case final state?) {
-                    panel.open(session, gitChangeRequest(of!, state, resource));
-                  }
-                },
-            onRevealInExplorer: _revealInFiles,
-            revealInExplorerLabel: l10n.sidePanelRevealInFiles,
-            onOpenInTerminal: terminals == null
-                ? null
-                : (folder) {
-                    final shell = terminals.create(cwd: folder);
-                    panel.openTerminal(session, shell);
-                    WidgetsBinding.instance.addPostFrameCallback(
-                      (_) => shell.focus(),
-                    );
-                  },
-            onTreeViewChanged: (tree) => panel.changesAsTree = tree,
-            onAddToChat: session.draft.insertFiles,
-            trash: local && WindowControls.canMoveToTrash
-                ? WindowControls.moveToTrash
-                : null,
-            commitMessage: commitMessage,
-          );
-    return _Page(
+    if (git == null) {
+      // No repository: the changes opened from the conversation alone.
+      return KeyedSubtree(
+        key: const ValueKey(('page', SidePanelSection.changes)),
+        child: active == null
+            ? const _NoRepository()
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ?_fileTabs(context, tabs, tabs.diffs, active),
+                  Expanded(
+                    child: ShownWhenReady(child: _preview(context, active)),
+                  ),
+                ],
+              ),
+      );
+    }
+    final host = _SidePanelScmHost(this);
+    return KeyedSubtree(
       key: const ValueKey(('page', SidePanelSection.changes)),
-      panel: panel,
-      list: list,
-      tabs: _fileTabs(context, tabs, tabs.diffs, active),
-      body: active != null
-          ? _preview(context, active)
-          : none
-          ? const _NoChanges()
-          : _EmptySection(l10n.sidePanelSelectChange),
+      child: IdeGitLogView(
+        key: ValueKey(('git-log', session.root)),
+        host: host,
+        session: panel.scmOf(git),
+        notifications: notifications,
+        background: AppColors.code,
+        border: AppColors.partBorder,
+        onOpen: (path) => panel.open(session, FileOpenRequest(path)),
+        // A commit's file: its changes in a tab, as the local ones'.
+        onOpenDiff: (file) => panel.open(
+          session,
+          FileOpenRequest(
+            file.path,
+            diff: true,
+            original: file.original,
+            modified: file.modified,
+            readOnly: true,
+          ),
+        ),
+        // A file shown once read, compared and colored: what was before
+        // until then.
+        overlay: active == null
+            ? null
+            : ShownWhenReady(child: _preview(context, active)),
+        overlayTabs: _fileTabs(context, tabs, tabs.diffs, active),
+        onCloseOverlay: () => panel.showLog(session),
+        onAddToChat: session.draft.insertFiles,
+        worktrees: worktreesOf?.call(git) ?? const IdeGitWorktreeChoice(),
+        changes: IdeGitCommitPanel(
+          key: ValueKey(('scm', session.root)),
+          host: host,
+          session: panel.scmOf(git),
+          sessionOf: panel.scmOf,
+          notifications: notifications,
+          onOpen: (path, {focusEditor = false}) async =>
+              panel.open(session, FileOpenRequest(path)),
+          // Its diff; its HEAD side is the diff's left.
+          onOpenChange: (resource, {head = false, focusEditor = false}) async {
+            final of = _gitOf(resource.path);
+            if (of?.state case final state?) {
+              panel.open(session, gitChangeRequest(of!, state, resource));
+            }
+          },
+          onRevealInExplorer: _revealInFiles,
+          revealInExplorerLabel: context.l10n.sidePanelRevealInFiles,
+          onAddToChat: session.draft.insertFiles,
+          trash: local && WindowControls.canMoveToTrash
+              ? WindowControls.moveToTrash
+              : null,
+          commitMessage: commitMessage,
+          onTreeViewChanged: (tree) => panel.changesAsTree = tree,
+        ),
+      ),
     );
   }
 
@@ -880,6 +904,7 @@ class AgentSidePanelView extends StatelessWidget {
           onOpen: (id) => panel.openTerminal(session, id),
           onKill: kill,
           onStopTask: stop,
+          onClearTasks: session.clearTasks,
           border: false,
         ),
       ),
@@ -1964,38 +1989,6 @@ class _NoRepository extends StatelessWidget {
   );
 }
 
-/// The changes page while Git sees no change.
-class _NoChanges extends StatelessWidget {
-  const _NoChanges();
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Codicons.sourceControl, size: 22, color: AppColors.textFaint),
-            const SizedBox(height: 10),
-            Text(
-              l10n.sidePanelNoChanges,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 13),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              l10n.sidePanelNoChangesDetail,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textFaint, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// The title bar's button for the side panel: the layout icon, which
 /// shows whether it is open; its hover Toggle Side Panel's title.
 class SidePanelToggle extends StatelessWidget {
@@ -2064,4 +2057,7 @@ class _SidePanelScmHost implements IdeScmHost {
   @override
   Future<void> appendLines(String path, String lines) =>
       ideAppendLinesToFile(files, path, lines);
+
+  @override
+  String? get activePath => null;
 }

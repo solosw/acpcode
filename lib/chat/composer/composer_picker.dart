@@ -49,7 +49,7 @@ class ComposerPicker extends StatefulWidget {
     this.tapRegionGroupId,
     this.focusNode,
     this.searchPlaceholder,
-    this.footer,
+    this.footers = const [],
   }) : assert(settingsOf == null || submenuOf == null);
 
   final List<KernelOption> options;
@@ -104,8 +104,8 @@ class ComposerPicker extends StatefulWidget {
   /// never when null.
   final String? searchPlaceholder;
 
-  /// An action under the options (Manage Models…).
-  final ComposerPickerFooter? footer;
+  /// Actions under the options (Create Branch…, New Worktree…).
+  final List<ComposerPickerFooter> footers;
 
   /// Options from which the search shows.
   static const searchFrom = 10;
@@ -1067,7 +1067,6 @@ class ComposerPickerState extends State<ComposerPicker> {
       for (final i in matching)
         if (!_collapsedAt(i)) i,
     };
-    final footer = widget.footer;
     final menu = Container(
       key: _menuKey,
       width: widget.menuWidth,
@@ -1108,9 +1107,9 @@ class ComposerPickerState extends State<ComposerPicker> {
                 child: _buildList(rows),
               ),
             ),
-          if (footer != null)
+          for (final (index, footer) in widget.footers.indexed)
             Padding(
-              padding: sides.copyWith(top: _menuPadding),
+              padding: sides.copyWith(top: index == 0 ? _menuPadding : 0),
               child: _FooterRow(
                 footer: footer,
                 onTap: () {

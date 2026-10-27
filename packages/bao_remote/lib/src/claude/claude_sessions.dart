@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:bao_agent/bao_agent.dart' show AgentPaths;
 import 'package:path/path.dart' as p;
 
 import '../platform/app_paths.dart';
@@ -170,6 +171,91 @@ class ClaudeSessions {
     final config = await _config();
     return Isolate.run(() => _fork(id, into, config, before, title));
   }
+
+  /// Has the sessions that ran in [from] run in [to] (a project's folder
+  /// moved, or the project pointed elsewhere): their files go to [to]'s
+  /// folder of sessions, the folder they name rewritten, with what is kept
+  /// beside them and the project's memory. Claude Code lists and resumes
+  /// them there from then on. Returns how many moved.
+  Future<int> move(String from, String to) async {
+    final config = await _config();
+    return Isolate.run(() => _move(from, to, config));
+  }
+}
+
+/// Moves the sessions of [from] to [to] (see [ClaudeSessions.move]).
+int _move(String from, String to, String config) {
+  final projects = '$config/projects';
+  final source = Directory(p.join(projects, AgentPaths.projectDirName(from)));
+  if (!source.existsSync() || p.equals(from, to)) return 0;
+  final target = Directory(p.join(projects, AgentPaths.projectDirName(to)))
+    ..createSync(recursive: true);
+  final same = p.equals(source.path, target.path);
+  var moved = 0;
+  for (final file in source.listSync().whereType<File>()) {
+    if (!file.path.endsWith('.jsonl')) continue;
+    final text = file.readAsStringSync();
+    // Another folder's, dashed alike (`a-b` and `a/b`).
+    if (_cwdOf(text) case final cwd? when !p.equals(cwd, from)) continue;
+    final name = p.basename(file.path);
+    final out = File(p.join(target.path, name));
+    if (!same && out.existsSync()) continue;
+    // Whole or not at all, as a fork is.
+    final temp = File('${out.path}.$pid.tmp')
+      ..writeAsStringSync(_relocate(text, from, to), flush: true);
+    temp.renameSync(out.path);
+    if (!same) {
+      file.deleteSync();
+      // Its subagents' logs and tools' output.
+      final beside = Directory(p.withoutExtension(file.path));
+      final there = p.join(target.path, p.basename(beside.path));
+      if (beside.existsSync() && !Directory(there).existsSync()) {
+        beside.renameSync(there);
+      }
+    }
+    moved++;
+  }
+  if (same) return moved;
+  final memory = Directory(p.join(source.path, 'memory'));
+  final memoryThere = p.join(target.path, 'memory');
+  if (memory.existsSync() && !Directory(memoryThere).existsSync()) {
+    memory.renameSync(memoryThere);
+  }
+  if (source.listSync().isEmpty) source.deleteSync();
+  return moved;
+}
+
+/// The folder a session file says it ran in: its first line that names
+/// one's.
+String? _cwdOf(String text) {
+  for (final line in const LineSplitter().convert(text)) {
+    if (!line.contains('"cwd"')) continue;
+    if (_decode(line)?['cwd'] case final String cwd) return cwd;
+  }
+  return null;
+}
+
+/// [text], a session's lines, with the folders in [from] in [to] instead:
+/// only the lines that name one rewritten, the rest as they were.
+String _relocate(String text, String from, String to) {
+  final out = StringBuffer();
+  for (final line in const LineSplitter().convert(text)) {
+    final entry = line.contains('"cwd"') ? _decode(line) : null;
+    final cwd = entry?['cwd'];
+    if (cwd is String && (p.equals(cwd, from) || p.isWithin(from, cwd))) {
+      out.writeln(
+        jsonEncode({
+          ...entry!,
+          'cwd': p.equals(cwd, from)
+              ? to
+              : p.join(to, p.relative(cwd, from: from)),
+        }),
+      );
+    } else {
+      out.writeln(line);
+    }
+  }
+  return out.toString();
 }
 
 /// Writes the session [into] as a copy of [id] (see [ClaudeSessions.fork]).

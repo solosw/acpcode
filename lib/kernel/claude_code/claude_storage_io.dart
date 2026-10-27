@@ -6,7 +6,7 @@ import '../agent_kernel.dart';
 
 /// Claude Code's own record of its sessions on this machine (see
 /// [ClaudeSessions]).
-class ClaudeStorage implements SessionCatalog {
+class ClaudeStorage implements SessionCatalog, MovesSessions {
   const ClaudeStorage({this.configDir, this.tempDir, this.cacheFile});
 
   /// Where Claude Code keeps its state; by default `BAOCODE_CLAUDE_DATA_PATH`
@@ -32,6 +32,9 @@ class ClaudeStorage implements SessionCatalog {
 
   @override
   Future<void> delete(String id) => _sessions.delete(id);
+
+  @override
+  Future<int> moveSessions(String from, String to) => _sessions.move(from, to);
 
   @override
   Future<List<ProjectRecord>> projects() async => [

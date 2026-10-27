@@ -4,7 +4,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,10 +19,14 @@ class _LegacyCheckpoint {
   final String folder;
   final String root;
 
-  Future<String> git(List<String> arguments, {String? input}) async {
+  Future<String> git(
+    List<String> arguments, {
+    String? input,
+    String? gitDir,
+  }) async {
     final process = await Process.start(
       'git',
-      ['--git-dir=$folder', ...arguments],
+      ['--git-dir=${gitDir ?? folder}', ...arguments],
       environment: {
         'GIT_AUTHOR_NAME': 'baocode',
         'GIT_AUTHOR_EMAIL': 'baocode@localhost',
@@ -133,12 +137,12 @@ void main() {
         } else {
           checkpoints = p.join(temp.path, 'checkpoints');
         }
-        final store = (await LocalReviewStore.open(
+        final store = (await GitReviewStore.open(
           root,
           checkpoints: checkpoints,
         ))!;
-        legacy = _LegacyCheckpoint(store.folder, root);
-        await legacy.git(['init', '-q', '--bare', '--template=', store.folder]);
+        legacy = _LegacyCheckpoint(store.gitDir, root);
+        await legacy.git(['init', '-q', '--bare', '--template=', store.gitDir]);
       });
 
       tearDown(() async {
@@ -149,7 +153,7 @@ void main() {
 
       Future<ReviewStore> open() async => remote
           ? (await harness!.client.openReview(root))!
-          : (await LocalReviewStore.open(root, checkpoints: checkpoints))!;
+          : (await GitReviewStore.open(root, checkpoints: checkpoints))!;
 
       test(
         'a session absent from a legacy repository can still discover edits',
@@ -176,14 +180,14 @@ void main() {
       );
 
       test(
-        'rehashes only pending files and preserves originals and Undo',
+        'retains only pending files and preserves originals and Undo',
         () async {
           final old = await legacy.seed(session);
           // Migration must also work once Git has packed the checkpoint.
           await legacy.git(['gc', '--prune=now']);
           // Opening the new store and its periodic cleanup must not delete v1.
           final store = await open();
-          await LocalReviewStore.tidy(
+          await GitReviewStore.tidy(
             checkpoints,
             every: Duration.zero,
             now: DateTime.now().add(const Duration(days: 365)),
@@ -206,26 +210,29 @@ void main() {
             isFalse,
           );
           final data = jsonDecode((await store.load(session))!) as Map;
-          expect(data['version'], 2);
+          expect(data['version'], 3);
           expect(data.containsKey('snapshot'), isFalse);
           final base = ReviewBlob.fromJson(
             (data['entries'] as Map)['edit.txt']['base'],
           )!;
-          expect(base.oid, isNot(old.base.oid));
-          expect(utf8.decode(await store.read(session, base)), 'before\n');
-          final directory = Directory(
-            p.join(legacy.folder, 'sessions-v2', session, 'blobs'),
-          );
-          final imported = directory
-              .listSync()
-              .map((file) => p.basename(file.path))
-              .toSet();
-          expect(imported, hasLength(4));
-          final unrelated = await LocalReviewStore.open(
+          // Both formats use Git blobs: migration must retain their identity.
+          expect(base, old.base);
+          expect(utf8.decode(await store.read(base)), 'before\n');
+          // The new session commit must retain only pending blobs, not the
+          // legacy snapshot or unrelated project contents. Inspect reachability
+          // rather than loose objects: Git may pack or share the same blobs.
+          final migrated = (await GitReviewStore.open(
             root,
             checkpoints: checkpoints,
-          );
-          final unrelatedBlob = await unrelated!.current('unrelated.txt');
+          ))!;
+          final imported = (await legacy.git([
+            'ls-tree',
+            '-r',
+            '--format=%(objectname)',
+            'refs/baocode/sessions/$session',
+          ], gitDir: migrated.gitDir)).split('\n').toSet();
+          expect(imported, hasLength(4));
+          final unrelatedBlob = await migrated.current('unrelated.txt');
           expect(imported, isNot(contains(unrelatedBlob!.oid)));
           expect(
             await legacy.git(['rev-parse', 'refs/baocode/sessions/$session']),
@@ -246,7 +253,7 @@ void main() {
           expect(
             reopened.changes,
             isEmpty,
-          ); // The retained ref must not revive.
+          ); // The retained v1 objects must not revive the accepted review.
         },
       );
 
@@ -269,11 +276,19 @@ void main() {
             store.load(session),
             throwsA(isA<ReviewUnavailable>()),
           );
-          expect(
-            File(p.join(legacy.folder, 'sessions-v2', session, 'review.json'))
-                .existsSync(),
-            isFalse,
-          );
+          // No partial destination session may be published on failure.
+          final destination = (await GitReviewStore.open(
+            root,
+            checkpoints: checkpoints,
+          ))!;
+          final published = await Process.run('git', [
+            '--git-dir=${destination.gitDir}',
+            'show-ref',
+            '--verify',
+            '--quiet',
+            'refs/baocode/sessions/$session',
+          ]);
+          expect(published.exitCode, 1);
           expect(
             File(p.join(legacy.folder, '.migrated-$session')).existsSync(),
             isFalse,
@@ -282,7 +297,7 @@ void main() {
             await legacy.git(['rev-parse', 'refs/baocode/sessions/$session']),
             old.commit,
           );
-          await LocalReviewStore.tidy(
+          await GitReviewStore.tidy(
             checkpoints,
             every: Duration.zero,
             now: DateTime.now().add(const Duration(days: 365)),
@@ -359,8 +374,9 @@ void main() {
           final first = await ChangeReview.resume(store, session);
           addTearDown(first.dispose);
           expect(first.failure, isNull);
+          expect(first.changes, hasLength(4));
           await first.keepAll();
-          await LocalReviewStore.tidy(
+          await GitReviewStore.tidy(
             checkpoints,
             every: Duration.zero,
             now: DateTime.now().add(const Duration(days: 365)),
@@ -368,6 +384,7 @@ void main() {
           final second = await ChangeReview.resume(await open(), 'unopened');
           addTearDown(second.dispose);
           expect(second.failure, isNull);
+          expect(second.changes, hasLength(4));
           expect(
             await second.original(p.join(root, 'edit.txt'))!(),
             'before\n',
@@ -386,6 +403,11 @@ void main() {
           final review = await ChangeReview.resume(store, 'objects');
           addTearDown(review.dispose);
           expect(review.failure, isNull);
+          expect(review.changes, hasLength(4));
+          expect(
+            await review.original(p.join(root, 'edit.txt'))!(),
+            'before\n',
+          );
           await review.keepAll();
           expect(
             await legacy.git(['cat-file', 'blob', old.base.oid]),

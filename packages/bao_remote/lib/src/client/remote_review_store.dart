@@ -4,9 +4,9 @@ import '../protocol.dart';
 import '../review/review_store.dart';
 import '../rpc/rpc_peer.dart';
 
-/// [ReviewStore] of a project on the remote host: its folder there (in
-/// the server's `checkpoints/`), every call a request.
-class RemoteReviewStore implements ReviewStore, ScanningReviewStore {
+/// [ReviewStore] of a project on the remote host: its repository there
+/// (in the server's `checkpoints/`), every call a request.
+class RemoteReviewStore implements ReviewStore, ReviewSnapshotOmissions {
   RemoteReviewStore(this._peer, this._id, this.root, {this._reopen});
 
   RpcPeer _peer;
@@ -58,73 +58,41 @@ class RemoteReviewStore implements ReviewStore, ScanningReviewStore {
 
   static ReviewBlob? _blob(Object? json) => ReviewBlob.fromJson(json);
 
-  @override
-  Future<bool> exists(String path) async =>
-      await _call('exists', {'path': path}) as bool;
+  Set<String> _omitted = {};
 
   @override
-  Future<ReviewBlob?> current(String path) async =>
-      _blob(await _call('current', {'path': path}));
+  Future<Set<String>> omitted() async => Set.of(_omitted);
 
   @override
-  Future<ReviewBlob?> take(String session, String path) async =>
-      _blob(await _call('take', {'session': session, 'path': path}));
-
-  @override
-  Future<ReviewBlob> store(
-    String session,
-    Uint8List bytes, {
-    required String mode,
-  }) async => _blob(
-    await _call('store', {
-      'session': session,
-      'bytes': encodeBytes(bytes),
-      'mode': mode,
-    }),
-  )!;
-
-  @override
-  Future<Uint8List> read(String session, ReviewBlob blob) async => decodeBytes(
-    await _call('read', {'session': session, 'blob': blob.toJson()}),
-  );
-
-  @override
-  Future<void> restore(String session, String path, ReviewBlob? blob) => _call(
-    'restore',
-    {'session': session, 'path': path, 'blob': blob?.toJson()},
-  );
-
-  @override
-  Future<Uint8List?> merge(
-    String session,
-    String path,
-    ReviewBlob from,
-    ReviewBlob to,
-  ) async {
-    final merged = await _call('merge', {
-      'session': session,
-      'path': path,
-      'from': from.toJson(),
-      'to': to.toJson(),
+  Future<String?> snapshot({Iterable<String>? paths}) async {
+    final result = await _call('snapshot', {
+      if (paths != null) 'paths': [...paths],
+      'withOmitted': true,
     });
-    return merged == null ? null : decodeBytes(merged);
+    // Keep omissions with their snapshot even if the next RPC reconnects.
+    if (result is Map) {
+      _omitted = (result['omitted'] as List).cast<String>().toSet();
+      return result['tree'] as String?;
+    }
+    _omitted = {};
+    return result as String?;
   }
 
   @override
-  Future<void> write(String path, Uint8List bytes) =>
-      _call('write', {'path': path, 'bytes': encodeBytes(bytes)});
+  Future<List<ReviewTreeChange>> diff(String from, String to) async => [
+    for (final change in await _call('diff', {'from': from, 'to': to}) as List)
+      if (change case [final String path, final before, final after])
+        ReviewTreeChange(path, _blob(before), _blob(after)),
+  ];
 
   @override
   Future<Map<String, ({int added, int removed})?>> lineCounts(
-    String session,
-    Map<String, ReviewBlob?> bases,
+    String from,
+    String to,
   ) async => {
     for (final MapEntry(:key, :value) in (await _call('lineCounts', {
-      'session': session,
-      'bases': {
-        for (final MapEntry(:key, :value) in bases.entries)
-          key: value?.toJson(),
-      },
+      'from': from,
+      'to': to,
     }) as Map).cast<String, Object?>().entries)
       key: switch (value) {
         [final int added, final int removed] => (
@@ -136,12 +104,56 @@ class RemoteReviewStore implements ReviewStore, ScanningReviewStore {
   };
 
   @override
-  Future<Map<String, ReviewBlob?>> scan(String session) async => {
-    for (final MapEntry(:key, :value) in (await _call('scan', {
-      'session': session,
-    }) as Map).cast<String, Object?>().entries)
-      key: _blob(value),
-  };
+  Future<String> overlay(String tree, Map<String, ReviewBlob?> entries) async =>
+      await _call('overlay', {
+        'tree': tree,
+        'entries': {
+          for (final MapEntry(:key, :value) in entries.entries)
+            key: value?.toJson(),
+        },
+      }) as String;
+
+  @override
+  Future<bool> contains(String tree, String path) async =>
+      await _call('contains', {'tree': tree, 'path': path}) as bool;
+
+  @override
+  Future<bool> exists(String path) async =>
+      await _call('exists', {'path': path}) as bool;
+
+  @override
+  Future<ReviewBlob?> current(String path) async =>
+      _blob(await _call('current', {'path': path}));
+
+  @override
+  Future<ReviewBlob?> take(String path) async =>
+      _blob(await _call('take', {'path': path}));
+
+  @override
+  Future<Uint8List> read(ReviewBlob blob) async =>
+      decodeBytes(await _call('read', {'blob': blob.toJson()}));
+
+  @override
+  Future<ReviewBlob> store(Uint8List bytes, {required String mode}) async =>
+      _blob(await _call('store', {'bytes': encodeBytes(bytes), 'mode': mode}))!;
+
+  @override
+  Future<void> restore(String path, ReviewBlob? blob) =>
+      _call('restore', {'path': path, 'blob': blob?.toJson()});
+
+  @override
+  Future<Uint8List?> merge(String path, ReviewBlob from, ReviewBlob to) async {
+    final merged = await _call('merge', {
+      'path': path,
+      'from': from.toJson(),
+      'to': to.toJson(),
+    });
+    return merged == null ? null : decodeBytes(merged);
+  }
+
+  @override
+  Future<void> write(String path, Uint8List bytes) =>
+      _call('write', {'path': path, 'bytes': encodeBytes(bytes)});
 
   @override
   Future<String?> load(String session) async =>

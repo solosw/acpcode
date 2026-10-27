@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 
 import '../../kernel/kernel_event.dart';
 
@@ -18,7 +18,7 @@ FileSnapshot snapshotFile(String path) {
       case FileSystemEntityType.file:
         final file = File(path);
         final stat = file.statSync();
-        if (stat.size > LocalReviewStore.maxFileBytes) {
+        if (stat.size > GitReviewStore.maxFileBytes) {
           return const FileSnapshot.unknown();
         }
         return FileSnapshot(

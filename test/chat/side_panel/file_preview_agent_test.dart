@@ -65,7 +65,10 @@ class _Review extends ChangeReview {
   final settled = <String>[];
 
   @override
-  Future<void> refresh() async {}
+  Future<void> begin() async {}
+
+  @override
+  Future<void> observe({bool full = true}) async {}
 
   @override
   List<FileChange> get changes => [

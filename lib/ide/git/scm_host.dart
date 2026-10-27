@@ -31,6 +31,10 @@ abstract interface class IdeScmHost {
   /// Appends [lines] to the text file at [path], made when missing, and
   /// saves it (Add to .gitignore).
   Future<void> appendLines(String path, String lines);
+
+  /// The file in front in the editor, if any: the Git log's Paths filter
+  /// offers it.
+  String? get activePath;
 }
 
 /// [text] with [lines] after it on lines of their own, ending with a line

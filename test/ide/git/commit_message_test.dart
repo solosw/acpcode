@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/ide/git/ide_git_commit_panel.dart';
 import 'package:baocode/ide/git/commit_message.dart';
 import 'package:baocode/ide/ide_input.dart';
+import 'package:baocode/ide/ide_list.dart';
 
 import '../workbench/fake_files.dart';
 import 'fake_git.dart';
@@ -151,39 +153,75 @@ void main() {
     }
 
     String input(WidgetTester tester) => tester
-        .widget<IdeInputBox>(find.byType(IdeInputBox).first)
+        .widget<IdeInputBox>(
+          find
+              .descendant(
+                of: find.byType(IdeGitCommitPanel),
+                matching: find.byType(IdeInputBox),
+              )
+              .first,
+        )
         .controller
         .text;
 
-    testWidgets('fills the input from every change when none is staged', (
+    testWidgets('fills the input from the files checked, against HEAD', (
       tester,
     ) async {
       await pumpScm(tester);
       await tester.tap(find.byTooltip('Generate Commit Message'));
       await tester.pumpAndSettle();
       expect(input(tester), 'Update a and add notes');
+      // The unversioned file, unchecked, left out.
+      expect(
+        git.callsTo('diff').single,
+        containsAllInOrder(['HEAD', '--', 'lib/a.dart']),
+      );
+      final prompt = prompts.single.user;
+      expect(prompt, contains('M lib/a.dart (+3 -3)'));
+      expect(prompt, isNot(contains('notes.md')));
+      expect(prompt, contains('- feat: first'));
+    });
+
+    testWidgets('a staged file and an unversioned one checked both count', (
+      tester,
+    ) async {
+      git.status = '## main\x00M  lib/a.dart\x00?? notes.md\x00';
+      await pumpScm(tester);
+      await tester.tap(
+        find.descendant(
+          of: find.ancestor(
+            of: find.text('notes.md'),
+            matching: find.byType(IdeListRow),
+          ),
+          matching: find.byWidgetPredicate(
+            (widget) => widget.runtimeType.toString() == '_Check',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Generate Commit Message'));
+      await tester.pumpAndSettle();
       final diffs = git.callsTo('diff');
       expect(diffs.first, isNot(contains('--cached')));
+      expect(diffs.first, containsAllInOrder(['HEAD', '--', 'lib/a.dart']));
       expect(diffs.last, contains('notes.md'));
       final prompt = prompts.single.user;
       expect(prompt, contains('M lib/a.dart (+3 -3)'));
       expect(prompt, contains('A notes.md (+3 -3)'));
-      expect(prompt, contains('- feat: first'));
-    });
-
-    testWidgets('only the staged changes when some are', (tester) async {
-      git.status = '## main\x00M  lib/a.dart\x00?? notes.md\x00';
-      await pumpScm(tester);
-      await tester.tap(find.byTooltip('Generate Commit Message'));
-      await tester.pumpAndSettle();
-      expect(git.callsTo('diff').single, contains('--cached'));
-      expect(prompts.single.user, isNot(contains('notes.md')));
     });
 
     testWidgets('clicking again cancels, keeping the input', (tester) async {
       reply = Completer<String>();
       await pumpScm(tester);
-      await tester.enterText(find.byType(EditableText).first, 'draft');
+      await tester.enterText(
+        find
+            .descendant(
+              of: find.byType(IdeGitCommitPanel),
+              matching: find.byType(EditableText),
+            )
+            .first,
+        'draft',
+      );
       await tester.tap(find.byTooltip('Generate Commit Message'));
       await tester.pump();
       await tester.tap(find.byTooltip('Cancel Generating Commit Message'));

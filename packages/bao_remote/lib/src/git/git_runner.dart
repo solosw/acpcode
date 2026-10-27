@@ -9,6 +9,8 @@ import '../files/ide_file.dart';
 import '../files/recursive_watch.dart';
 import 'git_types.dart';
 
+// `GIT_OPTIONAL_LOCKS=0` rather than `--no-optional-locks`: the same in Git
+// 2.15+, and ignored by older ones, which fail on the option (#311).
 const _gitEnvironment = {
   'GIT_TERMINAL_PROMPT': '0',
   'GIT_EDITOR': 'true',
@@ -16,7 +18,6 @@ const _gitEnvironment = {
 };
 
 List<String> _gitArguments(List<String> arguments) => [
-  '--no-optional-locks',
   '-c',
   'core.fsmonitor=false',
   ...arguments,
@@ -28,12 +29,23 @@ List<String> _gitArguments(List<String> arguments) => [
 /// With [limit], the output is NUL-terminated records (`-z`) of which only
 /// the first [limit] are read: Git is stopped at the one after, and the
 /// output is [IdeGitOutput.truncated] (VS Code's `git.statusLimit`).
+/// [stdin] is written to it, and [environment] added to its.
 Future<IdeGitOutput> runGit(
   List<String> arguments, {
   required String workingDirectory,
   int? limit,
+  String? stdin,
+  Map<String, String>? environment,
 }) async {
   try {
+    if (stdin != null || environment != null) {
+      return await _runWith(
+        arguments,
+        workingDirectory,
+        stdin: stdin,
+        environment: environment,
+      );
+    }
     if (limit != null) {
       return await _runLimited(arguments, workingDirectory, limit);
     }
@@ -62,6 +74,36 @@ Future<IdeGitOutput> runGit(
     throw const IdeGitException('Git did not respond within 60 seconds.');
   } on FormatException {
     throw const IdeGitException('Git returned text that is not UTF-8.');
+  }
+}
+
+/// [runGit] with [stdin] written to it and [environment] added.
+Future<IdeGitOutput> _runWith(
+  List<String> arguments,
+  String workingDirectory, {
+  String? stdin,
+  Map<String, String>? environment,
+}) async {
+  final process = await Process.start(
+    'git',
+    _gitArguments(arguments),
+    workingDirectory: workingDirectory,
+    environment: {..._gitEnvironment, ...?environment},
+  );
+  final stdout = process.stdout.transform(utf8.decoder).join();
+  final stderr = process.stderr
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .join();
+  if (stdin != null) process.stdin.add(utf8.encode(stdin));
+  await process.stdin.close();
+  try {
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 60),
+    );
+    return IdeGitOutput(exitCode, await stdout, await stderr);
+  } on TimeoutException {
+    process.kill();
+    rethrow;
   }
 }
 

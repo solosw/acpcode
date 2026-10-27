@@ -38,7 +38,9 @@ void main() {
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('baocode_git_');
     root = p.normalize((await temp.resolveSymbolicLinks()));
-    await git(['init', '-q', '-b', 'main']);
+    // Not `init -b` (Git 2.28+): the tests run on older Gits too (#311).
+    await git(['init', '-q']);
+    await git(['symbolic-ref', 'HEAD', 'refs/heads/main']);
     final hooks = await Directory(p.join(root, '.no-hooks')).create();
     for (final (key, value) in [
       ('user.name', 'Ada'),
@@ -167,7 +169,7 @@ void main() {
     for (var i = 0; i < 300; i++) {
       await write('many/f$i.txt', '');
     }
-    const status = ['status', '-z', '--porcelain=v1', '--untracked-files=all'];
+    const status = ['status', '-z', '--porcelain', '--untracked-files=all'];
     final cut = await runGit(status, workingDirectory: root, limit: 100);
     expect(cut.truncated, isTrue);
     expect('\x00'.allMatches(cut.stdout).length, 100);

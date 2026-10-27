@@ -4,6 +4,7 @@
 
 - 远端要求：Linux x64 / arm64（glibc），或 macOS（Apple silicon / Intel，要在“系统设置 → 通用 → 共享”里打开“远程登录”）；能用密钥、ssh-agent 或密码登录
 - 本机要求：系统自带的 OpenSSH 客户端（`ssh`）
+- Windows 上也能打开 WSL 发行版里的项目（`wsl.exe`，不用 ssh），见 4 节“WSL 发行版”
 - 代码：应用侧 `lib/remote/`，服务端和协议 `packages/bao_remote/`，构建工具 `tool/build_remote_server.dart`
 - 测试：`test/remote/`
 
@@ -42,9 +43,9 @@
 | macOS 打包带上服务端 | 写在 `tool/build_macos.dart` 里，**还没实际跑过** |
 | macOS 远端主机 | 已完成：服务端编成 macOS arm64 / x64 两份（只能在 Mac 上编，见 9.1），探测到 `Darwin` 就推送对应那份；有假 ssh 的测试，**还没在真 Mac 主机上验证** |
 | Windows 客户端打开远程项目 | **有已知问题**：见第 15 节 |
-| 真实主机端到端验证 | **未做**：见第 13 节 |
+| 真实主机端到端验证 | 连接部分已自动化：`tool/ssh_e2e.sh`（Docker sshd，macOS 和 Windows 都跑过）；其余见第 13 节 |
 
-不在范围内：Codex、Windows 远端、Windows 客户端的密码登录、在访达中显示、用外部编辑器打开、往远程项目里拖文件。
+不在范围内：Codex、Windows 远端、在访达中显示、用外部编辑器打开、往远程项目里拖文件。
 
 ---
 
@@ -54,6 +55,7 @@
 
 入口：
 
+- 侧栏的环境切换器（见 2.2）：“添加 SSH 主机...”，或切到某台主机后“在 xxx 上打开文件夹...”
 - 欢迎页（还没有项目时）的“打开远程项目...”按钮
 - 命令面板：“打开远程项目...”（命令 id `baocode.remote.openFolder`），聊天布局和 IDE 都有
 - IDE 起始页
@@ -64,11 +66,19 @@
 1. **选主机**：列出 `~/.ssh/config` 里的 `Host`（会跟着 `Include` 读，带通配符的条目不列），已连上的主机会标出来。也可以直接输入 `user@host`、`host:2222` 这类地址；含空格或以 `-` 开头的输入会被拒绝，防止把输入当成 ssh 参数。
 2. **连接**：显示“正在连接 xxx...”。失败时显示原因、ssh 的最后一行输出和“重试”。
 3. **选文件夹**：从远端的家目录开始浏览，可以“打开此文件夹”、进入子文件夹、回到上级，也可以直接输入以 `/` 或 `~` 开头的路径跳过去。
-4. 打开后，这个项目和本地项目一样出现在侧栏里，下次启动还在。
+4. 连接成功时主机就被记下（`Workspace.addSshHost`），即使不选文件夹、直接关掉选择框，它也留在侧栏的主机列表里；打开文件夹后，这个项目出现在那台主机下，下次启动还在。
 
 ### 2.2 远程项目的样子
 
-- **侧栏**：项目名旁边有一个远程图标和主机名，悬停时显示远端路径和“位于 xxx（通过 SSH）”。连接失败时图标和主机名变红，悬停显示原因，点击重连。
+- **侧栏按环境切换**：主机是一级概念，项目是主机下的子集。没有添加过主机时，侧栏标题仍是“智能体”，什么都不变；有主机后，标题变成环境切换器：本机（显示器图标）或某台主机（远程图标，后面是连接状态圆点：绿=已连接、黄=连接中、红=已断开、空心=未连接）。
+  - 下面的项目、对话、置顶、已归档（含计数和“全部取消归档/删除”）都只是当前环境的；按项目/时间/状态分组都照此过滤，上下切换对话的快捷键也只在当前环境里走。
+  - 菜单：本机和各主机（各自需要处理的对话数，或连接状态）、“添加 SSH 主机...”；当前是主机时还有“在 xxx 上打开文件夹...”、“断开连接”/“重新连接”、“移除主机”。
+  - 别的环境有对话等你确认或完成未读时，切换器图标右上角出现圆点，悬停显示数量。
+  - 选中别的环境的对话（搜索、通知、新对话输入框上方的文件夹菜单等）时，侧栏自动切到那个环境；新对话默认建在当前环境的项目里。主机下还没有项目时，列表里是“在 xxx 上打开文件夹...”按钮，“新对话”也走它。
+  - 移除主机：确认后它的项目从侧栏移走（`hideProject`），对话不删；重新添加这台主机后项目回来。
+  - 主机列表和当前环境存在 `state.json` 的 `sidebar.sshHosts`、`sidebar.host`；老版本已有的远程项目，其主机自动算进列表，不需要迁移。
+  - 新对话输入框上方的文件夹菜单仍可跨环境选择（远程项目在“远程”分组下）。
+- **侧栏里的远程项目**：项目名后不再写主机名（标题已经说明在哪台主机）；悬停显示远端路径和“位于 xxx（通过 SSH）”。连接失败时项目名后出现红色断开图标，悬停显示原因，点击重连。
 - **对话输入框上方**：项目所在主机连接失败时，显示“无法连接到 xxx: 原因”，带“详细信息”（ssh 或服务端的输出、下载地址）和“重试”。如果对话本身已经因为同一原因报错，就只显示对话的那条。
 - **窗口标题**：`项目名 [SSH: 主机]`。
 - **IDE 状态栏最左边**：`SSH: 主机`，和 VS Code 的远程指示器一样，状态随时更新；点击它打开远程菜单（见下）。
@@ -175,22 +185,41 @@
 ssh 参数固定为：
 
 ```
--T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=20 -e none [-p <端口>] <目的地>
+-T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ConnectTimeout=20 -e none [-o StrictHostKeyChecking=accept-new] [-F <应用的 ssh 配置>] [-p <端口>] <目的地>
 ```
 
-- `BatchMode=yes`：只在没有 `prompter` 时使用（Windows 上也是），ssh 从不提问，需要密码就直接失败（`authentication`）。
-- 应用里 `SshLauncher` 带有 `prompter`，此时改成 `BatchMode=no`，并设置 `SSH_ASKPASS`（一个 sh 脚本）和 `SSH_ASKPASS_REQUIRE=force`（OpenSSH 8.4 起支持）。ssh 要密码、密钥口令或验证码时，会运行这个脚本：脚本把提示写进这次 ssh 专用的临时目录（只有当前用户能读），然后等应用写回答案（见 `ssh_askpass.dart`）。应用弹窗问用户（`SshPasswords`、`showSshPasswordDialog`）：
+- `BatchMode=yes`：只在没有 `prompter` 时使用（Windows 上 ssh 低于 OpenSSH 8.4 时也是），ssh 从不提问，需要密码就直接失败（`authentication`）。
+- 应用里 `SshLauncher` 带有 `prompter`，此时改成 `BatchMode=no`，并设置 `SSH_ASKPASS`（一个 sh 脚本；Windows 上是 `askpass.cmd`，由它调用做同样事情的 `askpass.ps1`）和 `SSH_ASKPASS_REQUIRE=force`（OpenSSH 8.4 起支持）。Windows 上先跑一次 `ssh -V`：低于 8.4 的 ssh 不认 `force`，会去控制台读密码而卡住。所以系统的 ssh 低于 8.4（Windows 10 自带的是 8.1）或没装时，改用安装包自带的 OpenSSH（`<安装目录>\openssh\ssh.exe`，微软的 Win32-OpenSSH，见 `chooseSsh` 和 `tool/build_windows.dart`）；没有自带的（开发时）仍是 `BatchMode=yes`，认证失败时提示升级 OpenSSH。ssh 要密码、密钥口令或验证码时，会运行这个脚本：脚本把提示写进这次 ssh 专用的临时目录（只有当前用户能读），然后等应用写回答案（见 `ssh_askpass.dart`）。应用弹窗问用户（`SshPasswords`、`showSshPasswordDialog`）：
   - 同一提示在本次运行里只问一次：一次连接里的探测、上传、启动三个 ssh 共用同一个答案，断线重连也不再问；
-  - 勾选“在本机记住”的，等**登录成功后**才存进系统钥匙串（`SecretStore`，macOS 用钥匙串），名字是 `ssh:<主机>:<提示的哈希>`；下次启动直接取用，不再弹窗；
+  - 勾选“在本机记住”（默认勾上）的，等**登录成功后**才存进系统钥匙串（`SecretStore`，macOS 用钥匙串），名字是 `ssh:<主机>:<提示的哈希>`；下次启动直接取用，不再弹窗；
   - 主机拒绝了（ssh 再问同一个提示，或最后报认证失败），就从内存和钥匙串里删掉，重新问；
   - 验证码一类的提示（含 code、token、OTP 等字样）每次都问，不提供记住；
   - 取消就停止重试，报“Signing in was cancelled.”。
-- 主机密钥确认（`yes/no`）不交给用户，脚本直接回答 no，和 `BatchMode=yes` 时一样失败（`hostKey`）。所以主机密钥仍然要先在 `known_hosts` 里。
+- 主机密钥：每次连接先跑 `ssh -G` 看用户配置的 `StrictHostKeyChecking`；是默认的 `ask` 时加 `-o StrictHostKeyChecking=accept-new`，第一次连接自动记进用户自己的 `known_hosts`（和在终端里第一次输 yes 一样），不用再先去终端连一次。用户配置里写了别的值就照它的来。密钥**变了**仍然拒绝（`hostKeyChanged`）：选择框里给出“移除旧指纹并重新连接”，确认后用 ssh 旁边的 `ssh-keygen -R` 从 `ssh -G` 报的 known_hosts 文件里删掉旧记录（`SshLauncher.forgetHostKey`）。askpass 脚本遇到 `yes/no` 提问仍然直接回答 no。
 - `ServerAliveInterval=15` 加 `ServerAliveCountMax=3`：约 45 秒内发现死连接。
 - `-e none`：二进制数据里不处理转义字符。
 - 其他配置（用户名、端口、跳板机 `ProxyJump`、身份文件……）都来自用户自己的 `~/.ssh/config`。
 
-失败分类见 `SshFailure`：`noSsh`、`authentication`、`hostKey`、`unreachable`、`unsupported`、`server`。
+失败分类见 `SshFailure`：`noSsh`、`authentication`、`hostKey`、`hostKeyChanged`、`unreachable`、`unsupported`、`server`、`wsl`。应用里显示的是 `sshErrorText` 按分类给的本地化说明，ssh 的原话放在详情里。
+
+### 在应用里保存的服务器
+
+主机选择框（打开远程项目，IDE 和对话模式是同一个）里有“新增 SSH 服务器…”，已添加的主机行上有编辑按钮，侧边栏的主机菜单里也有“编辑连接…”（来自 `~/.ssh/config` 的都不给编辑，去配置文件里改）。表单（`ssh_server_form.dart`）填主机、端口、用户名、名称、登录方式（密码 / 私钥 / 自动）和跳板机；主机栏粘贴 `user@host:port` 会自动拆开，私钥可以从 `~/.ssh` 里挑。
+
+- 保存的设置（`SshServer`）按主机名存在 `Workspace.sshServers`（状态文件 `sidebar.sshServers`）。新增时主机名就是 `user@host[:port]`；编辑后主机名不变（远程项目的位置 `ssh://<主机名>/…` 不受影响），连接用表单里的新地址。
+- 连接已保存的服务器时，`SshHosts` 把所有已保存的服务器写成一份 ssh 配置（数据目录 `state/ssh_config`，`sshServersConfig`），每台一个 `Host baocode-…`，末尾 `Include` 用户的 `~/.ssh/config` 和系统的配置，然后用 `-F` 连这个别名。跳板机写成 `ProxyCommand`，用同一个 ssh 和同一份配置连跳板机的别名（`ProxyJump` 会去 PATH 里找 ssh，而且 `-F` 的路径不加引号，带空格就坏）；跳板机绕回自己的不写。
+- 表单里的密码存在钥匙串 `ssh-server:<主机名>:password`。ssh 问密码时，按提示里的 `user@host` 认出是目标还是跳板机，取对应的密码（`SshHosts._savedPasswordId`）；被拒就删掉，弹窗重问。
+
+### WSL 发行版
+
+Windows 上，WSL 发行版也当成一台主机，主机名 `wsl+<发行版>`（和 VS Code 的写法一样，如 `wsl+Ubuntu-24.04`），项目位置是 `ssh://wsl+Ubuntu-24.04/home/me/app`。远程那一整套（服务端、文件、Git、终端、LSP、Claude Code、断线重连）原样复用，只是把 ssh 换成 wsl.exe：
+
+- 主机选择框最后一组“WSL”列出 `wsl --list --quiet` 的发行版（`wslHosts`，5 秒没回就当没有；输出是 UTF-16 还是 UTF-8 都认；Docker Desktop 自己的不列）。显示发行版名、Linux 图标；连上后和别的主机一样记进侧栏。状态栏、窗口标题、提示里写 `WSL: <发行版>`。设置里的 SSH 服务器列表不列它们，也没有编辑按钮。
+- 每条命令是 `wsl.exe --distribution <发行版> --exec sh -c 'cd && <命令>'`（`SshLauncher.wslArguments`）：`cd` 回家目录，因为 wsl.exe 默认停在应用当前所在的 Windows 目录；环境变量 `WSL_UTF8=1` 让 wsl.exe 自己的报错是 UTF-8。没有密码、主机密钥、`ssh -G`、ssh 配置这些步骤（`SshHosts` 给 WSL 单独一个不找 ssh 的 launcher）。
+- wsl.exe 自己失败（没装 WSL、没有这个发行版、起不来）退出码是 -1，归为 `SshFailure.wsl`，提示“WSL 无法启动这个发行版…”；起不来 wsl.exe 本身也是这个分类。
+- 杀掉 wsl.exe（相当于断线）后，服务端的会话还在，按普通主机的方式重连回同一个会话。
+- 真机验证：`packages/bao_remote/tool/wsl_e2e.dart <发行版> <baocode-server-linux-x64>`，在装了 WSL 的 Windows 上跑：列出发行版、不存在的发行版报 `wsl`、装服务端、文件、Git、终端、杀掉 wsl.exe 后重连、关闭。
+- 应用这一层：`test/remote/wsl_windows_e2e_test.dart`（标签 `wsl-e2e`，默认跳过；设好 `BAOCODE_REMOTE_SERVER_DIR`、`BAOCODE_WSL_DISTRO` 后 `flutter test --run-skipped -t wsl-e2e`），走应用自己的“打开远程项目”：真的 wsl.exe 列出主机、选中、连接、浏览到文件夹并打开，再看文件、Git 和状态栏，主机选择框画到 `build/wsl_e2e/hosts.png`。没有 Visual Studio、没人登录桌面也能跑（flutter_tester）。
 
 ---
 
@@ -241,13 +270,26 @@ ssh 参数固定为：
 
 ## 6. 远端的 Claude Code
 
+### 6.0 用哪个内核
+
+每台在应用里保存的服务器，表单里有“内核”一栏（`SshServer.core`，`remoteCoreOf`、`startRemoteCore`），不看 设置 → 通用 里本机的内核设置：
+
+| 内核 | 行为 |
+|---|---|
+| 自动（默认；`~/.ssh/config` 里的和手输的主机也是它） | 先按 CLI 启动；远端没装（`ClaudeNotInstalled`）就改用内置内核。用的是 Claude Code 自己的模型（没有上游）时内置内核跑不了，照旧自动安装 CLI |
+| 内置 | 服务端跑内置内核（`core: builtin`）；没有上游时报 `ClaudeNoModel`，让用户去配模型 |
+| Claude Code CLI | 只用 CLI，远端没装就自动安装（6.2） |
+
+Haiku（起标题、提交信息）走同一套，只是不触发安装。改了内核只影响之后开的会话。
+
 ### 6.1 找哪个 claude
 
 服务端按这个顺序找（`ServerClaude.locate`）：
 
 1. 远端环境变量 `BAOCODE_CLAUDE_PATH` 指定的路径（文件不存在就报错，不会去装）；
-2. 用户自己装的：远端登录 shell 的 PATH，以及 `~/.claude/local/claude`、`~/.local/bin/claude`、`/opt/homebrew/bin/claude`、`/usr/local/bin/claude`；
-3. BaoCode 自己装的那份：`~/.baocode-server/data/claude/` 里 `CURRENT` 指向的版本。
+2. 否则在用户自己装的（远端登录 shell 的 PATH，以及 `~/.claude/local/claude`、`~/.local/bin/claude`、`/opt/homebrew/bin/claude`、`/usr/local/bin/claude`）和 BaoCode 自己装的那份（`~/.baocode-server/data/claude/` 里 `CURRENT` 指向的版本）中，用版本最高的；一样新时用用户自己的。各份的版本用 `--version` 问一次，按文件缓存在 `~/.baocode-server/data/claude/versions.json`。
+
+本机的项目不读这个环境变量，改在 设置 → 通用 → Claude Code（`claudeCode.path`）里指定。
 
 **优先用用户自己的**，因为他的登录状态、配置和版本都在那份上。
 
@@ -272,7 +314,7 @@ ssh 参数固定为：
 
 **装不上时**：报“无法在 xxx 上安装 Claude Code”，详情里写原因和手动安装命令 `curl -fsSL https://claude.ai/install.sh | bash`。
 
-Haiku 起标题和提交信息**不会**触发自动安装，远端没有 claude 时它们就直接失败。
+Haiku 起标题和提交信息**不会**触发自动安装：内核是“自动”且用的是上游模型时改用内置内核，否则直接失败。
 
 ### 6.3 密钥不落远端磁盘
 
@@ -376,7 +418,7 @@ dart run tool/build_remote_server.dart --all        # 四份没编全就失败�
 - **打包**：`tool/build_macos.dart` 和 `tool/build_windows.dart` 先编译到 `build/remote/`（CI 里由单独的 `remote` 任务在 macOS 机器上把四份都编一次，在那台 Mac 上直接跑一遍两份 macOS 版（`tool/test_remote_server_macos.sh`，Intel 版经 Rosetta），再由 `remote-linux` 任务在 Docker 里的几个 Linux 发行版上各跑一遍 `tool/test_remote_server.sh`，两个打包脚本带 `--remote-built` 直接用它），再只把 `VERSION`、`servers.json` 放进 `BaoCode.app/Contents/Resources/remote/`（Windows 是 `<bundle>\remote\`），`.gz` 放到 `build/installers/remote/<VERSION>/`。
 - **发布**：Release 工作流把 `baocode-server-<平台>.gz` 和安装包一起上传到 `https://github.com/solosw/baocode/releases/download/v<营销版本>/`。`servers.json` 里的地址指向这里。重新发布同一个版本标签会替换这些文件；已经装过这个构建的主机不会再下载。
 - **下载**：第一次连某个平台的主机时，应用下载对应的 `.gz`，按 `servers.json` 校验大小和 SHA-256，存到数据目录的 `cache/remote-server/<VERSION>/`，之后照旧经 ssh 推送到主机（第 4 节第 4 步）。远端主机不需要能上网。下载完会删掉其他版本的缓存；同时连多台同平台的主机只下载一次。
-- **下载失败时手动安装**：报错详情里有完整地址。从 [GitHub Releases](https://github.com/solosw/baocode/releases) 下载对应的 `baocode-server-<平台>.gz`（Linux x64 是 `baocode-server-linux-x64.gz`），解压后放到本机数据目录的 `cache/remote-server/<VERSION>/baocode-server-<平台>.gz`。`<VERSION>` 是应用里 `remote/VERSION` 的内容（带构建哈希，不是只有 `1.0.4`）。macOS 数据目录默认是 `~/Library/Application Support/BaoCode`。也可以直接在远端放好可执行文件，应用发现已存在就不会再下载或上传：
+- **下载失败时手动安装**：报错详情里有完整地址。从 [GitHub Releases](https://github.com/solosw/baocode/releases) 下载对应的 `baocode-server-<平台>.gz`（Linux x64 是 `baocode-server-linux-x64.gz`），原样放到本机数据目录的 `cache/remote-server/<VERSION>/baocode-server-<平台>.gz`。`<VERSION>` 是应用里 `remote/VERSION` 的内容（带构建哈希，不是只有 `1.0.4`）。macOS 数据目录默认是 `~/Library/Application Support/BaoCode`。也可以直接在远端放好可执行文件，应用发现已存在就不会再下载或上传：
 
   ```sh
   mkdir -p ~/.baocode-server/<VERSION>
@@ -410,7 +452,7 @@ dart run tool/build_remote_server.dart --all        # 四份没编全就失败�
 | 文件 | 覆盖内容 |
 | --- | --- |
 | `test/remote/rpc_peer_test.dart` | JSON-RPC 收发、异常按类型还原、断线时未完成的请求失败、协议版本不一致 |
-| `test/remote/ssh_launcher_test.dart` | ssh 参数、探测、只上传一次、失败分类、Mac 主机拿到 macOS 版、不支持的系统、主机地址解析、`~/.ssh/config` 读取（用假的 ssh 进程） |
+| `test/remote/ssh_launcher_test.dart` | ssh 参数、探测、只上传一次、失败分类、Mac 主机拿到 macOS 版、不支持的系统、主机地址解析、`~/.ssh/config` 读取（用假的 ssh 进程）；WSL：用假的 wsl.exe 走完整连接、没有 WSL 时的失败、`wsl --list` 输出解析 |
 | `test/remote/remote_server_test.dart` | 服务端各方法（内存中直连） |
 | `test/remote/remote_lsp_test.dart` | 远端 LSP 进程、mason 安装 |
 | `test/remote/remote_project_test.dart` | 应用侧端到端：location、连接状态和重连、文件监听跨重连、Git、终端、LSP 跨重连、Claude 密钥处理、端口转发、会话、打开流程 |
@@ -439,10 +481,12 @@ flutter analyze
 | 现象 / 报错 | 原因 | 处理 |
 | --- | --- | --- |
 | The BaoCode server for Linux x64（或 macOS arm64 等）could not be downloaded（详情里是 HTTP 404） | 这个构建的服务端没有上传到 GitHub Release。常见于本机打包的应用：`servers.json` 里的地址对不上已发布的文件 | 从 https://github.com/solosw/baocode/releases 下载对应的 `baocode-server-<平台>.gz`，放到数据目录的 `cache/remote-server/<VERSION>/`（`<VERSION>` 见应用里的 `remote/VERSION`）。或者在远端手动安装，见 9.3 |
-| No ssh here | 本机没有 `ssh` | 安装 OpenSSH 客户端；Windows 上在“可选功能”里安装 |
-| 认证失败（authentication） | 密码不对、取消了登录，或密钥没加载（Windows 上不问密码） | 重连时重新输入密码；用密钥的话，把密钥加到 ssh-agent，或在 `~/.ssh/config` 里写 `IdentityFile` |
-| 主机密钥问题（hostKey） | 主机还不在 `known_hosts` 里，或密钥变了 | 先在终端里 `ssh <主机>` 一次，接受密钥；密钥确实换过的话，用 `ssh-keygen -R <主机>` 删掉旧记录 |
+| No ssh here | 本机没有 `ssh`（Windows 安装包自带一份，开发时才会遇到） | 安装 OpenSSH 客户端；Windows 上在“可选功能”里安装 |
+| 认证失败（authentication） | 密码不对、取消了登录，或密钥没加载 | 失败页点“编辑”改密码或换私钥；或把密钥加到 ssh-agent，或在 `~/.ssh/config` 里写 `IdentityFile` |
+| 主机密钥未知（hostKey） | 用户的 ssh 配置写了 `StrictHostKeyChecking yes` | 先在终端里 `ssh <主机>` 一次，接受密钥 |
+| 主机密钥变了（hostKeyChanged） | 服务器重装过，或有人在中间 | 确认是重装过的话，失败页点“移除旧指纹并重新连接” |
 | 不支持的系统（unsupported） | 远端不是 Linux 或 macOS 的 x64/arm64 | 不支持 |
+| WSL 无法启动这个发行版（wsl） | 没装 WSL、发行版被删或改名、WSL 自己起不来 | 在终端里 `wsl --list` 看发行版名，`wsl -d <发行版>` 看它自己的报错 |
 | This build of the app has no server for macOS x64 | 应用是在 Linux / Windows 上、或没给 `--macos-x64-dart` 时打包的，没有这个平台的服务端 | 用 CI 发布的版本，或按 9.1 在 Mac 上补编 |
 | Mac 主机：Connection refused / 连不上 | 没打开“远程登录” | 系统设置 → 通用 → 共享 → 远程登录 |
 | This build of the app has no remote server | 应用里没带服务端，也不是从源码目录运行 | 执行 `dart run tool/build_remote_server.dart`，或设置 `BAOCODE_REMOTE_SERVER_DIR` |
@@ -471,7 +515,9 @@ flutter analyze
 3. **文件、Git、搜索、终端**：打开、编辑、保存文件；新建和删除文件；在远端另开 shell 改文件，界面会刷新；Git 面板的状态、暂存、提交；全文搜索；终端能输入，窗口大小和 shell 集成正常。
 4. **断线和重连**：终端里跑一个持续输出的命令、Claude 正在回复时，断开网络（关 Wi-Fi 或拔网线，30 秒以上）或杀掉本机的 ssh 进程：状态栏变成“正在重连”，恢复后自动连上；终端里的命令没断、断网期间的输出都补上了，Claude 的回复接着出来。远端 `pkill -f 'baocode-server --daemon'` 模拟会话没了：文件监听恢复，语言服务器重启，未保存的修改还在。
 5. **密码登录**：只开密码登录的主机会弹窗；输错会提示“不正确”再问；勾选记住后，退出应用再连不再弹窗，钥匙串里有 `BaoCode` 服务下 `ssh:<主机>:…` 的条目；在主机上改掉密码后再连，会重新弹窗，旧条目被删掉。可以用 Docker 起一个只允许密码登录的 sshd 来测。
-6. **失败场景**：取消密码弹窗、`known_hosts` 里没有的主机：应直接报错，不会一直重试，点状态栏可以重连。
+6. **失败场景**：取消密码弹窗：应直接报错，不会一直重试，点状态栏可以重连。`known_hosts` 里没有的主机直接连上并记下指纹；改掉 `known_hosts` 里它的记录再连，报指纹变了，点“移除旧指纹并重新连接”后能连上。
+6.1 **新增服务器**：选择框里“新增 SSH 服务器…”，用密码、私钥各加一台，再加一台经跳板机的；保存并连接都能连上，重启应用后仍在，编辑按钮能改。内核选“自动”：远端没装 claude、用上游模型时，对话由内置内核跑起来，不会去装 CLI；装了就用它。
+6.2 **设置 → SSH 服务器**：列出应用里的服务器（含侧栏里手输过的主机）和 `~/.ssh/config` 里的主机；能添加、编辑（同一个表单，`editSshServer`）、连接 / 断开、移除（连同表单存的密码）；`~/.ssh/config` 的只读，可打开文件。
 7. **Claude Code**：
    - 远端没装 claude 时，会出现安装进度，装完正常对话；远端 `~/.local/bin` 里没有多出文件；
    - 远端屏蔽 `downloads.claude.ai` 后，改成本机下载再上传；
@@ -517,7 +563,7 @@ flutter analyze
 3. **旧版本服务端不会自动清理**：`~/.baocode-server/<旧VERSION>/` 会一直留着，每个约几十 MB。可以在连接成功后删掉其他版本的目录。
 4. **Haiku 不会触发 Claude 自动安装**：远端没有 claude 时，标题和提交信息会失败，等到第一次对话装好后才正常。
 5. **自动安装没有开关**：远端没有 claude 时总是自动装。如果有用户不希望自动下载，需要加一个设置项。
-6. **Windows 客户端不支持密码登录**：`SSH_ASKPASS` 用的是 sh 脚本，Windows 上仍是 `BatchMode=yes`，只能用密钥。
+6. **Windows 客户端的密码登录还没在 Windows 上实测**：`askpass.cmd` 经 PowerShell 回传密码，依赖 Win32-OpenSSH 8.4 及以上按 `SSH_ASKPASS_REQUIRE=force` 调用它；系统的低于 8.4 时用安装包自带的 OpenSSH。要确认的有：能否运行 `.cmd`、用户名带空格的临时目录、运行时是否闪出控制台窗口、自带 ssh 的跳板机 `ProxyCommand`（带引号的路径）能否运行。
 7. **启动时会连接所有远程项目的主机**（因为要读会话列表）。主机很多或很慢时，可以改成在展开项目时再连接。
 8. **macOS 打包这一步还没实际跑过**，签名和公证也还没做（见 `tool/build_macos.dart` 里的 TODO）。
 9. **会话守护进程会被 `KillUserProcesses=yes` 杀掉**：少数发行版的 systemd-logind 在用户最后一个登录会话结束时杀掉他的所有进程，断线就等于会话失效（退回到旧的“重建会话”行为）。需要的话在主机上 `loginctl enable-linger <用户>`。

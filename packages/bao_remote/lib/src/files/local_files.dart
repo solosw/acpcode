@@ -487,7 +487,6 @@ bool? _gitFiles(
     result = Process.runSync(
       'git',
       [
-        '--no-optional-locks',
         '-c',
         'core.fsmonitor=false',
         'ls-files',

@@ -3,7 +3,7 @@ library;
 
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,7 +31,7 @@ void main() {
           harness = await RemoteHarness.start();
           store = (await harness!.client.openReview(root))!;
         } else {
-          store = (await LocalReviewStore.open(
+          store = (await GitReviewStore.open(
             root,
             checkpoints: p.join(temp.path, 'checkpoints'),
           ))!;

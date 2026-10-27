@@ -241,7 +241,7 @@ class _ClickListenerState extends State<_ClickListener> {
 
 /// What a step opens to: a dark framed box under its header, scrolling
 /// past [maxHeight].
-class StepBody extends StatelessWidget {
+class StepBody extends StatefulWidget {
   const StepBody({
     super.key,
     required this.child,
@@ -266,19 +266,58 @@ class StepBody extends StatelessWidget {
   final Widget? header;
 
   @override
+  State<StepBody> createState() => _StepBodyState();
+}
+
+class _StepBodyState extends State<StepBody> {
+  final _controller = SmoothScrollController();
+
+  @override
+  void didUpdateWidget(StepBody old) {
+    super.didUpdateWidget(old);
+    if (old.followEnd != widget.followEnd && _controller.hasClients) {
+      _keepInView(_controller.position);
+    }
+  }
+
+  /// [StepBody.followEnd] turns the view round (the command ended, or went
+  /// to the background), its offset now counted from the other end: what
+  /// was in view stays, rather than the view jumping to the far end.
+  void _keepInView(ScrollPosition position) {
+    // How far it is from the end its offset counted from, which is now the
+    // far end.
+    final held = position.pixels - position.minScrollExtent;
+    // Before this frame's layout, so the far end never shows.
+    position.correctPixels(position.maxScrollExtent - held);
+    // At that end (following the output), it stays there, though the
+    // output grew as it ended; scrolled off it, nothing in view moves.
+    if (held > 0.5) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      final now = _controller.position;
+      if (now.pixels != now.maxScrollExtent) now.jumpTo(now.maxScrollExtent);
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final StepBody(:child, :maxHeight, :padding, :overlay, :header) = widget;
     Widget body = Stack(
       children: [
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxHeight),
-          child: SmoothScrolling(
-            builder: (context, controller) => SingleChildScrollView(
-              controller: controller,
-              reverse: followEnd,
-              padding: padding,
-              child: WheelLatch(
-                child: SizedBox(width: double.infinity, child: child),
-              ),
+          child: SingleChildScrollView(
+            controller: _controller,
+            reverse: widget.followEnd,
+            padding: padding,
+            child: WheelLatch(
+              child: SizedBox(width: double.infinity, child: child),
             ),
           ),
         ),

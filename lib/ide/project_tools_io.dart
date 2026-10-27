@@ -227,13 +227,18 @@ class LocalIdeProjectTools implements IdeProjectTools {
 
   Future<ProcessResult> _git(List<String> arguments) async {
     try {
-      // No shell interpolation or optional index refresh writes. Disable a
-      // configured fsmonitor hook, which need not itself be read-only.
+      // No shell interpolation or optional index refresh writes (the
+      // variable, not `--no-optional-locks`, which Gits before 2.15 do not
+      // know). Disable a configured fsmonitor hook, which need not itself be
+      // read-only.
       return await Process.run(
         'git',
-        ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...arguments],
+        ['-c', 'core.fsmonitor=false', ...arguments],
         workingDirectory: root,
-        environment: const {'GIT_TERMINAL_PROMPT': '0'},
+        environment: const {
+          'GIT_TERMINAL_PROMPT': '0',
+          'GIT_OPTIONAL_LOCKS': '0',
+        },
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
       ).timeout(const Duration(seconds: 15));
@@ -280,7 +285,8 @@ class LocalIdeProjectTools implements IdeProjectTools {
     final repositoryRoot = _stdoutLine(repository);
     final status = await _git([
       'status',
-      '--porcelain=v1',
+      // v1, spelled as Gits before 2.11 know it.
+      '--porcelain',
       '-z',
       '--untracked-files=all',
       '--',

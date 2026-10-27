@@ -7,11 +7,12 @@ import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/change_reviews.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/kernel/kernel_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 /// Only store-relative POSIX paths go to the store; host paths go to the UI.
-class _Store implements ReviewStore, ScanningReviewStore {
+class _Store implements ReviewStore {
   _Store(this.root);
 
   @override
@@ -20,35 +21,84 @@ class _Store implements ReviewStore, ScanningReviewStore {
   final _texts = <ReviewBlob, String>{};
   final _saved = <String, String>{};
   final restored = <String>[];
+  final _trees = <String, Map<String, ReviewBlob>>{};
+  Map<String, ReviewBlob> _latest = {};
+
+  String _tree(Map<String, ReviewBlob> files) {
+    final id = 'tree-${_trees.length}';
+    _trees[id] = Map.of(files);
+    return id;
+  }
+
+  ReviewBlob _blob(String mode, String text) {
+    for (final MapEntry(key: blob, value: stored) in _texts.entries) {
+      if (stored == text && blob.mode == mode) return blob;
+    }
+    final blob = ReviewBlob(mode, '${_texts.length}');
+    _texts[blob] = text;
+    return blob;
+  }
 
   void edit(String path, String text) {
-    final blob = ReviewBlob('100644', '${_texts.length}');
-    files[path] = blob;
-    _texts[blob] = text;
+    files[path] = _blob('100644', text);
   }
 
   @override
-  Future<Map<String, ReviewBlob?>> scan(String session) async => Map.of(files);
+  Future<String?> snapshot({Iterable<String>? paths}) async {
+    if (paths == null) {
+      _latest = Map.of(files);
+    } else {
+      for (final path in paths) {
+        if (files[path] case final blob?) {
+          _latest[path] = blob;
+        } else {
+          _latest.remove(path);
+        }
+      }
+    }
+    return _tree(_latest);
+  }
 
   @override
-  Future<ReviewBlob?> take(String session, String path) async => files[path];
+  Future<List<ReviewTreeChange>> diff(String from, String to) async => [
+    for (final path in {..._trees[from]!.keys, ..._trees[to]!.keys})
+      if (_trees[from]![path] != _trees[to]![path])
+        ReviewTreeChange(path, _trees[from]![path], _trees[to]![path]),
+  ];
 
   @override
-  Future<ReviewBlob> store(
-    String session,
-    Uint8List bytes, {
-    required String mode,
-  }) async {
-    final blob = ReviewBlob(mode, '${_texts.length}');
-    _texts[blob] = utf8.decode(bytes);
-    return blob;
+  Future<String> overlay(String tree, Map<String, ReviewBlob?> entries) async {
+    final files = <String, ReviewBlob>{...?_trees[tree]};
+    for (final MapEntry(key: path, value: blob) in entries.entries) {
+      if (blob == null) {
+        files.remove(path);
+      } else {
+        files[path] = blob;
+      }
+    }
+    return _tree(files);
+  }
+
+  @override
+  Future<bool> contains(String tree, String path) async =>
+      _trees[tree]!.containsKey(path);
+
+  @override
+  Future<ReviewBlob?> take(String path) async => files[path];
+
+  @override
+  Future<ReviewBlob> store(Uint8List bytes, {required String mode}) async {
+    return _blob(mode, utf8.decode(bytes));
   }
 
   @override
   Future<Map<String, ({int added, int removed})?>> lineCounts(
-    String session,
-    Map<String, ReviewBlob?> bases,
-  ) async => {for (final path in bases.keys) path: (added: 1, removed: 1)};
+    String from,
+    String to,
+  ) async => {
+    for (final change in await diff(from, to))
+      change.path: (added: 1, removed: 1),
+  };
 
   @override
   Future<bool> exists(String path) async => files.containsKey(path);
@@ -57,11 +107,11 @@ class _Store implements ReviewStore, ScanningReviewStore {
   Future<ReviewBlob?> current(String path) async => files[path];
 
   @override
-  Future<Uint8List> read(String session, ReviewBlob blob) async =>
+  Future<Uint8List> read(ReviewBlob blob) async =>
       Uint8List.fromList(utf8.encode(_texts[blob]!));
 
   @override
-  Future<void> restore(String session, String path, ReviewBlob? blob) async {
+  Future<void> restore(String path, ReviewBlob? blob) async {
     restored.add(path);
     if (blob == null) {
       files.remove(path);
@@ -71,12 +121,8 @@ class _Store implements ReviewStore, ScanningReviewStore {
   }
 
   @override
-  Future<Uint8List?> merge(
-    String session,
-    String path,
-    ReviewBlob from,
-    ReviewBlob to,
-  ) => throw UnimplementedError();
+  Future<Uint8List?> merge(String path, ReviewBlob from, ReviewBlob to) =>
+      throw UnimplementedError();
 
   @override
   Future<void> write(String path, Uint8List bytes) async =>
@@ -127,7 +173,13 @@ void main() {
         'listed files, originals and undo use the host path context',
         () async {
           store.edit('lib/main.dart', 'after\n');
-          review.report(FileChange(path: absolute, added: 1, removed: 1));
+          review.reportEdit(
+            FileEdited(
+              1,
+              FileChange(path: absolute, added: 1, removed: 1),
+              after: FileSnapshot.text('after\n'),
+            ),
+          );
           await review.observe();
           expect(review.changes.single.path, absolute);
           expect(review.changes.single.tracked, isTrue);
@@ -178,8 +230,20 @@ void main() {
       final first = context.join(root, 'lib', 'main.dart');
       final second = context.join(other, 'lib', 'main.dart');
       reviews
-        ..report(const FileChange(path: 'lib/main.dart', added: 1, removed: 1))
-        ..report(FileChange(path: second, added: 1, removed: 1));
+        ..reportEdit(
+          FileEdited(
+            1,
+            const FileChange(path: 'lib/main.dart', added: 1, removed: 1),
+            after: FileSnapshot.text('after\n'),
+          ),
+        )
+        ..reportEdit(
+          FileEdited(
+            2,
+            FileChange(path: second, added: 1, removed: 1),
+            after: FileSnapshot.text('after\n'),
+          ),
+        );
       await reviews.observe();
       expect(reviews.changes.map((c) => c.path), [first, second]);
       expect(await reviews.original(second)!(), 'before\n');

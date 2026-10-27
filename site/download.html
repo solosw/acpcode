@@ -48,9 +48,10 @@
     </section>
     <section class="platform" data-os="windows">
       <h2 class="plain"><svg class="ic logo" aria-hidden="true"><use href="#ic-windows"/></svg>Windows</h2>
-      <p>x64. Windows 10 or later.</p>
+      <p>x64<span data-shown="windows-arm64" hidden> and Arm64</span>. Windows 10 or later.</p>
       <div class="get">
-        <a class="button primary" data-file="windows" href="/dl/windows"><svg class="ic" aria-hidden="true"><use href="#ic-download"/></svg>Download installer</a>
+        <a class="button primary" data-file="windows" data-arch="x86" href="/dl/windows"><svg class="ic" aria-hidden="true"><use href="#ic-download"/></svg>x64 installer</a>
+        <a class="button" data-file="windows-arm64" data-arch="arm" data-shown="windows-arm64" hidden href="/dl/windows-arm64"><svg class="ic" aria-hidden="true"><use href="#ic-download"/></svg>Arm64 installer</a>
       </div>
     </section>
     <section class="platform" data-os="linux" id="linux">

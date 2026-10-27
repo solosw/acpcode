@@ -66,15 +66,19 @@ class ServerSession {
 
   static String defaultRunDirectory(String home) => '$home/.baocode-server/run';
 
-  /// The session's socket: in [runDirectory], else (a path too long for a
-  /// socket, which takes about a hundred bytes) in a folder of /tmp.
-  String get socketPath {
-    final path = '$runDirectory/$id';
-    if (path.length < 100) return path;
-    return '${Directory.systemTemp.path}/baocode-server-${_uid()}/$id';
-  }
+  /// Where the session's socket may be, in order: in [runDirectory], then
+  /// in a folder of /tmp, for a path too long for a socket (which takes
+  /// about a hundred bytes) or a folder that cannot hold one (of a file
+  /// system with no sockets, or no modes to keep it the user's alone).
+  List<String> get socketPaths => [
+    if ('$runDirectory/$id'.length < 100) '$runDirectory/$id',
+    '${Directory.systemTemp.path}/baocode-server-${_uid()}/$id',
+  ];
 
-  String get logPath => '${File(socketPath).parent.path}/$id.log';
+  /// The socket the daemon listens on, once it does.
+  String? _bound;
+
+  String get logPath => '${File(socketPaths.first).parent.path}/$id.log';
 
   static String _uid() {
     try {
@@ -84,9 +88,9 @@ class ServerSession {
     }
   }
 
-  /// The socket's folder, the user's alone.
-  Future<void> _prepareFolder() async {
-    final folder = File(socketPath).parent;
+  /// [socket]'s folder, the user's alone.
+  static Future<void> _prepareFolder(String socket) async {
+    final folder = File(socket).parent;
     await folder.create(recursive: true);
     await Process.run('chmod', ['700', folder.path]);
     final mode = (await folder.stat()).modeString();
@@ -95,48 +99,69 @@ class ServerSession {
     }
   }
 
-  InternetAddress get _address =>
-      InternetAddress(socketPath, type: InternetAddressType.unix);
+  static InternetAddress _address(String socket) =>
+      InternetAddress(socket, type: InternetAddressType.unix);
 
+  /// The daemon's socket, wherever it listens; null when none answers.
   Future<Socket?> _connect() async {
-    try {
-      return await Socket.connect(
-        _address,
-        0,
-        timeout: const Duration(seconds: 5),
-      );
-    } on SocketException {
-      return null;
+    for (final path in socketPaths) {
+      try {
+        return await Socket.connect(
+          _address(path),
+          0,
+          timeout: const Duration(seconds: 5),
+        );
+      } on SocketException {
+        // A socket left behind, or none: the next place.
+      }
     }
+    return null;
   }
 
   /// Between stdin and stdout and the session's daemon, started first
   /// unless [resume] (with none, [ResumableChannel.goneLine] is said and
   /// [goneExitCode] returned); ends when either side does. [daemon] starts
-  /// it.
+  /// it, and says its pid. Where none can be started (the host has no
+  /// place for its socket, say), this connection is served alone by
+  /// [serve], as before sessions: not to be resumed.
   Future<int> runBridge({
     required bool resume,
-    required Future<void> Function() daemon,
+    required Future<int?> Function() daemon,
+    required RemoteServer Function(RpcPeer peer) serve,
   }) async {
     var socket = await _connect();
     if (socket == null) {
       if (resume) {
         // A daemon's socket left behind (it was killed): no one's.
-        await _deleteSocket();
+        await _deleteSockets();
         stdout.writeln(ResumableChannel.goneLine);
         await stdout.flush();
         return goneExitCode;
       }
-      await _prepareFolder();
-      await daemon();
-      final deadline = DateTime.now().add(const Duration(seconds: 20));
-      while (socket == null && DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        socket = await _connect();
+      int? pid;
+      try {
+        pid = await daemon();
+      } on Object catch (error) {
+        stderr.writeln('baocode-server: the session did not start: $error');
+      }
+      if (pid != null) {
+        final deadline = DateTime.now().add(const Duration(seconds: 20));
+        while (socket == null && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          socket = await _connect();
+          // Ended without listening: no use waiting.
+          if (socket == null && !_alive(pid)) {
+            socket = await _connect();
+            break;
+          }
+        }
       }
       if (socket == null) {
-        stderr.writeln('baocode-server: the session did not start');
-        return 1;
+        stderr.writeln(
+          'baocode-server: the session did not start (see $logPath); '
+          'serving this connection alone',
+        );
+        return _serveAlone(serve);
       }
     }
     final connected = socket;
@@ -187,16 +212,62 @@ class ServerSession {
     return 0;
   }
 
+  /// Whether process [pid] is there still.
+  static bool _alive(int pid) {
+    try {
+      return Process.runSync('kill', ['-0', '$pid']).exitCode == 0;
+    } on Object {
+      return true;
+    }
+  }
+
+  /// This connection served over stdin and stdout by [serve], as the
+  /// session's daemon would; ends with it.
+  Future<int> _serveAlone(RemoteServer Function(RpcPeer peer) serve) async {
+    final channel = ResumableChannel(heartbeat: heartbeat);
+    final peer = RpcPeer(channel.messages, channel.send);
+    final server = serve(peer);
+    unawaited(stdout.done.then((_) {}, onError: (Object _) => channel.close()));
+    final gone = channel.attach(
+      ChannelLink(
+        input: stdin,
+        write: (bytes) {
+          try {
+            stdout.add(bytes);
+          } on Object {
+            channel.close();
+          }
+        },
+        close: () {},
+      ),
+    );
+    final signals = [
+      for (final signal in [ProcessSignal.sighup, ProcessSignal.sigterm])
+        signal.watch().listen((_) => channel.close()),
+    ];
+    await Future.any([peer.done, gone, channel.ended]);
+    for (final signal in signals) {
+      await signal.cancel();
+    }
+    await server.shutdown();
+    channel.close();
+    await stdout
+        .flush()
+        .timeout(const Duration(seconds: 2), onTimeout: () {})
+        .catchError((Object _) {});
+    return 0;
+  }
+
   /// Starts this program as the session's daemon, out of the SSH session
-  /// (its hangup not its own), with [arguments] besides.
-  Future<void> startDaemon(List<String> arguments) async {
+  /// (its hangup not its own), with [arguments] besides: its pid.
+  Future<int> startDaemon(List<String> arguments) async {
     final script = Platform.script.toFilePath();
     // Run by the Dart VM (in development and tests), or compiled.
     final jit =
         script.endsWith('.dart') ||
         script.endsWith('.dill') ||
         script.endsWith('.snapshot');
-    await Process.start(Platform.resolvedExecutable, [
+    final process = await Process.start(Platform.resolvedExecutable, [
       if (jit) ...[...Platform.executableArguments, script],
       '--daemon',
       id,
@@ -208,6 +279,7 @@ class ServerSession {
       '${heartbeat.inMilliseconds}',
       ...arguments,
     ], mode: ProcessStartMode.detached);
+    return process.pid;
   }
 
   /// Serves the session on its socket: [serve] answers over the channel's
@@ -279,32 +351,47 @@ class ServerSession {
     channel.close();
     current?.destroy();
     await listener.close();
-    await _deleteSocket();
+    await _deleteSocket(_bound);
     return end == ChannelEnd.closed;
   }
 
-  Future<void> _deleteSocket() async {
+  static Future<void> _deleteSocket(String? path) async {
+    if (path == null) return;
     try {
-      await File(socketPath).delete();
+      await File(path).delete();
     } on FileSystemException {
       // Gone already.
     }
   }
 
-  Future<ServerSocket> _bind() async {
-    await _prepareFolder();
-    try {
-      return await ServerSocket.bind(_address, 0);
-    } on SocketException {
-      // Another daemon of the session's, or one's socket left behind.
-      final other = await _connect();
-      if (other != null) {
-        other.destroy();
-        throw const _AlreadyServed();
-      }
-      await _deleteSocket();
-      return ServerSocket.bind(_address, 0);
+  Future<void> _deleteSockets() async {
+    for (final path in socketPaths) {
+      await _deleteSocket(path);
     }
+  }
+
+  /// Listens in the first of [socketPaths] that can be listened in.
+  Future<ServerSocket> _bind() async {
+    // Another daemon of the session's.
+    final other = await _connect();
+    if (other != null) {
+      other.destroy();
+      throw const _AlreadyServed();
+    }
+    Object? failed;
+    for (final path in socketPaths) {
+      try {
+        await _prepareFolder(path);
+        // One left behind, answering no one.
+        await _deleteSocket(path);
+        final listener = await ServerSocket.bind(_address(path), 0);
+        _bound = path;
+        return listener;
+      } on Exception catch (error) {
+        failed = error;
+      }
+    }
+    throw failed!;
   }
 }
 

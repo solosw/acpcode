@@ -5,7 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/review/change_review.dart';
@@ -94,12 +94,13 @@ Future<void> _delayedReview({
     harness = await RemoteHarness.start();
     store = (await harness.client.openReview(root))!;
   } else {
-    store = (await LocalReviewStore.open(
+    store = (await GitReviewStore.open(
       root,
       checkpoints: p.join(temp.path, 'checkpoints'),
     ))!;
   }
   final gate = Completer<ChangeReview?>();
+  final review = ChangeReview(store);
   late _FastKernel kernel;
   late final KernelDescriptor descriptor;
   descriptor = KernelDescriptor(
@@ -123,16 +124,16 @@ Future<void> _delayedReview({
   try {
     session.attach();
     if (reviewReady) {
-      gate.complete(ChangeReview(store));
+      gate.complete(review);
       await pumpEventQueue(times: 100);
     }
     session.send(const ComposerMessage(text: 'edit'));
     // The opener intentionally cannot finish until AFTER send returns.
     edit(kernel, file);
     beforeOpen?.call(session);
-    if (!reviewReady) gate.complete(ChangeReview(store));
+    if (!reviewReady) gate.complete(review);
     await pumpEventQueue(times: 100);
-    await session.changeReview!.refresh();
+    await review.refresh();
     await verify(session, file);
   } finally {
     session.dispose();
@@ -553,12 +554,13 @@ void main() {
           harness = await RemoteHarness.start();
           store = (await harness.client.openReview(root))!;
         } else {
-          store = (await LocalReviewStore.open(
+          store = (await GitReviewStore.open(
             root,
             checkpoints: p.join(temp.path, 'checkpoints'),
           ))!;
         }
         final gate = Completer<ChangeReview?>();
+        final review = ChangeReview(store);
         late final KernelDescriptor descriptor;
         descriptor = KernelDescriptor(
           id: 'fast',
@@ -580,9 +582,9 @@ void main() {
           expect(file.readAsStringSync(), 'agent edit\n');
           expect(session.fileChanges, hasLength(1));
           if (keep) session.keepAllChanges();
-          gate.complete(ChangeReview(store));
+          gate.complete(review);
           await pumpEventQueue(times: 100);
-          await session.changeReview!.refresh();
+          await review.refresh();
           if (keep) {
             expect(session.fileChanges, isEmpty);
             expect(file.readAsStringSync(), 'agent edit\n');

@@ -32,7 +32,6 @@ class _Review extends ChangeReview {
 
   final calls = <String>[];
   final reported = <String>[];
-  Completer<void>? holdRefresh;
   Completer<void>? holdBegin;
   Completer<void>? holdObserve;
   List<FileChange> listed = const [];
@@ -46,20 +45,14 @@ class _Review extends ChangeReview {
   }
 
   @override
-  Future<void> refresh() async {
-    calls.add('refresh');
-    await holdRefresh?.future;
-  }
-
-  @override
   Future<void> begin() async {
     calls.add('begin');
     await holdBegin?.future;
   }
 
   @override
-  Future<void> observe() async {
-    calls.add('observe');
+  Future<void> observe({bool full = true}) async {
+    calls.add(full ? 'observe' : 'observe reported');
     await holdObserve?.future;
   }
 
@@ -80,6 +73,20 @@ class _Review extends ChangeReview {
 
   @override
   Future<void> undoAll() async => calls.add('undoAll');
+}
+
+/// A kernel whose events the test sends.
+class _Kernel implements AgentKernel {
+  _Kernel(this.descriptor, this.events);
+
+  @override
+  final KernelDescriptor descriptor;
+
+  @override
+  final Stream<KernelEvent> events;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 class _ShellKernel extends AcpKernel {
@@ -123,6 +130,7 @@ void main() {
   }
 
   Future<void> finish(WidgetTester tester, ChatSession session) async {
+    // The message goes once the snapshot before it is taken.
     await tester.pump(const Duration(milliseconds: 100));
     for (var i = 0; i < 400 && session.isStreaming; i++) {
       switch (session.pendingInteraction) {
@@ -137,23 +145,26 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
   }
 
-  testWidgets('the edits go to the review, its files looked at again around '
-      'a turn, which does not wait for it', (tester) async {
+  testWidgets('a message goes without waiting for the snapshot before it', (
+    tester,
+  ) async {
     final session = await pump(tester);
-    expect(review.calls, ['refresh']);
+    // The project was snapshotted as the conversation showed.
+    expect(review.calls, ['begin']);
 
-    review.holdRefresh = Completer();
+    review.holdBegin = Completer();
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
-    // Shown at once.
-    expect(review.calls, ['refresh', 'refresh']);
+    // Shown at once, the snapshot taken as it goes.
+    expect(review.calls, ['begin', 'begin']);
     expect(session.itemCount, greaterThan(0));
 
-    review.holdRefresh!.complete();
+    review.holdBegin!.complete();
     await finish(tester, session);
 
+    // The edits it reported were looked at, and all at the turn's end.
     expect(review.reported, isNotEmpty);
-    // And again at the turn's end.
-    expect(review.calls.last, 'refresh');
+    expect(review.calls, contains('observe reported'));
+    expect(review.calls.last, 'observe');
     // Its background tests settle.
     await tester.pump(const Duration(seconds: 5));
   });
@@ -241,6 +252,64 @@ void main() {
       ..report(const FileChange(path: '/elsewhere.txt', added: 1, removed: 0));
     expect(parts['/w']!.reported, ['notes.md', '/elsewhere.txt']);
     expect(parts['/a']!.reported, ['/a/z.dart']);
+  });
+
+  testWidgets('what a command or a subagent may have written is looked for '
+      'as the agent works, a little later and not too often', (tester) async {
+    final live = StreamController<KernelEvent>.broadcast(sync: true);
+    addTearDown(live.close);
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'test',
+      label: 'Test',
+      icon: Icons.abc,
+      description: '',
+      create: (context) => _Kernel(descriptor, live.stream),
+    );
+    review = _Review();
+    final session = ChatSession(
+      kernel: descriptor,
+      kernels: [descriptor],
+      kernelContext: const KernelContext(cwd: '/p'),
+      historyCount: 0,
+      openReview: (root, {session}) async => review,
+    );
+    addTearDown(session.dispose);
+    session.attach();
+    await tester.pump();
+    expect(review.calls, ['begin']);
+    var seq = 0;
+    int looks() => review.calls.where((call) => call == 'observe').length;
+
+    // Between turns, what changes is not the agent's.
+    live.add(FilesMayHaveChanged(++seq));
+    await tester.pump(const Duration(seconds: 2));
+    expect(looks(), 0);
+
+    live.add(TurnStarted(++seq, 't1'));
+    live.add(FilesMayHaveChanged(++seq));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(looks(), 0);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(looks(), 1);
+
+    // Many commands right after: one look, once the last has rested.
+    for (var i = 0; i < 5; i++) {
+      live.add(FilesMayHaveChanged(++seq));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(looks(), 1);
+    await tester.pump(const Duration(seconds: 5));
+    expect(looks(), 2);
+    await tester.pump(const Duration(seconds: 10));
+    expect(looks(), 2);
+
+    // The turn's end looks at everything; none waits on after it.
+    live.add(FilesMayHaveChanged(++seq));
+    live.add(TurnEnded(++seq, 't1'));
+    expect(looks(), 3);
+    await tester.pump(const Duration(seconds: 10));
+    expect(looks(), 3);
   });
 
   testWidgets('a message still goes when opening the review never returns', (
@@ -369,23 +438,5 @@ void main() {
     for (final review in reviews.values) {
       expect(review.calls.where((call) => call == 'observe'), hasLength(2));
     }
-  });
-
-  testWidgets('reported-file kernels do not scan the whole project', (
-    tester,
-  ) async {
-    final session = await pump(tester);
-    session.send(const ComposerMessage(text: '改一下'));
-    await tester.pump(const Duration(milliseconds: 200));
-    final before = review.calls.where((call) => call == 'observe').length;
-
-    await tester.pump(const Duration(seconds: 3));
-    expect(review.calls.where((call) => call == 'observe').length, before);
-    expect(review.calls, isNot(contains('begin')));
-
-    await finish(tester, session);
-    final after = review.calls.where((call) => call == 'observe').length;
-    await tester.pump(const Duration(seconds: 4));
-    expect(review.calls.where((call) => call == 'observe').length, after);
   });
 }

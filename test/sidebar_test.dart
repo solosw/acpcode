@@ -1371,6 +1371,54 @@ void main() {
     expect(find.text('/tmp/b'), findsOneWidget);
   });
 
+  testWidgets('Collapse All folds every project, Expand All unfolds them '
+      '(#300)', (tester) async {
+    await pumpKept(
+      tester,
+      KeptCatalog([kept('a1', '/tmp/a', 1), kept('b1', '/tmp/b', 2)]),
+    );
+    final collapse = inSidebar(
+      find.widgetWithIcon(SidebarIconButton, Codicons.collapseAll),
+    );
+    expect(collapse, findsOneWidget);
+    expect(inSidebar(find.text('Chat a1')), findsOneWidget);
+
+    await tester.tap(collapse);
+    await tester.pump();
+    expect(inSidebar(find.text('Chat a1')), findsNothing);
+    expect(inSidebar(find.text('Chat b1')), findsNothing);
+
+    final expand = inSidebar(
+      find.widgetWithIcon(SidebarIconButton, Codicons.expandAll),
+    );
+    await tester.tap(expand);
+    await tester.pump();
+    expect(inSidebar(find.text('Chat a1')), findsOneWidget);
+    expect(inSidebar(find.text('Chat b1')), findsOneWidget);
+  });
+
+  testWidgets('an agent\'s hover says the model it runs on (#245)', (
+    tester,
+  ) async {
+    final workspace = await pumpKept(
+      tester,
+      KeptCatalog([kept('a1', '/tmp/a', 1), kept('b1', '/tmp/b', 2)]),
+    );
+    final thread = workspace.threads.firstWhere((t) => t.title == 'Chat b1');
+    final models = thread.session.models!;
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(inSidebar(find.text('Chat b1'))));
+    await tester.pump(const Duration(seconds: 2));
+    expect(
+      find.text(
+        'Model: ${[?models.selected.group?.label, models.selected.label].join(' · ')}',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('a project header has a menu of what can be done there', (
     tester,
   ) async {
@@ -1476,6 +1524,64 @@ void main() {
     await tester.pump();
     expect(inSidebar(find.text('Chat b2')), findsOneWidget);
     expect(workspace.isHidden(workspace.selected.project), isFalse);
+  });
+
+  testWidgets('pinned projects stay on top, dragged among themselves; kept '
+      'between runs', (tester) async {
+    final store = MemoryPreferenceStore();
+    final catalog = KeptCatalog([
+      kept('a1', '/tmp/a', 1),
+      kept('b1', '/tmp/b', 2),
+      kept('c1', '/tmp/c', 3),
+    ]);
+    var workspace = await pumpKept(tester, catalog, preferences: store);
+    List<String> order() => [
+      for (final project in workspace.sidebarProjectsHere) project.name,
+    ];
+    // The headers' pins, not the menu's.
+    final pin = inSidebar(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Icon &&
+            widget.icon == Icons.push_pin &&
+            widget.size == 11,
+      ),
+    );
+    expect(pin, findsNothing);
+
+    await pickFromMenu(tester, 'a', 'Pin');
+    expect(order().first, 'a');
+    expect(top(tester, 'a'), lessThan(top(tester, 'b')));
+    expect(top(tester, 'a'), lessThan(top(tester, 'c')));
+    expect(pin, findsOneWidget);
+
+    // Not above the pinned one, nor it below the others.
+    await mouseDrag(
+      tester,
+      tester.getCenter(inSidebar(find.text('c'))),
+      () => tester.getTopLeft(inSidebar(find.text('a'))) + const Offset(20, 2),
+    );
+    expect(order().first, 'a');
+    await mouseDrag(
+      tester,
+      tester.getCenter(inSidebar(find.text('a'))),
+      () => tester.getCenter(inSidebar(find.text('Chat c1'))),
+    );
+    expect(order().first, 'a');
+
+    // The last pinned on top of those pinned.
+    await pickFromMenu(tester, 'b', 'Pin');
+    expect(order().take(2), ['b', 'a']);
+    expect(pin, findsNWidgets(2));
+
+    // The next run.
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpKept(tester, catalog, preferences: store);
+    expect(order(), ['b', 'a', 'c']);
+
+    await pickFromMenu(tester, 'b', 'Unpin');
+    expect(order(), ['a', 'b', 'c']);
+    expect(pin, findsOneWidget);
   });
 
   testWidgets('agents and projects keep the order they are dragged to', (

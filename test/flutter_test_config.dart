@@ -12,6 +12,7 @@ import 'package:bao_editor/textmate/textmate_syntax.dart';
 import 'package:bao_editor/textmate/textmate_worker.dart';
 import 'package:baocode/chat/user_message_style.dart';
 import 'package:baocode/customize/customize_view.dart';
+import 'package:baocode/ide/ide_diff_options.dart';
 import 'package:baocode/ide/lsp/packs/language_packs.dart';
 import 'package:baocode/kernel/claude_code/claude_core_setting.dart';
 import 'package:baocode/kernel/kernel_registry.dart';
@@ -37,7 +38,7 @@ import 'semantics_tree.dart';
 /// the upstreams Settings → Models lists are not got from baocode.dev.
 /// Sessions are the CLI's, with Claude Code as set up on the machine to
 /// pick, which the kernel's tests were written for: those of BaoCode's
-/// own core say so.
+/// own core say so. Diffs show as they do by default.
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   checkDesktopSemantics();
   KernelRegistry.use(MockKernels.all);
@@ -45,6 +46,7 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   MonacoLanguageAssets.defaultPacks = () => LanguagePackRegistry.instance;
   final defaultTheme = await _defaultColorTheme();
   setUp(() {
+    IdeDiffOptions.instance.reset();
     rootBundle.clear();
     ClaudeCore.current = () => ClaudeCore.cli;
     UserMessageStyle.current.value = UserMessageStyle.sticky;

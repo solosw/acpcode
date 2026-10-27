@@ -5,6 +5,8 @@ import 'dart:ui' show AppExitType;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../browser/browser_tools.dart' show BrowserHistory;
+import '../../chat/review/review_store.dart' as review;
 import '../../ide/ide_button.dart';
 import '../../ide/ide_dialog.dart';
 import '../../l10n/l10n.dart';
@@ -29,6 +31,8 @@ class DataDirectoryPage extends StatefulWidget {
     this.pickDirectory,
     this.reveal,
     this.quit,
+    this.checkpointsSize,
+    this.clearCheckpoints,
   });
 
   /// The one of [DataDirectory.current] when null.
@@ -43,6 +47,11 @@ class DataDirectoryPage extends StatefulWidget {
   /// Quits through the app's own exit, which ends its processes first
   /// (see `AppLifecycleListener` in main.dart).
   final Future<void> Function()? quit;
+
+  /// The bytes the checkpoints take up, and clearing them: this machine's
+  /// when null.
+  final Future<int> Function()? checkpointsSize;
+  final Future<void> Function()? clearCheckpoints;
 
   static bool get canReveal =>
       WindowControls.canRevealInFileManager || AppPlatform.isWindows;
@@ -77,6 +86,44 @@ class _DataDirectoryPageState extends State<DataDirectoryPage> {
   DataDirectoryTarget? _draft;
 
   static bool get _canReveal => DataDirectoryPage.canReveal;
+
+  /// What the checkpoints take up; null while measured.
+  int? _checkpoints;
+  bool _clearing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_measure());
+  }
+
+  Future<void> _measure() async {
+    int size;
+    try {
+      size = await (widget.checkpointsSize ?? review.checkpointsSize)();
+    } on Object {
+      size = 0;
+    }
+    if (mounted) setState(() => _checkpoints = size);
+  }
+
+  Future<void> _clearCheckpoints() async {
+    final l10n = context.l10n;
+    final chosen = await showIdeDialog(
+      context,
+      message: l10n.checkpointsClearConfirm,
+      detail: l10n.checkpointsClearDetail,
+      buttons: [l10n.checkpointsClear],
+    );
+    if (chosen != 0 || !mounted) return;
+    setState(() => _clearing = true);
+    try {
+      await (widget.clearCheckpoints ?? review.clearCheckpoints)();
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+    await _measure();
+  }
 
   Future<void> _reveal(String path) async {
     if (widget.reveal case final reveal?) return reveal(path);
@@ -322,6 +369,34 @@ class _DataDirectoryPageState extends State<DataDirectoryPage> {
                           onPressed: reset,
                         ),
                       ],
+              ),
+            ),
+          ],
+        ),
+        SettingsGroup(
+          title: l10n.checkpointsTitle,
+          description: l10n.checkpointsDescription,
+          children: [
+            SettingsRow(
+              label: _clearing
+                  ? l10n.checkpointsClearing
+                  : switch (_checkpoints) {
+                      final size? => l10n.checkpointsSize(
+                        BrowserHistory.sizeText(size),
+                      ),
+                      null => l10n.checkpointsMeasuring,
+                    },
+              description: current.checkpointsDir,
+              trailing: SettingsButtons(
+                children: [
+                  IdeButton(
+                    label: l10n.checkpointsClear,
+                    secondary: true,
+                    onPressed: _clearing || (_checkpoints ?? 0) == 0
+                        ? null
+                        : () => unawaited(_clearCheckpoints()),
+                  ),
+                ],
               ),
             ),
           ],

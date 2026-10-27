@@ -165,6 +165,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       notifyListeners();
       return;
     }
+    // Nothing to show: for the review alone.
+    if (event is FilesMayHaveChanged) return _reviewEvent(event);
     if (event is KernelInfoChanged || _transcript.apply(event)) {
       _cache.clear();
       _timeQuiet();
@@ -187,12 +189,30 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   final List<FileEdited> _pendingReviewEdits = [];
   bool _reviewUnavailable = false;
 
-  /// While a turn is running, looks again every few seconds: kernels that
-  /// edit through a shell (ACP) never report the files, and a look only at
-  /// the turn's end would hold the changes back until then.
-  Timer? _scanTimer;
+  /// ACP shell writes need polling even without FilesMayHaveChanged.
+  Timer? _acpScanTimer;
   Future<void>? _scanning;
-  static const _scanInterval = Duration(seconds: 3);
+  static const _acpScanInterval = Duration(seconds: 3);
+
+  /// Gives the edits reported a moment to settle before a look.
+  Timer? _lookTimer;
+
+  /// The whole project's next look while the agent works, after what may
+  /// have written files without saying which (a command, a subagent): see
+  /// [_scanSoon].
+  Timer? _scanTimer;
+
+  /// Set from a look's start till [_scanInterval] after its end: looks
+  /// asked for meanwhile wait ([_scanWanted]).
+  bool _scanBusy = false;
+  bool _scanWanted = false;
+  Timer? _scanRest;
+
+  /// How soon after a command the project is looked at, and how far apart
+  /// two such looks are at least: a look reads the whole project (Git's
+  /// status of it), too much for every command of a busy turn.
+  static const _scanDelay = Duration(seconds: 1);
+  static const _scanInterval = Duration(seconds: 5);
 
   /// The review, while it holds: null before it opened, or once it failed
   /// (the changes are then those the kernel reported).
@@ -202,7 +222,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   };
 
   /// Opens the review of the project (each of its folders, in a
-  /// multi-folder workspace), the first time.
+  /// multi-folder workspace), the first time; and snapshots it, so that
+  /// the first message need not wait.
   void _startReview() {
     if (_reviewOpening != null) return;
     final open = _openReview;
@@ -226,7 +247,12 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
             }
             _review = review
               ..session = sessionId
+              // A message sent while it opened.
+              ..working = isStreaming
               ..addListener(_reviewChanged);
+            // Queue the baseline before replay: begin rebases user edits,
+            // which must not rewrite the buffered events' original snapshots.
+            unawaited(review.begin());
             for (final edit in _pendingReviewEdits) {
               if (edit.seq <= math.max(_keptSeq, _transcript.revertedSeq) ||
                   edit.seq <= (_keptPaths[_absolute(edit.change.path)] ?? -1)) {
@@ -235,13 +261,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
               review.reportEdit(edit);
             }
             _pendingReviewEdits.clear();
-            if (_kernel is AcpKernel) {
-              unawaited(review.begin());
-              // SSH may finish opening after TurnStarted.
-              if (isStreaming) _startScanning(review);
-            } else {
-              unawaited(review.refresh());
-            }
+            // SSH may finish opening after TurnStarted.
+            if (_kernel is AcpKernel && isStreaming) _startScanning(review);
             notifyListeners();
             return review;
           },
@@ -258,10 +279,10 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   }
 
   void _startScanning(ChangeReviews review) {
-    _scanTimer ??= Timer.periodic(_scanInterval, (_) {
+    _acpScanTimer ??= Timer.periodic(_acpScanInterval, (_) {
       if (_disposed || !isStreaming) {
-        _scanTimer?.cancel();
-        _scanTimer = null;
+        _acpScanTimer?.cancel();
+        _acpScanTimer = null;
         return;
       }
       // A slow remote scan must not accumulate timer ticks. The turn-end
@@ -298,18 +319,72 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     }
     review.session = sessionId;
     switch (event) {
-      case TurnStarted() when _kernel is AcpKernel:
-        _startScanning(review);
+      case TurnStarted():
+        review.working = true;
+        if (_kernel is AcpKernel) _startScanning(review);
       case TurnEnded():
+        review.working = isStreaming;
+        _lookTimer?.cancel();
+        _stopScans();
         if (!isStreaming) {
-          _scanTimer?.cancel();
-          _scanTimer = null;
+          _acpScanTimer?.cancel();
+          _acpScanTimer = null;
         }
-        unawaited(_kernel is AcpKernel ? review.observe() : review.refresh());
+        unawaited(review.observe());
+      // Only while it works: between turns, what changes is not the agent's.
+      case FilesMayHaveChanged() when isStreaming:
+        _scanSoon(review);
       case FileEdited():
         review.reportEdit(event);
+        _lookTimer?.cancel();
+        _lookTimer = Timer(
+          const Duration(milliseconds: 400),
+          () => unawaited(review.observe(full: false)),
+        );
       default:
     }
+  }
+
+  /// A look at the whole project, soon: [_scanDelay] after it is asked
+  /// for, then no other till [_scanInterval] after it ends, those asked for
+  /// meanwhile taken in by one look then.
+  void _scanSoon(ChangeReviews review) {
+    if (_scanTimer != null) return;
+    if (_scanBusy) {
+      _scanWanted = true;
+      return;
+    }
+    _scanTimer = Timer(_scanDelay, () => unawaited(_scan(review)));
+  }
+
+  Future<void> _scan(ChangeReviews review) async {
+    _scanTimer = null;
+    if (_disposed || !isStreaming) return;
+    _scanBusy = true;
+    try {
+      await review.observe();
+    } finally {
+      if (!_disposed && _scanBusy) {
+        _scanRest = Timer(_scanInterval, () {
+          _scanRest = null;
+          _scanBusy = false;
+          if (_scanWanted) {
+            _scanWanted = false;
+            _scanSoon(review);
+          }
+        });
+      }
+    }
+  }
+
+  /// No more looks of the turn's: its end looks at everything.
+  void _stopScans() {
+    _scanTimer?.cancel();
+    _scanTimer = null;
+    _scanRest?.cancel();
+    _scanRest = null;
+    _scanBusy = false;
+    _scanWanted = false;
   }
 
   Timer? _quietTimer;
@@ -758,17 +833,37 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     );
   }
 
-  /// Background commands, including completed ones for their output tabs.
+  /// Background commands, including completed ones for their output tabs
+  /// (until cleared, [clearTasks]).
   List<KernelTask> get terminalTasks => _cached(
     #terminalTasks,
     () => [
       for (final task in _transcript.tasks)
-        if (task.background && task.kind == KernelTaskKind.command) task,
+        if (task.background &&
+            task.kind == KernelTaskKind.command &&
+            !_clearedTasks.contains(task.id))
+          task,
     ],
   );
 
+  /// The background commands ended and cleared from [terminalTasks], by id.
+  final Set<String> _clearedTasks = {};
+
   void stopTask(KernelTask task) {
     if (_kernel case final RunsBackgroundTasks kernel) kernel.stopTask(task.id);
+  }
+
+  /// Takes [tasks] that have ended (done, failed, stopped) off
+  /// [terminalTasks]: those running stay.
+  void clearTasks(Iterable<KernelTask> tasks) {
+    var cleared = false;
+    for (final task in tasks) {
+      if (task.status == CommandStatus.running) continue;
+      cleared |= _clearedTasks.add(task.id);
+    }
+    if (!cleared) return;
+    _cache.remove(#terminalTasks);
+    notifyListeners();
   }
 
   /// Moves what the item at [index] runs (a command, a subagent) to the
@@ -917,6 +1012,22 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       return byPath.values.toList();
     });
   }
+
+  /// The files changed and neither kept nor undone, each with the turn
+  /// that changed it (its id) and what that turn was asked, in the order
+  /// they were changed: what the IDE's changelists of turns are made of.
+  List<({String turn, String request, String path})> get turnEdits =>
+      _cached(#turnEdits, () {
+        return [
+          for (final (seq: _, :change, :turnId) in _pendingEdits)
+            if (turnId != null)
+              (
+                turn: turnId,
+                request: _transcript.turnMessage(turnId)?.text ?? '',
+                path: _absolute(change.path),
+              ),
+        ];
+      });
 
   /// The files the agent read or changed (or was given: a picture a tool
   /// returned, saved), absolute: what its text may link to outside the
@@ -1107,10 +1218,21 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       now: now,
       notes: editor == null ? const [] : _editorNotes(editor()),
     );
-    // A turn about to start: what was put back since the last is no
-    // longer pending.
+    // A turn about to start, not one queued behind another: the project
+    // is snapshotted, so that what the agent does is told apart. Not
+    // waited on: the agent takes a while before it edits anything, and
+    // the looks its edits bring on are queued behind this one. (A review
+    // still opening takes its own snapshot as it opens.)
     if (_review case final review? when !isStreaming) {
-      unawaited(_kernel is AcpKernel ? review.begin() : review.refresh());
+      review.working = true;
+      // Taken late, it would count some of the agent's work as what was
+      // there: the review gives way to what the kernel reports.
+      unawaited(
+        review.begin().timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => review.abandon('The snapshot took too long.'),
+        ),
+      );
     }
     _kernel.send(turn);
   }
@@ -1219,8 +1341,10 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   void dispose() {
     _disposed = true;
     _quietTimer?.cancel();
-    _scanTimer?.cancel();
+    _acpScanTimer?.cancel();
     _pendingReviewEdits.clear();
+    _lookTimer?.cancel();
+    _stopScans();
     _review
       ?..removeListener(_reviewChanged)
       ..dispose();

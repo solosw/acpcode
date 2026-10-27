@@ -372,6 +372,14 @@ abstract interface class SessionCatalog {
   Future<void> delete(String id);
 }
 
+/// A [SessionCatalog] that can have a directory's sessions belong to
+/// another (a project's folder moved): listed, and continued, there.
+abstract interface class MovesSessions {
+  /// Moves the sessions kept for [from] to [to]; how many moved. Throws
+  /// where it cannot (a remote host's, say).
+  Future<int> moveSessions(String from, String to);
+}
+
 // --- Registration -----------------------------------------------------------
 
 /// A kernel the user can pick, and how to make one.

@@ -1,3 +1,4 @@
+import 'package:baocode/ide/git/git_model.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/git/git_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -65,6 +66,42 @@ void main() {
       await service.unstage(['/project/lib/a.dart']);
       expect(git.callsTo('restore'), hasLength(1));
     });
+  });
+
+  group('#311 the status on an old Git', () {
+    test('a Git before 2.16 lists the ignored paths apart', () async {
+      git.version = 'git version 2.7.4';
+      git.answers['ls-files'] = const IdeGitOutput(0, 'build/\x00');
+      final state = await service.status();
+      expect(state!.head.branch, 'main');
+      expect(git.callsTo('status').single, [
+        'status',
+        '-z',
+        '--porcelain',
+        '--branch',
+        '--untracked-files=all',
+      ]);
+      expect(git.callsTo('ls-files').single, contains('--directory'));
+      expect(
+        state.decorations.folder('/project/build')!.colorId,
+        'gitDecoration.ignoredResourceForeground',
+      );
+    });
+
+    test('a newer Git is, as matching patterns', () async {
+      await service.status();
+      expect(git.callsTo('status').single, contains('--ignored=matching'));
+    });
+  });
+
+  test('a ref\'s raw date is read as its seconds', () {
+    final refs = parseGitRefs(
+      gitRefRecord('refs/heads/main', 'a' * 40, time: 1767225600),
+    );
+    expect(
+      refs.single.details!.date,
+      DateTime.fromMillisecondsSinceEpoch(1767225600 * 1000),
+    );
   });
 
   test('parseGitVersion reads the major and minor', () {

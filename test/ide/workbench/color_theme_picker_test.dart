@@ -374,9 +374,7 @@ void main() {
     // A click on a row applies its theme too.
     await _openPicker(tester);
     expect(_active(tester), 'Light Modern');
-    await tester.tap(
-      find.descendant(of: _picker, matching: find.text('Red')),
-    );
+    await tester.tap(find.descendant(of: _picker, matching: find.text('Red')));
     await tester.pump();
     expect(_picker, findsNothing);
     await tester.pump(const Duration(seconds: 1));

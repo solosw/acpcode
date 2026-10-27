@@ -45,7 +45,8 @@ class GitSnapshot {
       return null;
     }
     final (branch, status, log, head) = await (
-      git(['branch', '--show-current']),
+      // Not `branch --show-current` (Git 2.22+); fails when detached.
+      git(['symbolic-ref', '--quiet', '--short', 'HEAD']),
       git(['status', '--short']),
       git(['log', '--oneline', '-n', '5']),
       git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']),

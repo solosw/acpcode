@@ -67,8 +67,12 @@ import '../save_copy.dart';
 import 'commit_message.dart';
 import 'git_graph_painter.dart';
 import 'git_model.dart';
+import 'git_review.dart';
 import 'git_repository.dart';
 import 'git_service.dart';
+import 'git_branch_tree.dart' show IdeGitFavoriteBranches;
+import 'ide_git_log_view.dart';
+import 'ide_git_ref_labels.dart';
 import 'scm_host.dart';
 import 'scm_tree.dart';
 
@@ -79,7 +83,11 @@ import 'scm_tree.dart';
 enum IdeScmSort { name, path, status }
 
 class IdeScmSession {
-  IdeScmSession({this.settings});
+  IdeScmSession({this.settings, this.favoriteBranches});
+
+  /// The favorite branches of each repository, by its folder, which the
+  /// window keeps (see [IdeGitLogController.favoriteBranches]).
+  final IdeGitFavoriteBranches? favoriteBranches;
 
   /// settings.json, where the choices made in its dialogs (Always, Never,
   /// Don't Show Again) are kept as VS Code keeps them; none under test,
@@ -115,6 +123,62 @@ class IdeScmSession {
   /// The tree's collapsed folders (`group:folder:path`).
   final Set<String> collapsedFolders = {};
 
+  /// The commit panel's check marks by path, where they are not the
+  /// default (the tracked changes checked, the unversioned files not).
+  final Map<String, bool> included = {};
+
+  /// The commit panel's Amend.
+  bool amend = false;
+
+  /// The commit options' author (`Name <email>`), for the next commit
+  /// only; null for the one configured.
+  String? author;
+
+  /// `git.alwaysSignOff`: a Signed-off-by line in each commit.
+  bool get signOff => _choice('git.alwaysSignOff', false);
+  set signOff(bool value) => _choose('git.alwaysSignOff', value);
+
+  /// Whether a commit runs the repository's hooks (else `--no-verify`).
+  bool get runHooks => _choice('baocode.git.runHooks', true);
+  set runHooks(bool value) => _choose('baocode.git.runHooks', value);
+
+  IdeGitCommitOptions get commitOptions =>
+      IdeGitCommitOptions(author: author, signOff: signOff, runHooks: runHooks);
+
+  /// The messages committed with, or tried, the newest first: what the
+  /// commit message history has before those of the log.
+  final List<String> recentMessages = [];
+
+  void rememberMessage(String message) {
+    recentMessages
+      ..remove(message)
+      ..insert(0, message);
+    if (recentMessages.length > 20) recentMessages.removeLast();
+  }
+
+  /// Whether the commit panel lists the ignored files.
+  bool showIgnored = false;
+
+  /// `baocode.git.aiReview`: the model reviews a commit before it is made.
+  bool get aiReview => _choice('baocode.git.aiReview', false);
+  set aiReview(bool value) => _choose('baocode.git.aiReview', value);
+
+  /// What the last review found; null when there is none to show.
+  List<IdeGitReviewProblem>? review;
+
+  /// Completes to stop the review under way; null when none is.
+  Completer<void>? reviewing;
+
+  /// The commit the review holds back (with Push, or not), done when
+  /// committed anyway; null when none waits.
+  bool? reviewHeldPush;
+
+  /// The list's focused row, selection and anchor, kept while the view is
+  /// away (the Git log left for the editor) to be where they were.
+  String? listSelected;
+  final Set<String> listSelection = {};
+  String? listAnchor;
+
   /// `git.enableSmartCommit`: commit every change when none is staged.
   bool get enableSmartCommit => _choice('git.enableSmartCommit', false);
   set enableSmartCommit(bool value) => _choose('git.enableSmartCommit', value);
@@ -128,6 +192,16 @@ class IdeScmSession {
   bool get confirmSync => _choice('git.confirmSync', true);
   set confirmSync(bool value) => _choose('git.confirmSync', value);
 
+  /// `git.rebaseWhenSync`: Update Project (and Sync) rebases, else merges.
+  bool get rebaseWhenSync => _choice('git.rebaseWhenSync', false);
+  set rebaseWhenSync(bool value) => _choose('git.rebaseWhenSync', value);
+
+  /// Whether Update Project asks how, as JetBrains IDEs' does until told
+  /// not to.
+  bool get updateProjectAsks => _choice('baocode.git.updateProjectAsks', true);
+  set updateProjectAsks(bool value) =>
+      _choose('baocode.git.updateProjectAsks', value);
+
   /// Completes to cancel the commit message being generated; null when
   /// none is. Kept here, so that the message still arrives when the view
   /// has closed meanwhile.
@@ -138,10 +212,17 @@ class IdeScmSession {
     expandedCommits,
   );
 
+  /// The Git log's (see ide_git_log_view.dart).
+  late final IdeGitLogController log = IdeGitLogController(
+    favoriteBranches: favoriteBranches,
+  );
+
   void dispose() {
     generating?.complete();
+    reviewing?.complete();
     message.dispose();
     graph.dispose();
+    log.dispose();
   }
 }
 
@@ -333,6 +414,7 @@ class IdeScmView extends StatefulWidget {
     this.commitMessage,
     this.onCheckout,
     this.showTitle = true,
+    this.showGraph = true,
     this.background,
   });
 
@@ -343,6 +425,10 @@ class IdeScmView extends StatefulWidget {
   /// Whether the view's title shows over it: not where the page it is on
   /// is named already (the side panel's).
   final bool showTitle;
+
+  /// Whether the Graph pane shows under CHANGES: not where the Git log
+  /// shows the history (see ide_git_log_view.dart).
+  final bool showGraph;
 
   /// Behind it; the side bar's when null.
   final Color? background;
@@ -667,6 +753,9 @@ class IdeScmViewState extends State<IdeScmView>
     _message = _session.message.text;
     _session.message.addListener(_messageChanged);
     _listFocus.addListener(_rebuild);
+    _selected = _session.listSelected;
+    _selection.addAll(_session.listSelection);
+    _anchor = _session.listAnchor;
   }
 
   @override
@@ -690,6 +779,11 @@ class IdeScmViewState extends State<IdeScmView>
   @override
   void dispose() {
     _session.message.removeListener(_messageChanged);
+    _session
+      ..listSelected = _selected
+      ..listSelection.clear()
+      ..listSelection.addAll(_selection)
+      ..listAnchor = _anchor;
     _inputFocus.dispose();
     for (final focus in _inputFocuses.values) {
       focus.dispose();
@@ -803,42 +897,43 @@ class IdeScmViewState extends State<IdeScmView>
             ],
             body: _changesList(git, state),
           ),
-          IdePane(
-            id: 'graph',
-            title: l10n.scmGraph,
-            // Which repository's, with several.
-            description: _grouped ? p.basename(git.service.root) : null,
-            weight: 2,
-            actions: [
-              IdePaneAction(
-                icon: Codicons.target,
-                tooltip: l10n.scmGoToCurrent,
-                onPressed: () => _graph.goToCurrent(git),
-              ),
-              IdeMenuButton(
-                icon: Codicons.gitBranch,
-                tooltip: l10n.scmGraphBranches,
-                entries: () => [
-                  IdeMenuAction(
-                    l10n.scmGraphCurrentBranch,
-                    checked: !git.graphAllBranches,
-                    onSelected: () => git.graphAllBranches = false,
-                  ),
-                  IdeMenuAction(
-                    l10n.scmGraphAllBranches,
-                    checked: git.graphAllBranches,
-                    onSelected: () => git.graphAllBranches = true,
-                  ),
-                ],
-              ),
-              IdePaneAction(
-                icon: Codicons.refresh,
-                tooltip: l10n.commonRefresh,
-                onPressed: () => unawaited(git.refresh()),
-              ),
-            ],
-            body: _graphList(git),
-          ),
+          if (widget.showGraph)
+            IdePane(
+              id: 'graph',
+              title: l10n.scmGraph,
+              // Which repository's, with several.
+              description: _grouped ? p.basename(git.service.root) : null,
+              weight: 2,
+              actions: [
+                IdePaneAction(
+                  icon: Codicons.target,
+                  tooltip: l10n.scmGoToCurrent,
+                  onPressed: () => _graph.goToCurrent(git),
+                ),
+                IdeMenuButton(
+                  icon: Codicons.gitBranch,
+                  tooltip: l10n.scmGraphBranches,
+                  entries: () => [
+                    IdeMenuAction(
+                      l10n.scmGraphCurrentBranch,
+                      checked: git.graphBranch == ideGraphCurrentBranch,
+                      onSelected: () => git.graphBranch = ideGraphCurrentBranch,
+                    ),
+                    IdeMenuAction(
+                      l10n.scmGraphAllBranches,
+                      checked: git.graphBranch == null,
+                      onSelected: () => git.graphBranch = null,
+                    ),
+                  ],
+                ),
+                IdePaneAction(
+                  icon: Codicons.refresh,
+                  tooltip: l10n.commonRefresh,
+                  onPressed: () => unawaited(git.refresh()),
+                ),
+              ],
+              body: _graphList(git),
+            ),
         ],
       );
     }
@@ -3322,7 +3417,7 @@ class IdeGitGraph extends StatelessWidget {
     return [
       for (final (index, ref) in refs.indexed) ...[
         if (index > 0) const SizedBox(width: 4),
-        Flexible(child: _RefBadge(ref, color(ref))),
+        Flexible(child: IdeGitRefBadge(ref, color(ref))),
       ],
     ];
   }
@@ -3636,8 +3731,8 @@ class _SplitButtonState extends State<_SplitButton> {
 /// short of room); filled with the reference's color, else outlined in the
 /// description's, quiet on any row (a selected one's color is often the
 /// badges' default).
-class _RefBadge extends StatelessWidget {
-  const _RefBadge(this.ref, this.color);
+class IdeGitRefBadge extends StatelessWidget {
+  const IdeGitRefBadge(this.ref, this.color, {super.key});
 
   final IdeGitRef ref;
 
@@ -3713,9 +3808,18 @@ class _RefBadge extends StatelessWidget {
 /// A commit's hover, as the graph and the timeline show it: the author,
 /// when, the message, its references and its id.
 class IdeCommitHover extends StatelessWidget {
-  const IdeCommitHover(this.commit, {super.key, this.referenceColors});
+  const IdeCommitHover(
+    this.commit, {
+    super.key,
+    this.referenceColors,
+    this.labels = false,
+  });
 
   final IdeGitCommit commit;
+
+  /// The references as the Git log draws them ([IdeGitRefLabelView]), not
+  /// as badges.
+  final bool labels;
 
   /// The graph's color ids of [commit]'s references, by id (the others in
   /// the default label's); without them (the timeline's), the references
@@ -3772,11 +3876,15 @@ class IdeCommitHover extends StatelessWidget {
               when commit.references.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
-              spacing: 4,
+              spacing: labels ? 12 : 4,
               runSpacing: 4,
               children: [
-                for (final ref in commit.references)
-                  _RefBadge(ref, referenceColors[ref.id]),
+                if (labels)
+                  for (final label in ideGitRefLabels(commit.references))
+                    IdeGitRefLabelView(label, foreground: foreground)
+                else
+                  for (final ref in commit.references)
+                    IdeGitRefBadge(ref, referenceColors[ref.id]),
               ],
             ),
           ],

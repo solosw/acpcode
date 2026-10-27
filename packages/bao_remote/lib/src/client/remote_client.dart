@@ -509,17 +509,21 @@ class RemoteClient {
     {'root': root, 'query': textQueryToJson(query)},
   ).map((item) => searchItemFromJson(_map(item)));
 
-  /// `git` there; [limit] as `runGit`'s (a server before it reads all).
+  /// `git` there; [limit], [stdin] and [environment] as `runGit`'s.
   Future<IdeGitOutput> git(
     List<String> arguments, {
     required String cwd,
     int? limit,
+    String? stdin,
+    Map<String, String>? environment,
   }) async {
     final result = _map(
       await peer.request(RemoteProtocol.gitRun, {
         'arguments': arguments,
         'cwd': cwd,
         'limit': ?limit,
+        'stdin': ?stdin,
+        'environment': ?environment,
       }),
     );
     if (result['truncated'] == true) {
@@ -752,7 +756,7 @@ class RemoteClient {
   // --- Review ----------------------------------------------------------------
 
   /// The review store of the project at [root] there; null where there is
-  /// none (no such folder).
+  /// none (no Git there, or no such folder).
   Future<RemoteReviewStore?> openReview(
     String root, {
     Future<RemoteClient> Function(RemoteClient previous)? reconnect,

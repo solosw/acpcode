@@ -3,8 +3,12 @@ import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import '../agent_kernel.dart';
 
 /// No local sessions on the web.
-class ClaudeStorage implements SessionCatalog {
+class ClaudeStorage implements SessionCatalog, MovesSessions {
   const ClaudeStorage();
+
+  @override
+  Future<int> moveSessions(String from, String to) =>
+      throw UnsupportedError('No local sessions on the web');
 
   @override
   Future<List<ProjectRecord>> projects() async => const [];

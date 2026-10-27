@@ -297,7 +297,7 @@ class _IdeDialogState extends State<_IdeDialog> {
                               if (widget.checkbox case final label?)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 10),
-                                  child: _DialogCheckbox(
+                                  child: IdeCheckbox(
                                     label: label,
                                     checked: _checked,
                                     onChanged: () =>
@@ -337,9 +337,11 @@ class _IdeDialogState extends State<_IdeDialog> {
   }
 }
 
-/// The dialog's checkbox and its label (`.monaco-checkbox`, 18px).
-class _DialogCheckbox extends StatefulWidget {
-  const _DialogCheckbox({
+/// A checkbox and its label (`.monaco-checkbox`, 18px): the dialog's, and
+/// others' in its style.
+class IdeCheckbox extends StatefulWidget {
+  const IdeCheckbox({
+    super.key,
     required this.label,
     required this.checked,
     required this.onChanged,
@@ -350,10 +352,10 @@ class _DialogCheckbox extends StatefulWidget {
   final VoidCallback onChanged;
 
   @override
-  State<_DialogCheckbox> createState() => _DialogCheckboxState();
+  State<IdeCheckbox> createState() => IdeCheckboxState();
 }
 
-class _DialogCheckboxState extends State<_DialogCheckbox> {
+class IdeCheckboxState extends State<IdeCheckbox> {
   var _focused = false;
 
   @override

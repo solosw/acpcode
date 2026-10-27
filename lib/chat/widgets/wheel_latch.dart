@@ -51,11 +51,18 @@ class _WheelLatchState extends State<WheelLatch> {
     }
   }
 
+  /// The wheel's move as [view]'s offset takes it: turned round in a
+  /// reversed view (live output's), as [Scrollable] itself does.
+  static double _deltaIn(ScrollableState view, PointerScrollEvent event) {
+    final dy = event.scrollDelta.dy;
+    return axisDirectionIsReversed(view.axisDirection) ? -dy : dy;
+  }
+
   void _handleSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
     final inner = Scrollable.maybeOf(context);
     if (inner == null) return;
-    final delta = event.scrollDelta.dy;
+    final delta = _deltaIn(inner, event);
     final last = _lastWheel;
     if (last == null || event.timeStamp - last >= WheelLatch.gap) {
       final position = inner.position;
@@ -83,7 +90,7 @@ class _WheelLatchState extends State<WheelLatch> {
     if (outer == null) return;
     GestureBinding.instance.pointerSignalResolver.register(
       event,
-      (event) => outer.position.pointerScroll(delta),
+      (_) => outer.position.pointerScroll(_deltaIn(outer, event)),
     );
   }
 

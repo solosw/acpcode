@@ -145,16 +145,16 @@ class SessionModelPicker extends StatelessWidget {
       tooltip: tooltip,
       menuWidth: 260,
       searchPlaceholder: l10n.modelsSearch,
-      footer: switch (SettingsOpener.maybeOf(context)) {
-        final open? => (
-          label: ChannelSetup.channelBuild
-              ? l10n.channelAccountTitle
-              : l10n.modelsManage,
-          icon: Icons.tune_rounded,
-          onTap: () => open(SettingsSection.models),
-        ),
-        null => null,
-      },
+      footers: [
+        if (SettingsOpener.maybeOf(context) case final open?)
+          (
+            label: ChannelSetup.channelBuild
+                ? l10n.channelAccountTitle
+                : l10n.modelsManage,
+            icon: Icons.tune_rounded,
+            onTap: () => open(SettingsSection.models),
+          ),
+      ],
       tapRegionGroupId: tapRegionGroupId,
       focusNode: focusNode,
       onSelected: (option) =>

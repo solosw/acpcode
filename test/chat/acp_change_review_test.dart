@@ -3,7 +3,7 @@ library;
 
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,7 +35,7 @@ void main() {
           harness = await RemoteHarness.start();
           store = (await harness!.client.openReview(root))!;
         } else {
-          store = (await LocalReviewStore.open(
+          store = (await GitReviewStore.open(
             root,
             checkpoints: p.join(temp.path, 'checkpoints'),
           ))!;
@@ -137,7 +137,7 @@ void main() {
       if (!remote) {
         test('checkpoints inside the project are never rediscovered', () async {
           review.dispose();
-          store = (await LocalReviewStore.open(
+          store = (await GitReviewStore.open(
             root,
             checkpoints: p.join(root, '.checkpoints'),
           ))!;
@@ -160,9 +160,9 @@ void main() {
       test(
         'a file that grows too large is not mistaken for a deletion',
         () async {
-          final beforeLimit = LocalReviewStore.maxFileBytes;
-          addTearDown(() => LocalReviewStore.maxFileBytes = beforeLimit);
-          LocalReviewStore.maxFileBytes = 32;
+          final beforeLimit = GitReviewStore.maxFileBytes;
+          addTearDown(() => GitReviewStore.maxFileBytes = beforeLimit);
+          GitReviewStore.maxFileBytes = 32;
           write('file.txt', 'small\n');
           await review.begin();
           write('file.txt', 'x' * 40);

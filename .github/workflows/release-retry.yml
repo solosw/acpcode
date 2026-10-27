@@ -1,0 +1,37 @@
+# Runs a failed Release's failed jobs again, once, when a macOS build is
+# among them: what failed it has been stapling, Apple's CloudKit dropping
+# the connection for minutes on end (tool/build_macos.dart tries again for
+# twelve of them), and another runner has always got through. Actions
+# cannot retry a job itself; a failure elsewhere alone (a build that does
+# not compile) is left as it is.
+name: Release retry
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    name: Run the failed jobs again
+    if: github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Run them again where macOS failed
+        run: |
+          failed=$(gh run view "$RUN" --json jobs \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join("\n")')
+          echo "Failed: $failed"
+          if grep -q '^Build for macOS' <<< "$failed"; then
+            gh run rerun "$RUN" --failed
+            echo "::notice::Release run $RUN: its failed jobs run again"
+          else
+            echo "No macOS build among them: left as it is."
+          fi

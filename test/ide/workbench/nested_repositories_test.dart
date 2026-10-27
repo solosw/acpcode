@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/git/repository_scan.dart';
-import 'package:baocode/ide/ide_list.dart';
+import 'package:baocode/ide/ide_status_bar.dart';
 import 'package:baocode/ide/ide_workspace.dart';
 
 import '../git/fake_git.dart';
@@ -124,30 +124,32 @@ void main() {
 
     await chord(tester, LogicalKeyboardKey.keyG, control: true, shift: true);
     await tester.pumpAndSettle();
-    // Every repository under its header in CHANGES (#76): its branch
-    // right after its name, marked with what changed, and its changes.
+    // Every repository under its header in the local changes (#76): its
+    // branch after its name, and its changes.
     expect(find.text('Repositories'), findsNothing);
-    expect(find.text('app'), findsWidgets);
-    expect(find.text('dev*'), findsOneWidget);
-    expect(find.text('main*'), findsOneWidget);
+    final appHeader = find.byKey(ValueKey('r:${inRoot('app')}')).first;
+    expect(
+      find.descendant(
+        of: appHeader,
+        matching: find.textContaining(
+          RegExp(r'^app\s+dev$'),
+          findRichText: true,
+        ),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('README.md'), findsWidgets);
     expect(find.text('new.dart'), findsOneWidget);
-    final appHeader = find.byKey(ValueKey('repo:${inRoot('app')}')).first;
-    final name = find.descendant(of: appHeader, matching: find.text('app'));
-    expect(
-      tester.getTopLeft(find.text('dev*')).dx,
-      lessThan(tester.getTopRight(name).dx + 40),
-    );
-    // No count: the marks tell what changed (`scm.providerCountBadge`).
-    expect(
-      find.descendant(of: appHeader, matching: find.byType(IdeTitleBadge)),
-      findsNothing,
-    );
 
     // The one clicked is the one shown (the status bar's branch).
-    expect(find.text('dev'), findsNothing);
+    expect(_statusBar('dev'), findsNothing);
     await tester.tap(appHeader);
     await tester.pumpAndSettle();
-    expect(find.text('dev'), findsOneWidget);
+    expect(_statusBar('dev'), findsOneWidget);
   });
 }
+
+/// [text] in the status bar (the branch of the repository shown), not the
+/// Git log's.
+Finder _statusBar(String text) =>
+    find.descendant(of: find.byType(IdeStatusBar), matching: find.text(text));

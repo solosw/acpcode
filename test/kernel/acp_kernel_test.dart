@@ -13,9 +13,9 @@ class _TrackingTransport extends MockAcpTransport {
   bool closed = false;
 
   @override
-  void close() {
+  Future<void> close() async {
     closed = true;
-    super.close();
+    await super.close();
   }
 }
 
@@ -85,9 +85,12 @@ void main() {
     addTearDown(subscription.cancel);
 
     kernel.prepare();
+    await pumpEventQueue();
+    expect(events.single, isA<KernelInfoChanged>());
+    events.clear();
     kernel.dispose();
     pending.complete(transport);
-    await Future<void>.delayed(Duration.zero);
+    await kernel.stopped;
     expect(transport.closed, isTrue);
     expect(transport.written, isEmpty);
     expect(events, isEmpty);

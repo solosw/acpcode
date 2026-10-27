@@ -4,3 +4,5 @@ import 'project_workspace.dart';
 String? workspacesRoot() => null;
 
 void writeWorkspaceDirectory(ProjectWorkspace workspace) {}
+
+bool isFolder(String path) => false;

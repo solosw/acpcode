@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/monaco/flutter/diff_editor_model.dart';
 import 'package:bao_editor/monaco/flutter/document_snapshot.dart';
+import 'package:bao_editor/monaco/flutter/editor_decorations.dart';
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'package:bao_editor/monaco/flutter/lines_diff.dart';
 import 'package:bao_editor/monaco/vs/editor/common/diff/range_mapping.dart';
@@ -193,5 +194,80 @@ void main() {
     expect((inserted[3].start, inserted[3].end), (6, 9));
     expect(inserted[3].isWholeLine, isTrue);
     expect(inserted[3].backgroundColor, colors.insertedText);
+  });
+
+  test('a changed range grows to the words it touches', () {
+    const text = 'let totals = 2;';
+    // Inside a word, or an insertion point in one: the word.
+    expect(diffWordRange(text, 9, 10), (4, 10));
+    expect(diffWordRange(text, 6, 6), (4, 10));
+    // Punctuation and spaces stay as they are.
+    expect(diffWordRange(text, 13, 14), (13, 14));
+    expect(diffWordRange(text, 10, 13), (10, 13));
+  });
+
+  group('highlighted by', () {
+    late ValueNotifier<String?> before;
+    late EditorDocumentModel after;
+    late DiffEditorModel words;
+
+    setUp(() {
+      before = ValueNotifier('let total = 1;\n');
+      after = EditorDocumentModel('let totals = 2;\n');
+      words = DiffEditorModel(original: before, modified: after);
+    });
+
+    tearDown(() {
+      words.dispose();
+      after.dispose();
+      before.dispose();
+    });
+
+    ({List<EditorDecoration> original, List<EditorDecoration> modified})
+    decorate(DiffHighlight highlight) => computeDiffDecorations(
+      words.mappings!,
+      DocumentSnapshot(before.value!),
+      after.snapshot,
+      colors,
+      highlight: highlight,
+    );
+
+    List<(int, int)> inner(List<EditorDecoration> decorations) => [
+      for (final decoration in decorations)
+        if (!decoration.isWholeLine) (decoration.start, decoration.end),
+    ];
+
+    test('character: just what changed', () {
+      expect(inner(decorate(DiffHighlight.characters).modified), [
+        (9, 10),
+        (13, 14),
+      ]);
+    });
+
+    test('word: the words it is in', () {
+      expect(inner(decorate(DiffHighlight.words).modified), [
+        (4, 10),
+        (13, 14),
+      ]);
+    });
+
+    test('line: the lines only', () {
+      final decorations = decorate(DiffHighlight.lines);
+      expect(inner(decorations.modified), isEmpty);
+      expect(decorations.modified.single.backgroundColor, colors.insertedLine);
+    });
+
+    test('none: no colour behind, the signs and margin kept', () {
+      final decorations = decorate(DiffHighlight.none);
+      expect(inner(decorations.modified), isEmpty);
+      for (final decoration in [
+        ...decorations.original,
+        ...decorations.modified,
+      ]) {
+        expect(decoration.backgroundColor, isNull);
+      }
+      expect(decorations.modified.single.marginColor, colors.insertedGutter);
+      expect(decorations.modified.single.lineDecorationIcon, diffInsertIcon);
+    });
   });
 }

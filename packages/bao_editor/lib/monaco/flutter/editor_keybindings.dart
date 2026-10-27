@@ -194,6 +194,12 @@ const Map<String, String> editorKeyboardCommandLabels = {
   'editor.action.marker.next': 'Go to Next Problem (Error, Warning, Info)',
   'editor.action.marker.prev': 'Go to Previous Problem (Error, Warning, Info)',
   'editor.action.showContextMenu': 'Show Editor Context Menu',
+  // quickDiff.contribution.ts, quickDiffWidget.ts: the editor's changes
+  // since the last commit, which the app marks by the line numbers.
+  'workbench.action.editor.nextChange': 'Go to Next Change',
+  'workbench.action.editor.previousChange': 'Go to Previous Change',
+  'editor.action.dirtydiff.next': 'Show Next Change',
+  'editor.action.dirtydiff.previous': 'Show Previous Change',
   // suggestController.ts.
   'acceptSelectedSuggestion': 'Accept Selected Suggestion',
   'acceptAlternativeSelectedSuggestion':
@@ -222,6 +228,10 @@ const Set<String> editorKeyboardPaletteCommands = {
   'editor.action.marker.next',
   'editor.action.marker.prev',
   'editor.action.showContextMenu',
+  'workbench.action.editor.nextChange',
+  'workbench.action.editor.previousChange',
+  'editor.action.dirtydiff.next',
+  'editor.action.dirtydiff.previous',
 };
 
 // `when` clauses, as upstream serializes them.
@@ -645,6 +655,26 @@ editorExtraKeybindings = List.unmodifiable(<KeybindingEntry>[
   KeybindingEntry(
     key: 'shift+alt+f8',
     command: 'editor.action.marker.prev',
+    when: _focus,
+  ),
+  KeybindingEntry(
+    key: 'alt+f5',
+    command: 'workbench.action.editor.nextChange',
+    when: _textFocus,
+  ),
+  KeybindingEntry(
+    key: 'shift+alt+f5',
+    command: 'workbench.action.editor.previousChange',
+    when: _textFocus,
+  ),
+  KeybindingEntry(
+    key: 'alt+f3',
+    command: 'editor.action.dirtydiff.next',
+    when: _focus,
+  ),
+  KeybindingEntry(
+    key: 'shift+alt+f3',
+    command: 'editor.action.dirtydiff.previous',
     when: _focus,
   ),
   KeybindingEntry(

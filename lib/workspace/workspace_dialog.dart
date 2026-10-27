@@ -1,6 +1,8 @@
 // Creating a multi-folder workspace, or changing one: its name and its
 // folders, added from the projects listed or picked in the file manager.
+// And a project's own: its name, and the folder it is.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -16,6 +18,9 @@ import '../l10n/l10n.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'project_workspace.dart';
+import 'project_workspace_dir_stub.dart'
+    if (dart.library.io) 'project_workspace_dir_io.dart'
+    as platform;
 import 'window_controls.dart';
 import 'workspace.dart';
 
@@ -261,6 +266,184 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
   }
 }
 
+/// Asks for [project]'s name and folder: renamed, or moved with its
+/// conversations (see [Workspace.relocateProject]). Completes with the
+/// project as it is then, or null when dismissed.
+Future<Project?> showProjectDialog(
+  BuildContext context, {
+  required Workspace workspace,
+  required Project project,
+}) => showGeneralDialog<Project>(
+  context: context,
+  barrierDismissible: true,
+  barrierLabel: context.l10n.commonDismiss,
+  barrierColor: const Color(0x80000000),
+  transitionDuration: Duration.zero,
+  pageBuilder: (context, _, _) =>
+      ProjectDialog(workspace: workspace, project: project),
+);
+
+class ProjectDialog extends StatefulWidget {
+  const ProjectDialog({
+    super.key,
+    required this.workspace,
+    required this.project,
+  });
+
+  final Workspace workspace;
+  final Project project;
+
+  /// Whether there is a folder at a path; replaceable under test.
+  @visibleForTesting
+  static bool Function(String path) isFolder = platform.isFolder;
+
+  @override
+  State<ProjectDialog> createState() => _ProjectDialogState();
+}
+
+class _ProjectDialogState extends State<ProjectDialog> {
+  Project get _project => widget.project;
+  Workspace get _workspace => widget.workspace;
+
+  /// Empty while it is named after its folder.
+  late final TextEditingController _name = TextEditingController(
+    text: _project.name == Project.at(_project.path).name ? '' : _project.name,
+  );
+  late final TextEditingController _path = TextEditingController(
+    text: _project.path,
+  )..addListener(_pathChanged);
+  late final bool _movable = _workspace.canRelocate(_project);
+
+  /// Its conversations are being moved.
+  bool _moving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _path.dispose();
+    super.dispose();
+  }
+
+  void _pathChanged() => setState(() => _error = null);
+
+  /// The folder typed, as a path: no space around, no separator after.
+  String get _typedPath {
+    final typed = _path.text.trim();
+    return typed.isEmpty ? typed : p.normalize(typed);
+  }
+
+  /// What it is named when the user names it nothing: its folder's.
+  String get _folderName {
+    final path = _typedPath;
+    return path.isEmpty ? _project.name : Project.at(path).name;
+  }
+
+  Future<void> _pick() async {
+    final folder = await WorkspaceDialog.pickDirectory();
+    if (folder == null || !mounted) return;
+    _path.text = folder;
+  }
+
+  Future<void> _save() async {
+    if (_moving) return;
+    final l10n = context.l10n;
+    var project = _project;
+    final path = _typedPath;
+    if (_movable && !p.equals(path, project.path)) {
+      if (path.isEmpty ||
+          !p.isAbsolute(path) ||
+          !ProjectDialog.isFolder(path)) {
+        setState(() => _error = l10n.projectFolderNotFound);
+        return;
+      }
+      setState(() {
+        _moving = true;
+        _error = null;
+      });
+      final moved = await _workspace.relocateProject(project, path);
+      if (!mounted) return;
+      if (moved != ProjectRelocation.moved) {
+        setState(() {
+          _moving = false;
+          _error = moved == ProjectRelocation.busy
+              ? l10n.projectRelocateBusy
+              : l10n.projectRelocateFailed;
+        });
+        return;
+      }
+      project = _workspace.projectAt(path);
+    }
+    _workspace.renameProject(project, _name.text);
+    Navigator.pop(context, _workspace.projectAt(project.path));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final error = _error;
+    return _DialogFrame(
+      title: l10n.projectEditTitle,
+      icon: Codicons.folder,
+      onSubmit: () => unawaited(_save()),
+      actions: [
+        IdeButton(
+          label: _moving ? l10n.projectRelocating : l10n.commonSave,
+          spinning: _moving,
+          onPressed: _moving ? null : () => unawaited(_save()),
+        ),
+        IdeButton(
+          label: l10n.commonCancel,
+          secondary: true,
+          onPressed: () => Navigator.pop(context),
+        ),
+      ],
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(l10n.workspaceName, style: _text(size: 12)),
+            const SizedBox(height: 4),
+            IdeInputBox(
+              controller: _name,
+              autofocus: true,
+              placeholder: _folderName,
+              semanticsLabel: l10n.workspaceName,
+              onSubmitted: (_) => unawaited(_save()),
+            ),
+            const SizedBox(height: 14),
+            Text(l10n.projectLocation, style: _text(size: 12)),
+            const SizedBox(height: 2),
+            if (_movable) ...[
+              Text(l10n.projectLocationDescription, style: _muted()),
+              const SizedBox(height: 8),
+              IdeInputBox(
+                controller: _path,
+                semanticsLabel: l10n.projectLocation,
+                validation: error == null ? null : IdeInputValidation(error),
+                onSubmitted: (_) => unawaited(_save()),
+              ),
+              if (WorkspaceDialog.canPickDirectory()) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IdeButton(
+                    icon: Codicons.folderOpened,
+                    label: l10n.projectChooseFolder(l10n.fileManager),
+                    secondary: true,
+                    onPressed: _moving ? null : () => unawaited(_pick()),
+                  ),
+                ),
+              ],
+            ] else
+              Text(_project.path, style: _muted()),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A folder of the workspace: its project's icon and name, where it is,
 /// and an × to take it out.
 class _FolderRow extends StatelessWidget {
@@ -324,9 +507,11 @@ class _DialogFrame extends StatelessWidget {
     required this.child,
     required this.actions,
     required this.onSubmit,
+    this.icon = Codicons.folderLibrary,
   });
 
   final String title;
+  final IconData icon;
   final Widget child;
   final List<Widget> actions;
 
@@ -374,7 +559,7 @@ class _DialogFrame extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(left: 12, top: 4),
                         child: Icon(
-                          Codicons.folderLibrary,
+                          icon,
                           size: 16,
                           color: colors['descriptionForeground'],
                         ),

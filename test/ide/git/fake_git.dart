@@ -12,11 +12,17 @@ class FakeGit {
   /// Whether [root] is in a repository (`rev-parse --show-toplevel`).
   bool isRepository = true;
 
-  /// `git status -z --porcelain=v1 --branch` output.
+  /// `git status -z --porcelain --branch` output.
   String status = '## main\x00';
 
   /// `git log` output ([ideGitLogFormat] records).
   String log = '';
+
+  /// The commit messages `git log --format=%B%x1e` gives, the newest first.
+  List<String> messages = [];
+
+  /// `git ls-files --others --ignored --directory -z` output's paths.
+  List<String> ignored = [];
 
   /// `git show` output: by commit for `--name-status -z`, by `ref:path`
   /// for a file's text (which, not there, fails as a missing path does).
@@ -30,6 +36,12 @@ class FakeGit {
 
   /// `git remote` output.
   String remotes = 'origin\n';
+
+  /// `git remote -v`'s URLs, by remote.
+  final Map<String, String> remoteUrls = {};
+
+  /// The pseudo-ref of the operation under way (`REBASE_HEAD`), if any.
+  String? operation;
 
   /// `git --version` output (the service reads it to pick `restore` or the
   /// older `reset` for unstaging).
@@ -50,6 +62,9 @@ class FakeGit {
   /// branch.
   final Map<String, String> upstreams = {};
 
+  /// `git worktree list --porcelain` output.
+  String worktrees = '';
+
   /// Every command run, without `git`.
   final List<List<String>> calls = [];
 
@@ -63,6 +78,10 @@ class FakeGit {
   /// What a command waits for before it answers, e.g. a push under way.
   Future<void>? Function(List<String> arguments)? hold;
 
+  /// What was written to Git, and the environments it was given, in order.
+  final List<String> stdins = [];
+  final List<Map<String, String>> environments = [];
+
   List<List<String>> callsTo(String command) => [
     for (final call in calls)
       if (call.first == command) call,
@@ -72,8 +91,16 @@ class FakeGit {
     List<String> arguments, {
     required String workingDirectory,
     int? limit,
+    String? stdin,
+    Map<String, String>? environment,
   }) async {
+    // The operation under way, read with each status: not counted.
+    if (arguments case ['log', '--no-walk', '--source', ...]) {
+      return IdeGitOutput(0, operation == null ? '' : '$operation\n');
+    }
     calls.add(arguments);
+    if (stdin != null) stdins.add(stdin);
+    if (environment != null) environments.add(environment);
     await hold?.call(arguments);
     onCommand?.call(arguments);
     if (answers[arguments.first] case final answer?) return answer;
@@ -99,8 +126,15 @@ class FakeGit {
         );
       case ['for-each-ref', ...]:
         return IdeGitOutput(0, forEachRef);
+      case ['log', '-n', _, '--format=%B%x1e', ...]:
+        return IdeGitOutput(0, [for (final m in messages) '$m\n\x1e'].join());
       case ['log', ...]:
         return IdeGitOutput(0, log);
+      case ['ls-files', '--others', '--ignored', ...]:
+        return IdeGitOutput(
+          0,
+          [for (final path in ignored) '$path\x00'].join(),
+        );
       case ['diff', ..., '--no-index', '--', '/dev/null', final path]:
         final added = newFileDiffs[path];
         return IdeGitOutput(added == null ? 0 : 1, added ?? '');
@@ -116,6 +150,16 @@ class FakeGit {
         return IdeGitOutput(0, show[commit] ?? '');
       case ['remote']:
         return IdeGitOutput(0, remotes);
+      case ['remote', '-v']:
+        return IdeGitOutput(
+          0,
+          [
+            for (final MapEntry(:key, :value) in remoteUrls.entries)
+              '$key\t$value (fetch)\n$key\t$value (push)\n',
+          ].join(),
+        );
+      case ['worktree', 'list', '--porcelain']:
+        return IdeGitOutput(0, worktrees);
       case [..., 'blame', '--root', '--incremental', '--', final path]:
         final output = blame[path];
         if (output == null) {
@@ -166,7 +210,7 @@ String gitBlameEntry(
 
 /// A [ideGitRefsFormat] line: [ref] at [commit] (40 hex digits), which
 /// [author] committed at [time] with [subject]; [track] its upstream's
-/// tracking (`[ahead 1]`).
+/// tracking (`[ahead 1]`), [upstream] its upstream (`origin/main`).
 String gitRefRecord(
   String ref,
   String commit, {
@@ -174,6 +218,7 @@ String gitRefRecord(
   String subject = 'Change',
   int time = 1767225600,
   String track = '',
+  String upstream = '',
 }) => [
   ref,
   commit,
@@ -182,11 +227,13 @@ String gitRefRecord(
   '',
   author,
   '',
-  '$time',
+  // `%(committerdate:raw)`.
+  '$time +0000',
   '',
   subject,
   '',
   track,
+  upstream,
 ].join('\x00');
 
 /// A [ideGitLogFormat] record.

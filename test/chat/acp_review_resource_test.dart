@@ -3,41 +3,64 @@ library;
 
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show LocalReviewStore;
+import 'package:bao_remote/local.dart' show GitReviewStore;
 import 'package:bao_remote/protocol.dart' show RpcError;
 import 'package:bao_remote/review.dart' show ReviewUnavailable;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+/// Fail at the Git snapshot's index-directory access, before staging changes.
+/// The old scanner used systemTemp; Git no longer does, so injecting there
+/// would let these tests pass without exercising a failed discovery.
+final class _SnapshotFailure extends IOOverrides {
+  _SnapshotFailure(this.gitDir, this.code);
+
+  final String gitDir;
+  final int code;
+  var attempts = 0;
+
+  @override
+  Directory createDirectory(String path) {
+    if (p.equals(path, gitDir)) {
+      attempts++;
+      throw FileSystemException(
+        code == 13 ? 'Permission denied' : 'Too many open files',
+        path,
+        OSError(code == 13 ? 'Permission denied' : 'Too many open files', code),
+      );
+    }
+    return super.createDirectory(path);
+  }
+}
+
 void main() {
   late Directory temp;
   late String root;
   late ChangeReview review;
+  late GitReviewStore store;
 
   void write(String text) =>
       File(p.join(root, 'file.txt')).writeAsStringSync(text);
   String read() => File(p.join(root, 'file.txt')).readAsStringSync();
 
-  Future<void> exhausted(Future<void> Function() action, {int? code}) =>
-      IOOverrides.runZoned(
-        action,
-        getSystemTempDirectory: () {
-          throw FileSystemException(
-            'Too many open files',
-            '',
-            OSError(
-              'Too many open files',
-              code ?? (Platform.isWindows ? 4 : 24),
-            ),
-          );
-        },
-      );
+  Future<void> exhausted(Future<void> Function() action, {int? code}) async {
+    final failure = _SnapshotFailure(
+      store.gitDir,
+      code ?? (Platform.isWindows ? 4 : 24),
+    );
+    await IOOverrides.runWithIOOverrides(action, failure);
+    expect(
+      failure.attempts,
+      isPositive,
+      reason: 'discovery must hit the fault',
+    );
+  }
 
   setUp(() async {
     temp = Directory.systemTemp.createTempSync('acp-resource-');
     root = (Directory(p.join(temp.path, 'project'))..createSync()).path;
-    final store = (await LocalReviewStore.open(
+    store = (await GitReviewStore.open(
       root,
       checkpoints: p.join(temp.path, 'checkpoints'),
     ))!;

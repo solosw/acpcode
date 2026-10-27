@@ -1064,6 +1064,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdToggleChat => 'Toggle Chat';
 
   @override
+  String get cmdToggleFullScreen => 'Toggle Full Screen';
+
+  @override
+  String get cmdToggleWordWrap => 'Toggle Word Wrap';
+
+  @override
+  String get menuWordWrap => 'Word Wrap';
+
+  @override
   String get cmdTogglePanel => 'Toggle Panel Visibility';
 
   @override
@@ -1183,6 +1192,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cmdOpenKeyboardShortcuts => 'Open Keyboard Shortcuts';
+
+  @override
+  String get cmdOpenLspSettings => 'Open Language Server Settings (JSON)';
 
   @override
   String get cmdJumpToBracket => 'Go to Bracket';
@@ -1637,13 +1649,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelChanges => 'Changes';
 
   @override
-  String get sidePanelNoChanges => 'No changes yet';
-
-  @override
-  String get sidePanelNoChangesDetail =>
-      'Changes in the project\'s Git working tree and index show here.';
-
-  @override
   String get sidePanelOpenFile => 'Open in side panel';
 
   @override
@@ -1684,14 +1689,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelAddToChat => 'Add to Chat';
 
   @override
+  String get termClearTask => 'Clear';
+
+  @override
+  String get termClearEndedTasks => 'Clear All Ended Tasks';
+
+  @override
   String get sidePanelBackgroundTasks => 'Background Tasks';
 
   @override
   String get sidePanelSelectFile => 'Select a file to preview it';
-
-  @override
-  String get sidePanelSelectChange =>
-      'Select a changed file to see its changes';
 
   @override
   String get sidePanelSelectTerminal =>
@@ -1828,6 +1835,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarUnread => 'Unread';
 
   @override
+  String sidebarHoverModel(String model) {
+    return 'Model: $model';
+  }
+
+  @override
   String get sidebarDone => 'Done';
 
   @override
@@ -1838,6 +1850,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarAgents => 'Agents';
+
+  @override
+  String get sidebarCollapseAll => 'Collapse All';
+
+  @override
+  String get sidebarExpandAll => 'Expand All';
 
   @override
   String get sidebarNoMatchingAgents => 'No matching agents';
@@ -2865,8 +2883,12 @@ class AppLocalizationsEn extends AppLocalizations {
       'Changed again since the agent left it, so Undo could not take the agent\'s change out. Undo it by hand, then keep it.';
 
   @override
+  String get stripChangeShared =>
+      'Another agent was working in this project at the same time: some of this change may be its.';
+
+  @override
   String get stripChangeUntracked =>
-      'What it was before is not known (the agent did not tell, it is too large, or outside the project): it can be kept, not undone.';
+      'What it was before is not known (it is ignored or too large and the agent did not tell, or it is outside the project): it can be kept, not undone.';
 
   @override
   String get stripChangesDiff => 'Agent Changes';
@@ -7613,6 +7635,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Draws sequences such as => and != as one glyph where the font has one. The terminal does not.';
 
   @override
+  String get appearanceSettingsWordWrap => 'Word Wrap';
+
+  @override
+  String get appearanceSettingsWordWrapDescription =>
+      'Wraps long lines at the editor\'s width, in every editor. An editor\'s context menu and the Command Palette (Toggle Word Wrap) switch it too. Files of more than 5,000 lines are not wrapped.';
+
+  @override
   String get appearanceSettingsUiScale => 'Interface Size';
 
   @override
@@ -7791,28 +7820,33 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String remoteStatus(String host) {
-    return 'SSH: $host';
+  String remoteStatus(String kind, String host) {
+    return '$kind: $host';
   }
 
   @override
-  String remoteStatusConnecting(String host) {
-    return 'SSH: $host (connecting...)';
+  String remoteStatusConnecting(String kind, String host) {
+    return '$kind: $host (connecting...)';
   }
 
   @override
-  String remoteStatusReconnecting(String host) {
-    return 'SSH: $host (reconnecting...)';
+  String remoteStatusReconnecting(String kind, String host) {
+    return '$kind: $host (reconnecting...)';
   }
 
   @override
-  String remoteStatusFailed(String host) {
-    return 'SSH: $host (disconnected)';
+  String remoteStatusFailed(String kind, String host) {
+    return '$kind: $host (disconnected)';
   }
 
   @override
-  String remoteStatusInstalling(String host, int percent) {
-    return 'SSH: $host (installing Claude Code $percent%)';
+  String remoteStatusInstalling(String kind, String host, int percent) {
+    return '$kind: $host (installing Claude Code $percent%)';
+  }
+
+  @override
+  String remoteStatusInstallingUnsized(String kind, String host) {
+    return '$kind: $host (installing Claude Code...)';
   }
 
   @override
@@ -7836,8 +7870,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String remoteStatusTooltip(String host) {
-    return 'Connected to $host over SSH';
+  String remoteStatusTooltip(String kind, String host) {
+    return 'Connected to $host over $kind';
   }
 
   @override
@@ -7854,8 +7888,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get remoteReconnect => 'Reconnect';
 
   @override
-  String remoteProjectTooltip(String host) {
-    return 'On $host, over SSH';
+  String remoteProjectTooltip(String kind, String host) {
+    return 'On $host, over $kind';
   }
 
   @override
@@ -8060,6 +8094,38 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sidebarDeleteWorkspace => 'Delete Workspace';
+
+  @override
+  String get sidebarEditProject => 'Edit Project…';
+
+  @override
+  String get projectEditTitle => 'Edit Project';
+
+  @override
+  String get projectLocation => 'Location';
+
+  @override
+  String get projectLocationDescription =>
+      'Moved or renamed the folder? Point the project at it here, and its conversations move along. The folder itself is not moved.';
+
+  @override
+  String projectChooseFolder(String app) {
+    return 'Choose in $app…';
+  }
+
+  @override
+  String get projectFolderNotFound => 'There is no folder at this path.';
+
+  @override
+  String get projectRelocateBusy =>
+      'An agent of this project is still working, or open in a window of its own. Change its location once it is done.';
+
+  @override
+  String get projectRelocateFailed =>
+      'Couldn\'t move this project\'s conversations.';
+
+  @override
+  String get projectRelocating => 'Moving Conversations…';
 
   @override
   String ideWorkspaceTitle(String name) {
@@ -10238,6 +10304,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server could not be reached: check the address, port and network.';
 
   @override
+  String get remoteFailWsl =>
+      'WSL could not start this distribution: check that WSL is installed and that the distribution is listed by wsl --list.';
+
+  @override
   String get channelSetupTitle => 'Welcome to BaoCode';
 
   @override
@@ -10869,4 +10939,1421 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get stashIssuePicturesGitea =>
       'Gitea local image upload is not supported yet. Remove local images or replace them with remote image links before publishing.';
+
+  @override
+  String get gitLogRepository => 'Repository';
+
+  @override
+  String get gitLogSearch => 'Search messages; separate several with |';
+
+  @override
+  String get gitLogClearSearch => 'Clear Search';
+
+  @override
+  String get gitLogUser => 'User';
+
+  @override
+  String get gitLogAllUsers => 'All Users';
+
+  @override
+  String get gitLogMe => 'Me';
+
+  @override
+  String get gitLogDate => 'Date';
+
+  @override
+  String get gitLogAnyDate => 'Any Time';
+
+  @override
+  String get gitLogLastDay => 'Last 24 Hours';
+
+  @override
+  String get gitLogLastWeek => 'Last 7 Days';
+
+  @override
+  String get gitLogLastMonth => 'Last 30 Days';
+
+  @override
+  String get gitLogLastYear => 'Last Year';
+
+  @override
+  String get gitLogHighlight => 'Highlight';
+
+  @override
+  String get gitLogHighlightNone => 'Nothing';
+
+  @override
+  String get gitLogHighlightMine => 'My Commits';
+
+  @override
+  String get gitLogClearFilters => 'Clear Filters';
+
+  @override
+  String get gitLogCheckout => 'Checkout to...';
+
+  @override
+  String get gitLogSortTopo => 'Topological Order';
+
+  @override
+  String get gitLogSortDate => 'Date Order';
+
+  @override
+  String get gitLogLocalBranches => 'Local Branches';
+
+  @override
+  String get gitLogRemoteBranches => 'Remote Branches';
+
+  @override
+  String get gitLogTags => 'Tags';
+
+  @override
+  String get gitLogBackToLog => 'Back to Log';
+
+  @override
+  String get gitLogNoCommits => 'No commits match.';
+
+  @override
+  String get gitLogLocalChanges => 'Local Changes';
+
+  @override
+  String gitLogLocalChangesCount(int count) {
+    return 'Local Changes ($count)';
+  }
+
+  @override
+  String get gitLogSelectCommit => 'Select a commit to see its details.';
+
+  @override
+  String get gitLogAuthor => 'Author';
+
+  @override
+  String get gitLogParents => 'Parent: ';
+
+  @override
+  String get gitLogShowBranches => 'Show Branches';
+
+  @override
+  String get gitLogHideBranches => 'Hide Branches';
+
+  @override
+  String get gitLogShowSizes => 'Show Sizes';
+
+  @override
+  String get gitLogHideSizes => 'Hide Sizes';
+
+  @override
+  String gitLogFileCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitLogInNoBranch => 'No branch has this commit.';
+
+  @override
+  String get gitLogList => 'List';
+
+  @override
+  String get gitLogTree => 'Tree';
+
+  @override
+  String get gitLogFilterFiles => 'Filter files (* and ? match any)';
+
+  @override
+  String get gitLogCopyPath => 'Copy Path';
+
+  @override
+  String get gitLogCopyRelativePath => 'Copy Relative Path';
+
+  @override
+  String get gitLogBinary => 'binary';
+
+  @override
+  String get gitLogPreviousFile => 'Previous File';
+
+  @override
+  String get gitLogNextFile => 'Next File';
+
+  @override
+  String get gitLogOpenInEditor => 'Open in Editor';
+
+  @override
+  String get checkpointsTitle => 'Checkpoints';
+
+  @override
+  String get checkpointsDescription =>
+      'Snapshots of the projects agents work in, kept to undo their changes. A conversation\'s are tidied away 30 days after it last changed anything.';
+
+  @override
+  String checkpointsSize(String size) {
+    return 'Using $size';
+  }
+
+  @override
+  String get checkpointsMeasuring => 'Measuring…';
+
+  @override
+  String get checkpointsClear => 'Clear';
+
+  @override
+  String get checkpointsClearing => 'Clearing…';
+
+  @override
+  String get checkpointsClearConfirm => 'Clear the checkpoints?';
+
+  @override
+  String get checkpointsClearDetail =>
+      'The changes agents made in conversations that are not open can no longer be undone. The files themselves stay as they are.';
+
+  @override
+  String gitLogToday(String time) {
+    return 'Today $time';
+  }
+
+  @override
+  String gitLogYesterday(String time) {
+    return 'Yesterday $time';
+  }
+
+  @override
+  String get gitLogCheckoutRevision => 'Checkout Revision';
+
+  @override
+  String get gitLogNewBranch => 'New Branch…';
+
+  @override
+  String gitLogNewBranchAt(String commit) {
+    return 'New branch at $commit';
+  }
+
+  @override
+  String gitLogCheckoutBranch(String branch) {
+    return 'Checkout \'$branch\'';
+  }
+
+  @override
+  String get gitLogCopyHash => 'Copy the full hash';
+
+  @override
+  String get gitLogLoading => 'Loading history…';
+
+  @override
+  String get gitLogWorktree => 'Worktree';
+
+  @override
+  String gitLogWorktreeOf(String path) {
+    return 'Worktree: $path';
+  }
+
+  @override
+  String get gitLogFollowAgent => 'Follow the Agent';
+
+  @override
+  String get gitLogAgentHere => 'The agent works here';
+
+  @override
+  String gitLogWorktreeAt(String name, String path) {
+    return 'Checked out in worktree $name\n$path';
+  }
+
+  @override
+  String get gitLogMainWorktree => 'main worktree';
+
+  @override
+  String get gitLogWorktreeMissing => 'missing';
+
+  @override
+  String branchBarWorktree(String name, String path) {
+    return 'In worktree $name\n$path';
+  }
+
+  @override
+  String get gitCommitChanges => 'Changes';
+
+  @override
+  String get gitCommitUnversioned => 'Unversioned Files';
+
+  @override
+  String get gitCommitConflicts => 'Merge Conflicts';
+
+  @override
+  String get gitCommitAmend => 'Amend';
+
+  @override
+  String get gitCommitMessage => 'Commit Message';
+
+  @override
+  String get gitCommitButton => 'Commit';
+
+  @override
+  String get gitCommitAndPush => 'Commit and Push';
+
+  @override
+  String get gitCommitRollback => 'Rollback…';
+
+  @override
+  String gitCommitRollbackConfirm(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return 'Roll back the changes of $_temp0?';
+  }
+
+  @override
+  String get gitCommitRollbackDetail =>
+      'They go back to how they were last committed; files not committed yet are deleted.';
+
+  @override
+  String get gitCommitRollbackButton => 'Rollback';
+
+  @override
+  String get gitCommitShowDiff => 'Show Diff';
+
+  @override
+  String get gitCommitJumpToSource => 'Jump to Source';
+
+  @override
+  String get gitCommitAddToVcs => 'Add to VCS';
+
+  @override
+  String get gitCommitMarkResolved => 'Mark Resolved';
+
+  @override
+  String get gitCommitExpandAll => 'Expand All';
+
+  @override
+  String get gitCommitCollapseAll => 'Collapse All';
+
+  @override
+  String get gitCommitGroupByDirectory => 'Group by Directory';
+
+  @override
+  String get gitCommitEmptyMessage => 'Enter a commit message.';
+
+  @override
+  String get gitCommitNothingSelected => 'Check the files to commit.';
+
+  @override
+  String get gitCommitNoChanges => 'No local changes';
+
+  @override
+  String gitCommitSelected(int checked, int total) {
+    return '$checked of $total files checked';
+  }
+
+  @override
+  String get gitLogUndoCommit => 'Undo Commit';
+
+  @override
+  String get branchBarNewWorktree => 'New Worktree…';
+
+  @override
+  String branchBarNewWorktreeFrom(String branch, String folder) {
+    return 'A new branch from “$branch”, in a worktree of its own beside “$folder”: the agent works there, your checkout stays as it is';
+  }
+
+  @override
+  String branchBarInWorktree(String name) {
+    return 'In worktree $name';
+  }
+
+  @override
+  String branchBarWorkIn(String path, String branch) {
+    return 'From now on, work in $path (branch $branch): read and edit the files and run the commands there.';
+  }
+
+  @override
+  String get diffRevertChange => 'Revert';
+
+  @override
+  String get diffRemoveChange => 'Remove';
+
+  @override
+  String get diffPreviousDifference => 'Previous Difference';
+
+  @override
+  String get diffNextDifference => 'Next Difference';
+
+  @override
+  String diffDifferenceOf(int current, int count) {
+    return '$current of $count';
+  }
+
+  @override
+  String diffDifferences(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count differences',
+      one: '1 difference',
+      zero: 'No differences',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get diffSettings => 'Viewer Settings';
+
+  @override
+  String get diffLayoutAuto => 'Side by Side When Wide Enough';
+
+  @override
+  String get diffSideBySide => 'Side-by-Side Viewer';
+
+  @override
+  String get diffUnified => 'Unified Viewer';
+
+  @override
+  String get diffIgnoreWhitespace => 'Ignore Whitespace at Line Ends';
+
+  @override
+  String get diffWhitespaceNone => 'Do Not Ignore Whitespace';
+
+  @override
+  String get diffIgnoreAllWhitespace => 'Ignore All Whitespace';
+
+  @override
+  String get diffCollapseUnchanged => 'Collapse Unchanged Fragments';
+
+  @override
+  String diffUnchangedLines(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count unchanged lines',
+      one: '1 unchanged line',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get diffHighlightCharacters => 'Highlight Characters';
+
+  @override
+  String get diffHighlightWords => 'Highlight Words';
+
+  @override
+  String get diffHighlightLines => 'Highlight Lines';
+
+  @override
+  String get diffHighlightNone => 'Do Not Highlight';
+
+  @override
+  String get diffGoToFile => 'Go to Changed File';
+
+  @override
+  String get lineChangePrevious => 'Previous Change';
+
+  @override
+  String get lineChangeNext => 'Next Change';
+
+  @override
+  String get lineChangeRollback => 'Rollback';
+
+  @override
+  String get lineChangeShowDiff => 'Show Diff';
+
+  @override
+  String get lineChangeCopy => 'Copy Original Lines';
+
+  @override
+  String get cmdNextChange => 'Go to Next Change';
+
+  @override
+  String get cmdPreviousChange => 'Go to Previous Change';
+
+  @override
+  String get cmdShowNextChange => 'Show Next Change';
+
+  @override
+  String get cmdShowPreviousChange => 'Show Previous Change';
+
+  @override
+  String get gitAnnotate => 'Annotate with Git Blame';
+
+  @override
+  String get gitCloseAnnotations => 'Close Annotations';
+
+  @override
+  String get gitLogCopyPatch => 'Copy as Patch';
+
+  @override
+  String get gitLogCherryPick => 'Cherry-Pick';
+
+  @override
+  String get gitLogCompareWithLocal => 'Compare with Local';
+
+  @override
+  String get gitLogResetToHere => 'Reset Current Branch to Here';
+
+  @override
+  String get gitLogResetSoft => 'Soft: keep the changes staged';
+
+  @override
+  String get gitLogResetMixed => 'Mixed: keep the changes, not staged';
+
+  @override
+  String get gitLogResetHard => 'Hard: discard the changes';
+
+  @override
+  String get gitLogResetKeep => 'Keep: keep the local changes';
+
+  @override
+  String gitLogResetHardConfirm(String branch, String commit) {
+    return 'Reset “$branch” to $commit and discard every change since, committed or not?';
+  }
+
+  @override
+  String get gitLogResetButton => 'Reset';
+
+  @override
+  String get gitLogRevertCommit => 'Revert Commit';
+
+  @override
+  String get gitLogEditMessage => 'Edit Commit Message…';
+
+  @override
+  String get gitLogDropCommit => 'Drop Commit';
+
+  @override
+  String gitLogDropConfirm(String commit, String subject) {
+    return 'Take $commit “$subject” out of the branch?';
+  }
+
+  @override
+  String get gitLogDropButton => 'Drop';
+
+  @override
+  String get gitLogPushUpToHere => 'Push All up to Here';
+
+  @override
+  String get gitLogNewTag => 'New Tag…';
+
+  @override
+  String gitLogNewTagAt(String commit) {
+    return 'New tag at $commit';
+  }
+
+  @override
+  String get gitTagName => 'Tag name';
+
+  @override
+  String get gitTagMessage => 'Message (optional: an annotated tag)';
+
+  @override
+  String get gitLogCreateTag => 'Create Tag';
+
+  @override
+  String get gitLogGoToParent => 'Go to Parent Commit';
+
+  @override
+  String get gitLogGoToChild => 'Go to Child Commit';
+
+  @override
+  String gitLogComparedWithLocal(String commit) {
+    return '$commit ↔ Local';
+  }
+
+  @override
+  String get gitLogNoDifferences => 'No differences from the working tree';
+
+  @override
+  String get gitLogCopyHashes => 'Copy Commit Hashes';
+
+  @override
+  String gitLogCherryPickCount(int count) {
+    return 'Cherry-Pick $count Commits';
+  }
+
+  @override
+  String get gitLogCompareCommits => 'Compare Commits';
+
+  @override
+  String gitLogRevertCommits(int count) {
+    return 'Revert $count Commits';
+  }
+
+  @override
+  String gitLogSquashCommits(int count) {
+    return 'Squash $count Commits into One';
+  }
+
+  @override
+  String gitLogCommitsSelected(int count) {
+    return '$count commits selected';
+  }
+
+  @override
+  String get gitLogPaths => 'Paths';
+
+  @override
+  String get gitLogAllPaths => 'All Paths';
+
+  @override
+  String gitLogCurrentFile(String path) {
+    return 'Current File: $path';
+  }
+
+  @override
+  String gitLogCurrentFolder(String path) {
+    return 'Its Folder: $path';
+  }
+
+  @override
+  String gitLogPathCount(int count) {
+    return '$count paths';
+  }
+
+  @override
+  String gitLogLinesOf(String file, int start, int end) {
+    return '$file: lines $start–$end';
+  }
+
+  @override
+  String get gitShowHistory => 'Show History';
+
+  @override
+  String get gitShowHistoryForSelection => 'Show History for Selection';
+
+  @override
+  String get gitShowBranches => 'Show Branches';
+
+  @override
+  String get gitHideBranches => 'Hide Branches';
+
+  @override
+  String get gitBranchesFilter => 'Filter branches';
+
+  @override
+  String get gitBranchesHead => 'HEAD (Current Branch)';
+
+  @override
+  String get gitBranchCheckout => 'Checkout';
+
+  @override
+  String gitBranchNewFrom(String name) {
+    return 'New Branch from “$name”…';
+  }
+
+  @override
+  String gitBranchCheckoutRebase(String current) {
+    return 'Checkout and Rebase onto “$current”';
+  }
+
+  @override
+  String gitBranchCompare(String current) {
+    return 'Compare with “$current”';
+  }
+
+  @override
+  String get gitBranchDiffWorkingTree => 'Show Diff with Working Tree';
+
+  @override
+  String gitBranchRebaseOnto(String current, String name) {
+    return 'Rebase “$current” onto “$name”';
+  }
+
+  @override
+  String gitBranchMerge(String name, String current) {
+    return 'Merge “$name” into “$current”';
+  }
+
+  @override
+  String gitBranchPullRebase(String current) {
+    return 'Pull into “$current” Using Rebase';
+  }
+
+  @override
+  String gitBranchPullMerge(String current) {
+    return 'Pull into “$current” Using Merge';
+  }
+
+  @override
+  String get gitBranchUpdate => 'Update';
+
+  @override
+  String get gitBranchPush => 'Push';
+
+  @override
+  String gitBranchPushTo(String upstream) {
+    return 'Push to $upstream';
+  }
+
+  @override
+  String get gitBranchUpstream => 'Upstream';
+
+  @override
+  String get gitBranchUnsetUpstream => 'Unset Upstream';
+
+  @override
+  String get gitBranchRename => 'Rename…';
+
+  @override
+  String gitBranchRenameTitle(String name) {
+    return 'Rename the branch “$name”';
+  }
+
+  @override
+  String get gitBranchRenameButton => 'Rename';
+
+  @override
+  String get gitBranchFavorite => 'Add to Favorites';
+
+  @override
+  String get gitBranchUnfavorite => 'Remove from Favorites';
+
+  @override
+  String get gitBranchShowOnly => 'Show Only This in the Log';
+
+  @override
+  String get gitBranchDelete => 'Delete';
+
+  @override
+  String get gitTagDelete => 'Delete Tag';
+
+  @override
+  String get gitBranchDeleteButton => 'Delete';
+
+  @override
+  String gitBranchDeleteRemoteConfirm(String name) {
+    return 'Delete the branch “$name” on its remote?';
+  }
+
+  @override
+  String gitBranchNotMergedConfirm(String name) {
+    return '“$name” has commits merged into no other branch. Delete it anyway?';
+  }
+
+  @override
+  String gitBranchDeleted(String name) {
+    return 'Deleted the branch “$name”.';
+  }
+
+  @override
+  String gitTagDeleted(String name) {
+    return 'Deleted the tag “$name”.';
+  }
+
+  @override
+  String get gitBranchRestore => 'Restore';
+
+  @override
+  String gitBranchCompared(String name, String current, int ahead, int behind) {
+    return '“$name” has $ahead commits “$current” has not; “$current” has $behind it has not.';
+  }
+
+  @override
+  String get gitBranchCompareFiles => 'Show Changed Files';
+
+  @override
+  String scmGraphRangeIn(String to, String from) {
+    return 'Commits in “$to” Not in “$from”';
+  }
+
+  @override
+  String get gitBranchesRecent => 'Recent';
+
+  @override
+  String get gitBranchesSearch => 'Search for branches and actions';
+
+  @override
+  String get gitUpdateProject => 'Update Project';
+
+  @override
+  String get gitCommitEllipsis => 'Commit…';
+
+  @override
+  String get gitPushEllipsis => 'Push…';
+
+  @override
+  String get gitNewBranchEllipsis => 'New Branch…';
+
+  @override
+  String get gitCheckoutRevision => 'Checkout Tag or Revision…';
+
+  @override
+  String get gitBranchesTitle => 'Git Branches';
+
+  @override
+  String get gitRevisionPlaceholder => 'A tag, a branch or a commit hash';
+
+  @override
+  String get gitUpdateProjectDetail =>
+      'Bring each repository\'s current branch up to its upstream: merge its new commits in, or rebase the branch\'s own onto them. Local changes are stashed meanwhile.';
+
+  @override
+  String get gitUpdateMerge => 'Merge';
+
+  @override
+  String get gitUpdateRebase => 'Rebase';
+
+  @override
+  String get gitDontAskAgain => 'Don\'t ask again';
+
+  @override
+  String get gitPushTitle => 'Push Commits';
+
+  @override
+  String get gitPushTags => 'Push tags';
+
+  @override
+  String get gitPushForce => 'Force Push';
+
+  @override
+  String gitPushForceConfirm(String targets) {
+    return 'Force push to $targets?';
+  }
+
+  @override
+  String get gitPushForceDetail =>
+      'What is there is replaced by what you push (with lease: only as last fetched, so nobody\'s newer commits are lost).';
+
+  @override
+  String get gitPushNothing => 'Nothing to push';
+
+  @override
+  String get gitPushRemote => 'Remote';
+
+  @override
+  String get gitPushNew => 'new';
+
+  @override
+  String get gitPushSelectCommit => 'Select a commit to see its files';
+
+  @override
+  String get gitPushEllipsisCommand => 'Push…';
+
+  @override
+  String get gitOperationRebasing => 'Rebasing';
+
+  @override
+  String get gitOperationMerging => 'Merging';
+
+  @override
+  String get gitOperationCherryPicking => 'Cherry-picking';
+
+  @override
+  String get gitOperationReverting => 'Reverting';
+
+  @override
+  String gitOperationConflicts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conflicts left',
+      one: '1 conflict left',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitOperationResolved => 'conflicts resolved';
+
+  @override
+  String get gitOperationContinue => 'Continue';
+
+  @override
+  String get gitOperationSkip => 'Skip';
+
+  @override
+  String get gitOperationAbort => 'Abort';
+
+  @override
+  String gitOperationAbortConfirm(String what) {
+    return 'Abort? $what stops and what it did so far is undone.';
+  }
+
+  @override
+  String get gitConflictAcceptCurrent => 'Accept Current (Ours)';
+
+  @override
+  String get gitConflictAcceptIncoming => 'Accept Incoming (Theirs)';
+
+  @override
+  String get gitConflictMerge => 'Merge…';
+
+  @override
+  String gitMergeTitle(String path) {
+    return 'Merge Revisions for $path';
+  }
+
+  @override
+  String get gitMergeOurs => 'Current (Ours)';
+
+  @override
+  String get gitMergeResult => 'Result';
+
+  @override
+  String get gitMergeTheirs => 'Incoming (Theirs)';
+
+  @override
+  String gitMergeConflictsLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conflicts left',
+      one: '1 conflict left',
+      zero: 'All conflicts resolved',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String gitMergeChangesApplied(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count changes applied without conflict',
+      one: '1 change applied without conflict',
+      zero: '',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitMergePrevious => 'Previous Conflict';
+
+  @override
+  String get gitMergeNext => 'Next Conflict';
+
+  @override
+  String get gitMergeApply => 'Apply';
+
+  @override
+  String get gitMergeAppend => 'Append';
+
+  @override
+  String get gitMergeIgnore => 'Ignore';
+
+  @override
+  String get gitMergeAi => 'Merge with AI';
+
+  @override
+  String get gitMergeAiAll => 'Merge Conflicts with AI';
+
+  @override
+  String gitMergeAiFailed(String error) {
+    return 'AI could not merge the conflict: $error';
+  }
+
+  @override
+  String get gitMergeAiNoAnswer => 'the reply had no merged lines';
+
+  @override
+  String get gitMergeAcceptOurs => 'Accept Current';
+
+  @override
+  String get gitMergeAcceptTheirs => 'Accept Incoming';
+
+  @override
+  String gitMergeUnresolved(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conflicts are not resolved.',
+      one: '1 conflict is not resolved.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitMergeUnresolvedDetail =>
+      'Save the result as it is and mark the file resolved?';
+
+  @override
+  String get gitMergeSaveAnyway => 'Save and Mark Resolved';
+
+  @override
+  String get gitMergeDiscard => 'Discard the merge result?';
+
+  @override
+  String get gitMergeDiscardButton => 'Discard';
+
+  @override
+  String get gitDiffExcludeChange => 'Leave This Change Out of the Commit';
+
+  @override
+  String get gitDiffIncludeChange => 'Include This Change in the Commit';
+
+  @override
+  String get gitDiffExcludeLine => 'Leave This Line Out of the Commit';
+
+  @override
+  String get gitDiffIncludeLine => 'Include This Line in the Commit';
+
+  @override
+  String get gitChangelistActive => 'active';
+
+  @override
+  String get gitChangelistMoveTo => 'Move to Another Changelist';
+
+  @override
+  String get gitChangelistNew => 'New Changelist…';
+
+  @override
+  String get gitChangelistCreate => 'Create';
+
+  @override
+  String get gitChangelistName => 'Changelist name';
+
+  @override
+  String get gitChangelistCommitOnly => 'Commit Only This Changelist';
+
+  @override
+  String get gitChangelistSetActive => 'Set Active Changelist';
+
+  @override
+  String get gitChangelistRename => 'Rename Changelist…';
+
+  @override
+  String get gitChangelistRenameButton => 'Rename';
+
+  @override
+  String get gitChangelistDelete => 'Delete Changelist';
+
+  @override
+  String gitChangelistTurn(String request) {
+    return 'AI: $request';
+  }
+
+  @override
+  String get gitStashChangesTitle => 'Stash Changes';
+
+  @override
+  String gitStashFilesTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Stash $count Files',
+      one: 'Stash 1 File',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitStashButton => 'Stash';
+
+  @override
+  String get gitStashMessage => 'Message (optional)';
+
+  @override
+  String get gitStashUntracked => 'Include untracked files';
+
+  @override
+  String get gitStashBase => 'Base';
+
+  @override
+  String get gitStashApply => 'Apply';
+
+  @override
+  String get gitStashPop => 'Pop';
+
+  @override
+  String get gitStashAsBranch => 'Unstash as Branch…';
+
+  @override
+  String get gitStashCopyMessage => 'Copy Message';
+
+  @override
+  String get gitStashDrop => 'Drop…';
+
+  @override
+  String gitStashDropConfirm(String ref) {
+    return 'Drop $ref?';
+  }
+
+  @override
+  String get gitStashDropButton => 'Drop';
+
+  @override
+  String get gitStashClear => 'Clear Stashes…';
+
+  @override
+  String get gitStashClearConfirm => 'Drop every stash?';
+
+  @override
+  String get gitStashClearButton => 'Clear';
+
+  @override
+  String get gitStashNone => 'No stashes';
+
+  @override
+  String get gitStashTab => 'Stash';
+
+  @override
+  String get gitCommitTab => 'Commit';
+
+  @override
+  String get gitStashSelected => 'Stash Selected Files…';
+
+  @override
+  String get gitCommitIgnored => 'Ignored Files';
+
+  @override
+  String get gitCommitShowIgnored => 'Show Ignored Files';
+
+  @override
+  String gitCommitLongSubject(int limit) {
+    return 'The subject is longer than $limit characters';
+  }
+
+  @override
+  String get gitCommitNoBlankLine =>
+      'Separate the subject from the body with a blank line';
+
+  @override
+  String get gitCommitMessageHistory => 'Commit Message History (Ctrl+M)';
+
+  @override
+  String get gitCommitNoMessageHistory => 'No messages yet';
+
+  @override
+  String get gitCommitOptions => 'Commit Options';
+
+  @override
+  String get gitCommitAuthor => 'Author…';
+
+  @override
+  String gitCommitAuthorIs(String author) {
+    return 'Author: $author';
+  }
+
+  @override
+  String get gitCommitAuthorReset => 'Use the Configured Author';
+
+  @override
+  String get gitCommitAuthorPlaceholder => 'Name <email>';
+
+  @override
+  String get gitCommitSignOff => 'Sign-off Commit';
+
+  @override
+  String get gitCommitRunHooks => 'Run Git Hooks';
+
+  @override
+  String get gitCommitSignedOff => 'Signed off';
+
+  @override
+  String get gitCommitNoHooks => 'Hooks skipped';
+
+  @override
+  String get gitLogInteractiveRebase => 'Interactively Rebase from Here…';
+
+  @override
+  String gitRebaseTitle(int count, String base) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Commits',
+      one: '1 Commit',
+    );
+    return 'Rebasing $_temp0 from $base';
+  }
+
+  @override
+  String get gitRebasePick => 'Pick';
+
+  @override
+  String get gitRebaseReword => 'Reword';
+
+  @override
+  String get gitRebaseEdit => 'Edit';
+
+  @override
+  String get gitRebaseSquash => 'Squash';
+
+  @override
+  String get gitRebaseFixup => 'Fixup';
+
+  @override
+  String get gitRebaseDrop => 'Drop';
+
+  @override
+  String get gitRebaseMoveUp => 'Move Up (Alt+Up)';
+
+  @override
+  String get gitRebaseMoveDown => 'Move Down (Alt+Down)';
+
+  @override
+  String get gitRebaseMessage => 'Commit message';
+
+  @override
+  String get gitRebaseStart => 'Start Rebasing';
+
+  @override
+  String get gitRebaseNothingBelow =>
+      'The oldest commit kept cannot be squashed or fixed up: there is nothing below it.';
+
+  @override
+  String get gitRebaseStopped =>
+      'The rebase stopped: amend the commit or resolve the conflicts, then Continue.';
+
+  @override
+  String get gitRebaseCleanUpWithAi => 'Clean Up with AI';
+
+  @override
+  String get gitRebaseCleanUpWithAiDetail =>
+      'Let the model suggest what to fix up, squash and reword; you look it over before the rebase starts';
+
+  @override
+  String get gitRebaseAiPlanning => 'Planning… (click to stop)';
+
+  @override
+  String get gitRebaseAiNoPlan =>
+      'The model\'s answer was not a rebase list of these commits.';
+
+  @override
+  String gitRebaseAiFailed(String error) {
+    return 'Could not clean up with AI: $error';
+  }
+
+  @override
+  String gitTagPushTo(String remote) {
+    return 'Push Tag to $remote';
+  }
+
+  @override
+  String gitTagDeleteOn(String remote) {
+    return 'Delete Tag on $remote';
+  }
+
+  @override
+  String gitTagDeleteOnConfirm(String name, String remote) {
+    return 'Delete the tag $name on $remote?';
+  }
+
+  @override
+  String get gitRemotesManage => 'Manage Remotes…';
+
+  @override
+  String get gitRemotesTitle => 'Git Remotes';
+
+  @override
+  String get gitRemotesNone => 'No remotes';
+
+  @override
+  String get gitRemoteAdd => 'Add Remote';
+
+  @override
+  String get gitRemoteEdit => 'Edit Remote';
+
+  @override
+  String get gitRemoteRemove => 'Remove';
+
+  @override
+  String get gitRemoteName => 'Name';
+
+  @override
+  String get gitRemoteUrl => 'URL';
+
+  @override
+  String gitRemoteRemoveConfirm(String name) {
+    return 'Remove the remote $name?';
+  }
+
+  @override
+  String get gitRemoteRemoveDetail =>
+      'Its remote branches go with it; nothing on the server changes.';
+
+  @override
+  String get gitCloneTitle => 'Get from Version Control';
+
+  @override
+  String get gitCloneUrl => 'URL';
+
+  @override
+  String get gitCloneDirectory => 'Directory';
+
+  @override
+  String get gitCloneBrowse => 'Browse…';
+
+  @override
+  String get gitCloneButton => 'Clone';
+
+  @override
+  String get gitCloning => 'Cloning…';
+
+  @override
+  String get gitCloneCommand => 'Clone Repository…';
+
+  @override
+  String get gitReviewWithAi => 'Review Changes with AI';
+
+  @override
+  String get gitReviewStop => 'Stop the Review';
+
+  @override
+  String get gitReviewBeforeCommit => 'Review with AI Before Committing';
+
+  @override
+  String get gitReviewRunning => 'Reviewing the changes…';
+
+  @override
+  String get gitReviewClean => 'No problems found';
+
+  @override
+  String gitReviewFound(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count problems found',
+      one: '1 problem found',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get gitReviewCommitAnyway => 'Commit Anyway';
+
+  @override
+  String get gitReviewCommitAndPushAnyway => 'Commit and Push Anyway';
+
+  @override
+  String gitReviewFailed(String error) {
+    return 'Could not review the changes: $error';
+  }
+
+  @override
+  String get gitAskAiCommit => 'Ask AI About This Commit';
+
+  @override
+  String gitAskAiCommitPrompt(String id, String subject) {
+    return 'Explain commit $id (“$subject”): what it changes and why, and anything in it that looks risky. Read it with `git show $id`.';
+  }
+
+  @override
+  String gitAskAiCommits(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Ask AI About These $count Commits',
+      one: 'Ask AI About This Commit',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String gitAskAiCommitsPrompt(String ids) {
+    return 'Explain commits $ids: what they change together, and anything in them that looks risky. Read them with `git show`.';
+  }
+
+  @override
+  String get gitAskAiHunk => 'Ask AI About This Change';
+
+  @override
+  String gitAskAiHunkPrompt(String path, int line, String change) {
+    return 'About this change in $path at line $line: explain what it does and whether anything in it is wrong.\n\n```diff\n$change\n```';
+  }
+
+  @override
+  String get gitAskAiChanges => 'Ask AI About These Changes';
+
+  @override
+  String gitAskAiChangesPrompt(String paths) {
+    return 'Review my uncommitted changes in $paths (`git diff HEAD -- $paths`): explain what they do and point out anything wrong.';
+  }
+
+  @override
+  String get gitAskAiConflicts => 'Ask AI to Resolve the Conflicts';
+
+  @override
+  String gitAskAiConflictsPrompt(String paths) {
+    return 'Resolve the merge conflicts in $paths: keep what both sides meant, then tell me what you chose. Don\'t stage or commit.';
+  }
+
+  @override
+  String get gitLogFixup => 'Fixup with Checked Changes';
+
+  @override
+  String get compareWith => 'Compare With';
+
+  @override
+  String get compareWithClipboard => 'Clipboard';
+
+  @override
+  String compareWithClipboardLabel(String name) {
+    return '$name (Clipboard ↔ File)';
+  }
+
+  @override
+  String get gitCompareWithBranch => 'Branch or Tag…';
+
+  @override
+  String get gitCompareWithRevision => 'Revision…';
+
+  @override
+  String get gitCompareWithBranchPlaceholder =>
+      'Select a branch or tag to compare the file with';
+
+  @override
+  String get gitCompareWithRevisionPlaceholder =>
+      'Select a revision of the file to compare it with';
+
+  @override
+  String gitCompareLabel(String name, String other) {
+    return '$name ($other ↔ Working Tree)';
+  }
+
+  @override
+  String get explorerSelectForCompare => 'Select for Compare';
+
+  @override
+  String explorerCompareWithSelected(String name) {
+    return 'Compare with \'$name\'';
+  }
+
+  @override
+  String compareFoldersSame(String original, String modified) {
+    return '“$original” and “$modified” have the same files.';
+  }
+
+  @override
+  String compareFoldersPick(String original, String modified) {
+    return 'Files “$original” and “$modified” differ in';
+  }
+
+  @override
+  String compareFoldersOnlyIn(String name) {
+    return 'Only in “$name”';
+  }
+
+  @override
+  String get compareFoldersModified => 'Changed';
+
+  @override
+  String get compareWithLocalHistory => 'Local History…';
+
+  @override
+  String get localHistoryShow => 'Show Local History';
+
+  @override
+  String localHistoryNone(String name) {
+    return 'No local history of “$name” yet: it is kept as the file is saved.';
+  }
+
+  @override
+  String localHistoryPick(String name) {
+    return 'A version of “$name” to compare with';
+  }
+
+  @override
+  String localHistoryLabel(String name, String time) {
+    return '$name (Local History, $time)';
+  }
+
+  @override
+  String get explorerCompareSelected => 'Compare Selected';
+
+  @override
+  String compareFilesLabel(String original, String modified) {
+    return '$original ↔ $modified';
+  }
 }

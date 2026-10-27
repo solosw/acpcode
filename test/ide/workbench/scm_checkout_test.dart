@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/git/git_service.dart';
 import 'package:baocode/ide/ide_quick_input.dart';
 import 'package:baocode/ide/ide_status_bar.dart';
+import 'package:baocode/ide/ide_workbench.dart';
 import 'package:baocode/keybindings/keybinding_service.dart';
 
 import '../git/fake_git.dart';
@@ -67,15 +68,14 @@ void main() {
         text.data!,
   ];
 
+  /// Git: Checkout to… (the status bar's branch opens the branch popup,
+  /// see branch_popup_test.dart).
   Future<void> openCheckout(WidgetTester tester) async {
     await pumpWorkbench(tester, const {'a.dart': 'a'}, git: git.repository());
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(IdeStatusBar),
-        matching: find.text('main'),
-      ),
-    );
+    tester
+        .state<IdeWorkbenchState>(find.byType(IdeWorkbench))
+        .runCommand('git.checkout');
     await tester.pumpAndSettle();
   }
 
@@ -89,14 +89,11 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the branch says what it runs: Checkout to…', (tester) async {
+  testWidgets('the branch says what it opens: Git Branches', (tester) async {
     await pumpWorkbench(tester, const {'a.dart': 'a'}, git: git.repository());
     await tester.pumpAndSettle();
     final bar = tester.widget<IdeStatusBar>(find.byType(IdeStatusBar));
-    expect(
-      bar.left.first.tooltip,
-      'project (Git) - main, Checkout Branch/Tag...',
-    );
+    expect(bar.left.first.tooltip, 'project (Git) - main, Git Branches');
   });
 
   testWidgets('it lists the branch commands, then the branches, remote '
@@ -163,12 +160,9 @@ void main() {
     ]);
 
     git.upstreams['topic'] = 'origin/topic';
-    await tester.tap(
-      find.descendant(
-        of: find.byType(IdeStatusBar),
-        matching: find.text('main'),
-      ),
-    );
+    tester
+        .state<IdeWorkbenchState>(find.byType(IdeWorkbench))
+        .runCommand('git.checkout');
     await tester.pumpAndSettle();
     await type(tester, 'topic');
     await enter(tester);
@@ -241,12 +235,9 @@ void main() {
     ]);
 
     // With a value typed, that is the name: no input box.
-    await tester.tap(
-      find.descendant(
-        of: find.byType(IdeStatusBar),
-        matching: find.text('main'),
-      ),
-    );
+    tester
+        .state<IdeWorkbenchState>(find.byType(IdeWorkbench))
+        .runCommand('git.checkout');
     await tester.pumpAndSettle();
     await type(tester, 'hotfix');
     await tester.tap(inQuickInput(find.text('Create new branch from...')));

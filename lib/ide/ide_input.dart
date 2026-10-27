@@ -129,17 +129,34 @@ class _IdeInputBoxState extends State<IdeInputBox> {
   FocusNode? _ownFocus;
   FocusNode get _focus => widget.focusNode ?? (_ownFocus ??= FocusNode());
   final LayerLink _link = LayerLink();
-  final OverlayPortalController _portal = OverlayPortalController();
+  OverlayPortalController _portal = OverlayPortalController();
+  bool _portalShown = false;
 
   @override
   void initState() {
     super.initState();
     _focus.addListener(_focusChanged);
-    if (widget.floatingValidation) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _portal.show();
-      });
+    _syncPortal();
+  }
+
+  /// A floating validation's overlay, there only while it has one: one
+  /// kept empty is grafted under the input in the semantics tree all the
+  /// same, and the desktop engines lose it as overlays around it come and
+  /// go (a menu closing as the input's panel changes). Called in a build,
+  /// where a controller attached cannot show: shown at once through a new
+  /// one the portal takes, hidden after the frame.
+  void _syncPortal() {
+    bool wanted() => widget.floatingValidation && widget.validation != null;
+    if (wanted() == _portalShown) return;
+    if (wanted()) {
+      _portal = OverlayPortalController()..show();
+      _portalShown = true;
+      return;
     }
+    _portalShown = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_portalShown) _portal.hide();
+    });
   }
 
   @override
@@ -150,6 +167,7 @@ class _IdeInputBoxState extends State<IdeInputBox> {
       old?.removeListener(_focusChanged);
       _focus.addListener(_focusChanged);
     }
+    _syncPortal();
   }
 
   @override

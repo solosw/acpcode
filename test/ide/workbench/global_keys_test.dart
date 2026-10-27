@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/ide/git/ide_git_commit_panel.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_screen.dart';
@@ -112,7 +113,14 @@ void main() {
     'the commit message': (
       (tester) async {
         await run(tester, 'workbench.view.scm');
-        await tester.tap(find.byType(TextField).first);
+        await tester.tap(
+          find
+              .descendant(
+                of: find.byType(IdeGitCommitPanel),
+                matching: find.byType(TextField),
+              )
+              .first,
+        );
         await tester.pumpAndSettle();
       },
       'scmRepository',

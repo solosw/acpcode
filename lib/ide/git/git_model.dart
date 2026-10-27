@@ -235,6 +235,128 @@ class IdeGitHead {
   final bool unborn;
 }
 
+/// How a commit is made, as JetBrains IDEs' commit options set it: by
+/// [author] (`Name <email>`) rather than the one configured, signed off
+/// (a `Signed-off-by` line), without running the repository's hooks.
+class IdeGitCommitOptions {
+  const IdeGitCommitOptions({
+    this.author,
+    this.signOff = false,
+    this.runHooks = true,
+  });
+
+  final String? author;
+  final bool signOff;
+  final bool runHooks;
+
+  List<String> get arguments => [
+    if (author case final author? when author.trim().isNotEmpty)
+      '--author=${author.trim()}',
+    if (signOff) '--signoff',
+    if (!runHooks) '--no-verify',
+  ];
+}
+
+/// The folder a clone of [url] goes in, as Git names it: the URL's last
+/// part, without `.git`.
+String ideGitCloneFolder(String url) {
+  final trimmed = url.trim().replaceAll(RegExp(r'[/\\]+$'), '');
+  final last = trimmed.split(RegExp(r'[/\\:]')).last;
+  return last.endsWith('.git') ? last.substring(0, last.length - 4) : last;
+}
+
+/// What an interactive rebase does with a commit.
+enum IdeGitRebaseAction {
+  pick,
+  reword,
+  edit,
+  squash,
+  fixup,
+  drop;
+
+  /// Whether the commit goes into the one before it.
+  bool get unites => this == squash || this == fixup;
+}
+
+/// A commit ([commit], its id) in an interactive rebase's list, what is
+/// done with it, and a reworded one's new [message].
+class IdeGitRebaseStep {
+  const IdeGitRebaseStep(this.commit, this.action, {this.message});
+
+  final String commit;
+  final IdeGitRebaseAction action;
+  final String? message;
+}
+
+/// What may be wrong with a commit message, as JetBrains IDEs' commit
+/// message inspections find it: a subject longer than [subjectLimit], a
+/// body not set apart from it by a blank line.
+enum IdeGitMessageProblem { longSubject, noBlankLine }
+
+const ideGitSubjectLimit = 72;
+
+List<IdeGitMessageProblem> ideGitMessageProblems(String message) {
+  final lines = message.trimRight().split('\n');
+  return [
+    if (lines.first.trimRight().length > ideGitSubjectLimit)
+      IdeGitMessageProblem.longSubject,
+    if (lines.length > 1 && lines[1].trim().isNotEmpty)
+      IdeGitMessageProblem.noBlankLine,
+  ];
+}
+
+/// A stash (`git stash list`): [ref] (`stash@{0}`), its commit [id], when
+/// it was made, the branch it was made on and what it says.
+class IdeGitStash {
+  const IdeGitStash({
+    required this.ref,
+    required this.id,
+    required this.date,
+    required this.message,
+    this.branch,
+  });
+
+  final String ref;
+  final String id;
+  final DateTime date;
+  final String message;
+  final String? branch;
+}
+
+/// `git stash list --format=%gd%x00%H%x00%ct%x00%gs` as stashes: what
+/// each says without Git's `WIP on <branch>:` or `On <branch>:`.
+List<IdeGitStash> parseGitStashes(String output) {
+  final subject = RegExp(r'^(?:WIP on|On) ([^:]+): (.*)$');
+  final stashes = <IdeGitStash>[];
+  for (final line in output.split('\n')) {
+    if (line.split('\x00') case [
+      final ref,
+      final id,
+      final time,
+      final summary,
+    ]) {
+      final match = subject.firstMatch(summary);
+      stashes.add(
+        IdeGitStash(
+          ref: ref,
+          id: id,
+          date: DateTime.fromMillisecondsSinceEpoch(
+            (int.tryParse(time) ?? 0) * 1000,
+          ),
+          message: match == null ? summary : match[2]!,
+          branch: match?[1],
+        ),
+      );
+    }
+  }
+  return stashes;
+}
+
+/// How Reset Current Branch to Here leaves the changes (`git reset`):
+/// staged, in the working tree, gone, or kept where the commits do not
+/// touch them.
+enum IdeGitResetMode { soft, mixed, hard, keep }
+
 /// A repository's status.
 class IdeGitState {
   IdeGitState({
@@ -244,12 +366,17 @@ class IdeGitState {
     List<String> ignored = const [],
     this.didHitLimit = false,
     p.Context? pathContext,
+    this.operation,
   }) : resources = List.unmodifiable(resources),
        ignored = List.unmodifiable(ignored),
        pathContext = pathContext ?? p.context;
 
   /// The repository's top level.
   final String root;
+
+  /// The merge, rebase, cherry-pick or revert under way, stopped for
+  /// conflicts (or an edit); null for none.
+  final IdeGitOperation? operation;
 
   /// How the host the repository is on spells its paths.
   final p.Context pathContext;
@@ -477,6 +604,7 @@ IdeGitState parseGitStatus(
   String output, {
   bool truncated = false,
   p.Context? pathContext,
+  IdeGitOperation? operation,
 }) {
   final paths = pathContext ?? p.context;
   var head = const IdeGitHead();
@@ -598,6 +726,7 @@ IdeGitState parseGitStatus(
     ignored: ignored,
     didHitLimit: truncated,
     pathContext: paths,
+    operation: operation,
   );
 }
 
@@ -663,6 +792,7 @@ class IdeGitRef {
     this.details,
     this.ahead,
     this.behind,
+    this.upstream,
   });
 
   /// `refs/heads/main`.
@@ -685,14 +815,20 @@ class IdeGitRef {
   /// none or is level with it.
   final int? ahead;
   final int? behind;
+
+  /// A branch's upstream: `origin/main`.
+  final String? upstream;
 }
 
 /// The `git for-each-ref` format [parseGitRefs] reads (upstream
-/// `REFS_WITH_DETAILS_FORMAT` and the upstream's tracking).
+/// `REFS_WITH_DETAILS_FORMAT` and the upstream's tracking). The dates are
+/// `raw` (`<seconds> <zone>`), not upstream's `unix`, which Gits before 2.9
+/// do not know (#311).
 const ideGitRefsFormat =
     '%(refname)%00%(objectname)%00%(*objectname)%00%(parent)%00%(*parent)'
-    '%00%(authorname)%00%(*authorname)%00%(committerdate:unix)'
-    '%00%(*committerdate:unix)%00%(subject)%00%(*subject)%00%(upstream:track)';
+    '%00%(authorname)%00%(*authorname)%00%(committerdate:raw)'
+    '%00%(*committerdate:raw)%00%(subject)%00%(*subject)%00%(upstream:track)'
+    '%00%(upstream:short)';
 
 /// Parses `git for-each-ref --format=<ideGitRefsFormat>` (upstream
 /// `parseRefs`): the local branches, remote branches and tags, an annotated
@@ -722,6 +858,7 @@ List<IdeGitRef> parseGitRefs(String output) {
     final date = either(5, 4);
     final subject = either(7, 6);
     final status = field(8);
+    final upstream = field(9);
     final commitDetails =
         parents.isNotEmpty &&
             subject.isNotEmpty &&
@@ -731,7 +868,7 @@ List<IdeGitRef> parseGitRefs(String output) {
             subject: subject,
             author: author,
             date: DateTime.fromMillisecondsSinceEpoch(
-              (int.tryParse(date) ?? 0) * 1000,
+              (int.tryParse(date.split(' ').first) ?? 0) * 1000,
             ),
           )
         : null;
@@ -746,6 +883,7 @@ List<IdeGitRef> parseGitRefs(String output) {
           details: commitDetails,
           ahead: status.isEmpty ? null : int.tryParse(track?[1] ?? '') ?? 0,
           behind: status.isEmpty ? null : int.tryParse(track?[2] ?? '') ?? 0,
+          upstream: upstream.isEmpty ? null : upstream,
         ),
       );
     } else if (remoteHeadRegex.firstMatch(ref) case final remote?) {
@@ -829,6 +967,118 @@ List<IdeGitCommit> parseGitLog(String output) {
     );
   }
   return commits;
+}
+
+/// Which commits the log shows: [text] in their messages (terms split by
+/// `|`, any of them, case ignored), by [author], since [since]; those that
+/// changed [paths] (files or folders), or [lines] of a file.
+class IdeGitLogFilter {
+  const IdeGitLogFilter({
+    this.text = '',
+    this.author,
+    this.since,
+    this.paths = const [],
+    this.lines,
+  });
+
+  final String text;
+  final String? author;
+  final DateTime? since;
+
+  /// Absolute paths; the commits that changed any of them.
+  final List<String> paths;
+
+  /// A file's lines, from 1 (`git log -L`): the commits that changed
+  /// them, [paths] aside.
+  final IdeGitLogLines? lines;
+
+  /// The message's terms.
+  List<String> get terms => [
+    for (final term in text.split('|'))
+      if (term.trim().isNotEmpty) term.trim(),
+  ];
+
+  /// Whether some commits are left out such that the lanes do not join
+  /// up; by [paths] they do (Git rewrites the parents past the others).
+  bool get narrowed =>
+      terms.isNotEmpty || author != null || since != null || lines != null;
+
+  /// Whether some commits are left out.
+  bool get filtered => narrowed || paths.isNotEmpty;
+
+  /// `git log`'s options for it but the paths and lines.
+  List<String> get arguments {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return [
+      if (terms.isNotEmpty || author != null) ...['-i', '--fixed-strings'],
+      for (final term in terms) '--grep=$term',
+      if (author case final author?) '--author=$author',
+      if (since case final since?)
+        '--since=${since.year}-${two(since.month)}-${two(since.day)} '
+            '${two(since.hour)}:${two(since.minute)}:${two(since.second)}',
+      if (paths.isNotEmpty && lines == null) '--parents',
+    ];
+  }
+
+  IdeGitLogFilter copyWith({
+    String? text,
+    String? Function()? author,
+    DateTime? Function()? since,
+    List<String>? paths,
+    IdeGitLogLines? Function()? lines,
+  }) => IdeGitLogFilter(
+    text: text ?? this.text,
+    author: author == null ? this.author : author(),
+    since: since == null ? this.since : since(),
+    paths: paths ?? this.paths,
+    lines: lines == null ? this.lines : lines(),
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is IdeGitLogFilter &&
+      other.text == text &&
+      other.author == author &&
+      other.since == since &&
+      other.lines == lines &&
+      other.paths.length == paths.length &&
+      Iterable<int>.generate(paths.length)
+          .every((index) => other.paths[index] == paths[index]);
+
+  @override
+  int get hashCode =>
+      Object.hash(text, author, since, lines, Object.hashAll(paths));
+}
+
+/// Lines [start] to [end] (from 1) of the file at [path].
+typedef IdeGitLogLines = ({String path, int start, int end});
+
+/// Parses `git show --numstat -z`: each file's added and deleted lines, by
+/// its path (the new one of a rename) as [resolve] makes it of Git's; null
+/// counts for a binary file.
+Map<String, ({int? added, int? deleted})> parseGitNumstat(
+  String output,
+  String Function(String relative) resolve,
+) {
+  final stats = <String, ({int? added, int? deleted})>{};
+  final fields = output.split('\x00');
+  for (var i = 0; i < fields.length; i++) {
+    final field = fields[i].replaceFirst(RegExp(r'^\s+'), '');
+    final parts = field.split('\t');
+    if (parts.length < 3) continue;
+    final counts = (
+      added: int.tryParse(parts[0]),
+      deleted: int.tryParse(parts[1]),
+    );
+    if (parts[2].isNotEmpty) {
+      stats[resolve(parts[2])] = counts;
+    } else if (i + 2 < fields.length) {
+      // A rename or copy: its old path, then its new one.
+      stats[resolve(fields[i + 2])] = counts;
+      i += 2;
+    }
+  }
+  return stats;
 }
 
 /// `_resolveHistoryItemRefs`: HEAD's branch first, then the rest in
@@ -1274,4 +1524,155 @@ void _addIncomingOutgoing(
       );
     }
   }
+}
+
+/// One of a repository's working trees (`git worktree list`): where it is,
+/// the commit it is at, the branch checked out there (none when detached),
+/// and whether it is the repository's own, its first ([main]).
+class IdeGitWorktree {
+  const IdeGitWorktree({
+    required this.path,
+    this.head,
+    this.branch,
+    this.main = false,
+    this.bare = false,
+    this.locked = false,
+    this.prunable = false,
+  });
+
+  final String path;
+  final String? head;
+
+  /// The branch's short name (`feat/x`); null when detached.
+  final String? branch;
+  final bool main;
+  final bool bare;
+  final bool locked;
+
+  /// Gone from the disk: `git worktree prune` would forget it.
+  final bool prunable;
+
+  @override
+  bool operator ==(Object other) =>
+      other is IdeGitWorktree &&
+      other.path == path &&
+      other.head == head &&
+      other.branch == branch &&
+      other.main == main &&
+      other.bare == bare &&
+      other.locked == locked &&
+      other.prunable == prunable;
+
+  @override
+  int get hashCode =>
+      Object.hash(path, head, branch, main, bare, locked, prunable);
+
+  @override
+  String toString() => 'IdeGitWorktree($path, ${branch ?? head})';
+}
+
+/// `git worktree list --porcelain`: a record of `key value` lines each,
+/// a blank line between; the first the repository's own. [normalize]
+/// spells each path as the host does.
+List<IdeGitWorktree> parseGitWorktrees(
+  String output, {
+  String Function(String path)? normalize,
+}) {
+  final worktrees = <IdeGitWorktree>[];
+  for (final record in output.replaceAll('\r\n', '\n').split('\n\n')) {
+    String? path;
+    String? head;
+    String? branch;
+    var bare = false;
+    var locked = false;
+    var prunable = false;
+    for (final line in record.split('\n')) {
+      final space = line.indexOf(' ');
+      final key = space < 0 ? line : line.substring(0, space);
+      final value = space < 0 ? '' : line.substring(space + 1);
+      switch (key) {
+        case 'worktree':
+          path = value;
+        case 'HEAD':
+          head = value;
+        case 'branch':
+          branch = value.startsWith('refs/heads/')
+              ? value.substring('refs/heads/'.length)
+              : value;
+        case 'bare':
+          bare = true;
+        case 'locked':
+          locked = true;
+        case 'prunable':
+          prunable = true;
+      }
+    }
+    if (path == null || path.isEmpty) continue;
+    worktrees.add(
+      IdeGitWorktree(
+        path: normalize?.call(path) ?? path,
+        head: head,
+        branch: branch,
+        main: worktrees.isEmpty,
+        bare: bare,
+        locked: locked,
+        prunable: prunable,
+      ),
+    );
+  }
+  return worktrees;
+}
+
+/// The worktree of [worktrees] that has [path] (itself, or a file under
+/// it): the innermost, as one may be inside another's folder; null for
+/// none.
+IdeGitWorktree? ideWorktreeOf(
+  String path,
+  List<IdeGitWorktree> worktrees,
+  p.Context paths,
+) {
+  IdeGitWorktree? found;
+  for (final worktree in worktrees) {
+    if (worktree.bare) continue;
+    if (!paths.equals(worktree.path, path) &&
+        !paths.isWithin(worktree.path, path)) {
+      continue;
+    }
+    if (found == null || worktree.path.length > found.path.length) {
+      found = worktree;
+    }
+  }
+  return found;
+}
+
+/// A branch not deleted for its commits merged nowhere else (`git branch
+/// -d`'s "not fully merged"): deleted only once confirmed.
+class IdeGitNotMergedException implements Exception {
+  const IdeGitNotMergedException(this.branch);
+
+  final String branch;
+
+  @override
+  String toString() => 'The branch $branch is not fully merged.';
+}
+
+/// An operation Git stopped in the middle of, by the pseudo-ref it leaves
+/// ([ref]): JetBrains IDEs' banner over the changes offers to go on with it
+/// or abort it.
+enum IdeGitOperation {
+  merge('MERGE_HEAD', 'merge'),
+  rebase('REBASE_HEAD', 'rebase'),
+  cherryPick('CHERRY_PICK_HEAD', 'cherry-pick'),
+  revert('REVERT_HEAD', 'revert');
+
+  const IdeGitOperation(this.ref, this.command);
+
+  /// The pseudo-ref it leaves while under way.
+  final String ref;
+
+  /// The Git command that continues, aborts or skips it.
+  final String command;
+
+  /// Whether a commit of it can be skipped (`--skip`): a merge's cannot.
+  bool get skips => this != merge;
 }

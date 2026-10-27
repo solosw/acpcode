@@ -3,7 +3,8 @@ import 'dart:math' as math;
 
 import 'package:bao_editor/textmate/textmate_syntax.dart';
 import 'package:bao_remote/client.dart' show SshPrompt;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, listEquals;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -36,7 +37,11 @@ import 'customize/customization_store.dart';
 import 'customize/customizations.dart';
 import 'customize/customize_view.dart';
 import 'extensions/theme_extensions.dart';
+import 'ide/editor_word_wrap.dart';
+import 'ide/git/git_model.dart' show ideWorktreeOf;
 import 'ide/git/git_repository.dart';
+import 'ide/git/ide_git_clone_dialog.dart';
+import 'ide/git/ide_git_log_view.dart' show IdeGitWorktreeChoice;
 import 'ide/git/repository_scan.dart';
 import 'ide/file_views.dart';
 import 'ide/file_service.dart'
@@ -67,6 +72,7 @@ import 'ide/search/text_search.dart' show ideSearchText;
 import 'ide/ide_workspace.dart';
 import 'ide/lsp/language_features.dart';
 import 'ide/lsp/lsp_protocol.dart';
+import 'ide/lsp/packs/lsp_settings_template.dart';
 import 'ide/terminal/links/terminal_links.dart';
 import 'ide/terminal/terminal_instance.dart';
 import 'ide/terminal/terminal_panel.dart' show terminalCommandsToSkipShell;
@@ -82,6 +88,7 @@ import 'l10n/l10n.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_service.dart';
 import 'notifications/attention_settings.dart';
+import 'platform/data_dir.dart' show DataDirectory;
 import 'platform/local_paths.dart'
     if (dart.library.io) 'platform/local_paths_io.dart';
 import 'platform/open_requests.dart';
@@ -121,6 +128,7 @@ import 'stash/stash_controller.dart';
 import 'stash/stash_thread_view.dart' show sidebarStashes;
 import 'stash/stash_view.dart';
 import 'stash/stash_welcome.dart' show showStashWelcome;
+import 'workspace/agent_work_path.dart';
 import 'workspace/chat_branch_bar.dart';
 import 'workspace/chat_drag.dart';
 import 'workspace/chat_grid_view.dart';
@@ -1021,10 +1029,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Map<String, VoidCallback> _windowCommands() {
     final windows = _windows;
     final window = widget.window;
+    final fullScreen = {
+      if (WindowControls.canFullScreen)
+        WindowCommandIds.toggleFullScreen: () =>
+            unawaited(WindowControls.toggleFullScreen(viewId: _viewId)),
+    };
     if (windows == null || window == null || !windows.started) {
-      return const {};
+      return fullScreen;
     }
     return {
+      ...fullScreen,
       WindowCommandIds.newWindow: () => unawaited(windows.newWindow()),
       WindowCommandIds.closeWindow: () => unawaited(
         windows.requestClose(
@@ -1374,6 +1388,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       category: 'Preferences',
       label: 'Open Keyboard Shortcuts',
       run: () => unawaited(openSettings(SettingsSection.keyboard)),
+    ),
+    IdeCommand(
+      id: openLspSettingsCommandId,
+      category: 'Preferences',
+      label: commandCatalog[openLspSettingsCommandId]!.title,
+      run: () => unawaited(_openLspSettings()),
     ),
     IdeCommand(
       id: checkForUpdatesCommandId,
@@ -1881,6 +1901,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             enabled: WindowControls.canPickDirectory,
           ),
           IdeCommand(
+            id: 'git.clone',
+            category: 'Git',
+            label: 'Clone',
+            enabled: !kIsWeb,
+            run: () => unawaited(_cloneRepository()),
+          ),
+          IdeCommand(
             id: openRemoteFolderCommandId,
             category: 'Remote-SSH',
             label: 'Open Remote Project...',
@@ -1905,6 +1932,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             () => unawaited(_clearRecent()),
           ),
           command(toggleAutoSaveCommandId, _toggleAutoSave),
+          command(EditorWordWrap.commandId, EditorWordWrap.toggle),
           for (final MapEntry(key: id, value: run) in _windowCommands().entries)
             command(id, run),
           if (folder != _noFolder) ...[
@@ -1969,6 +1997,25 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _openIdeFolder(path, held: held);
   }
 
+  /// Where the last clone went: the next one's folder at first.
+  String? _cloneParent;
+
+  /// Git: Clone (JetBrains' Get from Version Control): a repository
+  /// cloned, then opened as a folder is.
+  Future<void> _cloneRepository() async {
+    final held = _newWindowHeld;
+    final folder = await showIdeGitCloneDialog(
+      context,
+      parent: _cloneParent ?? homeDirectory ?? p.current,
+      pickDirectory: WindowControls.canPickDirectory
+          ? WindowControls.pickDirectory
+          : null,
+    );
+    if (folder == null || !mounted) return;
+    _cloneParent = p.dirname(folder);
+    _openIdeFolder(folder, held: held);
+  }
+
   /// Opens [paths] in editors of the IDE's folder (or its empty window).
   /// With windows of its own: in this one, unless ⌘ (Ctrl) was [held] or
   /// `window.openFilesInNewWindow` says a new one; from the chat's window,
@@ -1993,6 +2040,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         await _ide?.openFile(path);
       }
     });
+  }
+
+  /// The user's `lsp.json`, in an editor: made first, with its examples,
+  /// where there is none (#304).
+  Future<void> _openLspSettings() async {
+    final path = DataDirectory.current.lspSettingsFile;
+    await ensureLspSettingsFile(path);
+    if (mounted) _openIdeFiles([path]);
   }
 
   Future<void> _pickIdeFiles() async {
@@ -2676,6 +2731,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                       ?.session
                       .draft
                       .insertFiles(files),
+            onAskInChat: _workspace.ideChat(path) == null
+                ? null
+                : (text) => _workspace
+                      .ideChat(path)
+                      ?.session
+                      .draft
+                      .restore(text, const []),
           ),
         ),
       ),
@@ -2937,6 +2999,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             roots: multi.folders,
             gitOf: (folder) => widget.gitFor?.call(folder),
             repositoryDetection: _repositoryDetection(host),
+            openWorktree: (path) =>
+                widget.gitFor?.call(RemoteLocation.of(host.name, path)),
             paths: host.name == null ? null : host.paths,
           )
         : IdeWorkspace(
@@ -2945,6 +3009,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             languages: widget.languagesFor?.call(folder),
             git: widget.gitFor?.call(folder),
             repositoryDetection: _repositoryDetection(host),
+            openWorktree: (path) =>
+                widget.gitFor?.call(RemoteLocation.of(host.name, path)),
             paths: host.name == null ? null : host.paths,
           );
     // The parts as the last run left them, before anything shows them.
@@ -3169,7 +3235,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       l10n: context.l10n,
       added: _workspace.sshHosts,
       labelOf: _workspace.hostLabel,
-      addressOf: (host) => _workspace.sshServers[host]?.address ?? host,
+      addressOf: (host) =>
+          _workspace.sshServers[host]?.address ?? RemoteLocation.hostName(host),
       iconOf: _hostIcon,
       onAdd: (address) =>
           unawaited(_editSshServer(flow: flow, address: address)),
@@ -3350,13 +3417,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ),
         const IdeMenuSeparator(),
         IdeMenuAction(
-          l10n.sidebarOpenFolderOn(host),
+          l10n.sidebarOpenFolderOn(RemoteLocation.hostName(host)),
           icon: const Icon(Codicons.folderOpened),
           onSelected: () =>
               _openRemoteProject(host: host, switchTo: true, inIde: true),
         ),
         IdeMenuAction(
-          l10n.remoteOpenFileOn(host),
+          l10n.remoteOpenFileOn(RemoteLocation.hostName(host)),
           icon: const Icon(Codicons.file),
           onSelected: () => _openRemoteFile(),
         ),
@@ -3476,7 +3543,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// what its pages' bar counts: the changes of its repositories, its
   /// background commands running. A section picked shows for [thread],
   /// focused first.
-  Widget _sidePanelRail(AgentThread thread) {
+  Widget _sidePanelRail(AgentThread thread) => ListenableBuilder(
+    listenable: _worktreeSignals(thread),
+    builder: (context, _) => _sidePanelRailOf(thread),
+  );
+
+  Widget _sidePanelRailOf(AgentThread thread) {
     final multi = _workspace.workspaceAt(thread.project.path);
     return SidePanelRail(
       onSelect: (section) {
@@ -3486,10 +3558,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         _showSidePanelSection(section);
       },
       session: thread.session,
-      gits: switch (multi == null
-          ? _sidePanelFolderRepositories(thread)
-          : _sidePanelRepositories(multi)) {
-        [] => [?_sidePanelGit(thread)],
+      gits: switch (_shownRepositories(
+        thread,
+        multi == null
+            ? _sidePanelFolderRepositories(thread)
+            : _sidePanelRepositories(multi),
+      )) {
+        [] => [?_shownGit(thread)],
         final repositories => [for (final (_, git) in repositories) git],
       },
     );
@@ -3522,6 +3597,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   }
 
   Widget _sidePanelView(
+    AgentThread thread, {
+    double titleBarInset = 0,
+    Widget? leading,
+  }) => ListenableBuilder(
+    listenable: _worktreeSignals(thread),
+    builder: (context, _) => _sidePanelViewOf(
+      thread,
+      titleBarInset: titleBarInset,
+      leading: leading,
+    ),
+  );
+
+  Widget _sidePanelViewOf(
     AgentThread thread, {
     double titleBarInset = 0,
     Widget? leading,
@@ -3558,7 +3646,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 tabSize: tabSize,
                 insertSpaces: insertSpaces,
               ),
-      git: _sidePanelGit(thread),
+      git: _shownGit(thread),
       terminals: _terminals?.sidePanelTerminals(thread.project.path),
       terminalSkipShell: chatTerminalSkipShell,
       onOpenTerminalLink: _openTerminalLink,
@@ -3568,9 +3656,21 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       notifications: _notifications,
       workspaceName: multi?.name,
       roots: multi?.folders ?? const [],
-      repositories: multi == null
-          ? _sidePanelFolderRepositories(thread)
-          : _sidePanelRepositories(multi),
+      repositories: _shownRepositories(
+        thread,
+        multi == null
+            ? _sidePanelFolderRepositories(thread)
+            : _sidePanelRepositories(multi),
+      ),
+      worktreesOf: (git) {
+        final folder = _shownFolders[git] ?? location;
+        return IdeGitWorktreeChoice(
+          agentPath: _agentWorkPathOf(thread).path,
+          following: _sidePanel.worktreeOf(thread.session, folder) == null,
+          onSelect: (path) =>
+              _sidePanel.chooseWorktree(thread.session, folder, path),
+        );
+      },
       onAddFolder: multi == null
           ? null
           : () => unawaited(_addWorkspaceFolder(location)),
@@ -3683,18 +3783,109 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Under [thread]'s composer: the branch of its project, or its
   /// workspace's name and its folders' branches, with the side panel's
   /// repositories.
-  Widget _branchBar(AgentThread thread) {
-    final project = thread.project;
-    final multi = _workspace.workspaceOf(project);
-    final git = multi == null ? _sidePanelGit(thread) : null;
-    return ChatBranchBar(
-      session: thread.session,
-      name: multi?.name ?? project.name,
-      workspace: multi != null,
-      repositories: multi != null
-          ? _sidePanelRepositories(multi)
-          : [if (git != null) (project.path, git)],
+  Widget _branchBar(AgentThread thread) => ListenableBuilder(
+    listenable: _worktreeSignals(thread),
+    builder: (context, _) {
+      final project = thread.project;
+      final multi = _workspace.workspaceOf(project);
+      final git = multi == null ? _shownGit(thread) : null;
+      return ChatBranchBar(
+        session: thread.session,
+        name: multi?.name ?? project.name,
+        workspace: multi != null,
+        repositories: multi != null
+            ? _shownRepositories(thread, _sidePanelRepositories(multi))
+            : [if (git != null) (project.path, git)],
+        onSwitchWorktree: widget.gitFor == null
+            ? null
+            : (folder, path) =>
+                  _sidePanel.chooseWorktree(thread.session, folder, path),
+      );
+    },
+  );
+
+  // --- Where the agent works ---------------------------------------------------
+
+  /// Where each conversation's agent works, told as it moves.
+  final Map<ChatSession, AgentWorkPath> _agentWorkPaths = Map.identity();
+
+  AgentWorkPath _agentWorkPathOf(AgentThread thread) =>
+      _agentWorkPaths[thread.session] ??= AgentWorkPath(thread.session);
+
+  /// What changes which worktree [thread]'s repositories show: where its
+  /// agent works, the worktree picked, and the worktrees read.
+  Listenable _worktreeSignals(AgentThread thread) {
+    final multi = _workspace.workspaceAt(thread.project.path);
+    return Listenable.merge([
+      _agentWorkPathOf(thread),
+      _sidePanel,
+      ?_sidePanelGit(thread),
+      if (multi != null)
+        for (final (_, git) in _sidePanelRepositories(multi)) git,
+    ]);
+  }
+
+  /// The folder of each repository the side panel shows, by it: a
+  /// worktree's, the folder whose repository it is of.
+  final Map<IdeGitRepository, String> _shownFolders = Map.identity();
+
+  /// The worktrees read again for where the agent moved, by repository:
+  /// once for each place.
+  final Map<IdeGitRepository, String> _worktreesReadFor = Map.identity();
+
+  /// [thread]'s project's repository as its side panel and branch show it
+  /// (see [_worktreeGit]).
+  IdeGitRepository? _shownGit(AgentThread thread) {
+    final git = _sidePanelGit(thread);
+    return git == null ? null : _worktreeGit(thread, thread.project.path, git);
+  }
+
+  List<(String, IdeGitRepository)> _shownRepositories(
+    AgentThread thread,
+    List<(String, IdeGitRepository)> repositories,
+  ) => [
+    for (final (folder, git) in repositories)
+      (folder, _worktreeGit(thread, folder, git)),
+  ];
+
+  /// [git], [folder]'s repository, as [thread]'s conversation shows it: the
+  /// worktree picked on its changes page, else the one its agent works in
+  /// (the files it edits are there), else [git] itself.
+  IdeGitRepository _worktreeGit(
+    AgentThread thread,
+    String folder,
+    IdeGitRepository git,
+  ) {
+    _shownFolders[git] = folder;
+    final gitFor = widget.gitFor;
+    if (gitFor == null || !git.isRepository) return git;
+    final paths = git.service.pathContext;
+    final chosen = _sidePanel.worktreeOf(thread.session, folder);
+    final agent = _agentWorkPathOf(thread).path;
+    final worktrees = git.worktrees;
+    if (chosen == null &&
+        agent != null &&
+        ideWorktreeOf(agent, worktrees, paths) == null &&
+        _worktreesReadFor[git] != agent) {
+      // Perhaps one made since they were read.
+      _worktreesReadFor[git] = agent;
+      unawaited(git.reloadWorktrees());
+    }
+    final target = agentShownWorktree(
+      root: git.service.root,
+      worktrees: worktrees,
+      paths: paths,
+      chosen: chosen,
+      agentPath: agent,
     );
+    if (target == null) return git;
+    final location = RemoteLocation.of(
+      RemoteLocation.hostOf(thread.project.path),
+      target,
+    );
+    final worktree = _sidePanelGits[location] ??= gitFor(location);
+    _shownFolders[worktree] = folder;
+    return worktree;
   }
 
   final Map<String, Future<bool> Function(String)> _projectFileChecks = {};
@@ -4625,6 +4816,9 @@ class _SessionTerminalTasks implements TerminalTasks {
 
   @override
   void stop(KernelTask task) => session.stopTask(task);
+
+  @override
+  void clear(Iterable<KernelTask> tasks) => session.clearTasks(tasks);
 
   @override
   String get root => session.root ?? '';

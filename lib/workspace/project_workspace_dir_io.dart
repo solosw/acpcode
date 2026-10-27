@@ -37,3 +37,5 @@ String _fileName(String name) {
   final safe = name.replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), '-').trim();
   return safe.isEmpty || safe.startsWith('.') ? 'workspace' : safe;
 }
+
+bool isFolder(String path) => Directory(path).existsSync();
