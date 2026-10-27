@@ -10,6 +10,43 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get quickRunRun => '运行';
+
+  @override
+  String get quickRunConfigure => '配置快速运行';
+
+  @override
+  String get quickRunConfigureTooltip => '选择或配置启动命令…';
+
+  @override
+  String get quickRunDescription =>
+      '为当前项目保存多条启动命令，每条命令都会在新的集成终端中运行。工作目录默认为项目文件夹（多文件夹工作区的第一个文件夹），相对路径以此为基准。';
+
+  @override
+  String get quickRunName => '名称（例如 前端服务）';
+
+  @override
+  String get quickRunCommand => '启动命令（例如 npm run dev）';
+
+  @override
+  String get quickRunWorkingDirectory => '工作目录（可选）';
+
+  @override
+  String get quickRunSaveAndRun => '保存并运行';
+
+  @override
+  String get quickRunAdd => '添加启动命令…';
+
+  @override
+  String get quickRunEdit => '编辑启动命令…';
+
+  @override
+  String get quickRunDelete => '删除启动命令';
+
+  @override
+  String get quickRunCommandRequired => '请输入要运行的命令。';
+
+  @override
   String get commonCancel => '取消';
 
   @override

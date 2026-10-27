@@ -102,6 +102,7 @@ import 'ide_layout.dart';
 import 'ide_list.dart' show IdeKeyboardList;
 import 'ide_modern_ui.dart';
 import 'ide_diff_options.dart';
+import 'ide_menu.dart';
 import 'ide_notifications.dart';
 import 'ide_panes.dart';
 import 'ide_quick_input.dart';
@@ -134,6 +135,7 @@ import 'terminal/terminal_service.dart';
 
 part 'ide_workbench_extensions.dart';
 part 'ide_workbench_keys.dart';
+part 'ide_workbench_quick_run.dart';
 
 /// The IDE shell is kept mounted when the user returns to the conversation.
 class IdeWorkbench extends StatefulWidget {
@@ -605,6 +607,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   /// The panel's terminals; none where they cannot run (the web).
   TerminalService? _terminals;
   List<StreamSubscription<Object?>> _terminalRequests = const [];
+
+  /// Commands explicitly configured for this project; never run on restore.
+  final List<_QuickRunConfiguration> _quickRunConfigurations = [];
+  int _quickRunSelected = 0;
+  bool _configuringQuickRun = false;
   IdeReferences? _references;
 
   /// The Problems and References lists' focused rows and collapsed files.
@@ -737,6 +744,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       _favoriteBranches.restore(favorites);
       favorites.dispose();
     }
+    _restoreQuickRun(kept['quickRun']);
     if (kept['view'] case final String name) {
       _view = IdeSideView.values.asNameMap()[name] ?? _view;
     }
@@ -780,6 +788,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       ..._layout.toJson(),
       'view': _view.name,
       if (search.isNotEmpty) 'search': search,
+      if (_quickRunConfigurations.isNotEmpty) 'quickRun': _quickRunJson,
       if (_markdownSources.isNotEmpty) 'markdownSource': [..._markdownSources],
       if (!_favoriteBranches.isEmpty)
         'gitFavoriteBranches': _favoriteBranches.toJson(),
@@ -5150,6 +5159,23 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_terminals != null && widget.workspace.hasFolder) ...[
+                    IdeHover(
+                      message: switch (_selectedQuickRun) {
+                        final config? => '${config.name}\n${config.command}',
+                        null => l10n.quickRunConfigure,
+                      },
+                      child: IdeButton(
+                        key: const ValueKey('ide-quick-run'),
+                        label: l10n.quickRunRun,
+                        icon: Codicons.play,
+                        onPressed: _runQuickCommand,
+                        onDropdown: _showQuickRunMenu,
+                        dropdownTooltip: l10n.quickRunConfigureTooltip,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   IdeLayoutToggle.panel(_layout),
                   IdeLayoutToggle.chat(_layout),
                   if (widget.onPinnedChanged case final onPinnedChanged?) ...[

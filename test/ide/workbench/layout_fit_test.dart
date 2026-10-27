@@ -348,8 +348,8 @@ void main() {
     (tester) async {
       final calls = recordWindowCalls(tester);
       await pumpWorkbench(tester, {'a.txt': 'a'});
-      final panel = tester.getRect(find.byIcon(Codicons.layoutPanelOff));
-      await doubleClickAt(tester, Offset(panel.left - 60, panel.center.dy));
+      final run = tester.getRect(find.byKey(const ValueKey('ide-quick-run')));
+      await doubleClickAt(tester, Offset(run.left - 60, run.center.dy));
       expect(titleDoubleClicks(calls), 1);
       await tester.pump(kDoubleTapTimeout);
 

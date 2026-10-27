@@ -10,6 +10,43 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get quickRunRun => 'Run';
+
+  @override
+  String get quickRunConfigure => 'Configure Quick Run';
+
+  @override
+  String get quickRunConfigureTooltip => 'Select or Configure Run Command...';
+
+  @override
+  String get quickRunDescription =>
+      'Save startup commands for this project. Each command runs in a new integrated terminal. The working directory defaults to the project folder (the first folder in a multi-folder workspace); relative paths are based there.';
+
+  @override
+  String get quickRunName => 'Name (e.g. Frontend)';
+
+  @override
+  String get quickRunCommand => 'Command (e.g. npm run dev)';
+
+  @override
+  String get quickRunWorkingDirectory => 'Working directory (optional)';
+
+  @override
+  String get quickRunSaveAndRun => 'Save and Run';
+
+  @override
+  String get quickRunAdd => 'Add Run Command...';
+
+  @override
+  String get quickRunEdit => 'Edit Run Command...';
+
+  @override
+  String get quickRunDelete => 'Delete Run Command';
+
+  @override
+  String get quickRunCommandRequired => 'Enter a command to run.';
+
+  @override
   String get commonCancel => 'Cancel';
 
   @override

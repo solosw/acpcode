@@ -98,6 +98,78 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @quickRunRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Run'**
+  String get quickRunRun;
+
+  /// No description provided for @quickRunConfigure.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure Quick Run'**
+  String get quickRunConfigure;
+
+  /// No description provided for @quickRunConfigureTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Select or Configure Run Command...'**
+  String get quickRunConfigureTooltip;
+
+  /// No description provided for @quickRunDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Save startup commands for this project. Each command runs in a new integrated terminal. The working directory defaults to the project folder (the first folder in a multi-folder workspace); relative paths are based there.'**
+  String get quickRunDescription;
+
+  /// No description provided for @quickRunName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name (e.g. Frontend)'**
+  String get quickRunName;
+
+  /// No description provided for @quickRunCommand.
+  ///
+  /// In en, this message translates to:
+  /// **'Command (e.g. npm run dev)'**
+  String get quickRunCommand;
+
+  /// No description provided for @quickRunWorkingDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Working directory (optional)'**
+  String get quickRunWorkingDirectory;
+
+  /// No description provided for @quickRunSaveAndRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and Run'**
+  String get quickRunSaveAndRun;
+
+  /// No description provided for @quickRunAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Run Command...'**
+  String get quickRunAdd;
+
+  /// No description provided for @quickRunEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit Run Command...'**
+  String get quickRunEdit;
+
+  /// No description provided for @quickRunDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete Run Command'**
+  String get quickRunDelete;
+
+  /// No description provided for @quickRunCommandRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a command to run.'**
+  String get quickRunCommandRequired;
+
   /// No description provided for @commonCancel.
   ///
   /// In en, this message translates to:
