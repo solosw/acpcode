@@ -177,6 +177,22 @@ Future<void> main(List<String> arguments) async {
     if (app.parent.existsSync()) app.parent.deleteSync(recursive: true);
     app.parent.createSync(recursive: true);
     await _run('ditto', ['--arch', lipoArch, bundle.path, app.path], root.path);
+    // Some macOS versions copy fat binaries unchanged despite --arch.
+    // Thin explicitly before signing, following framework symlinks to keep
+    // their versioned bundle layout intact.
+    for (final executable in _executables(app)) {
+      final target = File(executable).resolveSymbolicLinksSync();
+      final archs = await Process.run('lipo', ['-archs', target]);
+      if (archs.exitCode != 0) _fail('Cannot read architectures: $target');
+      if ('${archs.stdout}'.trim() == lipoArch) continue;
+      await _run('lipo', [
+        target,
+        '-thin',
+        lipoArch,
+        '-output',
+        target,
+      ], root.path);
+    }
     await _checkArchitecture(app, lipoArch);
     _step(
       'Signing the $arch app${signing.adHoc ? '' : ' as ${signing.identity}'}',
