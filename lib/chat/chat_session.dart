@@ -851,7 +851,9 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   final Set<String> _clearedTasks = {};
 
   void stopTask(KernelTask task) {
-    if (_kernel case final RunsBackgroundTasks kernel) kernel.stopTask(task.id);
+    if (task.canStop && _kernel is RunsBackgroundTasks) {
+      (_kernel as RunsBackgroundTasks).stopTask(task.id);
+    }
   }
 
   /// Takes [tasks] that have ended (done, failed, stopped) off
@@ -960,7 +962,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   /// Stops what the tool call [id] runs, e.g. a subagent; null unless it
   /// runs as a task the kernel can stop.
   VoidCallback? stopOf(String? id) => switch (_runningTask(id)) {
-    final task? when _kernel is RunsBackgroundTasks => () => stopTask(task),
+    final task? when task.canStop && _kernel is RunsBackgroundTasks =>
+      () => stopTask(task),
     _ => null,
   };
 

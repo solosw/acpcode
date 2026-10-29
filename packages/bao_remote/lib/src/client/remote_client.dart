@@ -787,7 +787,9 @@ class RemoteClient {
   // --- Terminals -------------------------------------------------------------
 
   /// The user's shell there (or [shell]) on a terminal in [cwd]; [nonce]
-  /// the shell integration's, else one of the server's.
+  /// the shell integration's, else one of the server's. [environment] overrides
+  /// that host's environment. With [workspaceRoots], [cwd] must be canonical
+  /// and still inside those roots when the server is about to spawn it.
   Future<RemotePty> startPty({
     required String cwd,
     int columns = 80,
@@ -797,6 +799,8 @@ class RemoteClient {
     String? locale,
     String? version,
     String? nonce,
+    Map<String, String>? environment,
+    List<String>? workspaceRoots,
   }) async {
     final started = _map(
       await peer.request(RemoteProtocol.ptyStart, {
@@ -808,6 +812,8 @@ class RemoteClient {
         'locale': ?locale,
         'version': ?version,
         'nonce': ?nonce,
+        'environment': ?environment,
+        'workspaceRoots': ?workspaceRoots,
       }),
     );
     final id = started['id'] as int;

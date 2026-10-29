@@ -304,7 +304,8 @@ void main() {
         ),
         isTrue,
       );
-      expect(h.kernel, isNot(isA<RunsBackgroundTasks>()));
+      expect(h.kernel, isA<RunsBackgroundTasks>());
+      expect(h.tasks.every((task) => !task.canStop), isTrue);
     },
   );
 

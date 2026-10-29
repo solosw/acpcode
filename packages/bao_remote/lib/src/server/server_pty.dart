@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../claude/claude_environment.dart';
 import '../protocol.dart';
 import '../pty/posix_pty.dart';
@@ -63,6 +65,7 @@ class ServerPty {
   final Future<String?> Function() _claudeDirectory;
   final Map<int, PosixPty> _ptys = {};
   int _nextId = 0;
+  bool _closed = false;
 
   static TerminalOs get _os =>
       Platform.isMacOS ? TerminalOs.macOS : TerminalOs.linux;
@@ -119,14 +122,42 @@ class ServerPty {
           : '$path:$claude';
       if (nonce.isNotEmpty) environment['VSCODE_PATH_PREFIX'] = '$claude:';
     }
+    // Explicit command overrides belong to this host's environment, never
+    // the app's. They also take precedence over terminal defaults.
+    environment.addAll(
+      (args['environment'] as Map?)?.cast<String, String>() ?? const {},
+    );
+    final cwd = args['cwd'] as String;
+    if (args['workspaceRoots'] case final List roots) {
+      // ACP approvals contain a canonical cwd. Recheck on the execution
+      // server after all environment/setup awaits, immediately before spawn.
+      final canonical = await Directory(cwd).resolveSymbolicLinks();
+      if (!p.equals(canonical, cwd) || !await Directory(canonical).exists()) {
+        throw ArgumentError('Working directory changed after approval');
+      }
+      var inside = false;
+      for (final root in roots.cast<String>()) {
+        final resolved = await Directory(root).resolveSymbolicLinks();
+        if (p.equals(resolved, canonical) || p.isWithin(resolved, canonical)) {
+          inside = true;
+          break;
+        }
+      }
+      if (!inside) throw ArgumentError('cwd is outside the session workspace');
+    }
+    if (_closed || _peer.isClosed) throw const RpcClosed();
     final pty = await PosixPty.start(
       shell.executable,
       arguments,
-      workingDirectory: args['cwd'] as String,
+      workingDirectory: cwd,
       environment: environment,
       columns: args['columns'] as int? ?? 80,
       rows: args['rows'] as int? ?? 24,
     );
+    if (_closed || _peer.isClosed) {
+      pty.kill(9);
+      throw const RpcClosed();
+    }
     final id = ++_nextId;
     _ptys[id] = pty;
     pty.output.listen(
@@ -153,6 +184,7 @@ class ServerPty {
 
   /// Hangs up every terminal, and kills those still there after [timeout].
   Future<void> stopAll({Duration timeout = const Duration(seconds: 2)}) async {
+    _closed = true;
     await Future.wait([
       for (final pty in [..._ptys.values])
         () async {

@@ -12,6 +12,7 @@ import 'acp_catalog.dart';
 import 'acp_config_option.dart';
 import 'acp_mcp.dart';
 import 'acp_transport.dart';
+import 'acp_terminal.dart';
 
 /// Adapts an ACP JSON-RPC agent over a message transport to [AgentKernel].
 class AcpKernel
@@ -22,7 +23,8 @@ class AcpKernel
         SelectsMode,
         SelectsEffort,
         ProvidesCommands,
-        ReportsContext {
+        ReportsContext,
+        RunsBackgroundTasks {
   AcpKernel(
     this.descriptor,
     this._context,
@@ -100,6 +102,13 @@ class AcpKernel
   final _toolParents = <String, String>{};
   final _childSessions = <String, _AcpChildSession>{};
   final _sessionMessages = <String, _AcpSessionMessage>{};
+  AcpTerminalHost? _terminals;
+  final _terminalSnapshots = <String, AcpTerminalSnapshot>{};
+  final _terminalToolLinks = <String, List<String>>{};
+  final _terminalToolBlocks = <String, List<Object?>>{};
+  final _terminalApprovals = <String, Completer<bool>>{};
+  int _terminalRequests = 0;
+  int _terminalCancelEpoch = 0;
   final Set<String> _todoToolIds = {};
   final List<KernelOption> _modeOptions = [];
   List<KernelCommand> _commands = const [];
@@ -200,11 +209,22 @@ class AcpKernel
           if (!obsolete()) _fail(StateError('ACP agent process exited'));
         },
       );
+      final cwd = _context.cwd ?? _context.resume?.cwd;
+      if (cwd != null && cwd.isNotEmpty) {
+        final host = RemoteLocation.hostOf(cwd);
+        _terminals = createAcpTerminalHost([
+          cwd,
+          ...?_context.workspace?.call()?.folders.where(
+            (folder) => RemoteLocation.hostOf(folder) == host,
+          ),
+        ], _terminalChanged);
+      }
       final initialized = await _request('initialize', {
         'protocolVersion': 1,
         'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
         'clientCapabilities': <String, Object?>{
           'subagents': <String, Object?>{},
+          if (_terminals != null) 'terminal': true,
           // Claude ACP's compatibility extension streams child messages with
           // _meta.claudeCode.parentToolUseId instead of flattening them away.
           '_meta': {'subagent-transcript': true},
@@ -520,8 +540,15 @@ class AcpKernel
   void cancel() {
     final sessionId = _sessionId;
     if (_disposed || sessionId == null) return;
-    if (_turnId == null && _permissionRpcIds.isEmpty) return;
+    if (_turnId == null &&
+        _permissionRpcIds.isEmpty &&
+        _terminalApprovals.isEmpty &&
+        _terminalRequests == 0) {
+      return;
+    }
     _cancelling = true;
+    _terminalCancelEpoch++;
+    _cancelTerminalApprovals();
     try {
       // ACP cancellation is a notification, not a request. SDK-based
       // agents dispatch it only without an id; no cancel response is due.
@@ -558,6 +585,14 @@ class AcpKernel
 
   @override
   void answer(String requestId, InteractionAnswer answer) {
+    final approval = _terminalApprovals.remove(requestId);
+    if (approval != null) {
+      approval.complete(
+        answer is ApprovalAnswer && answer.decision != ApprovalDecision.deny,
+      );
+      emit(InteractionResolved(nextSeq, requestId));
+      return;
+    }
     final rpcId = _permissionRpcIds.remove(requestId);
     // The user may answer just as cancellation resolves the request.
     if (rpcId == null) return;
@@ -709,12 +744,302 @@ class AcpKernel
     }
   }
 
+  void _linkTerminalContent(String toolId, Object? content, String? parentId) {
+    if (content is! List) return;
+    final session = parentId == null
+        ? _sessionId
+        : _childSessions.values
+                  .where((child) => child.id == parentId)
+                  .firstOrNull
+                  ?.session ??
+              _sessionId;
+    final oldIds = _terminalToolLinks[toolId] ?? const <String>[];
+    final ids = <String>[];
+    for (final block in content) {
+      if (block is! Map || block['type'] != 'terminal') continue;
+      final snapshot = _terminalSnapshots[block['terminalId']];
+      if (snapshot == null || snapshot.sessionId != session) continue;
+      ids.add(snapshot.id);
+    }
+    if (ids.isEmpty) {
+      _terminalToolLinks.remove(toolId);
+      _terminalToolBlocks.remove(toolId);
+      for (final id in oldIds) {
+        _terminalChanged(_terminalSnapshots[id]!);
+      }
+      return;
+    }
+    _terminalToolLinks[toolId] = ids;
+    _terminalToolBlocks[toolId] = content.toList();
+    for (final id in oldIds.where((id) => !ids.contains(id))) {
+      _terminalChanged(_terminalSnapshots[id]!);
+    }
+    for (final id in ids) {
+      final synthetic = _terminalItemId(id);
+      emit(ItemRemoved(nextSeq, synthetic));
+      if (parentId != null) _ensureAgent(parentId).children.remove(synthetic);
+      _reportTerminalTask(_terminalSnapshots[id]!);
+    }
+  }
+
+  String _terminalToolContent(String toolId) => [
+    for (final block in _terminalToolBlocks[toolId]!)
+      if (block is Map &&
+          block['type'] == 'terminal' &&
+          _terminalToolLinks[toolId]!.contains(block['terminalId']))
+        _terminalSnapshots[block['terminalId']]!.output
+      else
+        _toolContent([block]) ?? '',
+  ].join('\n\n');
+
+  void _cancelTerminalApprovals() {
+    for (final entry in _terminalApprovals.entries.toList()) {
+      entry.value.complete(false);
+      emit(InteractionResolved(nextSeq, entry.key));
+    }
+    _terminalApprovals.clear();
+  }
+
+  Future<void> _terminalRequest(
+    Object rpcId,
+    String method,
+    Map<String, Object?> params,
+  ) async {
+    final transport = _transport;
+    final generation = _startGeneration;
+    final host = _terminals;
+    final cancelEpoch = _terminalCancelEpoch;
+    bool cancelled() => _cancelling || cancelEpoch != _terminalCancelEpoch;
+    bool current() =>
+        !_disposed &&
+        generation == _startGeneration &&
+        identical(transport, _transport);
+    _terminalRequests++;
+    try {
+      if (host == null) {
+        throw const AcpTerminalError(
+          -32601,
+          'Client terminals are not available for this workspace',
+        );
+      }
+      final session = params['sessionId'];
+      if (session is! String ||
+          session != _sessionId && !_childSessions.containsKey(session)) {
+        throw const AcpTerminalError(-32602, 'Unknown terminal session');
+      }
+      Map<String, Object?> result;
+      switch (method) {
+        case 'terminal/create':
+          if (_cancelling ||
+              _replaying ||
+              _retainedLoad ||
+              _childSessions[session]?.legacyTerminal == true) {
+            throw const AcpTerminalError(
+              -32000,
+              'Cannot start a terminal during replay or cancellation',
+            );
+          }
+          final command = await host.validate(params);
+          if (!current()) return;
+          if (cancelled()) {
+            throw const AcpTerminalError(
+              -32000,
+              'Terminal launch was cancelled',
+            );
+          }
+          final requestId = 'acp_terminal_approval_${++_nextId}';
+          final approval = Completer<bool>();
+          _terminalApprovals[requestId] = approval;
+          emit(
+            InteractionRequested(
+              nextSeq,
+              ApprovalRequest(
+                id: requestId,
+                title: command.host == null
+                    ? 'Run terminal command'
+                    : 'Run terminal command on ${command.host}',
+                toolName: 'terminal/create',
+                reason: command.host == null
+                    ? 'This command runs on your computer in the session workspace.'
+                    : 'This command runs on ${command.host} in the remote session workspace.',
+                preview: TextPreview(
+                  const JsonEncoder.withIndent('  ').convert(command.input),
+                ),
+              ),
+            ),
+          );
+          final allowed = await approval.future;
+          if (!current()) return;
+          if (!allowed || cancelled()) {
+            throw const AcpTerminalError(
+              -32000,
+              'Terminal command was not approved',
+            );
+          }
+          final id = await host.create(
+            session,
+            command,
+            canStart: () =>
+                current() &&
+                !cancelled() &&
+                _childSessions[session]?.legacyTerminal != true,
+          );
+          result = {'terminalId': id};
+        case 'terminal/output':
+          result = host.lookup(session, _terminalId(params)).result;
+        case 'terminal/wait_for_exit':
+          result = await host.wait(session, _terminalId(params));
+        case 'terminal/kill':
+          await host.kill(session, _terminalId(params));
+          result = {};
+        case 'terminal/release':
+          await host.release(session, _terminalId(params));
+          result = {};
+        default:
+          throw AcpTerminalError(-32601, 'method not found: $method');
+      }
+      if (current()) {
+        transport?.write({'jsonrpc': '2.0', 'id': rpcId, 'result': result});
+      }
+    } on Object catch (error) {
+      if (current()) {
+        transport?.write({
+          'jsonrpc': '2.0',
+          'id': rpcId,
+          'error': {
+            'code': error is AcpTerminalError ? error.code : -32000,
+            'message': '$error',
+          },
+        });
+      }
+    } finally {
+      _terminalRequests--;
+      if (!_disposed && _released) scheduleMicrotask(_releaseIfIdle);
+    }
+  }
+
+  String _terminalId(Map<String, Object?> params) {
+    final id = params['terminalId'];
+    if (id is! String || id.isEmpty) {
+      throw const AcpTerminalError(-32602, 'terminalId is required');
+    }
+    return id;
+  }
+
+  String _terminalItemId(String id) => 'acp_terminal_item_$id';
+
+  void _terminalChanged(AcpTerminalSnapshot snapshot) {
+    if (_disposed) return;
+    final first = !_terminalSnapshots.containsKey(snapshot.id);
+    _terminalSnapshots[snapshot.id] = snapshot;
+    final links = _terminalToolLinks.entries
+        .where((entry) => entry.value.contains(snapshot.id))
+        .toList();
+    if (links.isEmpty) {
+      final id = _terminalItemId(snapshot.id);
+      final item = _terminalItem(snapshot, id);
+      final parent = _childSessions[snapshot.sessionId]?.id;
+      if (parent == null) {
+        if (first) _closeAssistantStream();
+        emit(ItemUpserted(nextSeq, id, item));
+      } else {
+        if (first) _ensureAgent(parent).streamId = null;
+        _ensureAgent(parent).children[id] = item;
+        _publishAgent(parent);
+      }
+    } else {
+      for (final entry in links) {
+        final item = _tools[entry.key];
+        if (item == null) continue;
+        final parentId = _toolParents[entry.key];
+        _toolUpdate({'toolCallId': entry.key}, parentId: parentId);
+      }
+    }
+    _reportTerminalTask(snapshot);
+    emit(TasksReported(nextSeq, _tasks.values.toList()));
+    if (_released) scheduleMicrotask(_releaseIfIdle);
+  }
+
+  ToolCallItem _terminalItem(AcpTerminalSnapshot snapshot, String id) =>
+      ToolCallItem(
+        kind: ToolKind.command,
+        target: snapshot.command.command,
+        callId: id,
+        tool: 'terminal',
+        output: snapshot.output,
+        status: snapshot.exitStatus == null
+            ? ToolStatus.running
+            : snapshot.exitStatus!['exitCode'] == 0
+            ? ToolStatus.succeeded
+            : ToolStatus.failed,
+        details: ToolCallDetails(
+          input: jsonEncode(snapshot.command.input),
+          content: snapshot.output,
+        ),
+      );
+
+  void _reportTerminalTask(AcpTerminalSnapshot snapshot) {
+    final linked = _terminalToolLinks.entries
+        .where((entry) => entry.value.contains(snapshot.id))
+        .firstOrNull
+        ?.key;
+    final running = snapshot.exitStatus == null && !snapshot.released;
+    _tasks[snapshot.id] = KernelTask(
+      id: snapshot.id,
+      description: snapshot.command.command,
+      kind: KernelTaskKind.command,
+      status: running
+          ? CommandStatus.running
+          : snapshot.exitStatus?['exitCode'] == 0
+          ? CommandStatus.succeeded
+          : CommandStatus.failed,
+      startedAt: snapshot.startedAt,
+      toolUseId: linked ?? _terminalItemId(snapshot.id),
+      canStop: running && _terminals != null,
+      summary: snapshot.output,
+    );
+  }
+
+  @override
+  void stopTask(String taskId) {
+    final snapshot = _terminalSnapshots[taskId];
+    final host = _terminals;
+    if (snapshot == null ||
+        host == null ||
+        snapshot.released ||
+        snapshot.exitStatus != null) {
+      return;
+    }
+    unawaited(
+      host.kill(snapshot.sessionId, taskId).catchError((Object error) {
+        if (!_disposed) {
+          emit(
+            ItemUpserted(
+              nextSeq,
+              'acp_terminal_stop_$taskId',
+              NoticeItem(NoticeKind.warning, 'Could not stop terminal: $error'),
+            ),
+          );
+        }
+      }),
+    );
+  }
+
+  @override
+  void moveToBackground(String toolUseId) {
+    // Client-owned ACP terminals start asynchronously; none run in the foreground.
+  }
+
   void _handleServerRequest(
     Object rpcId,
     String requestId,
     String method,
     Map<String, Object?> params,
   ) {
+    if (method.startsWith('terminal/')) {
+      unawaited(_terminalRequest(rpcId, method, params));
+      return;
+    }
     if (method != 'session/request_permission') {
       _transport?.write({
         'jsonrpc': '2.0',
@@ -1010,6 +1335,7 @@ class AcpKernel
         update['id'] as String? ??
         'acp_tool';
     // ACP updates are patches: omitted fields retain the previous value.
+    _linkTerminalContent(id, update['content'], parentId);
     final previous = _tools[id];
     final title = update['title'] as String? ?? previous?.target ?? 'Tool call';
     final toolStatus = switch (update['status']) {
@@ -1053,7 +1379,9 @@ class AcpKernel
         'rawOutput',
         'raw_output',
       ], previous?.details?.output),
-      content: update['content'] != null
+      content: _terminalToolLinks.containsKey(id)
+          ? _terminalToolContent(id)
+          : update['content'] != null
           ? _toolContent(update['content'])
           : previous?.details?.content,
     );
@@ -1101,6 +1429,11 @@ class AcpKernel
       return;
     }
     emit(ItemUpserted(nextSeq, id, item));
+    if (_terminalToolLinks.containsKey(id)) {
+      _tasks.remove(id);
+      emit(TasksReported(nextSeq, _tasks.values.toList()));
+      return;
+    }
     _tasks[id] = KernelTask(
       id: id,
       description: title,
@@ -1369,7 +1702,8 @@ class AcpKernel
         status: item.status,
         startedAt: item.startedAt!,
         toolUseId: current,
-        background: item.background,
+        // ACP has no generic move-to-background operation for agent tools.
+        background: true,
         canStop: false,
         summary: item.result ?? item.activity,
       );
@@ -1683,6 +2017,18 @@ class AcpKernel
   }
 
   void _disconnect() {
+    _cancelTerminalApprovals();
+    final terminals = _terminals;
+    _terminals = null;
+    if (terminals != null) {
+      final closing = Future<void>.sync(terminals.close);
+      _stopping = Future.wait([_stopping, closing]).then((_) {});
+      unawaited(
+        _stopping.catchError((Object error) {
+          debugPrint('Could not close ACP terminals: $error');
+        }),
+      );
+    }
     _interruptAgents();
     if (_replaying && !_everLoaded) {
       // An interrupted initial load is only a partial transcript. Remove its
@@ -1772,6 +2118,9 @@ class AcpKernel
         _queuedTurns.isNotEmpty ||
         _childSessions.values.any((child) => child.active) ||
         _permissionRpcIds.isNotEmpty ||
+        _terminalApprovals.isNotEmpty ||
+        _terminalRequests != 0 ||
+        (_terminals?.hasRunning ?? false) ||
         _health.status == KernelHealthStatus.failed) {
       return;
     }

@@ -472,7 +472,8 @@ void main() {
         expect(task.canStop, isFalse);
         expect(task.copyWith(status: CommandStatus.succeeded).canStop, isFalse);
       }
-      expect(kernel, isNot(isA<RunsBackgroundTasks>()));
+      expect(kernel, isA<RunsBackgroundTasks>());
+      expect(initial.every((task) => !task.canStop), isTrue);
 
       transport.notify({
         'sessionUpdate': 'tool_call_update',
