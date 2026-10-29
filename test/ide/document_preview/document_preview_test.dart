@@ -9,6 +9,7 @@ import 'package:baocode/ide/document_preview/document_conversion.dart';
 import 'package:baocode/ide/document_preview/document_preview.dart';
 import 'package:baocode/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:docx_file_viewer/docx_file_viewer.dart';
@@ -111,6 +112,78 @@ void main() {
     expect(find.text('Built-in Word 中文', findRichText: true), findsOneWidget);
     expect(find.text('Table cell', findRichText: true), findsOneWidget);
   });
+
+  for (final kind in [PointerDeviceKind.mouse, PointerDeviceKind.trackpad]) {
+    testWidgets(
+      'Word $kind scrolling never zooms, including at boundaries',
+      (tester) async {
+        await tester.pumpWidget(
+          _app(
+            IdeDocumentPreview(
+              path: '/p/scroll.docx',
+              read: (_) async => wordFixture(),
+            ),
+          ),
+        );
+        final word = find.byType(DocxView);
+        await _waitFor(
+          tester,
+          find.text('Built-in Word 中文', findRichText: true),
+        );
+        final scrollable = find
+            .descendant(of: word, matching: find.byType(Scrollable))
+            .first;
+        final position = tester.state<ScrollableState>(scrollable).position;
+        expect(position.maxScrollExtent, greaterThan(0));
+        double scale() => tester
+            .renderObject(scrollable)
+            .getTransformTo(null)
+            .getMaxScaleOnAxis();
+        final initialScale = scale();
+        final pointer = tester.getCenter(word);
+        Future<void> wheel(double dy) async {
+          await tester.sendEventToBinding(
+            PointerScrollEvent(
+              kind: kind,
+              position: pointer,
+              scrollDelta: Offset(0, dy),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+
+        // The inner scroller cannot consume outward scrolling at its edges.
+        await wheel(-80);
+        expect(scale(), closeTo(initialScale, 0.0001));
+        await wheel(80);
+        expect(position.pixels, greaterThan(0));
+        expect(scale(), closeTo(initialScale, 0.0001));
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        await wheel(80);
+        expect(scale(), closeTo(initialScale, 0.0001));
+        await wheel(-80);
+        expect(position.pixels, lessThan(position.maxScrollExtent));
+        expect(scale(), closeTo(initialScale, 0.0001));
+
+        // Explicit pinch events must still zoom.
+        await tester.sendEventToBinding(
+          PointerScaleEvent(
+            kind: PointerDeviceKind.trackpad,
+            position: pointer,
+            scale: 1.2,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(scale(), greaterThan(initialScale));
+        expect(tester.takeException(), isNull);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+      }),
+    );
+  }
 
   testWidgets(
     'LaTeX preview compiles the latest snapshot and keeps the editor mounted',

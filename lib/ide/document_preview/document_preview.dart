@@ -224,7 +224,18 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
                   ),
                 )
               : _bytes != null && _word
-              ? DocxView.bytes(_bytes!, key: ObjectKey(_bytes))
+              ? InteractiveViewer(
+                  key: ObjectKey(_bytes),
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  // DocxView's default viewer zooms on unconsumed wheel
+                  // events at scroll boundaries. Keep pinch zoom only.
+                  scaleFactor: double.infinity,
+                  child: DocxView.bytes(
+                    _bytes!,
+                    config: const DocxViewConfig(enableZoom: false),
+                  ),
+                )
               : _sheets != null
               ? SpreadsheetPreview(key: ObjectKey(_sheets), sheets: _sheets!)
               : _bytes != null

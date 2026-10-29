@@ -29,6 +29,28 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.6.1">
+    <h2 class="plain"><a href="#v1.6.1">1.6.1</a></h2>
+    <p>New</p>
+    <ul>
+    <li>Preview PDF files directly in the editor and chat side panel, with page navigation and zoom controls.</li>
+    <li>Preview Word (.docx) documents with a lightweight native renderer, without installing Office or LibreOffice.</li>
+    <li>Preview Excel (.xlsx) workbooks as read-only tables, with worksheet switching and horizontal/vertical scrolling.</li>
+    <li>Compile local LaTeX source into a PDF preview using the bundled offline Tectonic engine, common packages and Chinese fonts. The preview uses unsaved editor content and preserves relative file references.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Scrolling Word documents no longer unexpectedly zooms at the top or bottom; trackpad pinch zoom remains available.</li>
+    <li>Reloaded PDFs and recompiled LaTeX previews show the new output instead of a cached document.</li>
+    <li>PDF and Office files no longer pass through the text editor's UTF-8 reading or save paths.</li>
+    </ul>
+    <p>Notes</p>
+    <ul>
+    <li>Legacy .doc/.xls files must be saved as .docx/.xlsx. Advanced Office layout, Excel charts and formula recalculation are not supported.</li>
+    <li>LaTeX compilation is local only and uses a curated offline package set, not a full TeX Live installation. Missing packages produce a local error; no runtime downloads are performed. Compile only trusted LaTeX documents.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.6.0">
     <h2 class="plain"><a href="#v1.6.0">1.6.0</a></h2>
     <p>Fork updates (1.6.0+34)</p>

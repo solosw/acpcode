@@ -29,6 +29,28 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.6.1">
+    <h2 class="plain"><a href="#v1.6.1">1.6.1</a></h2>
+    <p>新功能</p>
+    <ul>
+    <li>编辑器和聊天侧栏支持直接预览 PDF，可翻页和缩放。</li>
+    <li>使用轻量原生渲染器预览 Word（.docx），无需安装 Office 或 LibreOffice。</li>
+    <li>支持以只读表格预览 Excel（.xlsx），可切换工作表并横向、纵向滚动。</li>
+    <li>内置离线 Tectonic 引擎、常用宏包和中文字体，可将本地 LaTeX 源码编译为 PDF 预览，使用编辑器当前未保存内容，并保留相对文件引用。</li>
+    </ul>
+    <p>修复</p>
+    <ul>
+    <li>Word 文档滚动到顶部或底部时不再意外缩放，保留触控板捏合缩放。</li>
+    <li>PDF 重新加载和 LaTeX 重新编译后显示最新内容，不再命中旧文档缓存。</li>
+    <li>PDF 和 Office 文件不再经过文本编辑器的 UTF-8 读取及保存流程。</li>
+    </ul>
+    <p>说明</p>
+    <ul>
+    <li>旧版 .doc/.xls 需另存为 .docx/.xlsx；暂不支持高级 Office 排版、Excel 图表和公式重算。</li>
+    <li>LaTeX 仅支持本地编译，内置精选离线宏包而非完整 TeX Live；缺失宏包时在本地报错，不会在运行时下载。请仅编译可信的 LaTeX 文档。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.6.0">
     <h2 class="plain"><a href="#v1.6.0">1.6.0</a></h2>
     <p>分支更新（1.6.0+34）</p>
