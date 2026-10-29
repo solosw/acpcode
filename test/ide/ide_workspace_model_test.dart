@@ -56,6 +56,41 @@ void main() {
   final first = p.join(root, 'first.txt');
   final second = p.join(root, 'second.txt');
 
+  for (final extension in ['PDF', 'doc', 'DOCX', 'xls', 'XLSX']) {
+    test(
+      '$extension opens and restores as media without reading text',
+      () async {
+        final path = p.join(root, 'document.$extension');
+        final files = _FakeIdeFileService({path: '\x00binary document'});
+        final workspace = IdeWorkspace(root, files: files);
+        addTearDown(workspace.dispose);
+        await workspace.open(path);
+        expect(workspace.active!.isMedia, isTrue);
+        expect(workspace.active!.isFile, isFalse);
+        await workspace.save(workspace.active!);
+        expect(files.writes, isEmpty);
+        expect(workspace.active!.text, isEmpty);
+        expect(files.reads, isEmpty);
+        final restored = IdeWorkspace(root, files: files);
+        addTearDown(restored.dispose);
+        await restored.restore([path]);
+        expect(restored.active!.isMedia, isTrue);
+        expect(files.reads, isEmpty);
+      },
+    );
+  }
+
+  test('LaTeX still opens as editable source', () async {
+    final path = p.join(root, 'main.tex');
+    final files = _FakeIdeFileService({path: 'LaTeX source'});
+    final workspace = IdeWorkspace(root, files: files);
+    addTearDown(workspace.dispose);
+    await workspace.open(path);
+    expect(workspace.active!.isMedia, isFalse);
+    expect(workspace.active!.readOnly, isFalse);
+    expect(workspace.active!.text, 'LaTeX source');
+  });
+
   test(
     'open retains the exact BOM, mixed endings, and initial baseline',
     () async {

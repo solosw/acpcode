@@ -10,6 +10,59 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get documentPreviewLegacyFormat =>
+      'Legacy .doc / .xls binary files are not supported by the built-in renderer. Save as .docx / .xlsx to preview.';
+
+  @override
+  String get documentPreviewSheetNotice =>
+      'Read-only data preview. Formulas use saved results; charts and advanced formatting are not rendered.';
+
+  @override
+  String get documentPreviewSheetTruncated =>
+      'Preview limited to 10,000 rows, 256 columns and 200,000 cells. Formulas are not recalculated.';
+
+  @override
+  String get documentPreviewReload => 'Reload';
+
+  @override
+  String get documentPreviewCompile => 'Compile LaTeX Preview';
+
+  @override
+  String get documentPreviewPreviousPage => 'Previous page';
+
+  @override
+  String get documentPreviewNextPage => 'Next page';
+
+  @override
+  String get documentPreviewZoomOut => 'Zoom out';
+
+  @override
+  String get documentPreviewZoomIn => 'Zoom in';
+
+  @override
+  String get documentPreviewLog => 'Build log';
+
+  @override
+  String get documentPreviewUnavailable =>
+      'LaTeX compilation requires a local desktop project. Remote compilation is not supported.';
+
+  @override
+  String get documentPreviewMissingTex =>
+      'The bundled LaTeX runtime is missing or incomplete. Reinstall BaoCode; developers should run tool/prepare_latex.dart.';
+
+  @override
+  String get documentPreviewFailed =>
+      'LaTeX compilation failed. See the build log for details.';
+
+  @override
+  String get documentPreviewTimeout =>
+      'LaTeX compilation timed out and was stopped.';
+
+  @override
+  String get documentPreviewTrustNotice =>
+      'Compile only trusted LaTeX documents. The bundled engine runs locally and offline with shell escape disabled; this is not a security sandbox.';
+
+  @override
   String get quickRunRun => 'Run';
 
   @override

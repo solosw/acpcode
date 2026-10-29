@@ -43,6 +43,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'prepare_latex.dart' as latex;
+
 /// Where the .app flutter leaves behind goes, and where the disk image is
 /// written. Under build/, which the repository already ignores and flutter
 /// clean already removes.
@@ -193,6 +195,14 @@ Future<void> main(List<String> arguments) async {
         target,
       ], root.path);
     }
+    _step('Bundling the offline LaTeX runtime ($arch)');
+    final latexDirectory = Directory('${app.path}/Contents/Resources/latex');
+    final engine = await latex.prepareEngine(
+      root,
+      latexDirectory,
+      'macos-$arch',
+    );
+    await latex.prepareBundle(root, latexDirectory, engine);
     await _checkArchitecture(app, lipoArch);
     _step(
       'Signing the $arch app${signing.adHoc ? '' : ' as ${signing.identity}'}',
@@ -359,6 +369,7 @@ class _Signing {
         await sign(entry.path);
       }
     }
+    await sign('${app.path}/Contents/Resources/latex/tectonic');
     await sign('${app.path}/Contents/MacOS/$_browserHost');
     await sign(
       '${app.path}/Contents/PlugIns/FinderExtension.appex',
@@ -496,6 +507,8 @@ String _bundleRemote(Directory remote, Directory target) {
 List<String> _executables(Directory app) => [
   '${app.path}/Contents/MacOS/BaoCode',
   '${app.path}/Contents/MacOS/$_browserHost',
+  if (File('${app.path}/Contents/Resources/latex/tectonic').existsSync())
+    '${app.path}/Contents/Resources/latex/tectonic',
   '${app.path}/Contents/PlugIns/FinderExtension.appex/Contents/MacOS/'
       'FinderExtension',
   // A framework's executable is named as the framework: X.framework/X.

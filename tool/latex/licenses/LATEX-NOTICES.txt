@@ -1,0 +1,22 @@
+BaoCode ships unmodified Tectonic 0.17.0 binaries and a subset of its TeX Live
+2022 resource snapshot. This helper is a separate process, not a system TeX
+installation. Original notices in TeX source and macro files are retained.
+
+Tectonic source, license and third-party build inputs:
+https://github.com/tectonic-typesetting/tectonic/tree/tectonic%400.17.0
+
+TeX resource snapshot SHA-256 identity:
+6ffe055852f8faf66c0acbe1a7fb27f87b869a90bad1204f3bf4d9683f597c7c
+Source distribution and package documentation:
+https://www.tug.org/texlive/
+https://ctan.org/
+
+LaTeX/AMS packages retain their individual LPPL/permissive notices. Latin
+Modern fonts are distributed under the GUST Font License. Fandol fonts are
+distributed under GPL with a font embedding exception. Other TeX and
+hyphenation files retain their respective notices and licensing terms.
+
+bundle-manifest.json identifies every bundled resource by name and SHA-256.
+The full unmodified upstream distributions contain corresponding source and
+package documentation. No bundled font, macro or hyphenation file is renamed
+or modified by BaoCode.

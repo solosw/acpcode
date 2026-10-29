@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 
+import 'document_preview/document_paths.dart';
 import 'file_service.dart';
 import 'file_views.dart';
 import 'git/git_repository.dart';
@@ -591,7 +592,7 @@ class IdeWorkspace extends ChangeNotifier
       doc = IdeDocument._shared(path, model);
     } else if (FileViews.of(path) case final view?) {
       doc = IdeDocument.media(path, view: view.id);
-    } else if (ideIsImagePath(path)) {
+    } else if (ideIsImagePath(path) || ideIsDocumentPath(path)) {
       doc = IdeDocument.media(path);
     } else {
       final read = _reads.putIfAbsent(path, () => files.read(path));
@@ -646,7 +647,7 @@ class IdeWorkspace extends ChangeNotifier
       final IdeDocument doc;
       if (FileViews.of(normal) case final view?) {
         doc = IdeDocument.media(normal, view: view.id);
-      } else if (ideIsImagePath(normal)) {
+      } else if (ideIsImagePath(normal) || ideIsDocumentPath(normal)) {
         doc = IdeDocument.media(normal);
       } else if (_fileModel(normal) case final model?) {
         doc = IdeDocument._shared(normal, model);

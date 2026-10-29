@@ -10,6 +10,56 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get documentPreviewLegacyFormat =>
+      '内置渲染器暂不支持旧版 .doc / .xls 二进制文件。请另存为 .docx / .xlsx 后预览。';
+
+  @override
+  String get documentPreviewSheetNotice =>
+      '只读数据预览，公式显示文件中保存的结果，不重新计算；不渲染图表和高级格式。';
+
+  @override
+  String get documentPreviewSheetTruncated =>
+      '预览上限为 10,000 行、256 列和 200,000 个单元格；公式不重新计算。';
+
+  @override
+  String get documentPreviewReload => '重新加载';
+
+  @override
+  String get documentPreviewCompile => '编译 LaTeX 预览';
+
+  @override
+  String get documentPreviewPreviousPage => '上一页';
+
+  @override
+  String get documentPreviewNextPage => '下一页';
+
+  @override
+  String get documentPreviewZoomOut => '缩小';
+
+  @override
+  String get documentPreviewZoomIn => '放大';
+
+  @override
+  String get documentPreviewLog => '编译日志';
+
+  @override
+  String get documentPreviewUnavailable => 'LaTeX 编译需要本地桌面环境，暂不支持远程项目编译。';
+
+  @override
+  String get documentPreviewMissingTex =>
+      '内置 LaTeX 运行时缺失或不完整，请重新安装 BaoCode。开发者请运行 tool/prepare_latex.dart。';
+
+  @override
+  String get documentPreviewFailed => 'LaTeX 编译失败，请查看编译日志。';
+
+  @override
+  String get documentPreviewTimeout => 'LaTeX 编译超时，已停止。';
+
+  @override
+  String get documentPreviewTrustNotice =>
+      '请仅编译可信 LaTeX 文档。内置引擎在本机离线运行，已禁用 shell escape，但这不是安全沙箱。';
+
+  @override
   String get quickRunRun => '运行';
 
   @override

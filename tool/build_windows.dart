@@ -38,6 +38,8 @@
 import 'dart:ffi' show Abi;
 import 'dart:io';
 
+import 'prepare_latex.dart' as latex;
+
 import 'package:crypto/crypto.dart' show sha256;
 
 /// Where the bundle flutter leaves behind goes (for [arch]), and where the
@@ -178,6 +180,16 @@ Future<void> main(List<String> arguments) async {
   _step('Putting in OpenSSH for Windows $_openSshRelease ($arch)');
   await _putOpenSsh(root, bundle, arch);
   _checkBundle(bundle, [for (final name in _openSshFiles) 'openssh\\$name']);
+
+  _step('Bundling the offline LaTeX runtime ($arch)');
+  final latexDirectory = Directory.fromUri(bundle.uri.resolve('latex/'));
+  final engine = await latex.prepareEngine(
+    root,
+    latexDirectory,
+    'windows-$arch',
+  );
+  await latex.prepareBundle(root, latexDirectory, engine);
+  _checkBundle(bundle, [r'latex\tectonic.exe', r'latex\bundle\SHA256SUM']);
 
   _step('Compiling the installer');
   final iscc = _findIscc();

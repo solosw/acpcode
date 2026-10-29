@@ -98,6 +98,96 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @documentPreviewLegacyFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Legacy .doc / .xls binary files are not supported by the built-in renderer. Save as .docx / .xlsx to preview.'**
+  String get documentPreviewLegacyFormat;
+
+  /// No description provided for @documentPreviewSheetNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Read-only data preview. Formulas use saved results; charts and advanced formatting are not rendered.'**
+  String get documentPreviewSheetNotice;
+
+  /// No description provided for @documentPreviewSheetTruncated.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview limited to 10,000 rows, 256 columns and 200,000 cells. Formulas are not recalculated.'**
+  String get documentPreviewSheetTruncated;
+
+  /// No description provided for @documentPreviewReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
+  String get documentPreviewReload;
+
+  /// No description provided for @documentPreviewCompile.
+  ///
+  /// In en, this message translates to:
+  /// **'Compile LaTeX Preview'**
+  String get documentPreviewCompile;
+
+  /// No description provided for @documentPreviewPreviousPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous page'**
+  String get documentPreviewPreviousPage;
+
+  /// No description provided for @documentPreviewNextPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Next page'**
+  String get documentPreviewNextPage;
+
+  /// No description provided for @documentPreviewZoomOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom out'**
+  String get documentPreviewZoomOut;
+
+  /// No description provided for @documentPreviewZoomIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom in'**
+  String get documentPreviewZoomIn;
+
+  /// No description provided for @documentPreviewLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Build log'**
+  String get documentPreviewLog;
+
+  /// No description provided for @documentPreviewUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'LaTeX compilation requires a local desktop project. Remote compilation is not supported.'**
+  String get documentPreviewUnavailable;
+
+  /// No description provided for @documentPreviewMissingTex.
+  ///
+  /// In en, this message translates to:
+  /// **'The bundled LaTeX runtime is missing or incomplete. Reinstall BaoCode; developers should run tool/prepare_latex.dart.'**
+  String get documentPreviewMissingTex;
+
+  /// No description provided for @documentPreviewFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'LaTeX compilation failed. See the build log for details.'**
+  String get documentPreviewFailed;
+
+  /// No description provided for @documentPreviewTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'LaTeX compilation timed out and was stopped.'**
+  String get documentPreviewTimeout;
+
+  /// No description provided for @documentPreviewTrustNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Compile only trusted LaTeX documents. The bundled engine runs locally and offline with shell escape disabled; this is not a security sandbox.'**
+  String get documentPreviewTrustNotice;
+
   /// No description provided for @quickRunRun.
   ///
   /// In en, this message translates to:

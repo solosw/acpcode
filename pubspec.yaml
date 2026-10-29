@@ -77,6 +77,10 @@ dependencies:
   # A web page copied, as HTML (WindowControls.readPasteboardHtml).
   quill_native_bridge: ^11.0.0
   super_sliver_list: ^0.4.1
+  pdfrx: ^2.10.1
+  docx_file_viewer: ^1.0.5
+  archive: ^4.0.9
+  xml: ^7.0.1
 
 dev_dependencies:
   flutter_test:

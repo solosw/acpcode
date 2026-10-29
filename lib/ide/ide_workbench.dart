@@ -63,6 +63,7 @@ import 'file_service.dart'
         IdeFileService,
         IdeHostFiles,
         localizedFileError,
+        readBytesThrough,
         readFileBytes;
 import 'git/commit_message.dart';
 import 'git/git_branch_actions.dart';
@@ -90,6 +91,8 @@ import 'ide_dialog.dart';
 import 'ide_editor.dart';
 import 'ide_editor_placeholder.dart';
 import 'ide_image_preview.dart';
+import 'document_preview/document_paths.dart';
+import 'document_preview/document_preview.dart';
 import 'markdown/markdown_paste.dart';
 import 'markdown/markdown_preview.dart';
 import 'ide_explorer.dart';
@@ -4576,6 +4579,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                             child: FileViews.byId(active.view!)!
                                 .build(context, active.path),
                           )
+                        : active.isMedia && ideIsDocumentPath(active.path)
+                        ? IdeDocumentPreview(
+                            key: ValueKey(active),
+                            path: active.path,
+                            read: (path) =>
+                                readBytesThrough(widget.workspace.files, path),
+                          )
                         : active.isMedia
                         ? IdeImagePreview(
                             key: ValueKey(active),
@@ -4609,35 +4619,39 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                           )
                         : _previewing(active)
                         ? _markdownPreview(active)
-                        : widget.editorBuilder?.call(
-                                context,
-                                widget.workspace,
-                              ) ??
-                              IdeEditor(
-                                nativeEditorEnabled: widget.nativeEditorEnabled,
-                                key: _editorKey,
-                                workspace: widget.workspace,
-                                active: active,
-                                onError: _report,
-                                onLspStatus: (_) {},
-                                onPositionChanged: _positionChanged,
-                                // Go to Definition's target (F12),
-                                // centered even when already in view.
-                                onOpenLocation: (location) =>
-                                    _openLocation(location, center: true),
-                                onShowReferences: _showReferences,
-                                onShowCommands: () => _showQuickInput('>'),
-                                gitBlame: _gitBlame,
-                                onShowCommit: _showCommitInLog,
-                                onShowHistory: _showHistory,
-                                onCompare: (path, what) =>
-                                    unawaited(_compareWith(path, what)),
-                                keyResolver: _resolveEditorKey,
-                                onPaste: _pasteInEditor,
-                                formatOnSave: _formatOnSave,
-                                debug: _debug,
-                                agentEdits: widget.agentEdits,
-                              ),
+                        : _withLatexPreview(
+                            active,
+                            widget.editorBuilder?.call(
+                                  context,
+                                  widget.workspace,
+                                ) ??
+                                IdeEditor(
+                                  nativeEditorEnabled:
+                                      widget.nativeEditorEnabled,
+                                  key: _editorKey,
+                                  workspace: widget.workspace,
+                                  active: active,
+                                  onError: _report,
+                                  onLspStatus: (_) {},
+                                  onPositionChanged: _positionChanged,
+                                  // Go to Definition's target (F12),
+                                  // centered even when already in view.
+                                  onOpenLocation: (location) =>
+                                      _openLocation(location, center: true),
+                                  onShowReferences: _showReferences,
+                                  onShowCommands: () => _showQuickInput('>'),
+                                  gitBlame: _gitBlame,
+                                  onShowCommit: _showCommitInLog,
+                                  onShowHistory: _showHistory,
+                                  onCompare: (path, what) =>
+                                      unawaited(_compareWith(path, what)),
+                                  keyResolver: _resolveEditorKey,
+                                  onPaste: _pasteInEditor,
+                                  formatOnSave: _formatOnSave,
+                                  debug: _debug,
+                                  agentEdits: widget.agentEdits,
+                                ),
+                          ),
                   ),
                 ),
                 // And it under them, while another tab is in front.
@@ -4651,6 +4665,17 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _withLatexPreview(IdeDocument document, Widget child) {
+    if (!ideIsLatexPath(document.path) || document.readOnly) return child;
+    return IdeLatexPreview(
+      key: ValueKey(document),
+      path: document.path,
+      source: () => document.text,
+      enabled: _local,
+      child: child,
     );
   }
 

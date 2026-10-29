@@ -14,6 +14,8 @@ import 'package:path/path.dart' as p;
 import '../../base/shown_when_ready.dart';
 import '../../base/smooth_scroll.dart';
 import '../../ide/file_service.dart';
+import '../../ide/document_preview/document_paths.dart';
+import '../../ide/document_preview/document_preview.dart';
 import '../../ide/ide_agent_edits.dart';
 import '../../ide/ide_code_diff.dart';
 import '../../ide/ide_code_editor.dart';
@@ -191,6 +193,8 @@ class _FilePreviewState extends State<FilePreview> {
 
   /// An image shows as it is, its changes too: there is no text to compare.
   bool get _image => ideIsImagePath(_request.path);
+  bool get _document => ideIsDocumentPath(_request.path);
+  bool get _binaryPreview => _image || _document;
 
   /// A markdown file rendered: its changes not, unless the text before is
   /// not known and the file shows as it is.
@@ -218,7 +222,7 @@ class _FilePreviewState extends State<FilePreview> {
   void _languageModesChanged() {
     if (!mounted) return;
     setState(() {});
-    if (_edit == null && !_image) unawaited(_read(++_load));
+    if (_edit == null && !_binaryPreview) unawaited(_read(++_load));
   }
 
   void _attach(SidePanelFileEdit edit) {
@@ -252,7 +256,7 @@ class _FilePreviewState extends State<FilePreview> {
       _detach();
       if (widget.edit case final edit? when _editable) _attach(edit);
       _start();
-    } else if (oldWidget.reveal != widget.reveal && !_image) {
+    } else if (oldWidget.reveal != widget.reveal && !_binaryPreview) {
       // Asked for again (the agent wrote it again, say): read anew, what
       // shows kept until then.
       unawaited(_read(++_load));
@@ -330,7 +334,7 @@ class _FilePreviewState extends State<FilePreview> {
     // The agent's change shows in the text.
     if (_request.agentChange && _isMarkdown) _source = true;
     _dropMarkdown();
-    if (_image) return;
+    if (_binaryPreview) return;
     // Its tab's edit shows as it is while the file is read anew.
     if (_edit case final edit?) {
       _loaded = const _Text([]);
@@ -479,7 +483,7 @@ class _FilePreviewState extends State<FilePreview> {
         children: [
           _bar(context),
           ?_notice(context),
-          Expanded(child: _body(context)),
+          Expanded(child: _withLatexPreview(_body(context))),
         ],
       ),
     );
@@ -528,7 +532,7 @@ class _FilePreviewState extends State<FilePreview> {
               ),
             ),
           ),
-          if (!_image && widget.language)
+          if (!_binaryPreview && widget.language)
             _TextButton(
               label: IdeLanguageNames.forPath(path),
               tooltip: l10n.languageModeChange,
@@ -569,7 +573,29 @@ class _FilePreviewState extends State<FilePreview> {
     );
   }
 
+  Widget _withLatexPreview(Widget child) {
+    final edit = _edit;
+    if (!ideIsLatexPath(_request.path) || edit == null || !_editable) {
+      return child;
+    }
+    return IdeLatexPreview(
+      key: ValueKey(edit),
+      path: _request.path,
+      source: () => edit.controller.document.text,
+      enabled: widget.files is! IdeHostFiles,
+      child: child,
+    );
+  }
+
   Widget _body(BuildContext context) {
+    if (_document) {
+      return IdeDocumentPreview(
+        key: ValueKey((_request.path, widget.reveal)),
+        path: _request.path,
+        read:
+            widget.readBytes ?? (path) => readBytesThrough(widget.files, path),
+      );
+    }
     if (_image) {
       return IdeImagePreview(path: _request.path, read: widget.readBytes);
     }

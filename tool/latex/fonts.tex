@@ -1,0 +1,24 @@
+% Exercise Latin Modern's optical sizes, text families and math scripts so
+% offline documents do not rely on whichever fonts happen to be on the host.
+\documentclass{article}
+\usepackage{fontspec,amsmath,amssymb}
+\newcommand{\previewfonts}{Latin \textbf{bold} \textit{italic} \textbf{\textit{both}}
+\textsl{slanted} \textsc{caps}
+{\sffamily Sans \textbf{bold} \textit{italic}}
+{\ttfamily Mono \textbf{bold} \textit{italic}}
+\(x^2+y_i=\sum_{k=1}^{n} k\quad\mathbb{R}\)\par}
+\begin{document}
+\fontsize{5}{7}\selectfont\previewfonts
+\fontsize{6}{8}\selectfont\previewfonts
+\fontsize{7}{9}\selectfont\previewfonts
+\fontsize{8}{10}\selectfont\previewfonts
+\fontsize{9}{11}\selectfont\previewfonts
+\fontsize{10}{12}\selectfont\previewfonts
+\fontsize{10.5}{13}\selectfont\previewfonts
+\fontsize{11}{13}\selectfont\previewfonts
+\fontsize{12}{14}\selectfont\previewfonts
+\fontsize{14}{16}\selectfont\previewfonts
+\fontsize{17}{19}\selectfont\previewfonts
+\fontsize{20}{22}\selectfont\previewfonts
+\fontsize{25}{27}\selectfont\previewfonts
+\end{document}
