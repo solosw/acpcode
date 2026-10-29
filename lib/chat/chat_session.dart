@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -929,10 +930,26 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   String? commandOf(String? id) {
     final index = id == null ? null : _transcript.indexOf(id);
     if (index == null) return null;
-    return switch (_transcript.itemAt(index)) {
-      TerminalItem(:final command) when command.isNotEmpty => command,
-      _ => null,
-    };
+    switch (_transcript.itemAt(index)) {
+      case TerminalItem(:final command) when command.isNotEmpty:
+        return command;
+      case ToolCallItem(kind: ToolKind.command, :final details):
+        final input = details?.input;
+        if (input == null || input.isEmpty) return null;
+        try {
+          final decoded = jsonDecode(input);
+          if (decoded is String) return decoded;
+          if (decoded is Map) {
+            final command = decoded['command'] ?? decoded['cmd'];
+            if (command is String) return command;
+          }
+        } on FormatException {
+          return input;
+        }
+        return null;
+      default:
+        return null;
+    }
   }
 
   /// Stops the subagent at [index]; null unless it runs as a task.

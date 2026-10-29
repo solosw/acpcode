@@ -354,7 +354,7 @@ class _TerminalTabsState extends State<TerminalTabs> {
         final stop = widget.onStopTask;
         final entries = ideMenuGroups([
           [
-            if (stop != null && running)
+            if (stop != null && running && task.canStop)
               IdeMenuAction(l10n.chatStop, onSelected: () => stop(task)),
             if (clear != null && !running)
               IdeMenuAction(

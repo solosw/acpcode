@@ -255,7 +255,7 @@ class _TerminalPreviewState extends State<TerminalPreview> {
                   tooltip: l10n.commonRefresh,
                   onPressed: () => unawaited(_read()),
                 ),
-              if (_running)
+              if (_running && task.canStop)
                 IdeActionButton(
                   icon: Codicons.debugStop,
                   tooltip: l10n.chatStop,
@@ -278,7 +278,7 @@ class _TerminalPreviewState extends State<TerminalPreview> {
           child: TerminalView(
             _terminal,
             skipShell: widget.skipShell,
-            onKill: _running ? widget.onStop : null,
+            onKill: _running && task.canStop ? widget.onStop : null,
             onOpenLink: widget.onOpenLink,
           ),
         ),

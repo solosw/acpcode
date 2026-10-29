@@ -430,6 +430,89 @@ void main() {
     kernel.dispose();
   });
 
+  test(
+    'ACP command tasks retain parallel calls, output and patch state',
+    () async {
+      final transport = MockAcpTransport();
+      final kernel = AcpKernel(
+        descriptor(),
+        const KernelContext(),
+        (_) async => transport,
+      );
+      addTearDown(kernel.dispose);
+      final events = <KernelEvent>[];
+      final subscription = kernel.events.listen(events.add);
+      addTearDown(subscription.cancel);
+      kernel.prepare();
+      await pumpEventQueue();
+
+      for (final kind in ['execute', 'Bash', 'shell', 'command', 'terminal']) {
+        transport.notify({
+          'sessionUpdate': 'tool_call',
+          'toolCallId': kind,
+          'title': 'Run $kind',
+          'kind': kind,
+          'status': 'in_progress',
+          'rawInput': {'command': 'echo $kind'},
+        });
+      }
+      transport.notify({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'named',
+        'title': 'Named Bash tool',
+        'kind': 'other',
+        'toolName': 'Bash',
+      });
+      final initial = events.whereType<TasksReported>().last.tasks;
+      expect(initial, hasLength(6));
+      for (final task in initial) {
+        expect(task.kind, KernelTaskKind.command);
+        expect(task.toolUseId, task.id);
+        expect(task.background, isTrue);
+        expect(task.canStop, isFalse);
+        expect(task.copyWith(status: CommandStatus.succeeded).canStop, isFalse);
+      }
+      expect(kernel, isNot(isA<RunsBackgroundTasks>()));
+
+      transport.notify({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'execute',
+        'content': [
+          {
+            'type': 'content',
+            'content': {'type': 'text', 'text': 'first output'},
+          },
+        ],
+      });
+      transport.notify({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'execute',
+        'status': 'completed',
+      });
+      transport.notify({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'Bash',
+        'status': 'failed',
+        'rawOutput': 'command failed',
+      });
+      transport.notify({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'read',
+        'title': 'Read a file',
+        'kind': 'read',
+      });
+      final tasks = events.whereType<TasksReported>().last.tasks;
+      expect(tasks, hasLength(7));
+      expect(tasks.first.startedAt, initial.first.startedAt);
+      expect(tasks.first.kind, KernelTaskKind.command);
+      expect(tasks.first.status, CommandStatus.succeeded);
+      expect(tasks.first.summary, 'first output');
+      expect(tasks[1].status, CommandStatus.failed);
+      expect(tasks[1].summary, 'command failed');
+      expect(tasks.last.kind, KernelTaskKind.other);
+    },
+  );
+
   test('ACP plan variants with items/description still become todos', () async {
     final transport = MockAcpTransport();
     final kernel = AcpKernel(
@@ -453,10 +536,7 @@ void main() {
             'priority': 'high',
             'status': 'InProgress',
           },
-          {
-            'title': 'Show TodoPanel above composer',
-            'status': 'PENDING',
-          },
+          {'title': 'Show TodoPanel above composer', 'status': 'PENDING'},
         ],
       },
     });

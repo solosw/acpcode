@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:baocode/chat/agent_view.dart';
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/widgets/agent_step.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/panels/todo_panel.dart';
@@ -28,16 +30,17 @@ class _Transport implements AcpTransport {
   @override
   Stream<Map<String, Object?>> get messages => _messages.stream;
 
-  void update(Map<String, Object?> update) => _messages.add({
-    'jsonrpc': '2.0',
-    'method': 'session/update',
-    'params': {'sessionId': 'session', 'update': update},
-  });
+  void update(Map<String, Object?> update, {String sessionId = 'session'}) =>
+      _messages.add({
+        'jsonrpc': '2.0',
+        'method': 'session/update',
+        'params': {'sessionId': sessionId, 'update': update},
+      });
 
   void text(String kind, String text, {String? messageId}) => update({
     'sessionUpdate': kind,
     'content': {'type': 'text', 'text': text},
-    if (messageId != null) 'messageId': messageId,
+    'messageId': ?messageId,
   });
 
   void history() {
@@ -155,6 +158,155 @@ String _pretty(Object? value) =>
     const JsonEncoder.withIndent('  ').convert(value);
 
 void main() {
+  for (final legacy in [false, true]) {
+    testWidgets(
+      'native ACP card opens child session and returns (legacy: $legacy)',
+      (tester) async {
+        final transport = _Transport();
+        final session = await _pump(tester, transport);
+        transport.update(
+          legacy
+              ? {
+                  'sessionUpdate': 'subagent_spawned',
+                  'subagentSessionId': 'child',
+                  'name': 'Investigate tests',
+                  'task': 'Find failing tests',
+                  'capabilities': {},
+                }
+              : {
+                  'sessionUpdate': 'subagent_update',
+                  'sessionId': 'child',
+                  'title': 'Investigate tests',
+                  'description': 'Test investigator',
+                  'state': {'state': 'running'},
+                },
+        );
+        transport.update({
+          'sessionUpdate': 'agent_message_chunk',
+          'content': {'type': 'text', 'text': 'Child conversation'},
+        }, sessionId: 'child');
+        await tester.pump();
+        final card = tester.widget<AgentStep>(find.byType(AgentStep));
+        expect(card.item.description, 'Investigate tests');
+        expect(card.onStop, isNull);
+        await tester.tap(find.byType(AgentStep));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(SubagentHeader), findsOneWidget);
+        expect(session.openAgents, [card.item.id]);
+        expect(
+          find.text('Child conversation', findRichText: true),
+          findsOneWidget,
+        );
+        if (legacy) {
+          expect(
+            find.text('Find failing tests', findRichText: true),
+            findsOneWidget,
+          );
+        }
+        transport.update(
+          legacy
+              ? {
+                  'sessionUpdate': 'subagent_state_update',
+                  'subagentSessionId': 'child',
+                  'state': 'completed',
+                }
+              : {
+                  'sessionUpdate': 'subagent_update',
+                  'sessionId': 'child',
+                  'state': {'state': 'idle', 'stopReason': 'end_turn'},
+                },
+        );
+        await tester.pump();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(SubagentHeader),
+            matching: find.text('Conversation'),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(session.openAgents, isEmpty);
+        expect(
+          tester.widget<AgentStep>(find.byType(AgentStep)).item.status,
+          CommandStatus.succeeded,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
+  testWidgets(
+    'ACP delegation card opens its live child conversation and returns',
+    (tester) async {
+      final transport = _Transport();
+      final session = await _pump(tester, transport);
+      transport.update({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'explore',
+        'name': 'Task',
+        'kind': 'other',
+        'title': 'Explore source',
+        'rawInput': {
+          'description': 'Inspect project',
+          'prompt': 'Find the entry point',
+        },
+      });
+      transport.update({
+        'sessionUpdate': 'agent_message_chunk',
+        'content': {'type': 'text', 'text': 'Reading the source'},
+        '_meta': {
+          'claudeCode': {'parentToolUseId': 'explore'},
+        },
+      });
+      await tester.pump();
+      expect(find.byType(AgentStep), findsOneWidget);
+      final card = tester.widget<AgentStep>(find.byType(AgentStep));
+      expect(card.item.description, 'Inspect project');
+      expect(card.onStop, isNull);
+      expect(card.onMoveToBackground, isNull);
+      await tester.tap(find.byType(AgentStep));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byType(SubagentHeader), findsOneWidget);
+      expect(session.openAgents, ['explore']);
+      expect(
+        find.textContaining('Find the entry point', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Reading the source', findRichText: true),
+        findsOneWidget,
+      );
+
+      transport.update({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'explore',
+        'status': 'completed',
+        'rawOutput': 'Entry point found',
+      });
+      await tester.pump();
+      expect(
+        find.textContaining('Entry point found', findRichText: true),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SubagentHeader),
+          matching: find.text('Conversation'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(session.openAgents, isEmpty);
+      expect(find.byType(SubagentHeader), findsNothing);
+      expect(find.byType(AgentStep), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets(
     'ACP tool expands input and output, retaining details across patches',
     (tester) async {
@@ -333,12 +485,10 @@ void main() {
     });
     await tester.pump();
     expect(_tool(session, 'missing').status, ToolStatus.failed);
-    expect(
-      find.text('The agent did not provide input details.'),
-      findsOneWidget,
-    );
-    expect(find.text('Output unavailable'), findsOneWidget);
-    expect(find.text('Permission denied'), findsNothing);
+    // ACP null fields are no-op patches, not requests to erase payloads.
+    expect(find.text('{}'), findsOneWidget);
+    expect(find.text('Permission denied'), findsOneWidget);
+    expect(find.text('Output unavailable'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

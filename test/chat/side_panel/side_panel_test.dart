@@ -44,6 +44,8 @@ import 'package:baocode/ide/tab_strip_scroll.dart';
 import 'package:baocode/chat/side_panel/terminal_preview.dart';
 import 'package:baocode/chat/panels/activity_strip.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
+import 'package:baocode/kernel/acp/acp_kernel.dart';
+import 'package:baocode/kernel/acp/mock_acp_transport.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/code_font.dart';
 import 'package:baocode/theme/codicons.dart';
@@ -296,6 +298,132 @@ Future<String> _previewScreen(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('ACP commands appear as read-only tasks with live output', (
+    tester,
+  ) async {
+    _bigWindow(tester);
+    final transport = MockAcpTransport();
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'acp-tasks',
+      label: 'ACP',
+      icon: Icons.hub,
+      description: '',
+      create: (context) =>
+          AcpKernel(descriptor, context, (_) async => transport),
+    );
+    final session = ChatSession(
+      kernel: descriptor,
+      kernels: [descriptor],
+      historyCount: 0,
+      openReview: (root, {session}) async => null,
+    );
+    addTearDown(session.dispose);
+    final panel = AgentSidePanel();
+    addTearDown(panel.dispose);
+    final files = _Files({})
+      ..reader = (_) => throw StateError('ACP output should not read files');
+    await tester.pumpWidget(
+      _app(
+        AgentSidePanelArea(
+          panel: panel,
+          builder: (_) => AgentSidePanelView(
+            notifications: IdeNotifications(),
+            panel: panel,
+            session: session,
+            files: files,
+          ),
+          child: ChatScreen(session: session),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 50));
+    transport.notify({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'one',
+      'title': 'First command',
+      'kind': 'execute',
+      'rawInput': {'command': 'printf hello'},
+    });
+    transport.notify({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'two',
+      'title': 'Second command',
+      'toolName': 'Bash',
+      'rawInput': 'echo two',
+    });
+    transport.notify({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'read',
+      'title': 'Read a file',
+      'kind': 'read',
+    });
+    await tester.pump();
+    expect(session.terminalTasks.map((task) => task.id), ['one', 'two']);
+    expect(session.commandOf('one'), 'printf hello');
+    expect(session.commandOf('two'), 'echo two');
+    expect(session.moveToBackgroundOf('one'), isNull);
+    expect(session.stopOf('one'), isNull);
+    panel.openTerminal(session, 'one');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final list = find.byKey(const ValueKey('side-panel-terminals'));
+    expect(
+      find.descendant(of: list, matching: find.text('Background Tasks')),
+      findsOneWidget,
+    );
+    expect(await _previewScreen(tester), '\$ printf hello\nWaiting for output');
+    final preview = find.byType(TerminalPreview);
+    expect(
+      find.descendant(of: preview, matching: find.byIcon(Codicons.debugStop)),
+      findsNothing,
+    );
+    expect(_previewTerminal(tester), isNotNull);
+    expect(
+      tester
+          .widget<TerminalView>(
+            find.descendant(of: preview, matching: find.byType(TerminalView)),
+          )
+          .onKill,
+      isNull,
+    );
+    transport.notify({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'one',
+      'rawOutput': 'hello',
+    });
+    await tester.pump();
+    expect(await _previewScreen(tester), '\$ printf hello\nhello');
+    transport.notify({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'one',
+      'status': 'completed',
+    });
+    await tester.pump();
+    expect(find.text('First command  ·  Completed'), findsOneWidget);
+    expect(await _previewScreen(tester), '\$ printf hello\nhello');
+    expect(session.terminalTasks, hasLength(2));
+    session.clearTasks(session.terminalTasks);
+    expect(session.terminalTasks.single.id, 'two');
+    transport.notify({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'two',
+      'rawInput': {'cmd': 'echo two'},
+      'rawOutput': 'two',
+      'status': 'failed',
+    });
+    await tester.pump();
+    expect(session.terminalTasks.single.status, CommandStatus.failed);
+    expect(session.commandOf('two'), 'echo two');
+    panel.openTerminal(session, 'two');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await _previewScreen(tester), '\$ echo two\ntwo');
+    expect(find.text('Second command  ·  Failed'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('completion queues a final read; hiding cancels polling', (
     tester,
   ) async {

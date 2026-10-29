@@ -305,6 +305,7 @@ class KernelTask {
     required this.startedAt,
     this.toolUseId,
     this.background = true,
+    this.canStop = true,
     this.summary,
     this.outputFile,
   });
@@ -319,6 +320,9 @@ class KernelTask {
   /// call of its own): where its card is.
   final String? toolUseId;
   final bool background;
+
+  /// Whether the kernel can stop this task independently of the conversation.
+  final bool canStop;
 
   /// Its last progress line, or how it ended.
   final String? summary;
@@ -340,6 +344,7 @@ class KernelTask {
     startedAt: startedAt,
     toolUseId: toolUseId,
     background: background ?? this.background,
+    canStop: canStop,
     summary: summary ?? this.summary,
     outputFile: outputFile ?? this.outputFile,
   );

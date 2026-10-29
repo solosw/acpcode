@@ -95,6 +95,11 @@ class AcpKernel
   final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
   final Map<String, ToolCallItem> _tools = {};
+  final Map<String, KernelTask> _tasks = {};
+  final _agents = <String, _AcpSubagent>{};
+  final _toolParents = <String, String>{};
+  final _childSessions = <String, _AcpChildSession>{};
+  final _sessionMessages = <String, _AcpSessionMessage>{};
   final Set<String> _todoToolIds = {};
   final List<KernelOption> _modeOptions = [];
   List<KernelCommand> _commands = const [];
@@ -198,7 +203,12 @@ class AcpKernel
       final initialized = await _request('initialize', {
         'protocolVersion': 1,
         'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
-        'clientCapabilities': <String, Object?>{},
+        'clientCapabilities': <String, Object?>{
+          'subagents': <String, Object?>{},
+          // Claude ACP's compatibility extension streams child messages with
+          // _meta.claudeCode.parentToolUseId instead of flattening them away.
+          '_meta': {'subagent-transcript': true},
+        },
       });
       if (obsolete()) return;
       final capabilities =
@@ -815,7 +825,12 @@ class AcpKernel
 
   void _handleUpdate(Map<String, Object?> params) {
     final session = params['sessionId'];
-    if (_sessionId != null && session is String && session != _sessionId) {
+    final child = _childSessions[session];
+    if (_sessionId != null &&
+        session is String &&
+        session != _sessionId &&
+        child == null) {
+      // Unannounced sessions cannot establish a parent or affect this chat.
       return;
     }
     final update =
@@ -829,6 +844,59 @@ class AcpKernel
           'current_mode_update',
           'usage_update',
         }.contains(update['sessionUpdate'])) {
+      return;
+    }
+    if (child?.legacyTerminal == true) return;
+    final type = update['sessionUpdate'];
+    if (type == 'subagent_update' ||
+        type == 'subagent_spawned' ||
+        type == 'subagent_state_update') {
+      if (session is String) _subagentSessionUpdate(session, update);
+      return;
+    }
+    if (type == 'session_message' || type == 'session_message_chunk') {
+      if (session is String) _sessionMessageUpdate(session, update);
+      return;
+    }
+    if (child != null) {
+      if (child.legacyTerminal) return;
+      if (type == 'state_update') {
+        _childState(child, update);
+        return;
+      }
+      if (type == 'user_message_chunk') {
+        final content = update['content'];
+        if (content is! Map) return;
+        final rawId = update['messageId'] as String?;
+        child.userMessageId =
+            rawId ?? child.userMessageId ?? 'acp_child_user_${++_replaySeq}';
+        _sessionMessageUpdate(session as String, {
+          'sessionUpdate': 'session_message_chunk',
+          'messageId': child.userMessageId,
+          'senderSessionId': child.parentSession,
+          'recipientSessionId': session,
+          'content': content,
+        });
+        return;
+      }
+      child.userMessageId = null;
+      // Tool ids are only unique within a session. Namespace them before
+      // using the shared tool patch store or exposing them to the transcript.
+      final toolId = update['toolCallId'] ?? update['id'];
+      _agentUpdate(child.id, {
+        ...update,
+        if (toolId is String)
+          'toolCallId': 'acp_child_tool_${jsonEncode([session, toolId])}',
+      });
+      return;
+    }
+    final meta = _jsonMap(_jsonMap(update['_meta'])?['claudeCode']);
+    final toolId = update['toolCallId'] as String? ?? update['id'] as String?;
+    final parentId =
+        meta?['parentToolUseId'] as String? ??
+        (toolId == null ? null : _toolParents[toolId]);
+    if (parentId != null && parentId.isNotEmpty) {
+      _agentUpdate(parentId, update);
       return;
     }
     switch (update['sessionUpdate']) {
@@ -936,7 +1004,7 @@ class AcpKernel
     }
   }
 
-  void _toolUpdate(Map<String, Object?> update) {
+  void _toolUpdate(Map<String, Object?> update, {String? parentId}) {
     final id =
         update['toolCallId'] as String? ??
         update['id'] as String? ??
@@ -955,13 +1023,22 @@ class AcpKernel
       ToolStatus.failed || ToolStatus.denied => CommandStatus.failed,
       ToolStatus.running => CommandStatus.running,
     };
-    final rawKind = update['kind'] as String? ?? update['toolName'] as String?;
-    final kind = rawKind == null
+    final meta = _jsonMap(_jsonMap(update['_meta'])?['claudeCode']);
+    final toolName =
+        update['name'] as String? ??
+        update['toolName'] as String? ??
+        meta?['toolName'] as String? ??
+        previous?.tool;
+    final rawKind = update['kind'] as String? ?? toolName;
+    var kind = rawKind == null
         ? previous?.kind ?? ToolKind.other
         : _toolKind(rawKind);
+    if (kind == ToolKind.other) {
+      kind = _toolKind(toolName);
+    }
     String? payload(List<String> keys, String? before) {
       for (final key in keys) {
-        if (update.containsKey(key)) return _toolPayload(update[key]);
+        if (update[key] != null) return _toolPayload(update[key]);
       }
       return before;
     }
@@ -976,7 +1053,7 @@ class AcpKernel
         'rawOutput',
         'raw_output',
       ], previous?.details?.output),
-      content: update.containsKey('content')
+      content: update['content'] != null
           ? _toolContent(update['content'])
           : previous?.details?.content,
     );
@@ -985,24 +1062,341 @@ class AcpKernel
       target: title,
       status: toolStatus,
       callId: id,
-      tool: update['toolName'] as String? ?? previous?.tool,
+      tool: toolName,
       output: details.content ?? details.output,
       details: details,
     );
     _tools[id] = item;
+    if (parentId != null) _toolParents[id] = parentId;
+    if (kind == ToolKind.agent || _agents.containsKey(id)) {
+      final agent = _ensureAgent(id, parentId: parentId);
+      final input = _jsonMap(details.input);
+      agent.item = agent.item.copyWith(
+        description:
+            input?['description'] as String? ??
+            (title == 'Tool call' ? null : title),
+        prompt: input?['prompt'] as String?,
+        agentType: input?['subagent_type'] as String?,
+        model: input?['model'] as String?,
+        background: input?['run_in_background'] as bool?,
+        status: status,
+        result: status == CommandStatus.running ? null : item.output,
+        duration: status == CommandStatus.running
+            ? null
+            : agent.item.duration ??
+                  DateTime.now().difference(agent.item.startedAt!),
+      );
+      _publishAgent(id);
+      return;
+    }
+    if (parentId != null) {
+      final parent = _ensureAgent(parentId);
+      parent.children[id] = item;
+      parent.item = parent.item.copyWith(
+        toolUses: parent.children.values.whereType<ToolCallItem>().length,
+        lastTool: toolName ?? title,
+        activity: title,
+      );
+      _publishAgent(parentId);
+      return;
+    }
     emit(ItemUpserted(nextSeq, id, item));
-    emit(
-      TasksReported(nextSeq, [
-        KernelTask(
-          id: id,
-          description: title,
-          kind: KernelTaskKind.other,
-          status: status,
-          startedAt: DateTime.now(),
-          summary: title,
-        ),
-      ]),
+    _tasks[id] = KernelTask(
+      id: id,
+      description: title,
+      kind: kind == ToolKind.command
+          ? KernelTaskKind.command
+          : KernelTaskKind.other,
+      status: status,
+      startedAt: _tasks[id]?.startedAt ?? DateTime.now(),
+      toolUseId: id,
+      canStop: false,
+      summary: kind == ToolKind.command ? item.output : title,
     );
+    emit(TasksReported(nextSeq, _tasks.values.toList()));
+  }
+
+  /// Both the current subagent RFD and the older Codex/AIR draft declare
+  /// children on their parent. No tool-name heuristic participates here.
+  void _subagentSessionUpdate(
+    String parentSession,
+    Map<String, Object?> update,
+  ) {
+    final standard = update['sessionUpdate'] == 'subagent_update';
+    final rawId = update[standard ? 'sessionId' : 'subagentSessionId'];
+    if (rawId is! String ||
+        rawId.isEmpty ||
+        rawId == _sessionId ||
+        rawId == parentSession) {
+      return;
+    }
+    final existing = _childSessions[rawId];
+    if (existing != null && existing.parentSession != parentSession) return;
+    if (update['sessionUpdate'] == 'subagent_state_update') {
+      if (existing != null) _legacyChildState(existing, update['state']);
+      return;
+    }
+    // An association is immutable. Also reject cycles before publishing a tree.
+    var ancestor = _childSessions[parentSession];
+    final seen = <String>{};
+    while (ancestor != null && seen.add(ancestor.session)) {
+      if (ancestor.session == rawId) return;
+      ancestor = _childSessions[ancestor.parentSession];
+    }
+    final child = _childSessions.putIfAbsent(
+      rawId,
+      () => _AcpChildSession(
+        rawId,
+        parentSession,
+        'acp_session_${jsonEncode(rawId)}',
+      ),
+    );
+    _ensureAgent(child.id, parentId: _childSessions[parentSession]?.id);
+    if (standard) {
+      if (update.containsKey('title')) child.title = update['title'] as String?;
+      if (update.containsKey('description')) {
+        child.description = update['description'] as String?;
+      }
+      if (update.containsKey('state')) {
+        _childState(child, _jsonMap(update['state']));
+      } else {
+        _refreshChild(child);
+      }
+    } else {
+      if (existing == null) child.active = true;
+      child.title = update['name'] as String? ?? child.title;
+      final task = update['task'] as String?;
+      final agent = _agents[child.id]!;
+      agent.item = agent.item.copyWith(prompt: task);
+      _refreshChild(child);
+    }
+  }
+
+  void _refreshChild(_AcpChildSession child, {CommandStatus? status}) {
+    final agent = _agents[child.id]!;
+    final previous = agent.item;
+    final nextStatus = status ?? previous.status;
+    final running = nextStatus == CommandStatus.running;
+    // Reconstruct to honor explicit metadata clears and to clear duration when
+    // a standard association starts another round of foreground work.
+    agent.item = AgentItem(
+      id: child.id,
+      description: child.title ?? child.description ?? 'Subagent',
+      prompt: child.promptInTranscript ? null : previous.prompt,
+      activity: child.description,
+      status: nextStatus,
+      startedAt: running && previous.status != CommandStatus.running
+          ? DateTime.now()
+          : previous.startedAt,
+      duration: running
+          ? null
+          : previous.duration ?? DateTime.now().difference(previous.startedAt!),
+      toolUses: previous.toolUses,
+      lastTool: previous.lastTool,
+      children: previous.children,
+      background: previous.background,
+    );
+    _publishAgent(child.id);
+    // Transport notifications can be synchronous. Do not close their stream
+    // from inside its own delivery callback. Recheck idleness after the batch.
+    if (!_starting && _released) scheduleMicrotask(_releaseIfIdle);
+  }
+
+  void _childState(_AcpChildSession child, Map? state) {
+    child.active =
+        state?['state'] == 'running' || state?['state'] == 'requires_action';
+    child.userMessageId = null;
+    final status = switch (state?['state']) {
+      'idle' => switch (state?['stopReason']) {
+        'cancelled' || 'error' || 'refusal' => CommandStatus.failed,
+        _ => CommandStatus.succeeded,
+      },
+      // An absent, unknown or cleared snapshot is not evidence of completion.
+      _ => CommandStatus.running,
+    };
+    _agents[child.id]!.streamId = null;
+    _refreshChild(child, status: status);
+  }
+
+  void _legacyChildState(_AcpChildSession child, Object? state) {
+    final status = switch (state) {
+      'completed' => CommandStatus.succeeded,
+      'failed' || 'cancelled' || 'disconnected' => CommandStatus.failed,
+      _ => null,
+    };
+    if (status == null || child.legacyTerminal) return;
+    child.legacyTerminal = true;
+    child.active = false;
+    _agents[child.id]!.streamId = null;
+    _refreshChild(child, status: status);
+  }
+
+  /// Inter-session messages belong to the enclosing session's transcript.
+  /// They are not a new user turn, nor a final result of the child lifetime.
+  void _sessionMessageUpdate(String session, Map<String, Object?> update) {
+    final messageId = update['messageId'];
+    if (messageId is! String || messageId.isEmpty) return;
+    final key = 'acp_session_message_${jsonEncode([session, messageId])}';
+    final message = _sessionMessages.putIfAbsent(key, _AcpSessionMessage.new);
+    message.sender = update['senderSessionId'] as String? ?? message.sender;
+    message.recipient =
+        update['recipientSessionId'] as String? ?? message.recipient;
+    if (update['sessionUpdate'] == 'session_message_chunk') {
+      message.content.add(update['content']);
+    } else if (update.containsKey('content')) {
+      message.content = (update['content'] as List?)?.toList() ?? [];
+    }
+    final text = [
+      for (final block in message.content)
+        if (block is Map)
+          _contentText(block) ?? _toolPayload(block) ?? ''
+        else
+          _toolPayload(block) ?? '',
+    ].join();
+    final ChatItem item = message.sender == session
+        ? AssistantTextItem(text)
+        : message.recipient == session
+        ? UserMessageItem(text: text)
+        : NoticeItem(NoticeKind.info, text);
+    final child = _childSessions[session];
+    if (child == null) {
+      _closeAssistantStream();
+      emit(ItemUpserted(nextSeq, key, item));
+    } else {
+      if (child.legacyTerminal) return;
+      final agent = _agents[child.id]!;
+      agent.streamId = null;
+      agent.children[key] = item;
+      if (message.recipient == session && !child.promptInTranscript) {
+        child.promptInTranscript = true;
+        _refreshChild(child);
+      } else {
+        _publishAgent(child.id);
+      }
+    }
+  }
+
+  _AcpSubagent _ensureAgent(String id, {String? parentId}) {
+    final agent = _agents.putIfAbsent(
+      id,
+      () => _AcpSubagent(
+        AgentItem(id: id, description: 'Subagent', startedAt: DateTime.now()),
+      ),
+    );
+    if (parentId != null && parentId != id && agent.parentId == null) {
+      agent.parentId = parentId;
+      // A child may stream before its enclosing delegation was reported.
+      // Move that placeholder out of the root transcript when linked.
+      emit(ItemRemoved(nextSeq, id));
+    }
+    return agent;
+  }
+
+  /// Each child has its own merge cursor, isolated from parallel tasks and
+  /// the main assistant's open stream.
+  void _agentUpdate(String id, Map<String, Object?> update) {
+    if (!const {
+      'agent_message_chunk',
+      'agent_thought_chunk',
+      'user_message_chunk',
+      'tool_call',
+      'tool_call_update',
+    }.contains(update['sessionUpdate'])) {
+      return;
+    }
+    final agent = _ensureAgent(id);
+    switch (update['sessionUpdate']) {
+      case 'agent_message_chunk':
+      case 'agent_thought_chunk':
+        final text = _jsonMap(update['content'])?['text'];
+        if (text is! String || text.isEmpty) return;
+        final thought = update['sessionUpdate'] == 'agent_thought_chunk';
+        final messageId = update['messageId'] as String?;
+        if (agent.streamId == null ||
+            agent.thought != thought ||
+            !_canMergeMessageIds(agent.messageId, messageId)) {
+          agent.streamId = 'acp_child_${++_replaySeq}';
+          agent.messageId = messageId;
+          agent.thought = thought;
+        } else {
+          agent.messageId ??= messageId;
+        }
+        final key = agent.streamId!;
+        final previous = agent.children[key];
+        final oldText = switch (previous) {
+          AssistantTextItem() => previous.text,
+          ThinkingItem() => previous.text,
+          _ => '',
+        };
+        agent.children[key] = thought
+            ? ThinkingItem(
+                text: '$oldText$text',
+                tokens: 0,
+                startedAt: previous is ThinkingItem
+                    ? previous.startedAt
+                    : DateTime.now(),
+              )
+            : AssistantTextItem('$oldText$text');
+        _publishAgent(id);
+      case 'tool_call':
+      case 'tool_call_update':
+        agent.streamId = null;
+        _toolUpdate(update, parentId: id);
+      case 'user_message_chunk':
+        // SubagentFeed displays the delegated prompt before its children.
+        final text = _jsonMap(update['content'])?['text'];
+        if (text is! String || text.isEmpty) return;
+        agent.streamId = null;
+        agent.prompt += text;
+        agent.item = agent.item.copyWith(prompt: agent.prompt);
+        _publishAgent(id);
+    }
+  }
+
+  void _publishAgent(String id) {
+    final visited = <String>{};
+    var current = id;
+    while (visited.add(current)) {
+      final agent = _ensureAgent(current);
+      agent.item = agent.item.copyWith(
+        children: agent.children.values.toList(),
+      );
+      final item = agent.item;
+      _tasks[current] = KernelTask(
+        id: current,
+        description: item.description,
+        kind: KernelTaskKind.agent,
+        status: item.status,
+        startedAt: item.startedAt!,
+        toolUseId: current,
+        background: item.background,
+        canStop: false,
+        summary: item.result ?? item.activity,
+      );
+      final parentId = agent.parentId;
+      if (parentId == null) {
+        emit(ItemUpserted(nextSeq, current, item));
+        break;
+      }
+      _ensureAgent(parentId).children[current] = item;
+      current = parentId;
+    }
+    emit(TasksReported(nextSeq, _tasks.values.toList()));
+  }
+
+  void _interruptAgents() {
+    for (final child in _childSessions.values) {
+      child.active = false;
+    }
+    for (final entry in _agents.entries.toList()) {
+      final agent = entry.value;
+      if (agent.item.status != CommandStatus.running) continue;
+      agent.item = agent.item.copyWith(
+        status: CommandStatus.failed,
+        duration: DateTime.now().difference(agent.item.startedAt!),
+      );
+      _publishAgent(entry.key);
+    }
   }
 
   ToolKind _toolKind(String? raw) {
@@ -1013,10 +1407,16 @@ class AcpKernel
     }
     if (value.contains('todo')) return ToolKind.todo;
     if (value.contains('edit') || value.contains('write')) return ToolKind.edit;
-    if (value.contains('command') || value.contains('shell')) {
+    if (value.contains('command') ||
+        value.contains('shell') ||
+        value == 'bash' ||
+        value == 'execute' ||
+        value == 'terminal') {
       return ToolKind.command;
     }
-    if (value.contains('agent')) return ToolKind.agent;
+    if (value == 'task' || value == 'agent') {
+      return ToolKind.agent;
+    }
     return ToolKind.other;
   }
 
@@ -1246,6 +1646,7 @@ class AcpKernel
     final worked = _turnStarted == null
         ? null
         : DateTime.now().difference(_turnStarted!);
+    if (interrupted) _interruptAgents();
     emit(TurnEnded(nextSeq, turn, interrupted: interrupted, worked: worked));
     _turnId = null;
     _turnStarted = null;
@@ -1282,14 +1683,16 @@ class AcpKernel
   }
 
   void _disconnect() {
+    _interruptAgents();
     if (_replaying && !_everLoaded) {
       // An interrupted initial load is only a partial transcript. Remove its
       // items so the next session/load can replay the complete history once.
       if (_replayTurnId != null) _endTurn(true);
-      for (final id in {..._messages.keys, ..._tools.keys}) {
+      for (final id in {..._messages.keys, ..._tools.keys, ..._agents.keys}) {
         emit(ItemRemoved(nextSeq, id));
       }
       emit(TodosReported(nextSeq, const []));
+      _tasks.clear();
       emit(TasksReported(nextSeq, const []));
     }
     _startGeneration++;
@@ -1322,7 +1725,15 @@ class AcpKernel
     _configChanges = Future.value();
     _closeAssistantStream();
     _messages.clear();
-    _tools.clear();
+    // The transcript survives idle release/reconnect. Keep its child routing
+    // and patch stores too: a retained session/load is deliberately not replayed.
+    if (!_everLoaded) {
+      _tools.clear();
+      _agents.clear();
+      _toolParents.clear();
+      _childSessions.clear();
+      _sessionMessages.clear();
+    }
     _todoToolIds.clear();
     if (transport != null) {
       unawaited(_closeTransport(transport).catchError((Object _) {}));
@@ -1359,6 +1770,7 @@ class AcpKernel
         _disposed ||
         (_turnId != null && !_replaying) ||
         _queuedTurns.isNotEmpty ||
+        _childSessions.values.any((child) => child.active) ||
         _permissionRpcIds.isNotEmpty ||
         _health.status == KernelHealthStatus.failed) {
       return;
@@ -1385,4 +1797,38 @@ class AcpKernel
     );
     closeEvents();
   }
+}
+
+/// An explicit parent-child association, keyed by the opaque ACP session id.
+class _AcpChildSession {
+  _AcpChildSession(this.session, this.parentSession, this.id);
+
+  final String session;
+  final String parentSession;
+  final String id;
+  String? title;
+  String? description;
+  bool legacyTerminal = false;
+  bool active = false;
+  bool promptInTranscript = false;
+  String? userMessageId;
+}
+
+class _AcpSessionMessage {
+  String? sender;
+  String? recipient;
+  List<Object?> content = [];
+}
+
+/// Mutable ACP routing state; only immutable snapshots reach the chat UI.
+class _AcpSubagent {
+  _AcpSubagent(this.item);
+
+  AgentItem item;
+  String? parentId;
+  final children = <String, ChatItem>{};
+  String prompt = '';
+  String? streamId;
+  String? messageId;
+  bool? thought;
 }

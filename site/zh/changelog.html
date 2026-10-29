@@ -29,6 +29,29 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.6.2">
+    <h2 class="plain"><a href="#v1.6.2">1.6.2</a></h2>
+    <p>新功能</p>
+    <ul>
+    <li>ACP 子 agent 任务使用与 Claude Code 相同的任务卡片，可打开独立对话并查看提示、回复、思考和工具调用，支持并行和多层嵌套。</li>
+    <li>兼容标准 ACP 子会话事件、Codex ACP 旧版子会话事件和 Claude ACP 对话扩展。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>子会话支持历史回放、重连后的增量更新，以及空闲后继续工作；隔离不同会话的工具和消息 ID，避免内容相互覆盖。</li>
+    <li>ACP 命令任务在侧栏保留并行调用、执行输出和状态，方便查看运行结果。</li>
+    </ul>
+    <p>修复</p>
+    <ul>
+    <li>不再为不支持独立停止的 ACP 任务显示停止按钮。</li>
+    <li>ACP 工具更新中的空值不再误清除先前的输入和输出详情。</li>
+    </ul>
+    <p>说明</p>
+    <ul>
+    <li>完整子对话需要 ACP 后端上报子会话或父子关联事件；暂不支持独立停止 ACP 子 agent。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.6.1">
     <h2 class="plain"><a href="#v1.6.1">1.6.1</a></h2>
     <p>新功能</p>

@@ -882,7 +882,7 @@ class AgentSidePanelView extends StatelessWidget {
           if (item case final TerminalInstance shell)
             IdeMenuAction(l10n.termKillTerminal, onSelected: () => kill(shell)),
           if (item case final KernelTask task
-              when task.status == CommandStatus.running)
+              when task.status == CommandStatus.running && task.canStop)
             IdeMenuAction(l10n.chatStop, onSelected: () => stop(task)),
         ],
       ]);
