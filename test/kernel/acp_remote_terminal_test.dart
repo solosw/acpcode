@@ -111,36 +111,24 @@ class _Harness {
     for (final event in events.whereType<InteractionRequested>())
       if (event.request case final ApprovalRequest request) request,
   ];
-  Future<(Object, ApprovalRequest)> pending(
+  Object requestCreate(
     String script, {
     Map<String, Object?> extra = const {},
     String session = _session,
-  }) async {
-    final count = approvals.length;
-    final id = request('terminal/create', {
+  }) {
+    return request('terminal/create', {
       'command': '/bin/sh',
       'args': ['-c', script],
       ...extra,
     }, session: session);
-    await _until(() => approvals.length > count);
-    return (id, approvals.last);
   }
 
-  void approve(ApprovalRequest request, {bool allow = true}) => kernel.answer(
-    request.id,
-    ApprovalAnswer(allow ? ApprovalDecision.allowOnce : ApprovalDecision.deny),
-  );
   Future<String> create(
     String script, {
     Map<String, Object?> extra = const {},
     String session = _session,
   }) async {
-    final (id, approval) = await pending(
-      script,
-      extra: extra,
-      session: session,
-    );
-    approve(approval);
+    final id = requestCreate(script, extra: extra, session: session);
     final reply = await response(id);
     expect(reply['error'], isNull, reason: '$reply');
     return (reply['result'] as Map)['terminalId'] as String;
@@ -183,56 +171,63 @@ void main() {
     });
   });
 
-  test('SSH advertises terminal support and executes the approved command through remote PTY', () async {
-    final h = _Harness(root);
-    await h.start();
-    final initialize = h.transport.written.firstWhere(
-      (m) => m['method'] == 'initialize',
-    );
-    expect(
-      ((initialize['params'] as Map)['clientCapabilities'] as Map)['terminal'],
-      isTrue,
-    );
-    final client = await SshHosts.instance['dev'].ready;
-    final handler =
-        connector.links.single.server.peer.handlers[RemoteProtocol.ptyStart]!;
-    Map? launch;
-    connector.links.single.server.peer.handlers[RemoteProtocol.ptyStart] =
-        (params, token) {
-          launch = params as Map;
-          return handler(params, token);
-        };
-    final (requestId, approval) = await h.pending(
-      r'printf "%s|%s" "$PWD" "$ACP_REMOTE_VALUE"; sleep 0.2; printf "|late"; printf "|stderr" >&2; exit 7',
-      extra: {
-        'env': [
-          {'name': 'ACP_REMOTE_VALUE', 'value': 'spaces; not shell syntax'},
-        ],
-      },
-    );
-    expect(launch, isNull, reason: 'No process before approval');
-    expect(approval.title, contains('dev'));
-    expect(approval.reason, contains('remote'));
-    final preview = jsonDecode((approval.preview as TextPreview).text) as Map;
-    expect(preview['host'], 'dev');
-    expect(preview['cwd'], root);
-    h.approve(approval);
-    final reply = await h.response(requestId);
-    expect(reply['error'], isNull);
-    final id = (reply['result'] as Map)['terminalId'] as String;
-    expect(launch!['cwd'], root);
-    expect(launch!['shellIntegration'], isFalse);
-    expect(launch!['shell'], ['/bin/sh', '-c', (preview['args'] as List).last]);
-    expect(launch!['environment'], {
-      'ACP_REMOTE_VALUE': 'spaces; not shell syntax',
-    }, reason: 'Never send the app environment to SSH');
-    expect(launch!['workspaceRoots'], [root]);
-    expect((await h.call('terminal/output', id))['exitStatus'], isNull);
-    expect((await h.call('terminal/wait_for_exit', id))['exitCode'], 7);
-    final output = (await h.call('terminal/output', id))['output'] as String;
-    expect(output, contains('$root|spaces; not shell syntax|late|stderr'));
-    expect(client.peer.isClosed, isFalse);
-  });
+  test(
+    'SSH commands execute through remote PTY without confirmation',
+    () async {
+      final h = _Harness(root);
+      await h.start();
+      final initialize = h.transport.written.firstWhere(
+        (m) => m['method'] == 'initialize',
+      );
+      expect(
+        ((initialize['params'] as Map)['clientCapabilities']
+            as Map)['terminal'],
+        isTrue,
+      );
+      final client = await SshHosts.instance['dev'].ready;
+      final handler =
+          connector.links.single.server.peer.handlers[RemoteProtocol.ptyStart]!;
+      Map? launch;
+      connector.links.single.server.peer.handlers[RemoteProtocol.ptyStart] =
+          (params, token) {
+            launch = params as Map;
+            return handler(params, token);
+          };
+      final requestId = h.requestCreate(
+        r'printf "%s|%s" "$PWD" "$ACP_REMOTE_VALUE"; sleep 0.2; printf "|late"; printf "|stderr" >&2; exit 7',
+        extra: {
+          'env': [
+            {'name': 'ACP_REMOTE_VALUE', 'value': 'spaces; not shell syntax'},
+          ],
+        },
+      );
+      final reply = await h.response(requestId);
+      expect(reply['error'], isNull);
+      final id = (reply['result'] as Map)['terminalId'] as String;
+      expect(launch!['cwd'], root);
+      expect(launch!['shellIntegration'], isFalse);
+      expect((launch!['shell'] as List).take(2), ['/bin/sh', '-c']);
+      expect(h.approvals, isEmpty);
+      final item = h.events
+          .whereType<ItemUpserted>()
+          .map((e) => e.item)
+          .whereType<ToolCallItem>()
+          .last;
+      final input = jsonDecode(item.details!.input!) as Map;
+      expect(input['host'], 'dev');
+      expect(input['cwd'], root);
+      expect((launch!['shell'] as List).last, (input['args'] as List).last);
+      expect(launch!['environment'], {
+        'ACP_REMOTE_VALUE': 'spaces; not shell syntax',
+      }, reason: 'Never send the app environment to SSH');
+      expect(launch!['workspaceRoots'], [root]);
+      expect((await h.call('terminal/output', id))['exitStatus'], isNull);
+      expect((await h.call('terminal/wait_for_exit', id))['exitCode'], 7);
+      final output = (await h.call('terminal/output', id))['output'] as String;
+      expect(output, contains('$root|spaces; not shell syntax|late|stderr'));
+      expect(client.peer.isClosed, isFalse);
+    },
+  );
 
   test('remote output is UTF-8 bounded and terminal control sequences are filtered', () async {
     final h = _Harness(root);
@@ -277,11 +272,11 @@ void main() {
       );
       expect((reply['error'] as Map)['message'], contains('outside'));
     }
-    expect(h.approvals, hasLength(1));
+    expect(h.approvals, isEmpty);
     expect(connector.attempts, 1);
   });
 
-  test('remote symlink escape is rejected before approval', () async {
+  test('remote symlink escape is rejected without execution', () async {
     final outside = Directory.systemTemp.createTempSync(
       'baocode-remote-outside-',
     );
@@ -299,7 +294,7 @@ void main() {
     expect(h.approvals, isEmpty);
   });
 
-  test('replacing an approved remote cwd cannot redirect execution', () async {
+  test('replacing a validated remote cwd cannot redirect execution', () async {
     final cwd = Directory(p.join(root, 'cwd'))..createSync();
     final outside = Directory.systemTemp.createTempSync(
       'baocode-remote-redirect-',
@@ -308,13 +303,23 @@ void main() {
     final marker = File(p.join(root, 'must-not-run'));
     final h = _Harness(root);
     await h.start();
-    final (id, approval) = await h.pending(
+    await SshHosts.instance['dev'].ready;
+    final peer = connector.links.single.server.peer;
+    final resolve = peer.handlers[RemoteProtocol.fsRealPath]!;
+    var changed = false;
+    peer.handlers[RemoteProtocol.fsRealPath] = (params, call) async {
+      final result = await resolve(params, call);
+      if (!changed && (params as Map)['path'] == cwd.path) {
+        changed = true;
+        cwd.deleteSync();
+        Link(cwd.path).createSync(outside.path);
+      }
+      return result;
+    };
+    final id = h.requestCreate(
       'touch "${marker.path}"',
       extra: {'cwd': cwd.path},
     );
-    cwd.deleteSync();
-    Link(cwd.path).createSync(outside.path);
-    h.approve(approval);
     expect((await h.response(id))['error'], isNotNull);
     expect(marker.existsSync(), isFalse);
   });
@@ -333,11 +338,10 @@ void main() {
       Link(cwd.path).createSync(target.path);
       return start(params, call);
     };
-    final (id, approval) = await h.pending(
+    final id = h.requestCreate(
       'touch "${marker.path}"',
       extra: {'cwd': cwd.path},
     );
-    h.approve(approval);
     final reply = await h.response(id);
     expect(
       (reply['error'] as Map)['message'],
@@ -372,15 +376,19 @@ void main() {
     },
   );
 
-  test('a denied remote command never reaches process creation', () async {
-    final marker = File(p.join(root, 'denied'));
-    final h = _Harness(root);
-    await h.start();
-    final (id, approval) = await h.pending('touch "${marker.path}"');
-    h.approve(approval, allow: false);
-    expect((await h.response(id))['error'], isNotNull);
-    expect(marker.existsSync(), isFalse);
-  });
+  test(
+    'cancelling a remote command before launch prevents execution',
+    () async {
+      final marker = File(p.join(root, 'cancelled'));
+      final h = _Harness(root);
+      await h.start();
+      final id = h.requestCreate('touch "${marker.path}"');
+      h.kernel.cancel();
+      expect((await h.response(id))['error'], isNotNull);
+      expect(marker.existsSync(), isFalse);
+      expect(h.approvals, isEmpty);
+    },
+  );
 
   test('connection failure does not run a remote command locally', () async {
     connector.failure = const RpcClosed();
@@ -484,8 +492,7 @@ void main() {
         exits.add(params);
         exit(params);
       };
-      final (id, approval) = await h.pending('sleep 30');
-      h.approve(approval);
+      final id = h.requestCreate('sleep 30');
       await entered.future;
       h.kernel.cancel();
       resume.complete();

@@ -246,7 +246,7 @@ void main() {
   });
 
   test(
-    'permission pending after a prompt keeps background ACP until answered',
+    'command choice after a prompt keeps background ACP until answered',
     () async {
       session.attach();
       final transport = await ready();
@@ -257,9 +257,9 @@ void main() {
         'id': 'permission-rpc',
         'method': 'session/request_permission',
         'params': {
-          'toolCall': {'title': 'Execute', 'kind': 'execute'},
+          'toolCall': {'title': '/choose', 'kind': 'command'},
           'options': [
-            {'optionId': 'allow', 'name': 'Allow', 'kind': 'allow_once'},
+            {'optionId': 'choice', 'name': 'Choice'},
           ],
         },
       });
@@ -271,7 +271,9 @@ void main() {
       final request = events.whereType<InteractionRequested>().single.request;
       kernel.answer(
         request.id,
-        const ApprovalAnswer(ApprovalDecision.allowOnce),
+        const QuestionAnswer([
+          ['Choice'],
+        ]),
       );
       await pumpEventQueue();
       expect(transport.closed, isTrue);

@@ -29,6 +29,23 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.6.4">
+    <h2 class="plain"><a href="#v1.6.4">1.6.4</a></h2>
+    <p>修复</p>
+    <ul>
+    <li>ACP 默认放行普通工具权限请求，本地和 SSH 终端执行不再额外弹出客户端确认，解决选择完全访问后仍被重复询问的问题。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>自动使用 Agent 提供的允许选项，保留真正需要选择内容的命令菜单交互。</li>
+    <li>保留终端参数与工作目录校验、主机和会话隔离、输出限制，以及取消、断连和关闭时的清理逻辑。</li>
+    </ul>
+    <p>说明</p>
+    <ul>
+    <li>此次调整针对 ACP 客户端审批，不更改原有 Claude Code 通道的权限选项或 ACP Agent 自身的模式配置。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.6.3">
     <h2 class="plain"><a href="#v1.6.3">1.6.3</a></h2>
     <p>新功能</p>

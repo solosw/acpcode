@@ -106,7 +106,6 @@ class AcpKernel
   final _terminalSnapshots = <String, AcpTerminalSnapshot>{};
   final _terminalToolLinks = <String, List<String>>{};
   final _terminalToolBlocks = <String, List<Object?>>{};
-  final _terminalApprovals = <String, Completer<bool>>{};
   int _terminalRequests = 0;
   int _terminalCancelEpoch = 0;
   final Set<String> _todoToolIds = {};
@@ -542,13 +541,11 @@ class AcpKernel
     if (_disposed || sessionId == null) return;
     if (_turnId == null &&
         _permissionRpcIds.isEmpty &&
-        _terminalApprovals.isEmpty &&
         _terminalRequests == 0) {
       return;
     }
     _cancelling = true;
     _terminalCancelEpoch++;
-    _cancelTerminalApprovals();
     try {
       // ACP cancellation is a notification, not a request. SDK-based
       // agents dispatch it only without an id; no cancel response is due.
@@ -585,14 +582,6 @@ class AcpKernel
 
   @override
   void answer(String requestId, InteractionAnswer answer) {
-    final approval = _terminalApprovals.remove(requestId);
-    if (approval != null) {
-      approval.complete(
-        answer is ApprovalAnswer && answer.decision != ApprovalDecision.deny,
-      );
-      emit(InteractionResolved(nextSeq, requestId));
-      return;
-    }
     final rpcId = _permissionRpcIds.remove(requestId);
     // The user may answer just as cancellation resolves the request.
     if (rpcId == null) return;
@@ -792,14 +781,6 @@ class AcpKernel
         _toolContent([block]) ?? '',
   ].join('\n\n');
 
-  void _cancelTerminalApprovals() {
-    for (final entry in _terminalApprovals.entries.toList()) {
-      entry.value.complete(false);
-      emit(InteractionResolved(nextSeq, entry.key));
-    }
-    _terminalApprovals.clear();
-  }
-
   Future<void> _terminalRequest(
     Object rpcId,
     String method,
@@ -847,35 +828,8 @@ class AcpKernel
               'Terminal launch was cancelled',
             );
           }
-          final requestId = 'acp_terminal_approval_${++_nextId}';
-          final approval = Completer<bool>();
-          _terminalApprovals[requestId] = approval;
-          emit(
-            InteractionRequested(
-              nextSeq,
-              ApprovalRequest(
-                id: requestId,
-                title: command.host == null
-                    ? 'Run terminal command'
-                    : 'Run terminal command on ${command.host}',
-                toolName: 'terminal/create',
-                reason: command.host == null
-                    ? 'This command runs on your computer in the session workspace.'
-                    : 'This command runs on ${command.host} in the remote session workspace.',
-                preview: TextPreview(
-                  const JsonEncoder.withIndent('  ').convert(command.input),
-                ),
-              ),
-            ),
-          );
-          final allowed = await approval.future;
-          if (!current()) return;
-          if (!allowed || cancelled()) {
-            throw const AcpTerminalError(
-              -32000,
-              'Terminal command was not approved',
-            );
-          }
+          // ACP execution is allowed by default; do not add a second
+          // client approval on top of the agent's own permission mode.
           final id = await host.create(
             session,
             command,
@@ -1062,7 +1016,6 @@ class AcpKernel
         toolKind == 'command' ||
         toolKind == 'slash_command' ||
         title.startsWith('/');
-    if (isCommandChoice) _commandInteractionIds.add(requestId);
     final options = [
       for (final raw in params['options'] as List? ?? const [])
         if (raw is Map && raw['optionId'] is String)
@@ -1072,6 +1025,32 @@ class AcpKernel
             kind: raw['kind'] as String?,
           ),
     ];
+    // Default ACP permissions to allow, selecting only an option actually
+    // advertised by the agent. Real command menus still need a user choice.
+    final allow = [
+      for (final kind in const [
+        'allow_once',
+        'allow-once',
+        'allow_always',
+        'allow-always',
+      ])
+        ...options.where((option) => option.kind == kind),
+    ].firstOrNull;
+    if (allow != null) {
+      _transport?.write({
+        'jsonrpc': '2.0',
+        'id': rpcId,
+        'result': {
+          'outcome': {'outcome': 'selected', 'optionId': allow.id},
+        },
+      });
+      return;
+    }
+    if (!isCommandChoice) {
+      _replyCancelled(rpcId);
+      return;
+    }
+    _commandInteractionIds.add(requestId);
     _permissionRpcIds[requestId] = rpcId;
     _permissionOptions[requestId] = {
       for (final option in options) option.name: option.id,
@@ -2017,7 +1996,6 @@ class AcpKernel
   }
 
   void _disconnect() {
-    _cancelTerminalApprovals();
     final terminals = _terminals;
     _terminals = null;
     if (terminals != null) {
@@ -2118,7 +2096,6 @@ class AcpKernel
         _queuedTurns.isNotEmpty ||
         _childSessions.values.any((child) => child.active) ||
         _permissionRpcIds.isNotEmpty ||
-        _terminalApprovals.isNotEmpty ||
         _terminalRequests != 0 ||
         (_terminals?.hasRunning ?? false) ||
         _health.status == KernelHealthStatus.failed) {

@@ -29,6 +29,23 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.6.4">
+    <h2 class="plain"><a href="#v1.6.4">1.6.4</a></h2>
+    <p>Fixed</p>
+    <ul>
+    <li>Allow ordinary ACP tool permission requests by default. Local and SSH terminals no longer prompt for additional client approval, avoiding duplicate confirmations even when full access is selected.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Automatically select an allow option advertised by the agent while keeping actual command-selection menus interactive.</li>
+    <li>Retain terminal argument and working-directory validation, host and session isolation, output limits, and cancellation, disconnection and shutdown cleanup.</li>
+    </ul>
+    <p>Notes</p>
+    <ul>
+    <li>This changes ACP client approvals only. Permission options for the existing Claude Code channel and the ACP agent's own mode configuration are unchanged.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.6.3">
     <h2 class="plain"><a href="#v1.6.3">1.6.3</a></h2>
     <p>New</p>

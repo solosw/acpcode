@@ -113,19 +113,11 @@ class _Harness {
     String session = _session,
     Map<String, Object?> extra = const {},
   }) async {
-    final before = events.whereType<InteractionRequested>().length;
     final id = request('terminal/create', {
       'command': '/bin/sh',
       'args': ['-c', script],
       ...extra,
     }, session: session);
-    await _until(
-      () => events.whereType<InteractionRequested>().length > before,
-    );
-    kernel.answer(
-      events.whereType<InteractionRequested>().last.request.id,
-      const ApprovalAnswer(ApprovalDecision.allowOnce),
-    );
     final result = await response(id);
     expect(result['error'], isNull, reason: '$result');
     return (result['result'] as Map)['terminalId'] as String;
@@ -190,7 +182,7 @@ void main() {
   );
 
   test(
-    'cancellation after approval cannot launch a command on the next turn',
+    'cancellation during validation cannot launch a command on the next turn',
     () async {
       final h = _Harness(root);
       await h.start();
@@ -198,16 +190,6 @@ void main() {
         'command': '/bin/sh',
         'args': ['-c', 'echo should-not-run'],
       });
-      await _until(() => h.events.whereType<InteractionRequested>().isNotEmpty);
-      final approval = h.events
-          .whereType<InteractionRequested>()
-          .last
-          .request
-          .id;
-      h.kernel.answer(
-        approval,
-        const ApprovalAnswer(ApprovalDecision.allowOnce),
-      );
       h.kernel.cancel();
       h.kernel.send(const KernelTurn(id: 'next-turn', text: 'new request'));
       expect((await h.response(request))['error'], isNotNull);
@@ -268,19 +250,15 @@ void main() {
   );
 
   test(
-    'approved missing executable fails without leaving a running task',
+    'missing executable fails without confirmation or a running task',
     () async {
       final h = _Harness(root);
       await h.start();
       final id = h.request('terminal/create', {
         'command': '${root.path}/not-an-executable',
       });
-      await _until(() => h.events.whereType<InteractionRequested>().isNotEmpty);
-      h.kernel.answer(
-        h.events.whereType<InteractionRequested>().last.request.id,
-        const ApprovalAnswer(ApprovalDecision.allowOnce),
-      );
       expect((await h.response(id))['error'], isNotNull);
+      expect(h.events.whereType<InteractionRequested>(), isEmpty);
       expect(h.events.whereType<TasksReported>(), isEmpty);
     },
   );
@@ -487,35 +465,36 @@ void main() {
     expect(h.tasks.single.canStop, isFalse);
   }, skip: Platform.isWindows);
 
-  test(
-    'approval includes args cwd env; denial never creates a process',
-    () async {
-      final h = _Harness(root);
-      await h.start();
-      final marker = File('${root.path}/denied');
-      final request = h.request('terminal/create', {
-        'command': '/bin/sh',
-        'args': ['-c', 'touch "${marker.path}"'],
-        'env': [
-          {'name': 'TEST', 'value': 'visible'},
-        ],
-      });
-      await _until(() => h.events.whereType<InteractionRequested>().isNotEmpty);
-      final approval =
-          h.events.whereType<InteractionRequested>().last.request
-              as ApprovalRequest;
-      expect((approval.preview as TextPreview).text, contains('visible'));
-      expect((approval.preview as TextPreview).text, contains(root.path));
-      expect(approval.alwaysAllowLabel, isNull);
-      h.kernel.answer(approval.id, const ApprovalAnswer(ApprovalDecision.deny));
-      expect((await h.response(request))['error'], isNotNull);
-      expect(await marker.exists(), isFalse);
-    },
-    skip: Platform.isWindows,
-  );
+  test('local commands run by default and retain args cwd env without confirmation', () async {
+    final h = _Harness(root);
+    await h.start();
+    final marker = File('${root.path}/allowed');
+    final request = h.request('terminal/create', {
+      'command': '/bin/sh',
+      'args': ['-c', 'touch "${marker.path}"'],
+      'env': [
+        {'name': 'TEST', 'value': 'visible'},
+      ],
+    });
+    final reply = await h.response(request);
+    expect(reply['error'], isNull);
+    final terminal = (reply['result'] as Map)['terminalId'];
+    await h.response(
+      h.request('terminal/wait_for_exit', {'terminalId': terminal}),
+    );
+    expect(await marker.exists(), isTrue);
+    expect(h.events.whereType<InteractionRequested>(), isEmpty);
+    final item = h.events
+        .whereType<ItemUpserted>()
+        .map((e) => e.item)
+        .whereType<ToolCallItem>()
+        .last;
+    expect(item.details!.input, contains('visible'));
+    expect(item.details!.input, contains(root.path));
+  }, skip: Platform.isWindows);
 
   test(
-    'cancel resolves pending local approvals and ignores late answers',
+    'cancel aborts a pending local launch and ignores stale answers',
     () async {
       final h = _Harness(root);
       await h.start();
@@ -523,58 +502,56 @@ void main() {
         'command': '/bin/sh',
         'args': ['-c', 'echo never'],
       });
-      await _until(() => h.events.whereType<InteractionRequested>().isNotEmpty);
-      final approval = h.events
-          .whereType<InteractionRequested>()
-          .last
-          .request
-          .id;
       h.kernel.cancel();
       h.kernel.answer(
-        approval,
+        'stale-terminal-approval',
         const ApprovalAnswer(ApprovalDecision.allowOnce),
       );
       expect((await h.response(request))['error'], isNotNull);
-      expect(h.events.whereType<InteractionResolved>(), hasLength(1));
+      expect(h.events.whereType<InteractionRequested>(), isEmpty);
+      expect(h.events.whereType<InteractionResolved>(), isEmpty);
       expect(h.events.whereType<TasksReported>(), isEmpty);
     },
     skip: Platform.isWindows,
   );
 
-  test('invalid session, paths, env and limits fail before approval', () async {
-    final h = _Harness(root);
-    await h.start();
-    for (final params in <Map<String, Object?>>[
-      {'command': 'echo', 'cwd': '/'},
-      {'command': 'echo', 'cwd': 'relative'},
-      {'command': ''},
-      {
-        'command': 'echo',
-        'args': [1],
-      },
-      {
-        'command': 'echo',
-        'env': [
-          {'name': 'BAD=NAME', 'value': 'x'},
-        ],
-      },
-      {'command': 'echo', 'outputByteLimit': -1},
-    ]) {
+  test(
+    'invalid session, paths, env and limits fail without execution',
+    () async {
+      final h = _Harness(root);
+      await h.start();
+      for (final params in <Map<String, Object?>>[
+        {'command': 'echo', 'cwd': '/'},
+        {'command': 'echo', 'cwd': 'relative'},
+        {'command': ''},
+        {
+          'command': 'echo',
+          'args': [1],
+        },
+        {
+          'command': 'echo',
+          'env': [
+            {'name': 'BAD=NAME', 'value': 'x'},
+          ],
+        },
+        {'command': 'echo', 'outputByteLimit': -1},
+      ]) {
+        expect(
+          (await h.response(h.request('terminal/create', params)))['error'],
+          isNotNull,
+        );
+      }
       expect(
-        (await h.response(h.request('terminal/create', params)))['error'],
+        (await h.response(
+          h.request('terminal/create', {
+            'command': 'echo',
+          }, session: 'unannounced'),
+        ))['error'],
         isNotNull,
       );
-    }
-    expect(
-      (await h.response(
-        h.request('terminal/create', {
-          'command': 'echo',
-        }, session: 'unannounced'),
-      ))['error'],
-      isNotNull,
-    );
-    expect(h.events.whereType<InteractionRequested>(), isEmpty);
-  });
+      expect(h.events.whereType<InteractionRequested>(), isEmpty);
+    },
+  );
 
   test('symlink cwd cannot escape workspace roots', () async {
     final outside = await Directory.systemTemp.createTemp('baocode-outside-');
@@ -797,7 +774,7 @@ void main() {
   );
 
   test(
-    'dispose waits for cleanup and cannot launch pending approvals',
+    'dispose waits for cleanup and cannot launch pending validation',
     () async {
       final h = _Harness(root);
       await h.start();
@@ -806,9 +783,6 @@ void main() {
         'command': '/bin/sh',
         'args': ['-c', 'sleep 30'],
       });
-      await _until(
-        () => h.events.whereType<InteractionRequested>().length == 2,
-      );
       h.kernel.dispose();
       await h.kernel.stopped;
       expect(

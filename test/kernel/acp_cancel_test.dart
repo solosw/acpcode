@@ -56,7 +56,11 @@ class _Transport implements AcpTransport {
     _promptId = null;
   }
 
-  void permission(Object id) => _messages.add({
+  void permission(
+    Object id, {
+    bool commandChoice = false,
+    List<Map<String, Object?>>? options,
+  }) => _messages.add({
     'jsonrpc': '2.0',
     'id': id,
     'method': 'session/request_permission',
@@ -64,13 +68,27 @@ class _Transport implements AcpTransport {
       'sessionId': 'session',
       'toolCall': {
         'toolCallId': 'tool_$id',
-        'title': 'Run tool',
-        'kind': 'execute',
+        'title': commandChoice ? '/choose' : 'Run tool',
+        'kind': commandChoice ? 'command' : 'execute',
       },
-      'options': [
-        {'optionId': 'allow', 'name': 'Allow once', 'kind': 'allow_once'},
-        {'optionId': 'reject', 'name': 'Reject', 'kind': 'reject_once'},
-      ],
+      'options':
+          options ??
+          (commandChoice
+              ? [
+                  {'optionId': 'command-a', 'name': 'Command A'},
+                ]
+              : [
+                  {
+                    'optionId': 'allow',
+                    'name': 'Allow once',
+                    'kind': 'allow_once',
+                  },
+                  {
+                    'optionId': 'reject',
+                    'name': 'Reject',
+                    'kind': 'reject_once',
+                  },
+                ]),
     },
   });
 
@@ -149,11 +167,11 @@ void main() {
   });
 
   test(
-    'cancel resolves all pending permissions with their original RPC ids',
+    'cancel resolves pending command choices with their original RPC ids',
     () async {
       await start();
-      transport.permission(42);
-      transport.permission('request-2');
+      transport.permission(42, commandChoice: true);
+      transport.permission('request-2', commandChoice: true);
       expect(events.whereType<InteractionRequested>(), hasLength(2));
 
       kernel.cancel();
@@ -204,19 +222,116 @@ void main() {
 
       await start(2);
       transport.permission(78);
-      expect(events.whereType<InteractionRequested>().single.request.id, '78');
-      kernel.answer(
-        '78',
-        const QuestionAnswer([
-          ['Allow once'],
-        ]),
-      );
+      expect(events.whereType<InteractionRequested>(), isEmpty);
       expect(transport.written.last['result'], {
         'outcome': {'outcome': 'selected', 'optionId': 'allow'},
       });
       transport.completePrompt('end_turn');
       await pumpEventQueue();
       expect(events.whereType<TurnEnded>().last.interrupted, isFalse);
+    },
+  );
+
+  test('ACP permissions are allowed by default without interactions or duplicate replies', () async {
+    await start();
+    transport.permission(42);
+    transport.permission('request-2');
+    expect(events.whereType<InteractionRequested>(), isEmpty);
+    final replies = transport.written.where((m) => m.containsKey('result'));
+    expect(replies.map((m) => m['id']), [42, 'request-2']);
+    for (final reply in replies) {
+      expect(reply['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'allow'},
+      });
+    }
+    kernel.cancel();
+    kernel.answer('42', const ApprovalAnswer(ApprovalDecision.deny));
+    expect(transport.written.where((m) => m['id'] == 42), hasLength(1));
+    transport.completePrompt('cancelled');
+    await pumpEventQueue();
+  });
+
+  test(
+    'auto-allow uses advertised kinds, not localized labels or option ids',
+    () async {
+      await start();
+      transport.permission(
+        43,
+        options: [
+          {
+            'optionId': 'allow-looking-reject',
+            'name': 'Allow',
+            'kind': 'reject_once',
+          },
+          {'optionId': 'permanent', 'name': '永久允许', 'kind': 'allow_always'},
+          {'optionId': 'opaque-id', 'name': '本次允许', 'kind': 'allow_once'},
+        ],
+      );
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'opaque-id'},
+      });
+      expect(events.whereType<InteractionRequested>(), isEmpty);
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    },
+  );
+
+  test(
+    'auto-allow supports always-only and legacy hyphenated permission kinds',
+    () async {
+      await start();
+      for (final kind in ['allow_always', 'allow-always', 'allow-once']) {
+        transport.permission(
+          kind,
+          options: [
+            {'optionId': 'actual-option', 'name': 'Continue', 'kind': kind},
+          ],
+        );
+        expect(transport.written.last['result'], {
+          'outcome': {'outcome': 'selected', 'optionId': 'actual-option'},
+        });
+      }
+      expect(events.whereType<InteractionRequested>(), isEmpty);
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    },
+  );
+
+  test('a permission with no allow option is cancelled, never fabricated or prompted', () async {
+    await start();
+    transport.permission(
+      44,
+      options: [
+        {'optionId': 'deny', 'name': 'Reject', 'kind': 'reject_once'},
+      ],
+    );
+    expect(transport.written.last['result'], {
+      'outcome': {'outcome': 'cancelled'},
+    });
+    expect(events.whereType<InteractionRequested>(), isEmpty);
+    transport.completePrompt('end_turn');
+    await pumpEventQueue();
+  });
+
+  test(
+    'actual command menus remain interactive and return the selected option',
+    () async {
+      await start();
+      transport.permission(45, commandChoice: true);
+      final request = events.whereType<InteractionRequested>().single.request;
+      expect(request, isA<QuestionRequest>());
+      expect(transport.written.where((m) => m['id'] == 45), isEmpty);
+      kernel.answer(
+        request.id,
+        const QuestionAnswer([
+          ['Command A'],
+        ]),
+      );
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'command-a'},
+      });
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
     },
   );
 

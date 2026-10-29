@@ -230,7 +230,7 @@ void main() {
   });
 
   test(
-    'ACP permission shows agent option names and keeps JSON-RPC id',
+    'ACP permission is automatically allowed and keeps JSON-RPC id',
     () async {
       final transport = MockAcpTransport();
       final kernel = AcpKernel(
@@ -244,23 +244,7 @@ void main() {
       kernel.send(const KernelTurn(id: 'turn-perm', text: 'need-permission'));
       await Future<void>.delayed(const Duration(milliseconds: 30));
 
-      final requested = events.whereType<InteractionRequested>().single;
-      expect(requested.request, isA<QuestionRequest>());
-      final question = requested.request as QuestionRequest;
-      expect(question.title, 'Run ls');
-      expect(question.questions.single.options.map((o) => o.label), [
-        'Allow once',
-        'Allow always',
-        'Reject',
-      ]);
-
-      kernel.answer(
-        question.id,
-        const QuestionAnswer([
-          ['Allow once'],
-        ]),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(events.whereType<InteractionRequested>(), isEmpty);
 
       final reply = transport.written.lastWhere(
         (message) => message.containsKey('result') && message['id'] == 42,
@@ -269,45 +253,46 @@ void main() {
       expect(reply['result'], {
         'outcome': {'outcome': 'selected', 'optionId': 'opt_allow'},
       });
-      expect(
-        events.whereType<InteractionResolved>().single.requestId,
-        question.id,
-      );
+      expect(events.whereType<InteractionResolved>(), isEmpty);
 
       await subscription.cancel();
       kernel.dispose();
     },
   );
 
-  test('ACP skip maps to reject_once option instead of cancelled', () async {
-    final transport = MockAcpTransport();
-    final kernel = AcpKernel(
-      descriptor(),
-      const KernelContext(cwd: '/tmp/project'),
-      (_) async => transport,
-    );
-    final events = <KernelEvent>[];
-    final subscription = kernel.events.listen(events.add);
+  test(
+    'a stale UI answer cannot reverse an automatically allowed ACP permission',
+    () async {
+      final transport = MockAcpTransport();
+      final kernel = AcpKernel(
+        descriptor(),
+        const KernelContext(cwd: '/tmp/project'),
+        (_) async => transport,
+      );
+      final events = <KernelEvent>[];
+      final subscription = kernel.events.listen(events.add);
 
-    kernel.send(const KernelTurn(id: 'turn-deny', text: 'need-permission'));
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-    final question =
-        events.whereType<InteractionRequested>().single.request
-            as QuestionRequest;
+      kernel.send(const KernelTurn(id: 'turn-deny', text: 'need-permission'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(events.whereType<InteractionRequested>(), isEmpty);
+      kernel.answer('42', const QuestionAnswer([], skipped: true));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        transport.written.where((message) => message['id'] == 42),
+        hasLength(1),
+      );
 
-    kernel.answer(question.id, const QuestionAnswer([], skipped: true));
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+      final reply = transport.written.lastWhere(
+        (message) => message.containsKey('result') && message['id'] == 42,
+      );
+      expect(reply['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'opt_allow'},
+      });
 
-    final reply = transport.written.lastWhere(
-      (message) => message.containsKey('result') && message['id'] == 42,
-    );
-    expect(reply['result'], {
-      'outcome': {'outcome': 'selected', 'optionId': 'opt_reject'},
-    });
-
-    await subscription.cancel();
-    kernel.dispose();
-  });
+      await subscription.cancel();
+      kernel.dispose();
+    },
+  );
 
   test('ACP plan session updates replace the todo list', () async {
     final transport = MockAcpTransport();

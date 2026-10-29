@@ -165,7 +165,7 @@ class _TerminalHost implements AcpTerminalHost {
     AcpTerminalCommand command,
     bool Function() canStart,
   ) async {
-    // Validate again after user approval, before any process is started.
+    // Revalidate after asynchronous setup, before any process is started.
     final checked = await validate(command.input);
     if (!paths.equals(checked.cwd, command.cwd)) {
       throw const AcpTerminalError(
