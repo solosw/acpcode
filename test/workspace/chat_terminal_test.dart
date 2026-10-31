@@ -2,18 +2,23 @@
 // workspace/chat_terminal.dart): its toggles, its keys, and the project
 // its terminals start in.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_editor/monaco/flutter/keybinding_entry.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
+import 'package:baocode/ide/terminal/terminal_widget.dart';
 import 'package:baocode/keybindings/keybinding_service.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/workspace/chat_grid.dart';
+import 'package:baocode/workspace/chat_grid_view.dart';
 import 'package:baocode/workspace/chat_terminal.dart';
 import 'package:baocode/workspace/window_header/window_header.dart';
 import 'package:baocode/workspace/workspace.dart';
 
+import '../chat_split_test.dart' show dragTitle;
 import '../ide/terminal/fake_pty.dart';
 import '../ide/terminal/fake_terminal.dart';
 import 'chat_window_keys_test.dart' show press;
@@ -54,7 +59,7 @@ Future<void> _settle(WidgetTester tester) async {
 final _mac = TargetPlatformVariant.only(TargetPlatform.macOS);
 final _windows = TargetPlatformVariant.only(TargetPlatform.windows);
 
-Finder get _panel => find.text('TERMINAL');
+Finder get _panel => find.byKey(const ValueKey('chat-terminal-panel'));
 
 /// The title bar's button (the panel's own Hide is another).
 Finder get _toggle => find.byType(ChatTerminalToggle);
@@ -66,6 +71,19 @@ bool _toggleShown(WidgetTester tester) =>
 ChatTerminals _terminals(WidgetTester tester) => tester
     .widget<ChatTerminalArea>(find.byType(ChatTerminalArea).first)
     .terminals;
+
+/// The pane showing [root]'s terminals.
+Finder _areaOf(String root) => find.byWidgetPredicate(
+  (widget) => widget is ChatTerminalArea && widget.root == root,
+);
+
+/// The terminal button in the title bar of the pane titled [title].
+Finder _toggleIn(String title) => find.descendant(
+  of: find.byWidgetPredicate(
+    (widget) => widget is ChatScreen && widget.title == title,
+  ),
+  matching: _toggle,
+);
 
 void main() {
   testWidgets('the title bar\'s button shows the panel under the chat, a '
@@ -211,6 +229,175 @@ void main() {
     expect(ptys, hasLength(2));
   }, variant: _mac);
 
+  testWidgets('each pane has its project\'s terminal under it, in its '
+      'width, its own button its own: both showing at once', (tester) async {
+    final ptys = <FakePty>[];
+    final workspace = await _pumpApp(
+      tester,
+      terminalBackend: fakeTerminalBackend(ptys),
+    );
+    final first = workspace.current!;
+    final other = workspace.threads.firstWhere(
+      (thread) => thread.project != first.project,
+    );
+    workspace.openBeside(other, first, PaneSide.right);
+    await _settle(tester);
+    // Focused, the right pane.
+    expect(workspace.current, same(other));
+
+    // The left pane's button is the left pane's project's, though another
+    // pane has the focus, which stays where it is.
+    await tester.tap(_toggleIn(first.title));
+    await _settle(tester);
+    expect(ptys.single.launch!.workingDirectory, first.project.path);
+    expect(workspace.current, same(other));
+
+    // The right pane's, its own: both show, each under its conversation.
+    await tester.tap(_toggleIn(other.title));
+    await _settle(tester);
+    expect(ptys, hasLength(2));
+    expect(ptys.last.launch!.workingDirectory, other.project.path);
+
+    final left = tester.getRect(_areaOf(first.project.path));
+    final right = tester.getRect(_areaOf(other.project.path));
+    expect(left.right, lessThanOrEqualTo(right.left));
+    expect(
+      left.width,
+      lessThan(tester.getRect(find.byType(ChatGridView)).width),
+    );
+    for (final (root, pane) in [
+      (first.project.path, left),
+      (other.project.path, right),
+    ]) {
+      final panel = tester.getRect(
+        find.descendant(of: _areaOf(root), matching: _panel),
+      );
+      expect(panel.left, greaterThanOrEqualTo(pane.left));
+      expect(panel.right, lessThanOrEqualTo(pane.right));
+    }
+  }, variant: _mac);
+
+  testWidgets('two panes of one project show its terminals once, under the '
+      'first of them, whose button alone is there', (tester) async {
+    final ptys = <FakePty>[];
+    final workspace = await _pumpApp(
+      tester,
+      terminalBackend: fakeTerminalBackend(ptys),
+    );
+    final first = workspace.current!;
+    final same = workspace.threads.firstWhere(
+      (thread) => thread.project == first.project && !identical(thread, first),
+    );
+    workspace.openBeside(same, first, PaneSide.right);
+    await _settle(tester);
+    expect(_areaOf(first.project.path), findsOneWidget);
+    expect(_toggle, findsOneWidget);
+
+    // Asked for from the right pane, the project's panel shows in the left
+    // one, where its terminals are.
+    await tester.tap(_toggle);
+    await _settle(tester);
+    expect(ptys, hasLength(1));
+    expect(_panel, findsOneWidget);
+    expect(
+      find.descendant(of: _areaOf(first.project.path), matching: _panel),
+      findsOneWidget,
+    );
+  }, variant: _mac);
+
+  testWidgets('a pane swapped keeps its terminal view, process and height', (
+    tester,
+  ) async {
+    final ptys = <FakePty>[];
+    final workspace = await _pumpApp(
+      tester,
+      terminalBackend: fakeTerminalBackend(ptys),
+    );
+    final first = workspace.current!;
+    final other = workspace.threads.firstWhere(
+      (thread) => thread.project != first.project,
+    );
+    workspace.openBeside(other, first, PaneSide.right);
+    await _settle(tester);
+    await tester.tap(_toggleIn(first.title));
+    await _settle(tester);
+    await tester.tap(_toggleIn(other.title));
+    await _settle(tester);
+    final terminals = _terminals(tester);
+    final service = terminals.serviceOf(first.project.path);
+    terminals.setHeight(first.project.path, 180);
+    await tester.pump();
+    Finder terminalIn(String root) => find.descendant(
+      of: _areaOf(root),
+      matching: find.byType(TerminalWidget),
+    );
+    final state = tester.state(terminalIn(first.project.path));
+    final original = tester.getRect(_areaOf(first.project.path));
+    final destination = tester.getRect(_areaOf(other.project.path));
+    final gesture = await dragTitle(tester, first.title, destination.center);
+    await gesture.up();
+    await _settle(tester);
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(tester.getRect(_areaOf(first.project.path)), destination);
+    expect(tester.getRect(_areaOf(other.project.path)), original);
+    expect(tester.state(terminalIn(first.project.path)), same(state));
+    expect(terminals.serviceOf(first.project.path), same(service));
+    expect(terminals.heightOf(first.project.path), 180);
+    expect(_panel, findsNWidgets(2));
+    expect(ptys, hasLength(2));
+    expect(ptys.expand((pty) => pty.kills), isEmpty);
+  }, variant: _mac);
+
+  testWidgets('same-project panes swapped still show one shared terminal', (
+    tester,
+  ) async {
+    final ptys = <FakePty>[];
+    final workspace = await _pumpApp(
+      tester,
+      terminalBackend: fakeTerminalBackend(ptys),
+    );
+    final first = workspace.current!;
+    final other = workspace.threads.firstWhere(
+      (thread) => thread.project == first.project && !identical(thread, first),
+    );
+    workspace.openBeside(other, first, PaneSide.right);
+    await _settle(tester);
+    await tester.tap(_toggleIn(first.title));
+    await _settle(tester);
+    final service = _terminals(tester).serviceOf(first.project.path);
+    final terminalState = tester.state(
+      find.descendant(
+        of: _areaOf(first.project.path),
+        matching: find.byType(TerminalWidget),
+      ),
+    );
+    final destination = tester.getRect(
+      find.byWidgetPredicate(
+        (widget) => widget is ChatScreen && widget.title == other.title,
+      ),
+    );
+    final gesture = await dragTitle(tester, first.title, destination.center);
+    await gesture.up();
+    await _settle(tester);
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(_areaOf(first.project.path), findsOneWidget);
+    expect(_panel, findsOneWidget);
+    expect(_toggleIn(other.title), findsOneWidget);
+    expect(
+      tester.state(
+        find.descendant(
+          of: _areaOf(first.project.path),
+          matching: find.byType(TerminalWidget),
+        ),
+      ),
+      same(terminalState),
+    );
+    expect(_terminals(tester).serviceOf(first.project.path), same(service));
+    expect(ptys, hasLength(1));
+    expect(ptys.single.kills, isEmpty);
+  }, variant: _mac);
+
   testWidgets('its last terminal exited, the panel hides', (tester) async {
     final ptys = <FakePty>[];
     await _pumpApp(tester, terminalBackend: fakeTerminalBackend(ptys));
@@ -260,8 +447,8 @@ void main() {
     expect(_panel, findsNothing);
   }, variant: _windows);
 
-  test('the side panel\'s terminals are each project\'s own, apart from the '
-      'panel\'s, and keep the window asking before it closes', () async {
+  test('the side panel\'s terminals are its panel\'s, each project\'s own, '
+      'and keep the window asking before it closes', () async {
     final started = <FakePty>[];
     final terminals = ChatTerminals(
       fakeTerminalBackend(started),
@@ -269,14 +456,15 @@ void main() {
       pathOf: (root) => '$root-host',
     );
     addTearDown(terminals.dispose);
-    final side = terminals.sidePanelTerminals('/p');
-    expect(terminals.sidePanelTerminals('/p'), same(side));
-    expect(terminals.sidePanelTerminals('/q'), isNot(same(side)));
+    final side = terminals.terminalsOf('/p');
+    expect(terminals.terminalsOf('/p'), same(side));
+    expect(terminals.terminalsOf('/q'), isNot(same(side)));
     expect(terminals.running(childProcesses: false), isFalse);
-    side.create();
+    // Made on the side panel's page: the panel stays hidden.
+    side.create(activate: false);
     await pumpEventQueue();
     expect(started.single.launch!.workingDirectory, '/p-host');
-    expect(terminals.current, isNull);
+    expect(terminals.current, same(side));
     expect(terminals.shown, isFalse);
     expect(terminals.running(childProcesses: false), isTrue);
   });

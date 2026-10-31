@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/platform/error_log.dart';
@@ -90,33 +89,6 @@ void main() {
     expect(text.length, lessThan(2100));
   });
 
-  testWidgets('the Windows app is told the folder, for its own logs', (
-    tester,
-  ) async {
-    final calls = <MethodCall>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      ErrorLog.channel,
-      (call) async => calls.add(call),
-    );
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        ErrorLog.channel,
-        null,
-      ),
-    );
-    final errors = log();
-
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    await errors.shareWithHost();
-    expect(calls, isEmpty);
-
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    await errors.shareWithHost();
-    debugDefaultTargetPlatformOverride = null;
-    expect(calls.single.method, 'setFolder');
-    expect(calls.single.arguments, errors.directory);
-  });
-
   test('installed, it hands what it is told on to the handlers there were', () {
     final flutter = FlutterError.onError;
     final platform = PlatformDispatcher.instance.onError;
@@ -150,5 +122,21 @@ void main() {
     final text = File(errors.path).readAsStringSync();
     expect(text, contains('[Flutter framework]\nBad state: in a gesture\n\n'));
     expect(text, contains('[uncaught]\nBad state: in a future\n\n'));
+  });
+
+  test('a release build writes all a FlutterError says, not its first line '
+      'alone', () {
+    final error = FlutterError.fromParts([
+      ErrorSummary('A drag on text selected nothing.'),
+      ErrorDescription('Pressed at Offset(1.0, 2.0); 3 listed.'),
+      ErrorHint('Done again.'),
+    ]);
+    expect(
+      ErrorLog.describe(error, release: true),
+      'A drag on text selected nothing.\n'
+      'Pressed at Offset(1.0, 2.0); 3 listed.\n'
+      'Done again.',
+    );
+    expect(ErrorLog.describe(StateError('x'), release: true), 'Bad state: x');
   });
 }

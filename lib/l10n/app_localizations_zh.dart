@@ -440,6 +440,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdChatAttachContext => '添加上下文…';
 
   @override
+  String get cmdChatAttachSelection => '将所选内容添加到对话';
+
+  @override
   String get cmdChatPasteRaw => '粘贴为纯文本';
 
   @override
@@ -1263,10 +1266,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cmdToggleFullScreen => '切换全屏';
 
   @override
+  String get cmdZoomIn => '放大';
+
+  @override
+  String get cmdZoomOut => '缩小';
+
+  @override
+  String get cmdZoomReset => '重置缩放';
+
+  @override
   String get cmdToggleWordWrap => '切换自动换行';
 
   @override
   String get menuWordWrap => '自动换行';
+
+  @override
+  String get cmdToggleMinimap => '切换缩略图';
+
+  @override
+  String get menuMinimap => '缩略图';
 
   @override
   String get cmdTogglePanel => '切换面板可见性';
@@ -1933,6 +1951,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentImageUntitled => '图片';
 
   @override
+  String get chatTitleSummarize => '总结新标题';
+
+  @override
+  String get chatTitleSummarizing => '正在总结…';
+
+  @override
+  String get chatTitleSummarizeFailed => '未能生成标题，再试一次';
+
+  @override
   String get sidebarNewAgent => '新对话';
 
   @override
@@ -2479,6 +2506,35 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get toolUpdatedTodos => '已更新待办';
+
+  @override
+  String todoCount(int done, int total) {
+    return '待办 $done/$total';
+  }
+
+  @override
+  String get todoAllDone => '全部完成';
+
+  @override
+  String get todoNone => '列表为空';
+
+  @override
+  String get todoAdded => '添加待办';
+
+  @override
+  String get todoStarted => '开始待办';
+
+  @override
+  String get todoCompleted => '完成待办';
+
+  @override
+  String get todoRemoved => '删除待办';
+
+  @override
+  String get todoUpdated => '更新待办';
+
+  @override
+  String get todoChecked => '查看待办';
 
   @override
   String get toolSending => '正在说';
@@ -3246,11 +3302,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get mcpProbeNote =>
       '启动后用 MCP 的 initialize 握手检测，与 `claude mcp list` 的检测方式相同。';
-
-  @override
-  String todoCount(int done, int total) {
-    return '待办 $done/$total';
-  }
 
   @override
   String queuedMessages(int count) {
@@ -4802,6 +4853,14 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get langNavigationUnavailable => '此文件没有可用于代码跳转的语言服务器。';
+
+  @override
+  String langNavigationInstall(String id) {
+    return '安装“$id”语言服务器后，即可在此文件中跳转到定义和引用。';
+  }
+
+  @override
   String get langReferences => '引用';
 
   @override
@@ -4938,6 +4997,21 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get termKillTerminal => '终止终端';
+
+  @override
+  String get termKillOtherTerminals => '终止其他终端';
+
+  @override
+  String get termKillAllTerminals => '终止所有终端';
+
+  @override
+  String get termStopAllTasks => '停止所有运行中的任务';
+
+  @override
+  String get termRunInNewTerminal => '在新终端中运行';
+
+  @override
+  String get termNoTerminals => '没有终端';
 
   @override
   String get termNewTerminal => '新建终端';
@@ -5158,6 +5232,26 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get workspaceClosePane => '关闭窗格';
+
+  @override
+  String workspaceCloseBackTo(String title) {
+    return '关闭窗格，回到「$title」';
+  }
+
+  @override
+  String workspaceCovers(String title) {
+    return '覆盖在「$title」之上，关闭后恢复';
+  }
+
+  @override
+  String workspaceCovered(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '下面还有 $count 个会话',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get workspaceLoadingProjects => '正在加载项目…';
@@ -6401,10 +6495,24 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get modelsAccountDisabled => '已禁用';
+
+  @override
   String get modelsAccountLimited => '额度已用尽';
 
   @override
   String get modelsAccountQuotaUnknown => '额度尚未获取';
+
+  @override
+  String get modelsQuotaShortWindow => '短周期';
+
+  @override
+  String get modelsQuotaLongWindow => '长周期';
+
+  @override
+  String modelsQuotaLastUpdated(String time) {
+    return '上次更新 $time';
+  }
 
   @override
   String get modelsQuotaWeek => '每周';
@@ -6423,6 +6531,40 @@ class AppLocalizationsZh extends AppLocalizations {
   String modelsQuotaUsed(int percent) {
     return '已用 $percent%';
   }
+
+  @override
+  String modelsQuotaRemaining(int percent) {
+    return '剩余 $percent%';
+  }
+
+  @override
+  String quotaBarWindowLeft(String window, int percent) {
+    return '$window剩 $percent%';
+  }
+
+  @override
+  String quotaBarAvailable(int count, int total) {
+    return '$count/$total 可用';
+  }
+
+  @override
+  String quotaBarAllOut(String time) {
+    return '账号额度全部用尽 · $time 恢复';
+  }
+
+  @override
+  String quotaBarBackAt(String time) {
+    return '额度已用尽 · $time 恢复';
+  }
+
+  @override
+  String get quotaBarNone => '没有可用的账号';
+
+  @override
+  String get quotaBarThisChat => '当前对话';
+
+  @override
+  String get quotaBarRefresh => '刷新额度';
 
   @override
   String modelsQuotaResetsIn(String time) {
@@ -6516,6 +6658,31 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsBaseUrlOpenAIHint => '按上游文档填写；路径里没有版本号（…/v1）时自动加 /v1。';
+
+  @override
+  String get modelsCustomUrls => '自定义地址';
+
+  @override
+  String get modelsCustomUrlsDescription =>
+      '拉模型列表和对话请求的地址默认由 Base URL 拼出；上游不按惯例时，在这里填完整地址。';
+
+  @override
+  String get modelsModelsUrl => '模型列表地址';
+
+  @override
+  String get modelsModelsUrlDescription =>
+      '测试连接和获取模型时 GET 这个地址。留空用灰字所示、由 Base URL 拼出的地址。';
+
+  @override
+  String get modelsEndpointUrl => '端点地址';
+
+  @override
+  String get modelsEndpointUrlDescription =>
+      '每次对话 POST 到这个完整地址。留空用灰字所示、由 Base URL 拼出的地址。单独设了其他端点类型的模型仍按 Base URL。';
+
+  @override
+  String get modelsEndpointUrlAnthropicDescription =>
+      '每次对话 POST 到这个完整地址，Claude Code 改经本地代理转发。留空用灰字所示、由 Base URL 拼出的地址。单独设了其他端点类型的模型仍按 Base URL。';
 
   @override
   String get modelsApiKey => 'API Key';
@@ -6742,9 +6909,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '每行一个 Name: Value，对此上游的每次请求都会带上。值里可用双花括号变量 CLAUDE_SESSION_ID（本次对话的会话）与 ANTHROPIC_MODEL（所请求的模型）；走直连 Anthropic 协议时这两个变量原样发出，可用的只有固定值。鉴权头（Authorization、x-api-key）在此忽略：Key 在下方设置。';
 
   @override
-  String get modelsHeadersPlaceholder => 'x-session-id: my-session';
-
-  @override
   String get modelsDuplicateProvider => '复制上游';
 
   @override
@@ -6900,6 +7064,10 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get modelsEndpointDescription =>
       '这个模型的请求发往哪种接口，Base URL 和 Key 与上游相同。中转站同时提供多种接口时，可以让 Claude 模型走 Anthropic 接口、GPT 模型走 Responses。';
+
+  @override
+  String get modelsModelEndpointUrlDescription =>
+      '这个模型的请求发到这个完整地址。与端点类型互不影响：类型决定请求格式，地址只决定发到哪里。留空用灰字所示的地址。';
 
   @override
   String get modelsImageBadge => '图片';
@@ -7079,7 +7247,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get diagnosticsDescription =>
-      '把 BaoCode 的错误日志发给开发者，帮助排查问题。只有点击上传时才会发送。';
+      '把 BaoCode 的错误日志和系统记录的崩溃和卡死报告发给开发者，帮助排查问题。只有点击上传时才会发送。';
 
   @override
   String get diagnosticsUpload => '上传…';
@@ -7331,6 +7499,13 @@ class AppLocalizationsZh extends AppLocalizations {
       '在对话左侧显示整段对话的缩略图，滚动时显示当前所在位置，点击或拖动即可跳转。开启时代替右侧滚动条；窗口太窄时不显示。关闭后恢复右侧滚动条。';
 
   @override
+  String get appearanceSettingsWindowBlur => '原生高斯模糊';
+
+  @override
+  String get appearanceSettingsWindowBlurDescription =>
+      '窗口底部使用系统的模糊效果（macOS 的侧边栏材质、Windows 11 的亚克力），侧边栏和对话区会透出窗口后面的内容。关闭后窗口不透明。';
+
+  @override
   String get appearanceSettingsSidebarTimes => '侧边栏显示时间';
 
   @override
@@ -7396,7 +7571,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceSettingsCodeSizeDescription =>
-      'Fast IDE 编辑器及侧边栏文件、变更视图中源码的字号。对话中的代码跟随界面大小，终端使用终端字号。';
+      'Fast IDE 编辑器及侧边栏文件、变更视图中源码的字号，按 100% 界面大小算，界面缩放时随之等比放大缩小。对话中的代码跟随界面大小，终端使用终端字号。';
 
   @override
   String appearanceSettingsCodeSizeLabel(String size) {
@@ -7418,11 +7593,18 @@ class AppLocalizationsZh extends AppLocalizations {
       '长行在编辑器宽度处折行，所有编辑器共用。编辑器右键菜单和命令面板（切换自动换行）也能切换。超过 5000 行的文件不折行。';
 
   @override
+  String get appearanceSettingsCodeMinimap => '代码缩略图';
+
+  @override
+  String get appearanceSettingsCodeMinimapDescription =>
+      '代码编辑器右侧显示整个文件的缩略图，所有编辑器共用；编辑器太窄时不显示。编辑器标签页右键菜单和命令面板（切换缩略图）也能切换。';
+
+  @override
   String get appearanceSettingsUiScale => '界面大小';
 
   @override
   String get appearanceSettingsUiScaleDescription =>
-      '缩放整个界面（文字、图标与间距）、对话中的代码，以及终端字号为“跟随界面大小”时的终端文字。Fast IDE 编辑器及侧边栏文件、变更中的源码使用代码字号。';
+      '缩放整个界面（文字、图标与间距）和其中的代码，以及终端字号为“跟随界面大小”时的终端文字。编辑器中的源码按代码字号等比缩放。';
 
   @override
   String appearanceSettingsUiScaleLabel(String percent) {
@@ -7545,6 +7727,9 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get remoteFolderRefresh => '重新读取文件夹';
+
+  @override
   String get remoteOpenThisFolder => '打开此文件夹';
 
   @override
@@ -7558,6 +7743,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String remoteListFailed(String path) {
     return '无法列出 $path';
+  }
+
+  @override
+  String remoteReadingFolder(String path) {
+    return '正在读取 $path…';
   }
 
   @override
@@ -8375,13 +8565,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mobileSettingsDescription =>
-      '在手机上的 BaoCode 里查看并操作这台电脑的智能体，经由局域网或公网直连。两端之间的内容端到端加密。';
+      '在手机上的 BaoCode 里查看并操作这台电脑的智能体：同一网络里直接连；跨网时自动打洞直连；都不行时经 BaoCode 中继。两端之间的内容端到端加密，中继也看不到。';
 
   @override
   String get mobileAllow => '允许手机连接';
 
   @override
-  String get mobileAllowDescription => '与这台电脑配对过的手机可以直接连接它。';
+  String get mobileAllowDescription => '与这台电脑配对过的手机，无论在哪里都可以连接它。';
 
   @override
   String get mobileStatus => '状态';
@@ -8393,53 +8583,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mobileStatusStarting => '正在启动…';
 
   @override
-  String mobileStatusListening(int port) {
-    return '正在监听端口 $port';
-  }
-
-  @override
   String mobileStatusFailed(String error) {
-    return '无法监听：$error';
+    return '无法启动：$error';
   }
 
   @override
-  String get mobileAddresses => '地址';
+  String get mobileRelay => '中继';
 
   @override
-  String get mobileAddressesDescription => '手机按此顺序尝试连接这台电脑：先局域网，再公网。';
-
-  @override
-  String get mobileAddressesNone => '未找到可用的网络。';
-
-  @override
-  String get mobileAddressesRefresh => '刷新';
-
-  @override
-  String get mobilePort => '端口';
-
-  @override
-  String get mobilePortDescription => '手机连接的端口。在路由器上转发此端口，即可从公网访问这台电脑。';
-
-  @override
-  String mobilePortInvalid(String text) {
-    return '不是有效端口：$text。请填写 1 到 65535 之间的数字。';
-  }
-
-  @override
-  String get mobilePublicAddress => '公网地址';
-
-  @override
-  String get mobilePublicAddressDescription =>
-      '可从公网访问这台电脑的域名或 IP（需转发端口），会写入二维码；多个用逗号分隔。经只收 HTTPS 的代理（如 Cloudflare Tunnel）访问时，写成 wss://域名。公网 IPv6 地址会自动加入。';
-
-  @override
-  String get mobileRelay => '中转';
-
-  @override
-  String get mobileRelayDescription => '当这台电脑的地址都无法直连时，经由 BaoCode 中转服务连接。即将推出。';
-
-  @override
-  String get mobileRelayUnavailable => '暂不可用';
+  String get mobileRelayDescription =>
+      '手机无法直连这台电脑时经中继连接，中继只转发两端加密后的内容。手机上不用设置：配对时、以及之后每次连接时，它会从这里得知。';
 
   @override
   String get mobilePair => '配对手机';
@@ -8530,6 +8683,70 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mobilePairAllow => '允许';
+
+  @override
+  String mobileStatusOnline(String relay) {
+    return '已开启，可经 $relay 连接';
+  }
+
+  @override
+  String get mobileStatusNoRelay => '已开启；还没连上中继，暂时只有同一网络里的手机能连';
+
+  @override
+  String mobileStatusDenied(String reason) {
+    return '已开启，但中继拒绝了这台电脑：$reason';
+  }
+
+  @override
+  String get mobileRelayInvalid => '不是中继地址，应形如 https://relay.example.com';
+
+  @override
+  String get mobileRelayPinned => '指定的中继';
+
+  @override
+  String get mobileRelayCustom => '自定义';
+
+  @override
+  String get mobileRelayCustomAddress => '自定义地址';
+
+  @override
+  String get mobileRelayCustomDescription => '你自己部署的中继（baocode-relay）的地址。';
+
+  @override
+  String get mobileRelayMode => '方式';
+
+  @override
+  String get mobileRelayModeAuto => '自动';
+
+  @override
+  String get mobileRelayModeAutoDescription => '使用 BaoCode 的中继，自动选最近的一台。';
+
+  @override
+  String get mobileRelayModePinned => '手动指定';
+
+  @override
+  String get mobileRelayModePinnedDescription =>
+      '只用你指定的一台：BaoCode 的某一台，或自定义地址。';
+
+  @override
+  String get mobilePathLan => '局域网直连';
+
+  @override
+  String get mobilePathDirect => '打洞直连';
+
+  @override
+  String get mobilePathRelay => '经中继';
+
+  @override
+  String mobilePathRtt(int ms) {
+    return '$ms 毫秒';
+  }
+
+  @override
+  String get mobileLegacyPhone => '需要重新配对：连接方式升级前配对的';
+
+  @override
+  String get mobileLegacyRepair => '重新配对';
 
   @override
   String get settingsSectionStash => 'Stash';
@@ -8708,26 +8925,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get stashPolishHint => '让 AI 把选中的文字理顺，保持你的原意，不加结构';
 
   @override
-  String get composerPolish => '润色';
+  String get composerPolish => '提示词增强';
 
   @override
-  String get composerPolishing => '润色中…';
+  String get composerPolishing => '增强中…';
 
   @override
   String get composerPolishHint =>
-      '润色：用辅助模型把消息改得更清楚，保留你的意思和口吻；图片、文件、代码和链接原样不动，可撤销';
+      '提示词增强：用辅助模型把消息改写成更清楚、更具体的提示词，没说清的地方由它补全；图片、文件、代码和链接原样不动，可撤销';
 
   @override
   String composerPolishFailed(String error) {
-    return '润色失败：$error';
+    return '提示词增强失败：$error';
   }
 
   @override
-  String get generalSettingsComposerPolish => '润色按钮';
+  String get generalSettingsComposerPolish => '提示词增强按钮';
 
   @override
   String get generalSettingsComposerPolishDescription =>
-      '在输入框里显示润色按钮，发送前用辅助模型把写的内容改得更清楚';
+      '在输入框里显示提示词增强按钮，发送前用辅助模型把写的内容改写成更清楚、更具体的提示词';
 
   @override
   String get generalSettingsLiveTurnStats => '运行时实时显示详细速率和时间';
@@ -9172,9 +9389,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get branchBarDetached => '分离的 HEAD';
-
-  @override
-  String get branchBarRunning => 'Agent 运行时不能切换分支';
 
   @override
   String branchBarFailed(String branch) {
@@ -10688,6 +10902,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get gitLogInNoBranch => '没有分支包含此提交。';
 
   @override
+  String gitLogInBranches(int count) {
+    return '所在分支（$count）';
+  }
+
+  @override
   String get gitLogList => '列表';
 
   @override
@@ -10769,6 +10988,14 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gitLogCopyHash => '复制完整哈希';
+
+  @override
+  String get gitLogCopyRefNames => '复制分支或标签名';
+
+  @override
+  String gitLogCopyName(String name) {
+    return '复制“$name”';
+  }
 
   @override
   String get gitLogLoading => '正在读取历史…';
@@ -10857,9 +11084,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get gitCommitCollapseAll => '全部折叠';
 
   @override
-  String get gitCommitGroupByDirectory => '按目录分组';
-
-  @override
   String get gitCommitEmptyMessage => '请填写提交信息。';
 
   @override
@@ -10895,10 +11119,10 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get diffRevertChange => '回滚';
+  String get diffRevertChange => '撤销这处改动（改回左边的样子）';
 
   @override
-  String get diffRemoveChange => '删除';
+  String get diffRemoveChange => '撤销这处改动（删掉新加的这几行）';
 
   @override
   String get diffPreviousDifference => '上一处差异';
@@ -10959,9 +11183,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get diffHighlightLines => '按行高亮';
-
-  @override
-  String get diffHighlightNone => '不高亮';
 
   @override
   String get diffGoToFile => '转到改动的文件';
@@ -11520,11 +11741,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get gitChangelistDelete => '删除变更列表';
-
-  @override
-  String gitChangelistTurn(String request) {
-    return 'AI：$request';
-  }
 
   @override
   String get gitStashChangesTitle => '暂存改动（Stash）';

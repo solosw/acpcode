@@ -102,6 +102,10 @@ abstract class Tool {
   /// the session's mode.
   bool get changesMode => false;
 
+  /// Whether the user saying no to a call of it ends the turn: what they
+  /// said is for their next message, not for the model to try again.
+  bool get endsTurnWhenDenied => false;
+
   /// What is wrong with [input] beyond its schema; null when nothing.
   Future<String?> validate(
     Map<String, Object?> input,
@@ -138,11 +142,14 @@ abstract class Tool {
   /// the session changes it.
   String promptFor(AgentSession session) => description;
 
+  /// The JSON Schema dialect the tools' input is written in.
+  static const schemaDialect = 'https://json-schema.org/draft/2020-12/schema';
+
   /// As the model is offered it.
   Map<String, Object?> toApi(AgentSession session) => {
     'name': name,
     'description': promptFor(session),
-    'input_schema': inputSchema,
+    'input_schema': {r'$schema': schemaDialect, ...inputSchema},
   };
 }
 

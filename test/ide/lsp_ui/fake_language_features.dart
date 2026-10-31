@@ -26,7 +26,8 @@ class FakeLanguageFeatures extends ChangeNotifier implements LanguageFeatures {
   final Map<String, List<LanguageServerStatus>> statuses = {};
 
   LspHover? Function(String path, LspPosition position)? onHover;
-  List<LspLocation> Function(String path, LspPosition position)? onDefinition;
+  FutureOr<List<LspLocation>> Function(String path, LspPosition position)?
+  onDefinition;
   List<LspLocation> Function(String path, LspPosition position)?
   onTypeDefinition;
   List<LspLocation> Function(String path, LspPosition position)?
@@ -257,6 +258,9 @@ class FakeLanguageFeatures extends ChangeNotifier implements LanguageFeatures {
 
   @override
   Stream<LspApplyEditRequest> get workspaceEdits => _workspaceEdits.stream;
+
+  @override
+  Listenable get progressChanges => this;
 
   @override
   List<LanguageServerStatus> statusFor(String path) =>

@@ -344,6 +344,7 @@ class ChatComposerState extends State<ChatComposer>
       if (!mounted) return;
       _focusNode.requestFocus();
       _takeDraftFiles();
+      _takeDraftCode();
       _takeDraftMessage();
     });
   }
@@ -679,6 +680,18 @@ class ChatComposerState extends State<ChatComposer>
     if (files.isNotEmpty) unawaited(insertFiles(files));
   }
 
+  /// The lines of code put in the draft from outside (see
+  /// [ComposerDraft.insertCode]): tags of them after what is typed, as the
+  /// IDE's lines pasted are.
+  void _takeDraftCode() {
+    final code = widget.draft?.takeCode() ?? const <CodeReference>[];
+    final root = widget.session.root;
+    _insertTags([
+      for (final lines in code)
+        ComposerCodeEmbed.of(lines.withPath(displayPath(lines.path, root))),
+    ], at: _controller.length);
+  }
+
   /// The message put back in the draft to be edited (see
   /// [ComposerDraft.restore]): after what is typed, the caret at its end.
   void _takeDraftMessage() {
@@ -738,6 +751,7 @@ class ChatComposerState extends State<ChatComposer>
   void _handleDraftChanged() {
     final draft = widget.draft;
     if (draft != null && draft.pendingFiles.isNotEmpty) _takeDraftFiles();
+    if (draft != null && draft.pendingCode.isNotEmpty) _takeDraftCode();
     if (draft?.pendingMessage != null) _takeDraftMessage();
     if (draft == null || identical(draft.savedBy, this) || !draft.saved) {
       return;
@@ -1359,9 +1373,10 @@ class ChatComposerState extends State<ChatComposer>
   /// The text as the model is given it to polish (see [composerPolishText]).
   ComposerPolishText _polishText() => composerPolishText(_controller.text);
 
-  /// Has the auxiliary model polish the text, its tags, images, code and
-  /// links kept as they are; put in its place as one change (⌘Z takes it
-  /// back), unless the text changed meanwhile. Why not, in a notification.
+  /// Has the auxiliary model polish the text into a clearer, more specific
+  /// prompt (Enhance prompt), its tags, images, code and links kept as they
+  /// are, the agent's last turn told to know what it answers; put in its place as one change (⌘Z takes it back), unless the
+  /// text changed meanwhile. Why not, in a notification.
   Future<void> _polish() async {
     if (_polishing) return;
     final asked = _polishText();
@@ -1375,6 +1390,7 @@ class ChatComposerState extends State<ChatComposer>
       try {
         polished = await polishComposerText(
           asked,
+          reply: widget.session.lastTurnReply,
           model: widget.session.selected(KernelChoiceKind.model),
           location: widget.session.kernelContext.cwd,
         );
@@ -1860,6 +1876,8 @@ class ChatComposerState extends State<ChatComposer>
         }.replaceAll(RegExp(r'[\x00-\x1f]+'), ' '),
         onKey: _handleKey,
         onPaste: _paste,
+        onPasteCopy: (markdown) =>
+            renumberPastes(markdown, from: _nextPastedNumber()),
         style: MarkdownEditorStyle(
           text: base,
           selection: AppColors.textSelection,
@@ -2000,8 +2018,8 @@ class ChatComposerState extends State<ChatComposer>
   }
 }
 
-/// Polish (see [ChatComposerState._polish]): a sparkle, spinning while the
-/// model answers; faint with no words to polish.
+/// Polish, Enhance prompt as it says (see [ChatComposerState._polish]): a
+/// sparkle, spinning while the model answers; faint with no words to polish.
 class _PolishButton extends StatelessWidget {
   const _PolishButton({
     required this.busy,

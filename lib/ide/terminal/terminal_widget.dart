@@ -208,6 +208,7 @@ class TerminalWidget extends StatefulWidget {
     this.onPanZoomUpdate,
     this.capturesWheel,
     this.mouseCursor = SystemMouseCursors.text,
+    this.background,
   });
 
   final TerminalRenderSource source;
@@ -253,6 +254,10 @@ class TerminalWidget extends StatefulWidget {
 
   /// The pointer over the grid.
   final MouseCursor mouseCursor;
+
+  /// Its background where it is shown, over the theme's
+  /// ([TerminalRenderer.background]).
+  final Color? background;
 
   @override
   State<TerminalWidget> createState() => _TerminalWidgetState();
@@ -347,6 +352,7 @@ class _TerminalWidgetState extends State<TerminalWidget>
       isFocused: widget.focusNode?.hasFocus ?? false,
     );
     _renderer
+      ..background = widget.background
       ..selection = _controller.selection
       ..linkUnderline = _controller.linkUnderline;
     _controller._state = this;
@@ -407,6 +413,8 @@ class _TerminalWidgetState extends State<TerminalWidget>
       _disposeRenderer();
       _createRenderer();
       _renderer.devicePixelRatio = _devicePixelRatio;
+    } else if (oldWidget.background != widget.background) {
+      _renderer.background = widget.background;
     }
   }
 
@@ -426,6 +434,7 @@ class _TerminalWidgetState extends State<TerminalWidget>
     PaintingBinding.instance.systemFonts.removeListener(_handleSystemFonts);
     widget.focusNode?.removeListener(_handleFocusChange);
     _hideTimer?.cancel();
+    _fitTimer?.cancel();
     _fade.dispose();
     _disposeRenderer();
     _subscriptions.dispose();
@@ -527,13 +536,52 @@ class _TerminalWidgetState extends State<TerminalWidget>
     if (geometry == _geometry) return;
     _geometry = geometry;
     final fit = geometry.fit;
-    final report = fit != null && fit != _reportedFit;
-    if (report) _reportedFit = fit;
+    if (fit != null && fit != _reportedFit) {
+      _reportedFit = fit;
+      _reportFit(fit);
+    }
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (report) widget.onResize?.call(fit.cols, fit.rows);
       _controller._geometryChanged();
     });
+  }
+
+  /// How long a size has to stay the same before the process hears of it,
+  /// once it starts changing.
+  static const _fitDelay = Duration(milliseconds: 100);
+
+  /// The size the process is to hear of once the size stops changing.
+  ({int cols, int rows})? _pendingFit;
+  Timer? _fitTimer;
+
+  /// Whether a run of size changes is under way (a line dragged): the
+  /// first of it is told at once, the rest only when it stops.
+  bool _sizing = false;
+
+  /// Tells the process the size the grid fits. A line dragged changes it
+  /// at each step, and the shell redraws its prompt at each size it hears
+  /// of: the first of a run is told at once, the rest once it has stopped.
+  void _reportFit(({int cols, int rows}) fit) {
+    _pendingFit = fit;
+    if (!_sizing) {
+      _sizing = true;
+      SchedulerBinding.instance.addPostFrameCallback((_) => _flushFit());
+    }
+    // The run ends once the size has stayed the same for [_fitDelay], a
+    // single change too: the next is the first of another, told at once.
+    _fitTimer?.cancel();
+    _fitTimer = Timer(_fitDelay, () {
+      _fitTimer = null;
+      _sizing = false;
+      _flushFit();
+    });
+  }
+
+  void _flushFit() {
+    final fit = _pendingFit;
+    if (fit == null || !mounted) return;
+    _pendingFit = null;
+    widget.onResize?.call(fit.cols, fit.rows);
   }
 
   // --- Scrolling (Viewport) ---------------------------------------------

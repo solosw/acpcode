@@ -24,19 +24,19 @@ import '../../ide/ide_image_preview.dart';
 import '../../ide/ide_status_bar.dart' show IdeLanguageNames;
 import '../../ide/language_mode.dart';
 import '../../ide/ide_dialog.dart';
-import '../../ide/ide_editor_placeholder.dart' show ideFormatSize;
+import '../../ide/ide_editor_placeholder.dart'
+    show IdeEditorPlaceholder, ideFormatSize;
 import '../../ide/markdown/markdown_paste.dart';
 import '../../ide/markdown/markdown_preview.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
 import '../../theme/app_theme.dart';
-import '../../theme/code_font.dart';
-import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../../workspace/window_controls.dart';
-import '../composer/composer_files.dart' show ComposerFile, CopiedCode;
+import '../composer/composer_files.dart'
+    show CodeReference, ComposerFile, CopiedCode;
 import '../composer/file_drop.dart';
 import '../widgets/code_citation.dart' show CodeColorizer;
 import '../widgets/hover_builder.dart';
@@ -45,6 +45,7 @@ import 'file_edit.dart';
 import 'file_link.dart';
 import 'file_open.dart';
 import 'line_diff.dart';
+import '../../base/safe_selection_indexes.dart';
 
 /// A file in the side panel: its text in the IDE's editor, to edit, search
 /// and save (Cmd+S, Ctrl+S), the lines asked for marked and scrolled to,
@@ -72,6 +73,8 @@ class FilePreview extends StatefulWidget {
     this.formatter,
     this.agentEdit,
     this.onOpenAgentChange,
+    this.diffScroll,
+    this.onDiffScrolled,
   });
 
   final FileOpenRequest request;
@@ -83,6 +86,11 @@ class FilePreview extends StatefulWidget {
   /// Opens the next file whose agent change is pending, at it, once this
   /// one's is all kept or undone (see [IdeAgentHunks.open]).
   final ValueChanged<String>? onOpenAgentChange;
+
+  /// Where its changes were scrolled when shown before, for them to show
+  /// there again; told [onDiffScrolled] as they scroll.
+  final Offset? diffScroll;
+  final ValueChanged<Offset>? onDiffScrolled;
 
   /// The file's text as edited already (its tab's), to go on with: read
   /// anew in it where it is not changed.
@@ -128,6 +136,14 @@ class FilePreview extends StatefulWidget {
   /// Past this many lines, the text is not colored.
   static const maxColoredLines = 5000;
 
+  /// The lines selected in the file [focus] is in, as its text, its lines
+  /// or its changes show it: references to them for the chat (Add
+  /// Selection to Chat). None where nothing is, or a markdown file shows
+  /// rendered.
+  static List<CodeReference> selectedAt(BuildContext? focus) =>
+      focus?.findAncestorStateOfType<_FilePreviewState>()?._selectedIn(focus) ??
+      const [];
+
   @override
   State<FilePreview> createState() => _FilePreviewState();
 }
@@ -172,6 +188,9 @@ class _FilePreviewState extends State<FilePreview> {
   EditorDocumentModel? _markdown;
   int _load = 0;
 
+  /// Read past the binary and size checks (Open Anyway).
+  bool _force = false;
+
   /// Lets it be shown in place of the file before (see [ShownWhenReady]):
   /// once read.
   VoidCallback? _release;
@@ -196,10 +215,15 @@ class _FilePreviewState extends State<FilePreview> {
   bool get _document => ideIsDocumentPath(_request.path);
   bool get _binaryPreview => _image || _document;
 
-  /// A markdown file rendered: its changes not, unless the text before is
-  /// not known and the file shows as it is.
+  /// A markdown file rendered: its changes too, as the file is after them
+  /// (its changes a click away), unless it was deleted.
   bool get _isMarkdown =>
-      isMarkdownPath(_request.path) && (!_request.diff || _loaded is _Text);
+      isMarkdownPath(_request.path) &&
+      switch (_loaded) {
+        _ when !_request.diff => true,
+        _Text() || _Diff(deleted: false) => true,
+        _ => false,
+      };
 
   /// The file's own text shows, to edit: not its changes, nor the index's,
   /// nor what is only shown ([FileOpenRequest.readOnly]).
@@ -327,12 +351,13 @@ class _FilePreviewState extends State<FilePreview> {
     _markdown = null;
   }
 
-  void _start() {
+  void _start({bool force = false}) {
+    _force = force;
     final load = ++_load;
     _loaded = null;
     _colors = const [];
     // The agent's change shows in the text.
-    if (_request.agentChange && _isMarkdown) _source = true;
+    if (_request.agentChange && isMarkdownPath(_request.path)) _source = true;
     _dropMarkdown();
     if (_binaryPreview) return;
     // Its tab's edit shows as it is while the file is read anew.
@@ -356,7 +381,8 @@ class _FilePreviewState extends State<FilePreview> {
     Object? error;
     try {
       text =
-          await (request.modified?.call() ?? widget.files.read(request.path));
+          await (request.modified?.call() ??
+              widget.files.read(request.path, force: _force));
     } catch (e) {
       error = e;
     }
@@ -540,7 +566,11 @@ class _FilePreviewState extends State<FilePreview> {
             ),
           if (_isMarkdown && _markdown != null)
             _TextButton(
-              label: _source ? l10n.sidePanelPreview : l10n.sidePanelSource,
+              label: _source
+                  ? l10n.sidePanelPreview
+                  : _loaded is _Diff
+                  ? l10n.sidePanelChanges
+                  : l10n.sidePanelSource,
               onPressed: () => setState(() => _source = !_source),
             ),
           if ((widget.agentEdit, _agent) case (final edit?, _?)
@@ -603,12 +633,23 @@ class _FilePreviewState extends State<FilePreview> {
       case null:
         return const SizedBox.shrink();
       case _Failed(:final error):
-        return _Message(
-          icon: error is IdeFileNotFoundException
-              ? Codicons.warning
-              : Codicons.error,
-          text: localizedFileError(context.l10n, error),
+        // As the IDE's editor shows it.
+        return IdeEditorPlaceholder(
+          error: error,
+          path: _request.path,
+          onOpenAnyway: () => setState(() => _start(force: true)),
+          onRetry: () => setState(_start),
+          // This machine's files only, not a remote project's host's, and
+          // the file itself, not another version of it.
+          onOpenInDefaultApp:
+              widget.files is! IdeHostFiles &&
+                  WindowControls.canOpenInDefaultApp &&
+                  _request.modified == null
+              ? () => unawaited(openExternal(_request.path))
+              : null,
         );
+      case _Text() || _Diff() when _markdown != null && !_source:
+        return _markdownPreview(_markdown!);
       case _Diff(:final original, :final modified, :final deleted):
         return IdeCodeDiff(
           // Asked for again: scrolled back to the lines asked for.
@@ -617,6 +658,8 @@ class _FilePreviewState extends State<FilePreview> {
           original: original,
           modified: modified,
           line: _request.range?.start,
+          scrolled: widget.diffScroll,
+          onScrolled: widget.onDiffScrolled,
           highlights: widget.highlights,
           // Lines of the file as it is now.
           onCopy: deleted
@@ -624,68 +667,65 @@ class _FilePreviewState extends State<FilePreview> {
               : (text, start, end) => _copied(start, end, text),
         );
       case _Text(:final lines):
-        if (_markdown case final model? when !_source) {
-          // The file's own text, its edit's: edited here, as in its source.
-          final edit = _edit;
-          final editable =
-              edit != null &&
-              !_request.agentChange &&
-              identical(model, edit.controller.document);
-          final preview = IdeMarkdownPreview(
-            key: _previewKey,
-            path: _request.path,
-            model: model,
-            readBytes: widget.readBytes ?? readFileBytes,
-            pathContext: widget.paths,
-            readOnly: !editable,
-            // Its source's editor told, which keeps whether it is saved.
-            onEdited: edit?.controller.syncFromDocument,
-            // Pictures and files pasted: copied beside it, linked to.
-            onPaste: editable
-                ? () => _markdownPaste().paste(_request.path)
-                : null,
-            initialLine: _request.range?.start,
-            onOpenFile: _openLinked,
-            onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
-            // This machine's files only, not a remote project's host's.
-            onReveal:
-                widget.files is! IdeHostFiles &&
-                    WindowControls.canRevealInFileManager
-                ? (path) => unawaited(WindowControls.revealInFileManager(path))
-                : null,
-          );
-          if (!editable) return preview;
-          // Files dropped on it from other apps: as pasted, where they are
-          // let go.
-          return _saved(
-            edit,
-            FileDropRegion(delegate: _markdownDrop, child: preview),
-          );
-        }
         if (_edit case final edit?) return _editing(edit);
         final range = _request.range;
         final gutter = _gutter(context, lines.length);
-        return CodeTextScale(
-          child: _Lines(
-            key: ValueKey(('text', _request.path)),
-            count: lines.length,
-            lineHeight: _lineHeight(context),
-            reveal: widget.reveal,
-            target: range == null ? null : range.start - 1,
-            width: _widthOf(context, lines, () => lines) + gutter + 20,
-            onCopy: (first, last, text) => _copied(first + 1, last + 1, text),
-            row: (context, i, sideways) => _LineRow(
-              number: i + 1,
-              text: lines[i],
-              colors: _colors.elementAtOrNull(i),
-              gutter: gutter,
-              sideways: sideways,
-              marked:
-                  range != null && i + 1 >= range.start && i + 1 <= range.end,
-            ),
+        return _Lines(
+          key: ValueKey(('text', _request.path)),
+          count: lines.length,
+          lineHeight: _lineHeight(context),
+          reveal: widget.reveal,
+          target: range == null ? null : range.start - 1,
+          width: _widthOf(context, lines, () => lines) + gutter + 20,
+          onCopy: (first, last, text) => _copied(first + 1, last + 1, text),
+          row: (context, i, sideways) => _LineRow(
+            number: i + 1,
+            text: lines[i],
+            colors: _colors.elementAtOrNull(i),
+            gutter: gutter,
+            sideways: sideways,
+            marked: range != null && i + 1 >= range.start && i + 1 <= range.end,
           ),
         );
     }
+  }
+
+  /// A markdown file rendered: its own text, edited here as in its source;
+  /// its changes', as it is after them, only shown.
+  Widget _markdownPreview(EditorDocumentModel model) {
+    // The file's own text, its edit's: edited here, as in its source.
+    final edit = _edit;
+    final editable =
+        edit != null &&
+        !_request.agentChange &&
+        identical(model, edit.controller.document);
+    final preview = IdeMarkdownPreview(
+      key: _previewKey,
+      path: _request.path,
+      model: model,
+      readBytes: widget.readBytes ?? readFileBytes,
+      pathContext: widget.paths,
+      readOnly: !editable,
+      // Its source's editor told, which keeps whether it is saved.
+      onEdited: edit?.controller.syncFromDocument,
+      // Pictures and files pasted: copied beside it, linked to.
+      onPaste: editable ? () => _markdownPaste().paste(_request.path) : null,
+      initialLine: _request.range?.start,
+      onOpenFile: _openLinked,
+      onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
+      // This machine's files only, not a remote project's host's.
+      onReveal:
+          widget.files is! IdeHostFiles && WindowControls.canRevealInFileManager
+          ? (path) => unawaited(WindowControls.revealInFileManager(path))
+          : null,
+    );
+    if (!editable) return preview;
+    // Files dropped on it from other apps: as pasted, where they are
+    // let go.
+    return _saved(
+      edit,
+      FileDropRegion(delegate: _markdownDrop, child: preview),
+    );
   }
 
   /// [child], where [edit] is edited, saving it with the IDE's keys.
@@ -728,6 +768,40 @@ class _FilePreviewState extends State<FilePreview> {
         ],
       ),
     );
+  }
+
+  /// What [FilePreview.selectedAt] finds at [focus], in it.
+  List<CodeReference> _selectedIn(BuildContext focus) {
+    List<CodeReference> of(
+      Iterable<({String text, int startLine, int endLine})> lines,
+    ) => [
+      for (final (:text, :startLine, :endLine) in lines)
+        CodeReference(
+          path: _request.path,
+          start: startLine,
+          end: endLine,
+          code: text,
+        ),
+    ];
+
+    switch (_loaded) {
+      case _Text() || _Diff() when _markdown != null && !_source:
+        return const [];
+      // Lines of the file as it is now: none of one deleted.
+      case _Diff(deleted: false):
+        final diff = focus.findAncestorStateOfType<IdeCodeDiffState>();
+        return of(diff?.selectedLines() ?? const []);
+      case _Text():
+        if (_edit case final edit?) return of(edit.controller.selectedLines());
+        final lines = focus.findAncestorStateOfType<_LinesState>();
+        final rows = lines?._selection.selectedRows();
+        if (rows == null) return const [];
+        return of([
+          (text: rows.text, startLine: rows.first + 1, endLine: rows.last + 1),
+        ]);
+      default:
+        return const [];
+    }
   }
 
   /// Lines [start] to [end] copied, as [text]: pasted into the chat's
@@ -816,7 +890,7 @@ class _FilePreviewState extends State<FilePreview> {
       AppFonts.codeStyle(12).copyWith(height: 1.5);
 
   static TextScaler _codeScaler(BuildContext context) =>
-      SystemTextScale.maybeOf(context) ?? MediaQuery.textScalerOf(context);
+      MediaQuery.textScalerOf(context);
 
   /// The actual height of one source line, including the configured scaler.
   static double _lineHeight(BuildContext context) {
@@ -1048,7 +1122,8 @@ class _LinesState extends State<_Lines> {
 /// The selection of [_Lines]: what is selected of each row, one to a line
 /// (each row's text is a selection of its own, which the list would run
 /// together), and which rows, told as it is copied.
-class _LinesSelection extends StaticSelectionContainerDelegate {
+class _LinesSelection extends StaticSelectionContainerDelegate
+    with SafeSelectionIndexes {
   _LinesSelection(this.onCopy);
 
   final void Function(int first, int last, String text) onCopy;
@@ -1058,19 +1133,33 @@ class _LinesSelection extends StaticSelectionContainerDelegate {
 
   @override
   SelectedContent? getSelectedContent() {
+    final (content, rows) = _selectedContent();
+    if (rows == null) return content;
+    onCopy(rows.first, rows.last, rows.text);
+    return SelectedContent(plainText: rows.text);
+  }
+
+  /// The rows selected (from 0) and their text, one to a line; null when
+  /// none is.
+  ({int first, int last, String text})? selectedRows() => _selectedContent().$2;
+
+  (SelectedContent?, ({int first, int last, String text})?) _selectedContent() {
     _rows.clear();
     final content = super.getSelectedContent();
-    if (content == null || _rows.isEmpty) return content;
-    final rows = [..._rows]..sort((a, b) => a.$1.compareTo(b.$1));
+    // The rows outside the selection tell nothing selected: not its own.
+    final rows = [
+      for (final row in _rows)
+        if (row.$2.isNotEmpty) row,
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
     _rows.clear();
+    if (content == null || rows.isEmpty) return (content, null);
     // An empty line selects nothing of its own: kept, between the others.
     final byRow = {for (final (row, text) in rows) row: text};
     final text = [
       for (var row = rows.first.$1; row <= rows.last.$1; row++)
         byRow[row] ?? '',
     ].join('\n');
-    onCopy(rows.first.$1, rows.last.$1, text);
-    return SelectedContent(plainText: text);
+    return (content, (first: rows.first.$1, last: rows.last.$1, text: text));
   }
 }
 
@@ -1110,7 +1199,8 @@ class _SelectableRowState extends State<_SelectableRow> {
       SelectionContainer(delegate: _selection, child: widget.child);
 }
 
-class _RowSelection extends StaticSelectionContainerDelegate {
+class _RowSelection extends StaticSelectionContainerDelegate
+    with SafeSelectionIndexes {
   _RowSelection(this.row);
 
   _SelectableRow row;
@@ -1208,35 +1298,6 @@ class _LineRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// In place of what cannot be shown: why.
-class _Message extends StatelessWidget {
-  const _Message({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 22, color: AppColors.textFaint),
-            const SizedBox(height: 10),
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
-            ),
-          ],
-        ),
       ),
     );
   }

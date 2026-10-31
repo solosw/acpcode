@@ -118,9 +118,15 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       history: historyCount > 0 ? MockConversation.itemAt : null,
       changes: changes,
       usage: usage ?? (historyCount > 0 ? MockConversation.usage : null),
+      queuedInPlace: _queuedInPlace,
     );
     _connect(kernel ?? this.kernels.first);
   }
+
+  /// Whether its messages sent while the agent works show where they
+  /// were sent ([KernelWorkspace.queuedInPlace]).
+  bool get _queuedInPlace =>
+      kernelContext.workspace?.call()?.queuedInPlace ?? false;
 
   /// Kernels this session may switch to before its first message.
   final List<KernelDescriptor> kernels;
@@ -494,6 +500,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     _kernel.dispose();
     _transcript = Transcript(
       changes: [for (final edit in _transcript.edits) edit.change],
+      queuedInPlace: _queuedInPlace,
     );
     _connect(descriptor);
     // Reload modes, slash commands, and context usage for the new agent.
@@ -627,7 +634,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   };
 
   /// Whether an agent on [model] can go on by itself once the usage limit
-  /// it stopped at resets: on the account's own plan, which says when.
+  /// it stopped at resets: on the account's own plan, or ChatGPT accounts,
+  /// which say when.
   bool continuesAfterLimit(String model) => switch (_kernel) {
     final ReportsUsageLimit kernel => kernel.usageLimitAppliesTo(model),
     _ => false,
@@ -771,6 +779,20 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       }
     }
     return null;
+  }
+
+  /// All the agent said in its last turn, its texts in order, as the next
+  /// message answers it; null for nothing said since the last message sent.
+  String? get lastTurnReply {
+    final texts = <String>[];
+    for (var i = _transcript.length - 1; i >= 0; i--) {
+      final item = _transcript.itemAt(i);
+      if (item is UserMessageItem) break;
+      if (item is AssistantTextItem && item.text.trim().isNotEmpty) {
+        texts.add(item.text.trim());
+      }
+    }
+    return texts.isEmpty ? null : texts.reversed.join('\n\n');
   }
 
   /// Whether the last turn to end was stopped rather than done.

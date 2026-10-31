@@ -56,8 +56,8 @@ class BackgroundTask {
   /// background (`background_tasks`): its call returns, it goes on.
   final Completer<void> toBackground = Completer<void>();
 
-  /// How far its output has been read (TaskOutput tells what is new).
-  int readOffset = 0;
+  /// Whether it ran past its time and was stopped.
+  bool timedOut = false;
 
   /// A subagent's last words, its tokens and calls.
   String? result;
@@ -156,12 +156,13 @@ class TaskManager {
     });
   }
 
-  /// Runs [command] in the background, from [cwd].
+  /// Runs [command] in the background, from [cwd], for [limit] at most.
   Future<BackgroundTask> startShell({
     required String command,
     required String description,
     required String cwd,
     String? toolUseId,
+    Duration? limit,
   }) async {
     final task = _register(
       type: 'local_bash',
@@ -175,20 +176,25 @@ class TaskManager {
       shell.executable,
       shell.arguments(command, cwdFile),
       workingDirectory: cwd,
-      environment: session.commandEnvironment,
+      environment: session.shellEnvironment,
       includeParentEnvironment: false,
     );
     task.process = process;
     unawaited(process.stdin.close().catchError((_) {}));
     final sink = File(task.outputFile).openWrite(mode: FileMode.append);
-    final written = Future.wait([
-      process.stdout.listen(sink.add).asFuture<void>(),
-      process.stderr.listen(sink.add).asFuture<void>(),
-    ]);
+    final output = ProcessOutput(process, sink.add, sink.add);
     _started(task);
+    final timer = limit == null
+        ? null
+        : Timer(limit, () {
+            if (task.status.done) return;
+            task.timedOut = true;
+            unawaited(killTree(process.pid));
+          });
     unawaited(() async {
       final code = await process.exitCode;
-      await written.catchError((_) => <void>[]);
+      timer?.cancel();
+      await output.ended();
       await sink.flush();
       await sink.close();
       task.exitCode = code;
@@ -196,7 +202,7 @@ class TaskManager {
         task,
         task.status == TaskStatus.killed
             ? TaskStatus.killed
-            : code == 0
+            : code == 0 && !task.timedOut
             ? TaskStatus.completed
             : TaskStatus.failed,
       );
@@ -326,7 +332,9 @@ class TaskManager {
             : '$what completed',
       TaskStatus.failed =>
         task.isShell
-            ? '$what failed with exit code ${task.exitCode}'
+            ? task.timedOut
+                  ? '$what ran out of time and was stopped'
+                  : '$what failed with exit code ${task.exitCode}'
             : '$what failed: ${task.error ?? 'unknown error'}',
       TaskStatus.killed => '$what was stopped',
       TaskStatus.running => '$what is running',
@@ -366,6 +374,9 @@ class TaskManager {
     if (!task.isShell) finish(task, TaskStatus.killed);
     // A shell's end is noted when its process exits: soon after.
     await task.done.timeout(const Duration(seconds: 3), onTimeout: () {});
+    // Or not, where it does not end on being killed: stopped all the same,
+    // for the host, which would show it running on.
+    finish(task, TaskStatus.killed);
     return true;
   }
 

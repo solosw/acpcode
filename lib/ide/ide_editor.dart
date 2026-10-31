@@ -12,7 +12,6 @@ import '../keybindings/keybinding_service.dart';
 import '../l10n/command_titles.dart';
 import '../l10n/l10n.dart';
 import '../theme/app_theme.dart';
-import '../theme/code_font.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 
 import 'package:bao_editor/monaco/flutter/diff_editor.dart';
@@ -22,6 +21,8 @@ import 'package:bao_editor/monaco/vs/editor/common/diff/range_mapping.dart'
     show DetailedLineRangeMapping, LineRangeMapping;
 import 'package:bao_editor/monaco/flutter/editor_surface.dart';
 import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
+import 'package:bao_editor/monaco/flutter/editor_view_painters.dart'
+    show EditorViewGeometry;
 import 'package:bao_editor/monaco/flutter/monaco_syntax.dart';
 import 'package:bao_editor/monaco/flutter/selection_adapter.dart';
 import 'package:bao_editor/monaco/flutter/theme_assets.dart';
@@ -44,6 +45,7 @@ import '../base/uri.dart' show VsUri;
 import '../debug/base/event.dart' show DisposableStore;
 import '../debug/service/debug_service.dart';
 import 'debug_editor_glue.dart';
+import 'editor_minimap_setting.dart';
 import 'editor_word_wrap.dart';
 import 'git/git_annotations.dart';
 import 'git/git_blame.dart';
@@ -52,7 +54,11 @@ import 'git/git_model.dart' show IdeGitBlameInformation, IdeGitLogLines;
 import 'ide_agent_edits.dart';
 import 'ide_line_change_popup.dart';
 import 'ide_code_diff.dart'
-    show IdeDiffRevertArrow, ideDiffChangeTop, ideDiffRevertEdit;
+    show
+        IdeDiffRevertArrow,
+        ideDiffArrowLeft,
+        ideDiffArrowTop,
+        ideDiffRevertEdit;
 import 'ide_diff_options.dart';
 import 'ide_commands.dart';
 import 'ide_find_widget.dart';
@@ -98,6 +104,7 @@ class IdeEditor extends StatefulWidget {
     required this.onError,
     required this.onLspStatus,
     required this.onPositionChanged,
+    this.onScrolled,
     this.nativeEditorEnabled = const bool.fromEnvironment(
       'BAOCODE_NATIVE_EDITOR',
       defaultValue: true,
@@ -121,6 +128,10 @@ class IdeEditor extends StatefulWidget {
   final ValueChanged<Object> onError;
   final ValueChanged<String> onLspStatus;
   final ValueChanged<IdeEditorPosition> onPositionChanged;
+
+  /// Told as the text scrolls: where it is, for the workspace to keep
+  /// ([IdeEditorState.keepViewStates]).
+  final VoidCallback? onScrolled;
 
   /// Opt out with --dart-define=BAOCODE_NATIVE_EDITOR=false, or override in
   /// tests. The painted surface is a partial Monaco port; see PARITY.md.
@@ -328,6 +339,7 @@ class IdeEditorState extends State<IdeEditor> {
     widget.agentEdits?.addListener(_rebuildSoon);
     IdeDiffOptions.instance.addListener(_diffOptionsChanged);
     EditorWordWrap.on.addListener(_rebuildSoon);
+    EditorMinimap.on.addListener(_rebuildSoon);
     if (widget.nativeEditorEnabled) _activateNativeController();
     _selectionChanged();
     _updateBlame(navigated: false);
@@ -419,12 +431,14 @@ class IdeEditorState extends State<IdeEditor> {
       final controller = EditorSurfaceController(document: doc.model)
         ..detectIndentation();
       // Where it was left, while it still fits the text.
+      final view = widget.workspace.viewStateOf(doc);
       final length = doc.model.text.length;
-      if (doc.selections case final kept?
+      if (view.selections case final kept?
           when kept.isNotEmpty &&
               kept.every((s) => s.isValid && s.start >= 0 && s.end <= length)) {
         controller.setSelections(kept);
       }
+      controller.viewState = view.editor;
       // Its lines pasted into the chat go in as a reference to them; not
       // so a revision's, whose lines are not the file's.
       if (doc.readRevision == null) {
@@ -498,6 +512,7 @@ class IdeEditorState extends State<IdeEditor> {
       onApplyWorkspaceEdit: applyWorkspaceEdit,
       onFocusEditor: focus,
       onFormatterMissing: _formatterMissing,
+      onNavigationUnavailable: _navigationUnavailable,
       paths: widget.workspace.paths,
       semanticTokenStyler: _semanticTokenStyler,
       languageId: _textMateDocuments[doc]?.$2.languageId ?? 'plaintext',
@@ -526,6 +541,51 @@ class IdeEditorState extends State<IdeEditor> {
         }),
       ],
     );
+  }
+
+  bool _navigationUnavailable(String path) {
+    final languages = widget.workspace.languages;
+    if (!mounted || languages == null) return false;
+    final notifications = IdeNotificationsScope.maybeOf(context);
+    if (notifications == null) return false;
+    final l10n = context.l10n;
+    for (final status in languages.statusFor(path)) {
+      final id = status.serverId;
+      final String message;
+      final actions = <IdeNotificationAction>[];
+      switch (status.state) {
+        case LanguageServerState.missing:
+          if (status.missingRuntime case final runtime?) {
+            message = l10n.extMissingRuntime(id, runtime);
+          } else if (status.installable) {
+            message = l10n.langNavigationInstall(id);
+            actions.add(
+              IdeNotificationAction(l10n.extInstall, () async {
+                try {
+                  await languages.install(id, path: path);
+                } catch (error) {
+                  if (mounted) widget.onError(error);
+                }
+              }),
+            );
+          } else {
+            message = l10n.extUnavailable(id);
+          }
+        case LanguageServerState.failed || LanguageServerState.restarting:
+          message = [l10n.langFailed(id), ?status.message].join('\n');
+          actions.add(
+            IdeNotificationAction(
+              l10n.cmdRetryLanguageServices,
+              () => languages.retry(id, path: path),
+            ),
+          );
+        default:
+          continue;
+      }
+      notifications.notify(IdeSeverity.warning, message, primary: actions);
+      return true;
+    }
+    return false;
   }
 
   void _disposeLanguageSession() {
@@ -931,6 +991,7 @@ class IdeEditorState extends State<IdeEditor> {
 
   void _viewChanged() {
     _viewTick.value++;
+    widget.onScrolled?.call();
     _language?.onViewChanged();
     _textMateViewportChanged();
     _languageChanged();
@@ -1185,6 +1246,8 @@ class IdeEditorState extends State<IdeEditor> {
       for (final entry in _nativeControllers.entries.toList()) {
         final controller = entry.value;
         if (!open.contains(entry.key)) {
+          // Closed, or moved: shown where it was if it opens again.
+          _keepViewState(entry.key, controller);
           _nativeControllers.remove(entry.key);
           _diffs.remove(entry.key)?.dispose();
           _agentDiffs.remove(entry.key)?.dispose();
@@ -1222,7 +1285,44 @@ class IdeEditorState extends State<IdeEditor> {
     _updateBlame(navigated: activeChanged ? false : null);
   }
 
-  void _disposeNativeControllers() {
+  /// The active document's surface.
+  EditorSurfaceView? get _surfaceView => switch (_surfaceKey.currentState) {
+    final EditorSurfaceView view => view,
+    _ => null,
+  };
+
+  /// Keeps where [doc]'s editor is ([controller]'s carets, its view, a
+  /// diff's scroll) in [workspace] (the editor's), for it to show again.
+  void _keepViewState(
+    IdeDocument doc,
+    EditorSurfaceController controller, [
+    IdeWorkspace? workspace,
+  ]) {
+    final diff = _diffs[doc];
+    // The surface showing it now has where it is; a diff's is its own.
+    final editor = diff == null && identical(controller, _nativeController)
+        ? _surfaceView?.viewState ?? controller.viewState
+        : controller.viewState;
+    (workspace ?? widget.workspace).keepViewState(
+      doc,
+      (kept) => kept.copyWith(
+        selections: controller.selections,
+        editor: diff == null ? editor : null,
+        diffScroll: diff?.scroll.value,
+      ),
+    );
+  }
+
+  /// Keeps where each open document's editor is in the workspace: see
+  /// [IdeWorkspace.viewStateOf].
+  void keepViewStates() {
+    for (final MapEntry(key: doc, value: controller)
+        in _nativeControllers.entries) {
+      _keepViewState(doc, controller);
+    }
+  }
+
+  void _disposeNativeControllers([IdeWorkspace? workspace]) {
     _disposeLanguageSession();
     _nativeController = null;
     _syntaxRequest++;
@@ -1236,7 +1336,7 @@ class IdeEditorState extends State<IdeEditor> {
     _textMateDocuments.clear();
     for (final MapEntry(key: doc, value: controller)
         in _nativeControllers.entries) {
-      doc.selections = controller.selections;
+      _keepViewState(doc, controller, workspace);
       controller.dispose();
     }
     _nativeControllers.clear();
@@ -1620,7 +1720,7 @@ class IdeEditorState extends State<IdeEditor> {
   void _diffOptionsChanged() {
     final whitespace = IdeDiffOptions.instance.whitespace;
     final stale = <IdeOriginalDiff>[];
-    _diffs.removeWhere((_, diff) {
+    _diffs.removeWhere((doc, diff) {
       final model = diff.model;
       final ignored = model.ignoreAllWhitespace
           ? IdeDiffWhitespace.all
@@ -1628,6 +1728,11 @@ class IdeEditorState extends State<IdeEditor> {
           ? IdeDiffWhitespace.trim
           : IdeDiffWhitespace.none;
       if (ignored == whitespace) return false;
+      // Its next diff where it was.
+      widget.workspace.keepViewState(
+        doc,
+        (kept) => kept.copyWith(diffScroll: diff.scroll.value),
+      );
       stale.add(diff);
       return true;
     });
@@ -1653,6 +1758,7 @@ class IdeEditorState extends State<IdeEditor> {
         onChanged: _rebuildSoon,
         ignoreTrimWhitespace: whitespace != IdeDiffWhitespace.none,
         ignoreAllWhitespace: whitespace == IdeDiffWhitespace.all,
+        scroll: widget.workspace.viewStateOf(doc).diffScroll ?? Offset.zero,
       );
       if (_textMateDocuments[doc]?.$2.languageId case final language?) {
         diff.highlight(_textMate, language);
@@ -1783,7 +1889,7 @@ class IdeEditorState extends State<IdeEditor> {
     final workspaceChanged = oldWidget.workspace != widget.workspace;
     if (workspaceChanged) {
       oldWidget.workspace.removeListener(_workspaceChanged);
-      _disposeNativeControllers();
+      _disposeNativeControllers(oldWidget.workspace);
       widget.workspace.addListener(_workspaceChanged);
     }
     var changed = false;
@@ -1794,7 +1900,11 @@ class IdeEditorState extends State<IdeEditor> {
           workspaceChanged;
       _activateNativeController();
     } else {
-      if (oldWidget.nativeEditorEnabled) _disposeNativeControllers();
+      if (oldWidget.nativeEditorEnabled) {
+        _disposeNativeControllers(
+          workspaceChanged ? oldWidget.workspace : null,
+        );
+      }
       if (oldWidget.active.path != widget.active.path ||
           _controller.text != widget.active.text ||
           oldWidget.nativeEditorEnabled ||
@@ -1821,6 +1931,7 @@ class IdeEditorState extends State<IdeEditor> {
     _themes.removeListener(_colorThemeChanged);
     IdeDiffOptions.instance.removeListener(_diffOptionsChanged);
     EditorWordWrap.on.removeListener(_rebuildSoon);
+    EditorMinimap.on.removeListener(_rebuildSoon);
     EditorLanguageOverrides.instance.removeListener(_languageModesChanged);
     widget.agentEdits?.removeListener(_rebuildSoon);
     _debugListeners?.dispose();
@@ -1931,19 +2042,19 @@ class IdeEditorState extends State<IdeEditor> {
   bool _languageCommandEnabled(String id) {
     final session = _language;
     if (session == null) return false;
-    // As upstream's `formatDocument.none`: offered with no formatter too,
-    // to say so and which server would be one.
-    if (id == 'editor.action.formatDocument' ||
+    // Explicit navigation waits for a starting server or explains how to
+    // install/retry a missing one, as formatting does without a formatter.
+    if (id == 'editor.action.revealDefinition' ||
+        id == 'editor.action.goToTypeDefinition' ||
+        id == 'editor.action.goToImplementation' ||
+        id == 'editor.action.goToReferences' ||
+        id == 'editor.action.referenceSearch.trigger' ||
+        id == 'editor.action.goToDeclaration' ||
+        id == 'editor.action.formatDocument' ||
         id == 'editor.action.formatSelection') {
       return true;
     }
     final request = switch (id) {
-      'editor.action.revealDefinition' => LanguageRequest.definition,
-      'editor.action.goToTypeDefinition' => LanguageRequest.typeDefinition,
-      'editor.action.goToImplementation' => LanguageRequest.implementation,
-      'editor.action.goToReferences' ||
-      'editor.action.referenceSearch.trigger' => LanguageRequest.references,
-      'editor.action.goToDeclaration' => LanguageRequest.definition,
       'editor.action.rename' => LanguageRequest.rename,
       'editor.action.quickFix' ||
       'editor.action.refactor' ||
@@ -1957,8 +2068,8 @@ class IdeEditorState extends State<IdeEditor> {
 
   /// The editor's context menu (`MenuId.EditorContext`): go-to commands,
   /// then modifications, then the clipboard, then the Command Palette; the
-  /// language items only while the language server has the feature, as
-  /// VS Code hides them without a provider.
+  /// navigation stays available while a server starts or needs installing;
+  /// other language items follow the server's capabilities.
   void _showContextMenu(Offset position) {
     if (_nativeController == null) return;
     final hasSelection = _nativeController!.selections.any(
@@ -2166,6 +2277,24 @@ class IdeEditorState extends State<IdeEditor> {
 
   /// Whether the text has the keyboard (upstream `editorTextFocus`).
   bool get hasTextFocus => _focusNode.hasFocus;
+
+  /// The lines selected, each selection's, as references to them for the
+  /// chat (Add Selection to Chat); none of a revision's, whose lines are
+  /// not the file's.
+  List<CodeReference> selectedCode() {
+    final doc = widget.active;
+    final controller = _nativeController;
+    if (controller == null || doc.readRevision != null) return const [];
+    return [
+      for (final (:text, :startLine, :endLine) in controller.selectedLines())
+        CodeReference(
+          path: doc.path,
+          start: startLine,
+          end: endLine,
+          code: text,
+        ),
+    ];
+  }
 
   /// Whether anything the editor shows has the keyboard: its text, the find
   /// widget, the rename input (upstream `editorFocus`).
@@ -2616,6 +2745,8 @@ class IdeEditorState extends State<IdeEditor> {
     onReplace: _replaceCurrent,
     onReplaceAll: _replaceAll,
     commandIds: editorFindCommandIds,
+    // Lines found across, as upstream's editor does.
+    multiline: true,
     resolveKey: widget.keyResolver == null
         ? null
         : (event) => _resolveKey(event).command,
@@ -2654,12 +2785,19 @@ class IdeEditorState extends State<IdeEditor> {
       ..._debugDecorations(),
       if (side == null) ..._lineChangeDecorations(colors),
     ],
-    // A diff editor's editors fold nothing and have no minimap.
+    // A diff editor's editors fold nothing and have no minimap; others
+    // have one unless it is turned off (EditorMinimap).
     viewZones: side?.zones ?? agent?.zones ?? const [],
     scrollPosition: side?.scrollPosition,
+    // Side by side, the line numbers are by the split: no margin between.
+    glyphMargin: side == null || !side.sideBySide,
+    lineNumbersMinChars:
+        side?.lineNumbersMinChars ?? EditorViewGeometry.lineNumbersMinChars,
     folding: side == null,
     hiddenLines: side?.hiddenLines,
-    showMinimap: side == null,
+    showMinimap: side == null && EditorMinimap.on.value,
+    // A diff's overview scrolls it.
+    verticalScrollbar: side == null,
     onKeyEvent: _onEditorKey,
     keyResolver: widget.keyResolver == null ? null : _resolveTextKey,
     onHover: _language == null
@@ -2733,6 +2871,7 @@ class IdeEditorState extends State<IdeEditor> {
     return DiffEditor(
       key: ObjectKey(diff),
       model: diff.model,
+      scrollPosition: diff.scroll,
       sideBySide: options.sideBySide,
       highlight: options.highlight,
       hideUnchanged: options.collapseUnchanged,
@@ -2743,6 +2882,7 @@ class IdeEditorState extends State<IdeEditor> {
       dark:
           type == ThemeTypeSelector.vsDark || type == ThemeTypeSelector.hcBlack,
       originalStyledLines: diff.textMate?.styledLines,
+      background: colors['editor.background'],
       border: colors.get('diffEditor.border'),
       sashHover: colors.get('sash.hoverBorder'),
       original: (context, side) {
@@ -2760,10 +2900,13 @@ class IdeEditorState extends State<IdeEditor> {
           decorations: side.decorations,
           viewZones: side.zones,
           scrollPosition: side.scrollPosition,
-          glyphMargin: side.sideBySide,
+          lineNumbers: side.lineNumbers,
+          lineNumbersMinChars: side.lineNumbersMinChars,
+          glyphMargin: false,
           folding: false,
           hiddenLines: side.hiddenLines,
           showMinimap: false,
+          verticalScrollbar: false,
           style: _editorStyle(colors),
         );
       },
@@ -2775,8 +2918,13 @@ class IdeEditorState extends State<IdeEditor> {
   }
 
   /// JetBrains' `>>` by each change of a diff tab whose file can be edited
-  /// (on the split side by side, at the file's left edge inline): the
-  /// change reverted in the file, unsaved as any edit.
+  /// (side by side, where the change's band leaves the original; at the
+  /// file's left edge inline): the change reverted in the file, unsaved as
+  /// any edit.
+  /// The revert arrows last built: for which changes, in which colors.
+  (List<LineRangeMapping>, Object, Map<LineRangeMapping, Widget>)?
+  _revertArrowWidgets;
+
   Widget _revertArrows(IdeOriginalDiff diff, DiffEditorLayout layout) =>
       ListenableBuilder(
         listenable: _viewTick,
@@ -2798,20 +2946,30 @@ class IdeEditorState extends State<IdeEditor> {
           }
           final snapshot = controller.document.snapshot;
           const size = 16.0;
+          // The same arrows as the view scrolls, moved, not built again
+          // each frame: built anew for other changes or colors.
+          final colors = _themes.colors;
+          final arrows = switch (_revertArrowWidgets) {
+            (final changes, final builtIn, final arrows)
+                when identical(changes, mappings) &&
+                    identical(builtIn, colors) =>
+              arrows,
+            _ => <LineRangeMapping, Widget>{},
+          };
+          _revertArrowWidgets = (mappings, colors, arrows);
           return Stack(
             children: [
               for (final change in mappings)
-                if (ideDiffChangeTop(view, snapshot, change) case final top?
+                if (ideDiffArrowTop(view, snapshot, change, layout, size)
+                    case final top?
                     when top >= area.top - 2 && top + size <= area.bottom)
                   Positioned(
                     key: ObjectKey(change),
-                    left: layout.sideBySide
-                        ? layout.splitLeft - size / 2
-                        : layout.modifiedLeft + 2,
-                    top: top + (view.lineHeight - size) / 2,
+                    left: ideDiffArrowLeft(layout, size),
+                    top: top,
                     width: size,
                     height: size,
-                    child: IdeDiffRevertArrow(
+                    child: arrows[change] ??= IdeDiffRevertArrow(
                       added: change.original.isEmpty,
                       onTap: () {
                         controller.applyEdits([
@@ -2876,60 +3034,54 @@ class IdeEditorState extends State<IdeEditor> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: CodeTextScale(
-                  child: widget.nativeEditorEnabled
-                      ? _nativeController == null
-                            ? const SizedBox.expand()
-                            : _diffOf(widget.active) == null
-                            // In the code's scale, which the deleted code
-                            // of an agent change is drawn in.
-                            ? Builder(
-                                builder: (context) => _surface(
-                                  colors,
-                                  agent: agent?.parts(
-                                    colors: DiffEditorColors.from(colors.get),
-                                    style: _editorStyle(colors),
-                                    textScaler: MediaQuery.textScalerOf(
-                                      context,
-                                    ),
-                                  ),
+                child: widget.nativeEditorEnabled
+                    ? _nativeController == null
+                          ? const SizedBox.expand()
+                          : _diffOf(widget.active) == null
+                          ? Builder(
+                              builder: (context) => _surface(
+                                colors,
+                                agent: agent?.parts(
+                                  colors: DiffEditorColors.from(colors.get),
+                                  style: _editorStyle(colors),
+                                  textScaler: MediaQuery.textScalerOf(context),
                                 ),
-                              )
-                            : _diffEditor(colors, _diffOf(widget.active)!)
-                      : TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          scrollController: _scrollController,
-                          expands: true,
-                          minLines: null,
-                          maxLines: null,
-                          keyboardType: TextInputType.multiline,
-                          textInputAction: TextInputAction.newline,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          cursorColor: colors['editorCursor.foreground'],
-                          onChanged: _changed,
-                          style: AppFonts.codeStyle(13).copyWith(
-                            color: colors['editor.foreground'],
-                            height: 1.45,
+                              ),
+                            )
+                          : _diffEditor(colors, _diffOf(widget.active)!)
+                    : TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        scrollController: _scrollController,
+                        expands: true,
+                        minLines: null,
+                        maxLines: null,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        cursorColor: colors['editorCursor.foreground'],
+                        onChanged: _changed,
+                        style: AppFonts.codeStyle(13).copyWith(
+                          color: colors['editor.foreground'],
+                          height: 1.45,
+                        ),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.fromLTRB(
+                            16,
+                            12,
+                            16,
+                            20,
                           ),
-                          decoration: InputDecoration(
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.fromLTRB(
-                              16,
-                              12,
-                              16,
-                              20,
-                            ),
-                            hintText: language.isEmpty
-                                ? context.l10n.editorStartTyping
-                                : context.l10n.editorEditLanguage(language),
-                            hintStyle: TextStyle(
-                              color: colors['editor.placeholder.foreground'],
-                            ),
+                          hintText: language.isEmpty
+                              ? context.l10n.editorStartTyping
+                              : context.l10n.editorEditLanguage(language),
+                          hintStyle: TextStyle(
+                            color: colors['editor.placeholder.foreground'],
                           ),
                         ),
-                ),
+                      ),
               ),
               if (_debugGlyphMargin() case final margin?)
                 Positioned(left: 0, top: 0, bottom: 0, child: margin),
@@ -2940,20 +3092,17 @@ class IdeEditorState extends State<IdeEditor> {
               ?_annotationHoverCard(),
               if (_language case final session?)
                 Positioned.fill(
-                  // Hovers and suggestions are sized with the code.
-                  child: CodeTextScale(
-                    child: IdeLanguageOverlay(
-                      session: session,
-                      renameHandlesKeys: widget.keyResolver == null,
-                      colorize: _colorizeCode,
-                      language:
-                          _textMateDocuments[widget.active]?.$2.languageId ??
-                          _tokenizedDocuments[widget.active]?.languageId,
-                      view: () => switch (_surfaceKey.currentState) {
-                        final EditorSurfaceView view => view,
-                        _ => null,
-                      },
-                    ),
+                  child: IdeLanguageOverlay(
+                    session: session,
+                    renameHandlesKeys: widget.keyResolver == null,
+                    colorize: _colorizeCode,
+                    language:
+                        _textMateDocuments[widget.active]?.$2.languageId ??
+                        _tokenizedDocuments[widget.active]?.languageId,
+                    view: () => switch (_surfaceKey.currentState) {
+                      final EditorSurfaceView view => view,
+                      _ => null,
+                    },
                   ),
                 ),
               if (_findVisible)

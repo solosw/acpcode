@@ -453,6 +453,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdChatAttachContext => 'Add Context…';
 
   @override
+  String get cmdChatAttachSelection => 'Add Selection to Chat';
+
+  @override
   String get cmdChatPasteRaw => 'Paste as Plain Text';
 
   @override
@@ -1306,10 +1309,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cmdToggleFullScreen => 'Toggle Full Screen';
 
   @override
+  String get cmdZoomIn => 'Zoom In';
+
+  @override
+  String get cmdZoomOut => 'Zoom Out';
+
+  @override
+  String get cmdZoomReset => 'Reset Zoom';
+
+  @override
   String get cmdToggleWordWrap => 'Toggle Word Wrap';
 
   @override
   String get menuWordWrap => 'Word Wrap';
+
+  @override
+  String get cmdToggleMinimap => 'Toggle Minimap';
+
+  @override
+  String get menuMinimap => 'Minimap';
 
   @override
   String get cmdTogglePanel => 'Toggle Panel Visibility';
@@ -1986,6 +2004,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentImageUntitled => 'Image';
 
   @override
+  String get chatTitleSummarize => 'Summarize into a new title';
+
+  @override
+  String get chatTitleSummarizing => 'Summarizing…';
+
+  @override
+  String get chatTitleSummarizeFailed => 'No title could be had. Try again';
+
+  @override
   String get sidebarNewAgent => 'New Chat';
 
   @override
@@ -2563,6 +2590,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get toolUpdatedTodos => 'Updated todos';
+
+  @override
+  String todoCount(int done, int total) {
+    return 'Todos $done/$total';
+  }
+
+  @override
+  String get todoAllDone => 'All done';
+
+  @override
+  String get todoNone => 'List empty';
+
+  @override
+  String get todoAdded => 'Added todo';
+
+  @override
+  String get todoStarted => 'Started todo';
+
+  @override
+  String get todoCompleted => 'Completed todo';
+
+  @override
+  String get todoRemoved => 'Removed todo';
+
+  @override
+  String get todoUpdated => 'Updated todo';
+
+  @override
+  String get todoChecked => 'Checked todos';
 
   @override
   String get toolSending => 'Saying';
@@ -3359,11 +3415,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get mcpProbeNote =>
       'Started and greeted with MCP\'s initialize, as `claude mcp list` checks it.';
-
-  @override
-  String todoCount(int done, int total) {
-    return 'Todos $done/$total';
-  }
 
   @override
   String queuedMessages(int count) {
@@ -5122,6 +5173,15 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get langNavigationUnavailable =>
+      'No language server is available for code navigation in this file.';
+
+  @override
+  String langNavigationInstall(String id) {
+    return 'Install the \'$id\' language server to enable code navigation in this file.';
+  }
+
+  @override
   String get langReferences => 'References';
 
   @override
@@ -5276,6 +5336,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get termKillTerminal => 'Kill Terminal';
+
+  @override
+  String get termKillOtherTerminals => 'Kill Other Terminals';
+
+  @override
+  String get termKillAllTerminals => 'Kill All Terminals';
+
+  @override
+  String get termStopAllTasks => 'Stop All Running Tasks';
+
+  @override
+  String get termRunInNewTerminal => 'Run in New Terminal';
+
+  @override
+  String get termNoTerminals => 'No terminals';
 
   @override
   String get termNewTerminal => 'New Terminal';
@@ -5502,6 +5577,27 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get workspaceClosePane => 'Close pane';
+
+  @override
+  String workspaceCloseBackTo(String title) {
+    return 'Close pane, back to $title';
+  }
+
+  @override
+  String workspaceCovers(String title) {
+    return 'Over $title, which shows again once this closes';
+  }
+
+  @override
+  String workspaceCovered(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count conversations under this one',
+      one: '1 conversation under this one',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get workspaceLoadingProjects => 'Loading projects…';
@@ -6820,10 +6916,24 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get modelsAccountDisabled => 'Disabled';
+
+  @override
   String get modelsAccountLimited => 'Out of quota';
 
   @override
   String get modelsAccountQuotaUnknown => 'Quota not known yet';
+
+  @override
+  String get modelsQuotaShortWindow => 'Short window';
+
+  @override
+  String get modelsQuotaLongWindow => 'Long window';
+
+  @override
+  String modelsQuotaLastUpdated(String time) {
+    return 'Last updated $time';
+  }
 
   @override
   String get modelsQuotaWeek => 'Weekly';
@@ -6842,6 +6952,40 @@ class AppLocalizationsEn extends AppLocalizations {
   String modelsQuotaUsed(int percent) {
     return '$percent% used';
   }
+
+  @override
+  String modelsQuotaRemaining(int percent) {
+    return '$percent% left';
+  }
+
+  @override
+  String quotaBarWindowLeft(String window, int percent) {
+    return '$window $percent% left';
+  }
+
+  @override
+  String quotaBarAvailable(int count, int total) {
+    return '$count/$total available';
+  }
+
+  @override
+  String quotaBarAllOut(String time) {
+    return 'All accounts out of quota · back $time';
+  }
+
+  @override
+  String quotaBarBackAt(String time) {
+    return 'Out of quota · back $time';
+  }
+
+  @override
+  String get quotaBarNone => 'No account can be used';
+
+  @override
+  String get quotaBarThisChat => 'This chat';
+
+  @override
+  String get quotaBarRefresh => 'Refresh Quota';
 
   @override
   String modelsQuotaResetsIn(String time) {
@@ -6939,6 +7083,31 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get modelsBaseUrlOpenAIHint =>
       'As the upstream documents it; without a version in its path (…/v1), /v1 is added.';
+
+  @override
+  String get modelsCustomUrls => 'Custom URLs';
+
+  @override
+  String get modelsCustomUrlsDescription =>
+      'Where models are listed and conversations go is made from the Base URL. When the upstream has them elsewhere, give them in full here.';
+
+  @override
+  String get modelsModelsUrl => 'Models URL';
+
+  @override
+  String get modelsModelsUrlDescription =>
+      'Testing the connection and fetching models GET it. Empty, the one in grey (from the Base URL) is used.';
+
+  @override
+  String get modelsEndpointUrl => 'Endpoint URL';
+
+  @override
+  String get modelsEndpointUrlDescription =>
+      'Every conversation is POSTed to it. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.';
+
+  @override
+  String get modelsEndpointUrlAnthropicDescription =>
+      'Every conversation is POSTed to it, Claude Code through the local proxy. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.';
 
   @override
   String get modelsApiKey => 'API Key';
@@ -7174,9 +7343,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'One Name: Value a line, sent on every request to this upstream. Values may use the CLAUDE_SESSION_ID variable (this conversation\'s session) and ANTHROPIC_MODEL (the model asked for), each between double braces; over the direct Anthropic protocol those two go as written, so only fixed values work there. Auth headers (Authorization, x-api-key) are ignored here: the key is set above.';
 
   @override
-  String get modelsHeadersPlaceholder => 'x-session-id: my-session';
-
-  @override
   String get modelsDuplicateProvider => 'Duplicate Upstream';
 
   @override
@@ -7337,6 +7503,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get modelsEndpointDescription =>
       'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.';
+
+  @override
+  String get modelsModelEndpointUrlDescription =>
+      'Where this model\'s requests go, in full. Apart from the endpoint type: that says how a request is made, this only where it goes. Empty, the one in grey is used.';
 
   @override
   String get modelsImageBadge => 'Image';
@@ -7522,7 +7692,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get diagnosticsDescription =>
-      'Send BaoCode\'s error logs to its developers to help track down a problem. Nothing is sent until you upload.';
+      'Send BaoCode\'s error logs and the crash and hang reports the system kept of it to its developers to help track down a problem. Nothing is sent until you upload.';
 
   @override
   String get diagnosticsUpload => 'Upload…';
@@ -7794,6 +7964,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.';
 
   @override
+  String get appearanceSettingsWindowBlur => 'Native Window Blur';
+
+  @override
+  String get appearanceSettingsWindowBlurDescription =>
+      'The system\'s blur under the windows (macOS\'s sidebar material, Windows 11\'s acrylic): what is behind them shows through the sidebar and the conversation. Off: the windows are opaque.';
+
+  @override
   String get appearanceSettingsSidebarTimes => 'Times in the Sidebar';
 
   @override
@@ -7859,7 +8036,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get appearanceSettingsCodeSizeDescription =>
-      'The size of code in the IDE editor and the side panel\'s file and changes views. Code in the chat follows the interface size; the terminal has its own size.';
+      'The size of code in the IDE editor and the side panel\'s file and changes views at 100% interface size; zooming the interface scales it in proportion. Code in the chat follows the interface size; the terminal has its own size.';
 
   @override
   String appearanceSettingsCodeSizeLabel(String size) {
@@ -7881,11 +8058,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'Wraps long lines at the editor\'s width, in every editor. An editor\'s context menu and the Command Palette (Toggle Word Wrap) switch it too. Files of more than 5,000 lines are not wrapped.';
 
   @override
+  String get appearanceSettingsCodeMinimap => 'Code Minimap';
+
+  @override
+  String get appearanceSettingsCodeMinimapDescription =>
+      'A minimap of the file at the right of the code editor, in every editor; it is not shown in an editor too narrow for it. An editor tab\'s context menu and the Command Palette (Toggle Minimap) switch it too.';
+
+  @override
   String get appearanceSettingsUiScale => 'Interface Size';
 
   @override
   String get appearanceSettingsUiScaleDescription =>
-      'Zooms the whole interface (its text, icons and spacing), code in the chat, and terminal text while the terminal size follows it. Code in the IDE editor and side panel files and changes keeps its own size.';
+      'Zooms the whole interface (its text, icons and spacing) and the code in it, and terminal text while the terminal size follows it. Code in the editor zooms from its code size.';
 
   @override
   String appearanceSettingsUiScaleLabel(String percent) {
@@ -8012,6 +8196,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get remoteFolderRefresh => 'Read the folders again';
+
+  @override
   String get remoteOpenThisFolder => 'Open This Folder';
 
   @override
@@ -8025,6 +8212,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String remoteListFailed(String path) {
     return 'Could not list $path';
+  }
+
+  @override
+  String remoteReadingFolder(String path) {
+    return 'Reading $path…';
   }
 
   @override
@@ -8870,14 +9062,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get mobileSettingsDescription =>
-      'Follow and drive this computer\'s agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.';
+      'Follow and drive this computer\'s agents from BaoCode on your phone: directly on the same network, across the internet through a hole punched in the routers between them, or through BaoCode\'s relay when neither works. What goes between them is end-to-end encrypted; a relay cannot read it.';
 
   @override
   String get mobileAllow => 'Allow Phones to Connect';
 
   @override
   String get mobileAllowDescription =>
-      'Phones paired with this computer connect to it directly.';
+      'Phones paired with this computer can connect to it, wherever they are.';
 
   @override
   String get mobileStatus => 'Status';
@@ -8889,56 +9081,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mobileStatusStarting => 'Starting…';
 
   @override
-  String mobileStatusListening(int port) {
-    return 'Listening on port $port';
-  }
-
-  @override
   String mobileStatusFailed(String error) {
-    return 'Could not listen: $error';
+    return 'Could not start: $error';
   }
 
   @override
-  String get mobileAddresses => 'Addresses';
-
-  @override
-  String get mobileAddressesDescription =>
-      'Where phones reach this computer, in the order they try them: the local network first, then the internet.';
-
-  @override
-  String get mobileAddressesNone => 'No network found.';
-
-  @override
-  String get mobileAddressesRefresh => 'Refresh';
-
-  @override
-  String get mobilePort => 'Port';
-
-  @override
-  String get mobilePortDescription =>
-      'The port phones connect to. Forward it on the router to reach this computer from the internet.';
-
-  @override
-  String mobilePortInvalid(String text) {
-    return 'Not a port: $text. Enter a number from 1 to 65535.';
-  }
-
-  @override
-  String get mobilePublicAddress => 'Public Address';
-
-  @override
-  String get mobilePublicAddressDescription =>
-      'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.';
-
-  @override
-  String get mobileRelay => 'Relay';
+  String get mobileRelay => 'Relays';
 
   @override
   String get mobileRelayDescription =>
-      'Reach this computer through BaoCode\'s relay when none of its addresses can be reached. Coming later.';
-
-  @override
-  String get mobileRelayUnavailable => 'Not Available Yet';
+      'Phones that cannot reach this computer directly go through one. It only passes along what is sealed between the two. Nothing to set on the phone: it learns them when paired, and again each time it connects.';
 
   @override
   String get mobilePair => 'Pair a Phone';
@@ -9033,6 +9185,75 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get mobilePairAllow => 'Allow';
+
+  @override
+  String mobileStatusOnline(String relay) {
+    return 'On, reachable through $relay';
+  }
+
+  @override
+  String get mobileStatusNoRelay =>
+      'On; no relay reached yet, so only phones on the same network can connect';
+
+  @override
+  String mobileStatusDenied(String reason) {
+    return 'On, but the relay turned this computer away: $reason';
+  }
+
+  @override
+  String get mobileRelayInvalid =>
+      'Not a relay address; one looks like https://relay.example.com';
+
+  @override
+  String get mobileRelayPinned => 'Relay Used';
+
+  @override
+  String get mobileRelayCustom => 'Custom';
+
+  @override
+  String get mobileRelayCustomAddress => 'Custom Address';
+
+  @override
+  String get mobileRelayCustomDescription =>
+      'The address of a relay you run yourself (baocode-relay).';
+
+  @override
+  String get mobileRelayMode => 'How';
+
+  @override
+  String get mobileRelayModeAuto => 'Automatic';
+
+  @override
+  String get mobileRelayModeAutoDescription =>
+      'BaoCode\'s relays, the nearest that answers.';
+
+  @override
+  String get mobileRelayModePinned => 'Pick One';
+
+  @override
+  String get mobileRelayModePinnedDescription =>
+      'Only the one picked: one of BaoCode\'s, or a custom address.';
+
+  @override
+  String get mobilePathLan => 'Same network';
+
+  @override
+  String get mobilePathDirect => 'Direct';
+
+  @override
+  String get mobilePathRelay => 'Through the relay';
+
+  @override
+  String mobilePathRtt(int ms) {
+    return '$ms ms';
+  }
+
+  @override
+  String get mobileLegacyPhone =>
+      'Needs pairing again: paired before the connection was rebuilt';
+
+  @override
+  String get mobileLegacyRepair => 'Pair Again';
 
   @override
   String get settingsSectionStash => 'Stash';
@@ -9213,26 +9434,26 @@ class AppLocalizationsEn extends AppLocalizations {
       'Has AI make the selection clearer, in your words, without adding structure';
 
   @override
-  String get composerPolish => 'Polish';
+  String get composerPolish => 'Enhance prompt';
 
   @override
-  String get composerPolishing => 'Polishing…';
+  String get composerPolishing => 'Enhancing…';
 
   @override
   String get composerPolishHint =>
-      'Polish: the auxiliary model makes the message clearer, in your words; pictures, files, code and links stay as they are; Undo takes it back';
+      'Enhance prompt: the auxiliary model makes the message a clearer, more specific prompt for the agent, filling in what you left vague; pictures, files, code and links stay as they are; Undo takes it back';
 
   @override
   String composerPolishFailed(String error) {
-    return 'Could not polish: $error';
+    return 'Could not enhance the prompt: $error';
   }
 
   @override
-  String get generalSettingsComposerPolish => 'Polish button';
+  String get generalSettingsComposerPolish => 'Enhance Prompt button';
 
   @override
   String get generalSettingsComposerPolishDescription =>
-      'A button in the message box that has the auxiliary model make what you wrote clearer before you send it';
+      'A button in the message box that has the auxiliary model make what you wrote a clearer, more specific prompt before you send it';
 
   @override
   String get generalSettingsLiveTurnStats => 'Live Speed and Time';
@@ -9694,10 +9915,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get branchBarDetached => 'Detached HEAD';
-
-  @override
-  String get branchBarRunning =>
-      'Branches can\'t be switched while the agent works';
 
   @override
   String branchBarFailed(String branch) {
@@ -11295,6 +11512,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gitLogInNoBranch => 'No branch has this commit.';
 
   @override
+  String gitLogInBranches(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count branches',
+      one: '1 branch',
+    );
+    return 'In $_temp0';
+  }
+
+  @override
   String get gitLogList => 'List';
 
   @override
@@ -11377,6 +11605,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitLogCopyHash => 'Copy the full hash';
+
+  @override
+  String get gitLogCopyRefNames => 'Copy Branch or Tag Name';
+
+  @override
+  String gitLogCopyName(String name) {
+    return 'Copy \'$name\'';
+  }
 
   @override
   String get gitLogLoading => 'Loading history…';
@@ -11472,9 +11708,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gitCommitCollapseAll => 'Collapse All';
 
   @override
-  String get gitCommitGroupByDirectory => 'Group by Directory';
-
-  @override
   String get gitCommitEmptyMessage => 'Enter a commit message.';
 
   @override
@@ -11510,10 +11743,10 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get diffRevertChange => 'Revert';
+  String get diffRevertChange => 'Undo this change (back to the left side)';
 
   @override
-  String get diffRemoveChange => 'Remove';
+  String get diffRemoveChange => 'Undo this change (remove the added lines)';
 
   @override
   String get diffPreviousDifference => 'Previous Difference';
@@ -11581,9 +11814,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get diffHighlightLines => 'Highlight Lines';
-
-  @override
-  String get diffHighlightNone => 'Do Not Highlight';
 
   @override
   String get diffGoToFile => 'Go to Changed File';
@@ -12157,11 +12387,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitChangelistDelete => 'Delete Changelist';
-
-  @override
-  String gitChangelistTurn(String request) {
-    return 'AI: $request';
-  }
 
   @override
   String get gitStashChangesTitle => 'Stash Changes';

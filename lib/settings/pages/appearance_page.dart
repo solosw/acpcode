@@ -12,6 +12,7 @@ import '../../chat/reply_scroll.dart';
 import '../../chat/user_message_style.dart';
 import '../../chat/widgets/chat_minimap.dart';
 import '../../chat/widgets/pixel_loader.dart';
+import '../../ide/editor_minimap_setting.dart';
 import '../../ide/editor_word_wrap.dart';
 import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_color_theme_picker.dart';
@@ -22,8 +23,10 @@ import '../../ide/terminal/terminal_render_theme.dart'
 import '../../ide/ide_menu.dart';
 import '../../sidebar/sidebar_times.dart';
 import '../../l10n/l10n.dart';
+import '../../platform/event_log.dart' show appEvent;
 import '../../theme/app_theme.dart';
 import '../../theme/code_font.dart';
+import '../../theme/window_blur.dart';
 import '../../theme/workbench_theme.dart' show ThemeSettingDefaults;
 import '../user_settings.dart';
 import 'settings_dropdown.dart';
@@ -34,10 +37,11 @@ import 'settings_widgets.dart';
 /// terminal's alike, and how wide the conversation grows
 /// (`chat.maxWidth`, see [ChatWidth]); what an agent and a subagent show
 /// running (see [PixelLoaderRole]); whether the sidebar's agents show
-/// their times ([SidebarTimes]); then the code's font, size and
-/// ligatures, whether the editors wrap long lines ([EditorWordWrap]), the
-/// window's text size and the terminal's (see [CodeFont]). A
-/// choice is applied and kept at once.
+/// their times ([SidebarTimes]), whether the windows are blurred
+/// underneath ([WindowBlur]); then the code's font, size and
+/// ligatures, whether the editors wrap long lines ([EditorWordWrap]) and
+/// show their minimap ([EditorMinimap]), the window's text size and the
+/// terminal's (see [CodeFont]). A choice is applied and kept at once.
 class AppearanceSettingsPage extends StatelessWidget {
   const AppearanceSettingsPage({
     super.key,
@@ -191,6 +195,11 @@ class AppearanceSettingsPage extends StatelessWidget {
   void _selectMinimapElasticity(ChatMinimapElasticity level) {
     ChatMinimap.elasticity.value = level;
     _keep(ChatMinimap.elasticityKey, ChatMinimap.elasticitySetting(level));
+  }
+
+  void _selectWindowBlur(bool on) {
+    WindowBlur.enabled.value = on;
+    _keep(WindowBlur.settingKey, WindowBlur.setting(on));
   }
 
   void _selectSidebarTimes(bool on) {
@@ -347,6 +356,7 @@ class AppearanceSettingsPage extends StatelessWidget {
   }
 
   void _selectUiScale(int percent) {
+    appEvent('zoom', 'Interface Size set');
     CodeFont.uiScale.value = percent;
     _keep(CodeFont.uiScaleSettingKey, CodeFont.uiScaleSetting(percent));
   }
@@ -364,6 +374,7 @@ class AppearanceSettingsPage extends StatelessWidget {
         ChatMinimap.glass,
         ChatMinimap.elasticity,
         SidebarTimes.shown,
+        WindowBlur.enabled,
         for (final role in PixelLoaderRole.values) ...[role.style, role.speed],
         CodeFont.families,
         CodeFont.size,
@@ -371,6 +382,7 @@ class AppearanceSettingsPage extends StatelessWidget {
         CodeFont.uiScale,
         CodeFont.terminalSize,
         EditorWordWrap.on,
+        EditorMinimap.on,
       ]),
       builder: (context, _) {
         final widthStep = ChatWidth.stepOf(ChatWidth.current.value);
@@ -550,6 +562,13 @@ class AppearanceSettingsPage extends StatelessWidget {
             ),
             SettingsCard(
               children: [
+                if (WindowBlur.available)
+                  SettingsSwitchRow(
+                    label: l10n.appearanceSettingsWindowBlur,
+                    description: l10n.appearanceSettingsWindowBlurDescription,
+                    value: WindowBlur.enabled.value,
+                    onChanged: _selectWindowBlur,
+                  ),
                 SettingsSwitchRow(
                   label: l10n.appearanceSettingsSidebarTimes,
                   description: l10n.appearanceSettingsSidebarTimesDescription,
@@ -632,6 +651,12 @@ class AppearanceSettingsPage extends StatelessWidget {
                   description: l10n.appearanceSettingsWordWrapDescription,
                   value: EditorWordWrap.on.value,
                   onChanged: EditorWordWrap.set,
+                ),
+                SettingsSwitchRow(
+                  label: l10n.appearanceSettingsCodeMinimap,
+                  description: l10n.appearanceSettingsCodeMinimapDescription,
+                  value: EditorMinimap.on.value,
+                  onChanged: EditorMinimap.set,
                 ),
                 SettingsRow(
                   label: l10n.appearanceSettingsUiScale,

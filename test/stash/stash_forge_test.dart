@@ -17,6 +17,42 @@ import 'package:flutter_test/flutter_test.dart';
 import '../forge/forge_test.dart' show FakeForgeHttp;
 import '../workspace/project_workspace_test.dart' show FakeWorkspaceDirectories;
 
+/// [inner], each request answered a turn later, and how many were asked at
+/// once at the most.
+class _CountingHttp implements ForgeHttp {
+  _CountingHttp(this.inner);
+
+  final ForgeHttp inner;
+  int _asking = 0;
+  int most = 0;
+
+  @override
+  Future<ForgeResponse> send(
+    String method,
+    Uri url, {
+    Map<String, String> headers = const {},
+    Object? json,
+    Map<String, String>? form,
+    List<int>? bytes,
+  }) async {
+    _asking++;
+    if (_asking > most) most = _asking;
+    try {
+      await Future<void>.delayed(Duration.zero);
+      return await inner.send(
+        method,
+        url,
+        headers: headers,
+        json: json,
+        form: form,
+        bytes: bytes,
+      );
+    } finally {
+      _asking--;
+    }
+  }
+}
+
 const issueUrl = 'https://github.com/o/r/issues/3';
 const pullUrl = 'https://github.com/o/r/pull/7';
 
@@ -753,6 +789,82 @@ void main() {
       await forge.sync();
       expect(store.notes, hasLength(2));
     });
+
+    test('its project taken away, or one of other repositories, its issue '
+        'is let go; one of the same repository keeps it', () async {
+      await forge.sync();
+      final id = forge.stashOf(issueUrl)!.id;
+      // Of the same repository: still the issue.
+      await forge.projectChanged(id);
+      expect(store.byId(id)!.ownIssue, issueUrl);
+
+      await store.update(id, (note) => note.project = '~/code/other');
+      await forge.projectChanged(id);
+      expect(store.byId(id)!.ownIssue, isNull);
+      expect(store.byId(id)!.issues, isEmpty);
+      await forge.sync();
+      expect(store.notes, hasLength(2));
+    });
+
+    test(
+      'its project put back, the issue let go is its again, as it was',
+      () async {
+        await forge.sync();
+        final id = forge.stashOf(issueUrl)!.id;
+        final before = store.byId(id)!.copy();
+        final project = before.project;
+
+        await store.update(id, (note) => note.project = null);
+        await forge.projectChanged(id);
+        expect(store.byId(id)!.ownIssue, isNull);
+        expect(store.byId(id)!.letGo?.link.url, issueUrl);
+        // Kept across a reload: it is in the stash's file.
+        expect(
+          StashNote.decode(id, store.byId(id)!.encode()).letGo?.link,
+          before.issueOf(issueUrl),
+        );
+
+        await store.update(id, (note) => note.project = project);
+        await forge.projectChanged(id);
+        final after = store.byId(id)!;
+        expect(after.ownIssue, issueUrl);
+        expect(after.local, isFalse);
+        expect(after.letGo, isNull);
+        expect(after.issues, before.issues);
+        expect(after.synced, before.synced);
+        expect(after.syncedRemote, before.syncedRemote);
+        // Not made a stash again beside it.
+        await forge.sync();
+        expect(store.notes.where((note) => note.ownIssue == issueUrl), [
+          isA<StashNote>().having((note) => note.id, 'id', id),
+        ]);
+      },
+    );
+
+    test(
+      'kept here by hand meanwhile, the issue let go stays let go',
+      () async {
+        await forge.sync();
+        final id = forge.stashOf(issueUrl)!.id;
+        final project = store.byId(id)!.project;
+        await store.update(id, (note) => note.project = null);
+        await forge.projectChanged(id);
+        await forge.keepLocal(id);
+        await store.update(id, (note) => note.project = project);
+        await forge.projectChanged(id);
+        expect(store.byId(id)!.ownIssue, isNull);
+        expect(store.byId(id)!.letGo, isNull);
+      },
+    );
+
+    test('no project, no issue', () async {
+      await forge.sync();
+      final id = forge.stashOf(issueUrl)!.id;
+      await store.update(id, (note) => note.project = null);
+      await forge.projectChanged(id);
+      expect(store.byId(id)!.ownIssue, isNull);
+      expect(store.byId(id)!.local, isTrue);
+    });
   });
 
   test('published: its pictures put where the issue shows them, its other '
@@ -937,6 +1049,39 @@ void main() {
     expect(store.byId(note.id)!.news, StashNews.merged);
     expect(forge.pullsToFix(store.byId(note.id)!), isEmpty);
     expect(forge.mergedPulls(store.byId(note.id)!).single.url, pullUrl);
+  });
+
+  test('the linked issues asked a few at a time, not all at once', () async {
+    http.fallback = (request) {
+      final number = int.parse(request.url.pathSegments.last);
+      return {'number': number, 'title': 'Issue $number', 'state': 'open'};
+    };
+    final counting = _CountingHttp(http);
+    final accounts = ForgeAccounts(
+      http: counting,
+      secrets: MemorySecretStore(),
+    );
+    await accounts.signInWithToken(ForgeKind.github, 'github.com', 't');
+    final forge = StashForge(
+      store: store,
+      workspace: Workspace.mock(),
+      accounts: accounts,
+      remotes: (_) async => const [],
+    );
+    addTearDown(forge.dispose);
+    final urls = [
+      for (var i = 101; i <= 120; i++) 'https://github.com/o/r/issues/$i',
+    ];
+    final note = await store.create(body: 'Many');
+    await store.update(note.id, (note) {
+      note.issues.addAll([for (final url in urls) StashIssueLink(url: url)]);
+    });
+    counting.most = 0;
+    await forge.refresh();
+    expect(counting.most, StashForge.atOnce);
+    for (final url in urls) {
+      expect(forge.itemOf(url)?.title, startsWith('Issue '), reason: url);
+    }
   });
 
   test('the pull requests a conversation links to', () {

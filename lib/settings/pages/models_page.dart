@@ -13,6 +13,7 @@ import '../../icons/project_icon_picker.dart';
 import '../../kernel/claude_code/claude_haiku.dart';
 import '../../l10n/l10n.dart';
 import '../../models/codex/codex_api.dart' show codexClientVersion;
+import '../../models/codex/codex_quota_format.dart';
 import '../../models/codex/codex_service.dart';
 import '../../models/codex/codex_usage.dart';
 import '../../models/auxiliary_model_menu.dart';
@@ -21,6 +22,7 @@ import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
+import '../../models/upstream.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
@@ -613,6 +615,10 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
   bool _rolesOpen = true;
   bool _advancedOpen = false;
 
+  /// The custom URLs shown: open from the first when one is set.
+  late bool _urlsOpen =
+      _provider.modelsUrl != null || _provider.endpointUrl != null;
+
   /// What the key was read as, once it is.
   String? _key;
   bool _keyRead = false;
@@ -921,7 +927,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         const SizedBox(height: 16),
         _models(context),
         const SizedBox(height: 16),
-        _Folding(
+        SettingsFolding(
           title: l10n.modelsRoles,
           description: l10n.modelsRolesDescription,
           open: _rolesOpen,
@@ -929,7 +935,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           children: _roles(context),
         ),
         const SizedBox(height: 16),
-        _Folding(
+        SettingsFolding(
           title: l10n.modelsAdvanced,
           open: _advancedOpen,
           onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
@@ -1191,6 +1197,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
                   )
                 : const SizedBox(width: _Field.width, height: 26),
           ),
+          ..._customUrls(context),
         ],
         SettingsRow(
           label: l10n.modelsTest,
@@ -1218,6 +1225,58 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         ),
       ],
     );
+  }
+
+  /// Where its models are listed and its conversations go, given in full,
+  /// folded under a row: each field's placeholder the one its base URL
+  /// makes, used while it is empty.
+  List<Widget> _customUrls(BuildContext context) {
+    final l10n = context.l10n;
+    final provider = _provider;
+    void toggle() => setState(() => _urlsOpen = !_urlsOpen);
+    return [
+      Semantics(
+        button: true,
+        expanded: _urlsOpen,
+        child: SettingsRow(
+          label: l10n.modelsCustomUrls,
+          description: l10n.modelsCustomUrlsDescription,
+          onTap: toggle,
+          trailing: Icon(
+            _urlsOpen ? Codicons.chevronDown : Codicons.chevronRight,
+            size: 14,
+            color: SettingsColors.textSecondary,
+          ),
+        ),
+      ),
+      if (_urlsOpen) ...[
+        SettingsRow(
+          label: l10n.modelsModelsUrl,
+          description: l10n.modelsModelsUrlDescription,
+          trailing: _Field(
+            value: provider.modelsUrl ?? '',
+            label: l10n.modelsModelsUrl,
+            placeholder:
+                '${UpstreamUrls.modelsByBase(provider).firstOrNull ?? ''}',
+            onCommit: (url) =>
+                unawaited(_save(_providerNow.copyWith(modelsUrl: () => url))),
+          ),
+        ),
+        SettingsRow(
+          label: l10n.modelsEndpointUrl,
+          description: provider.protocol == ProviderProtocol.anthropic
+              ? l10n.modelsEndpointUrlAnthropicDescription
+              : l10n.modelsEndpointUrlDescription,
+          trailing: _Field(
+            value: provider.endpointUrl ?? '',
+            label: l10n.modelsEndpointUrl,
+            placeholder: '${UpstreamUrls.endpointByBase(provider) ?? ''}',
+            onCommit: (url) =>
+                unawaited(_save(_providerNow.copyWith(endpointUrl: () => url))),
+          ),
+        ),
+      ],
+    ];
   }
 
   Widget _models(BuildContext context) {
@@ -1554,7 +1613,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
           _Field(
             value: formatHeaders(provider.headers),
             label: l10n.modelsHeaders,
-            placeholder: l10n.modelsHeadersPlaceholder,
+            placeholder: _headersPlaceholder,
             lines: 6,
             onCommit: (text) => unawaited(
               _save(_providerNow.copyWith(headers: parseHeaders(text))),
@@ -1601,6 +1660,15 @@ Map<String, String> parseEnvironment(String text) => {
           when RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(key))
         key: line.substring(line.indexOf('=') + 1).trim(),
 };
+
+/// The Custom Headers field's example: a client's user agent and its
+/// session headers, the session a variable. Not translated: header names
+/// and values are what they are, and `{{…}}` would be an ARB placeholder.
+const _headersPlaceholder =
+    'user-agent: opencode/1.17.12 ai-sdk/provider-utils/4.0.23 '
+    'runtime/bun/1.3.14\n'
+    'x-session-affinity: {{CLAUDE_SESSION_ID}}\n'
+    'x-session-id: {{CLAUDE_SESSION_ID}}';
 
 /// [headers] as the Custom Headers field shows it: `Name: Value` a line.
 String formatHeaders(Map<String, String> headers) =>
@@ -1948,34 +2016,6 @@ class _QuotaLine extends StatelessWidget {
 
   final CodexWindow window;
 
-  static String name(BuildContext context, int? minutes) {
-    final l10n = context.l10n;
-    if (minutes == null || minutes <= 0) return '';
-    if (minutes % 10080 == 0 && minutes == 10080) return l10n.modelsQuotaWeek;
-    if (minutes % 1440 == 0) return l10n.modelsQuotaDays(minutes ~/ 1440);
-    return l10n.modelsQuotaHours((minutes / 60).round());
-  }
-
-  static String resets(BuildContext context, DateTime at, DateTime now) {
-    final l10n = context.l10n;
-    final left = at.difference(now);
-    if (left.inMinutes < 60) {
-      return l10n.modelsQuotaResetsIn(
-        l10n.modelsDurationMinutes(left.inMinutes < 1 ? 1 : left.inMinutes),
-      );
-    }
-    if (left.inHours < 24) {
-      return l10n.modelsQuotaResetsIn(
-        l10n.modelsDurationHours(left.inHours, left.inMinutes % 60),
-      );
-    }
-    final local = at.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return l10n.modelsQuotaResetsAt(
-      '${local.month}/${local.day} ${two(local.hour)}:${two(local.minute)}',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -1987,7 +2027,7 @@ class _QuotaLine extends StatelessWidget {
         : AppColors.added;
     final detail = [
       l10n.modelsQuotaUsed(used.round()),
-      if (window.resetsAt case final at?) resets(context, at, DateTime.now()),
+      if (window.resetsAt case final at?) quotaResets(l10n, at, DateTime.now()),
     ].join(' · ');
     return Padding(
       padding: const EdgeInsets.only(top: 2),
@@ -1996,7 +2036,7 @@ class _QuotaLine extends StatelessWidget {
           SizedBox(
             width: 52,
             child: Text(
-              name(context, window.minutes),
+              quotaWindowName(l10n, window.minutes),
               style: SettingsText.description,
             ),
           ),
@@ -2101,70 +2141,6 @@ class _IconButton extends StatelessWidget {
       ),
     );
   }
-}
-
-class _Folding extends StatelessWidget {
-  const _Folding({
-    required this.title,
-    required this.open,
-    required this.onToggle,
-    required this.children,
-    this.description,
-  });
-
-  final String title;
-  final String? description;
-  final bool open;
-  final VoidCallback onToggle;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Semantics(
-        button: true,
-        expanded: open,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        open ? Codicons.chevronDown : Codicons.chevronRight,
-                        size: 13,
-                        color: SettingsColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(title, style: SettingsText.heading),
-                    ],
-                  ),
-                  if (description case final description? when open) ...[
-                    const SizedBox(height: 2),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 17),
-                      child: Text(
-                        description,
-                        style: SettingsText.headingDescription,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      if (open) SettingsCard(children: children),
-    ],
-  );
 }
 
 /// A text setting, written when it loses focus or Enter is pressed (not

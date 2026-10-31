@@ -78,6 +78,29 @@ enum ProjectRelocation {
   failed,
 }
 
+/// How the agents of a folder the app keeps for itself (a bot's) are set
+/// up: what they are told and the tools they have, and the settings they
+/// start with, over the user's. Such a folder is no project of the
+/// sidebar's.
+class AgentSetup {
+  const AgentSetup({
+    required this.workspace,
+    this.settings = const {},
+    this.kernel,
+  });
+
+  /// What its agents are told, and the tools they have: as it is when
+  /// one starts.
+  final KernelWorkspace Function() workspace;
+
+  /// The kernel its new agents run on ([KernelDescriptor.id]), over the
+  /// one the user picked last.
+  final String? kernel;
+
+  /// By [KernelChoiceKind]'s name.
+  final Map<String, String> settings;
+}
+
 /// What an agent needs from the user, most urgent first.
 enum ThreadStatus {
   /// Stopped on a question only the user can answer.
@@ -310,6 +333,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   bool _loading = false;
   bool get loading => _loading;
 
+  /// Completes once [load] has listed what the kernels keep.
+  Future<void> get loaded => _loaded.future;
+  final _loaded = Completer<void>();
+
   // --- Loading -------------------------------------------------------------
 
   /// Lists the projects and sessions the kernels keep, then opens a new
@@ -357,6 +384,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _forgetGone(listed);
     }
     _loading = false;
+    if (!_loaded.isCompleted) _loaded.complete();
     for (final folder in {?_ideFolder, ..._windowFolders}) {
       _ensureIdeChat(folder);
     }
@@ -565,7 +593,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
             cwd: session.cwd,
             resume: session,
             // As it was left, or as a new agent starts.
-            settings: {..._preferredSettings, ...?_agentSettings[session.id]},
+            settings: _setUp(session.cwd, {
+              ..._preferredSettings,
+              ...?_agentSettings[session.id],
+            }),
             workspace: () => _kernelWorkspace(session.cwd),
           ),
           historyCount: 0,
@@ -811,11 +842,26 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return thread;
   }
 
+  /// A new agent in [project], to drag beside the panes (a project's New
+  /// Agent dragged): listed, not shown, the panes left as they are. An
+  /// untouched one there that does not show is reused.
+  AgentThread dragAgent(Project project) => startAgent(project);
+
+  /// [thread], made to be dragged ([dragAgent]), was not dropped anywhere:
+  /// dropped too, unless it shows or something was sent to it.
+  void dropDragAgent(AgentThread thread) {
+    if (!_threads.contains(thread) || !_isUntouched(thread)) return;
+    if (_hasPane(thread)) return;
+    if (_windowAgents.contains(thread)) return;
+    if (_ideChats.values.any((tabs) => tabs.contains(thread))) return;
+    _discard(thread);
+  }
+
   /// [thread]'s window closed: a new agent nothing was sent to is dropped,
   /// unless it shows elsewhere too.
   void closeWindowAgent(AgentThread thread) {
     if (!_threads.contains(thread) || !_isUntouched(thread)) return;
-    if (_grid.contains(thread)) return;
+    if (_hasPane(thread)) return;
     if (_ideChats.values.any((tabs) => tabs.contains(thread))) return;
     _discard(thread);
   }
@@ -988,7 +1034,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         _ideChatShown[folder] = heirs[(at - 1).clamp(0, heirs.length - 1)];
       }
     }
-    if (_isUntouched(thread) && !_grid.contains(thread)) {
+    if (_isUntouched(thread) && !_hasPane(thread)) {
       _discard(thread);
     }
     return true;
@@ -1176,7 +1222,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// folder's, until it is sent something).
   bool listsInSidebar(AgentThread thread) =>
       _projects.contains(thread.project) &&
-      (!_isUntouched(thread) || _grid.contains(thread));
+      !isAppFolder(thread.project.path) &&
+      (!_isUntouched(thread) || _hasPane(thread));
 
   /// The sidebar's key for the group of [path]'s project.
   static String projectGroup(String path) => 'project:$path';
@@ -1307,7 +1354,59 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// again once opened, or asked something since (see [_unhide]).
   final Map<String, DateTime> _hiddenProjects = {};
 
-  bool isHidden(Project project) => _hiddenProjects.containsKey(project.path);
+  bool isHidden(Project project) =>
+      _hiddenProjects.containsKey(project.path) || isAppFolder(project.path);
+
+  /// The setup of agents in a folder the app keeps for itself, by its path;
+  /// null for a project's (see [AgentSetup]). Set, those folders' agents
+  /// shown (kept from before, say) are shown no longer.
+  AgentSetup? Function(String path)? get agentSetup => _agentSetup;
+  AgentSetup? Function(String path)? _agentSetup;
+  set agentSetup(AgentSetup? Function(String path)? setup) {
+    _agentSetup = setup;
+    if (setup != null) _leaveAppFolders();
+  }
+
+  /// The agents of the app's own folders (a bot's) out of the panes: never
+  /// shown here, their user on the phone.
+  void _leaveAppFolders() {
+    for (final thread in _threads) {
+      if (isAppFolder(thread.project.path)) _grid.forget(thread);
+    }
+    final shown = [
+      for (final thread in _grid.panes)
+        if (isAppFolder(thread.project.path)) thread,
+    ];
+    if (shown.isEmpty) return;
+    for (final thread in shown) {
+      if (_grid.uncover(thread) == null) _grid.remove(thread);
+    }
+    if (_grid.isEmpty) {
+      _selected = null;
+      final latest = [
+        for (final thread in _threads)
+          if (!thread.archived && listsInSidebar(thread)) thread,
+      ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      if (latest.isEmpty) {
+        create();
+        return;
+      }
+      _focus(latest.first);
+    } else if (_selected == null || shown.contains(_selected)) {
+      _focus(_grid.panes.first);
+    }
+    notifyListeners();
+  }
+
+  /// Whether [path] is a folder the app keeps for itself: never listed.
+  bool isAppFolder(String path) => agentSetup?.call(path) != null;
+
+  /// [settings] with those of the app's folder [cwd] over them.
+  Map<String, String> _setUp(String? cwd, Map<String, String> settings) =>
+      switch (cwd == null ? null : agentSetup?.call(cwd)) {
+        final setup? => {...settings, ...setup.settings},
+        null => settings,
+      };
 
   /// Takes [project] off the sidebar; nothing of it is deleted.
   void hideProject(Project project) {
@@ -1385,16 +1484,24 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     for (final project in sidebarProjects) ?project.host,
   }.toList();
 
-  /// Keeps [host] among [sshHosts], with no project there yet; its
-  /// projects taken off with it ([removeSshHost]) are listed again.
+  /// Keeps [host] among [sshHosts], with no project there yet. Added
+  /// again, its projects taken off with it ([removeSshHost]) are listed
+  /// again; not those the user took off one by one ([hideProject]), nor
+  /// any as it is connected to again, kept already.
   void addSshHost(String host) {
-    final unhidden = _projects
-        .where((project) => project.host == host && isHidden(project))
-        .map((project) => project.path)
-        .toList();
-    if (_sshHosts.contains(host) && unhidden.isEmpty) return;
-    if (!_sshHosts.contains(host)) _sshHosts.add(host);
-    unhidden.forEach(_hiddenProjects.remove);
+    if (_sshHosts.contains(host)) return;
+    _sshHosts.add(host);
+    final hidden = {
+      for (final project in _projects)
+        if (project.host == host) project.path: ?_hiddenProjects[project.path],
+    };
+    if (hidden.isNotEmpty) {
+      // Taken off with the host: at the time it went, the last.
+      final removed = hidden.values.reduce((a, b) => a.isAfter(b) ? a : b);
+      hidden.forEach((path, since) {
+        if (since == removed) _hiddenProjects.remove(path);
+      });
+    }
     _save();
     notifyListeners();
   }
@@ -1406,7 +1513,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _sshServers.remove(host);
     final now = DateTime.now();
     for (final project in _projects) {
-      if (project.host == host) _hiddenProjects[project.path] = now;
+      // Those off already stay as they were (see [addSshHost]).
+      if (project.host == host) {
+        _hiddenProjects.putIfAbsent(project.path, () => now);
+      }
     }
     if (_sidebarHost == host) _sidebarHost = null;
     _save();
@@ -1476,6 +1586,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// WSL distribution by its name).
   String hostLabel(String host) =>
       _hostNames[host] ?? RemoteLocation.hostName(host);
+
+  /// What a pane says [project] is: its name, and on another computer
+  /// that computer's ([hostLabel]), `api · devbox`.
+  String projectLabel(Project project) => switch (project.host) {
+    final host? => '${project.name} · ${hostLabel(host)}',
+    null => project.name,
+  };
 
   /// Calls [host] [name]; by itself again when null or empty.
   void renameHost(String host, String? name) {
@@ -1625,6 +1742,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       folders: workspace.folders,
       instructions: workspace.systemPrompt,
     ),
+    null when cwd != null => agentSetup?.call(cwd)?.workspace(),
     null => null,
   };
 
@@ -1832,7 +1950,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
               (t) =>
                   t.project == project &&
                   _isUntouched(t) &&
-                  !_grid.contains(t) &&
+                  !_hasPane(t) &&
                   !heirs.containsValue(t),
             )
             .firstOrNull ??
@@ -1932,6 +2050,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Takes [thread] off the list, to be listed again from where its
   /// session is kept now: nothing of it forgotten, its session closed.
   void _drop(AgentThread thread) {
+    _grid.forget(thread);
     final listener = _listeners.remove(thread);
     if (listener != null) thread.session.removeListener(listener);
     _snapshots.remove(thread);
@@ -2546,12 +2665,18 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _noteLimit(thread);
     // Renamed in Claude Code (/rename): named so here too.
     if (session.takeRenamed() case final title?) rename(thread, title);
-    if (thread._title.isEmpty && session.itemCount > 0) {
-      if (session.itemAt(0) case UserMessageItem(:final text)) {
-        thread._title = text.trim().split('\n').first;
+    // An agent of the app's own (a bot's) is named by it, not by what it
+    // was first told, nor by a model.
+    if (isAppFolder(thread.project.path)) {
+      thread._wantsTitle = false;
+    } else {
+      if (thread._title.isEmpty && session.itemCount > 0) {
+        if (session.itemAt(0) case UserMessageItem(:final text)) {
+          thread._title = text.trim().split('\n').first;
+        }
       }
+      if (thread._wantsTitle) _askTitle(thread);
     }
-    if (thread._wantsTitle) _askTitle(thread);
     // Sent something: its folder is a project now, if it was not.
     if (!_isUntouched(thread) && !_projects.contains(thread.project)) {
       _listProject(thread.project);
@@ -2568,7 +2693,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final snapshot = thread._snapshot;
     if (snapshot == before) return;
     var changed = _keepChoices(thread, snapshot);
-    if (before != null) {
+    // Picked for an agent of the app's own (a bot's): its alone.
+    if (before != null && !isAppFolder(thread.project.path)) {
       // Picked for this agent: the next new one starts with it too.
       if (before.kernel != snapshot.kernel) {
         _preferredKernel = thread.kernel;
@@ -2603,7 +2729,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
           }
         }
       }
-      if (before.status != snapshot.status) thread.updatedAt = DateTime.now();
+    }
+    if (before != null && before.status != snapshot.status) {
+      thread.updatedAt = DateTime.now();
     }
     _rememberAcpSession(thread);
     if (changed) _save();
@@ -2698,8 +2826,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'cells': [for (final pane in _grid.cells) panes.indexOf(pane)],
       if (focused != null && panes.contains(focused))
         'focused': panes.indexOf(focused),
-      'columnRatio': _grid.columnRatio,
-      'rowRatio': _grid.rowRatio,
+      'columnRatios': _grid.columnRatios,
+      'rowRatios': _grid.rowRatios,
+      'columnsFirst': _grid.columnsFirst,
     };
   }
 
@@ -2740,7 +2869,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         },
         _ => null,
       };
-      if (thread != null && !shown.containsValue(thread)) {
+      if (thread != null &&
+          !shown.containsValue(thread) &&
+          !isAppFolder(thread.project.path)) {
         shown[pane] = thread;
       }
     }
@@ -2749,17 +2880,33 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     if (cells.isEmpty) return;
     _grid.restore([for (final cell in cells.cells) shown[cell]!]);
-    if (kept['columnRatio'] case final num ratio when ratio > 0 && ratio < 1) {
-      _grid.columnRatio = ratio.toDouble();
+    if (kept['columnsFirst'] case final bool columnsFirst) {
+      _grid.columnsFirst = columnsFirst;
     }
-    if (kept['rowRatio'] case final num ratio when ratio > 0 && ratio < 1) {
-      _grid.rowRatio = ratio.toDouble();
+    if (_keptRatios(kept, 'columnRatio') case final ratios?) {
+      _grid.columnRatios = ratios;
+    }
+    if (_keptRatios(kept, 'rowRatio') case final ratios?) {
+      _grid.rowRatios = ratios;
     }
     final focused = switch (kept['focused']) {
       final int pane => shown[pane],
       _ => null,
     };
     _focus(focused ?? _grid.at(0)!);
+  }
+
+  /// A line's ratios as [_chatView] kept them under [name]`s`, one for each
+  /// of its parts; an earlier run's one ratio under [name], for both.
+  static List<double>? _keptRatios(Map<Object?, Object?> kept, String name) {
+    bool valid(Object? ratio) => ratio is num && ratio > 0 && ratio < 1;
+    if (kept['${name}s'] case [final a, final b] when valid(a) && valid(b)) {
+      return [(a as num).toDouble(), (b as num).toDouble()];
+    }
+    if (kept[name] case final num ratio when valid(ratio)) {
+      return [ratio.toDouble(), ratio.toDouble()];
+    }
+    return null;
   }
 
   /// A line between the panes moved: kept where it is now.
@@ -2778,6 +2925,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Shows [thread] and focuses it: in its pane if it has one, else in
   /// place of the focused one.
   void select(AgentThread thread) {
+    // A bot's: the phone's, never shown here.
+    if (isAppFolder(thread.project.path)) return;
     _focus(thread);
     _followInSidebar(thread);
     notifyListeners();
@@ -2789,13 +2938,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (!_grid.contains(thread)) {
       final focused = _selected;
       if (focused != null && _grid.contains(focused)) {
-        _grid.replace(focused, thread);
+        _showInPlaceOf(focused, thread);
       } else {
         _grid.show(thread);
       }
     }
     _selected = thread;
   }
+
+  /// [thread] in [target]'s pane: of several, over it, to show again once
+  /// [thread] closes (see [ChatGrid.cover]); alone, in its place.
+  void _showInPlaceOf(AgentThread target, AgentThread thread) {
+    if (_grid.length > 1) {
+      _grid.cover(target, thread);
+    } else {
+      _grid.replace(target, thread);
+    }
+  }
+
+  /// Whether [thread] has a pane: shown, or covered by another.
+  bool _hasPane(AgentThread thread) =>
+      _grid.contains(thread) || _grid.isCovered(thread);
 
   /// Shows [thread] in the half of [target]'s pane on its [side], and
   /// focuses it; where it shows already, only focuses it. Nothing where
@@ -2808,19 +2971,38 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     select(thread);
   }
 
-  /// Shows [thread] in [target]'s pane, and focuses it; where it shows
-  /// already, only focuses it.
+  /// Shows [thread] in [target]'s pane (see [_showInPlaceOf]), and focuses
+  /// it; where it shows already, only focuses it.
   void openInPlaceOf(AgentThread target, AgentThread thread) {
     if (!_grid.contains(target)) return;
-    if (!_grid.contains(thread)) _grid.replace(target, thread);
+    if (!_grid.contains(thread)) _showInPlaceOf(target, thread);
     select(thread);
   }
 
-  /// Closes [thread]'s pane, the one beside it taking its place; the last
-  /// one stays. The agent goes on, in the sidebar.
+  /// Rearranges an existing pane: beside [target] on [side], or swapping
+  /// their places. The agents keep running; the moved one stays focused.
+  void rearrangePane(AgentThread thread, AgentThread target, {PaneSide? side}) {
+    if (_grid.rearrange(thread, target, side: side)) select(thread);
+  }
+
+  /// Shows [covered], under [pane] (see [ChatGrid.cover]), in [pane]'s
+  /// place, [pane] going under it; focused.
+  void raiseCovered(AgentThread pane, AgentThread covered) {
+    if (!_grid.under(pane).contains(covered)) return;
+    _grid.raise(pane, covered);
+    select(covered);
+  }
+
+  /// Whether [thread]'s pane can close: another shows beside it.
+  bool canClosePane(AgentThread thread) =>
+      _grid.contains(thread) && _grid.length > 1;
+
+  /// Closes [thread]'s pane: the agent it covered shows there again, else
+  /// the one beside it takes its place; the last one stays. The agent goes
+  /// on, in the sidebar.
   void closePane(AgentThread thread) {
-    if (_grid.length < 2 || !_grid.contains(thread)) return;
-    final heir = _grid.remove(thread)!;
+    if (!canClosePane(thread)) return;
+    final heir = _grid.uncover(thread) ?? _grid.remove(thread)!;
     if (identical(thread, _selected)) _focus(heir);
     notifyListeners();
   }
@@ -2859,7 +3041,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     for (final thread in _threads) {
       if (thread.project == project &&
           _isUntouched(thread) &&
-          !_grid.contains(thread)) {
+          !_hasPane(thread)) {
         return thread;
       }
     }
@@ -2870,12 +3052,17 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// A new, empty agent in [project], listed here but not shown.
   AgentThread _newThread(Project project) {
-    final kernel = _preferredKernel;
-    final settings = {
+    final kernel =
+        switch (agentSetup?.call(project.path)?.kernel) {
+          final id? => kernels.where((k) => k.id == id).firstOrNull,
+          null => null,
+        } ??
+        _preferredKernel;
+    final settings = _setUp(project.path, {
       ..._preferredSettings,
       // Settings → Models' pick, if any, over the last one.
       KernelChoiceKind.model.name: ?ModelProviders.current.defaultModel,
-    };
+    });
     final cwd = project.path;
     final thread = AgentThread._(
       project: project,
@@ -2928,7 +3115,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         kernelContext: KernelContext(
           cwd: record.cwd,
           resume: record,
-          settings: {..._preferredSettings, ...?_agentSettings[record.id]},
+          settings: _setUp(record.cwd, {
+            ..._preferredSettings,
+            ...?_agentSettings[record.id],
+          }),
           workspace: () => _kernelWorkspace(record.cwd),
         ),
         historyCount: 0,
@@ -3070,6 +3260,22 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _retitle(thread, trimmed);
   }
 
+  /// A new title for [thread] by [titler], from what the user asked in it
+  /// (see [askedText]); null without [titler], or when it gives none.
+  /// Not given to it: the title is the user's to keep, through [rename].
+  Future<String?> summarizeTitle(AgentThread thread) async {
+    final titler = this.titler;
+    if (titler == null) return null;
+    final session = thread.session;
+    final text = askedText(session);
+    if (text.isEmpty) return null;
+    return titler(
+      text,
+      model: session.selected(KernelChoiceKind.model),
+      location: thread.project.path,
+    );
+  }
+
   void _retitle(AgentThread thread, String title) {
     thread._title = title;
     if (thread.isOpen) thread.session.rename(title);
@@ -3167,15 +3373,19 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   void _leaveMany(Set<AgentThread> gone) {
+    gone.forEach(_grid.forget);
     final shown = gone.where(_grid.contains).toList();
     for (final thread in shown) {
-      _grid.remove(thread);
+      if (_grid.uncover(thread) == null) _grid.remove(thread);
     }
     if (shown.isEmpty) return;
     if (_grid.isEmpty) {
       final candidates = [
         for (final thread in _threads)
-          if (!thread.archived && _projects.contains(thread.project)) thread,
+          if (!thread.archived &&
+              _projects.contains(thread.project) &&
+              !isAppFolder(thread.project.path))
+            thread,
       ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       if (candidates.isNotEmpty) {
         _focus(candidates.first);
@@ -3187,11 +3397,17 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
   }
 
-  /// After [gone] is archived or deleted: its pane closes, the one beside
-  /// it taking its place; the last one shows the most recent remaining
-  /// agent instead, or a new one.
+  /// After [gone] is archived or deleted: the agent it covered shows in its
+  /// pane again; else its pane closes, the one beside it taking its place;
+  /// the last one shows the most recent remaining agent instead, or a new
+  /// one.
   void _leave(AgentThread gone) {
+    _grid.forget(gone);
     if (!_grid.contains(gone)) return;
+    if (_grid.uncover(gone) case final heir?) {
+      if (identical(gone, _selected)) _focus(heir);
+      return;
+    }
     if (_grid.length > 1) {
       final heir = _grid.remove(gone)!;
       if (identical(gone, _selected)) _focus(heir);
@@ -3201,7 +3417,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       for (final thread in _threads)
         if (!thread.archived &&
             !identical(thread, gone) &&
-            _projects.contains(thread.project))
+            _projects.contains(thread.project) &&
+            !isAppFolder(thread.project.path))
           thread,
     ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     _grid.clear();

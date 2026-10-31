@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../codex/codex_accounts_io.dart';
@@ -12,6 +11,7 @@ import '../codex/codex_service.dart';
 import '../launch_environment.dart';
 import '../model_provider.dart';
 import '../upstream.dart';
+import 'prompt_cache_key.dart';
 import 'translate/openai_chat_request.dart';
 import 'translate/openai_chat_response.dart';
 import 'translate/responses_request.dart';
@@ -408,16 +408,19 @@ class ModelProxy {
     HttpResponse response, {
     required bool countTokens,
   }) async {
-    final base = UpstreamUrls.anthropicBase(provider.baseUrl);
-    if (base == null) {
+    final messages = UpstreamUrls.messages(provider);
+    if (messages == null) {
       return _fail(response, 400, '${provider.name} has no valid base URL');
     }
-    final path = Uri.parse(
-      '$base/v1/messages${countTokens ? '/count_tokens' : ''}',
-    );
-    final url = request.uri.hasQuery
-        ? path.replace(query: request.uri.query)
-        : path;
+    final path = countTokens
+        ? messages.replace(path: '${messages.path}/count_tokens')
+        : messages;
+    // Claude Code's query (`beta=true`) after the endpoint's own.
+    final query = [
+      path.query,
+      request.uri.query,
+    ].where((query) => query.isNotEmpty).join('&');
+    final url = query.isEmpty ? path : path.replace(query: query);
     final client = await _upstream();
     final upstreamRequest = await client.postUrl(url);
     final key = await _key(provider.id);
@@ -512,11 +515,20 @@ class ModelProxy {
     while (true) {
       final account = codex.pick(provider, session: cacheKey, exclude: tried);
       if (account == null) {
-        final message =
-            lastError ??
-            (provider.accounts.isEmpty
-                ? '${provider.name} is not signed in to a ChatGPT account'
-                : 'No ChatGPT account of ${provider.name} can be used now');
+        final back = codex.backAt(provider);
+        final message = back != null
+            ? [
+                'Every ChatGPT account of ${provider.name} is out of quota '
+                    'until ${back.toLocal().toString().substring(0, 16)}',
+                ?lastError,
+              ].join(': ')
+            : lastError ??
+                  (provider.accounts.isEmpty
+                      ? '${provider.name} is not signed in to a ChatGPT account'
+                      : 'No ChatGPT account of ${provider.name} can be used '
+                            'now');
+        // Not asked again and again by Claude Code till then, hours on.
+        if (back != null) response.headers.set('x-should-retry', 'false');
         _onError?.call(provider.id, message);
         await _json(response, lastStatus, anthropicError(lastStatus, message));
         return null;
@@ -713,7 +725,5 @@ String? sessionId(Map<String, Object?> request, {String? header}) {
 /// not told it. Null without one.
 String? promptCacheKey(Map<String, Object?> request, {String? header}) {
   final session = sessionId(request, header: header);
-  if (session == null) return null;
-  final digest = sha256.convert(utf8.encode('baocode:$session'));
-  return 'baocode-${'$digest'.substring(0, 32)}';
+  return session == null ? null : promptCacheKeyOf(session);
 }

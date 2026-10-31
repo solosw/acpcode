@@ -24,6 +24,7 @@ import 'editor_minimap.dart';
 import 'editor_scrollbar.dart';
 import 'editor_surface_controller.dart';
 import 'editor_view_painters.dart';
+import 'editor_view_state.dart';
 import 'editor_view_styles.dart';
 import 'editor_view_theme.dart';
 import 'text_input_window.dart';
@@ -44,6 +45,7 @@ export 'editor_decorations.dart'
         EditorLineAnnotation,
         EditorLineAnnotations,
         EditorUnderlineStyle;
+export 'editor_view_state.dart';
 export 'editor_view_styles.dart';
 export 'editor_view_painters.dart' show EditorRenderWhitespace;
 export 'editor_view_theme.dart' show EditorViewTheme;
@@ -62,10 +64,16 @@ class EditorViewZone {
     this.content,
     this.margin,
     this.interactive = false,
+    this.firstLineNumber,
   });
 
   final int afterLineNumber;
   final double heightInLines;
+
+  /// The number in the line numbers' column by the zone's first line, and
+  /// on by one by each line after it (a unified diff's deleted lines show
+  /// the original's), over [margin].
+  final int? firstLineNumber;
 
   /// Whether [content] and [margin] receive pointer events.
   final bool interactive;
@@ -119,7 +127,10 @@ class EditorSurface extends StatefulWidget {
     this.viewZones = const [],
     this.scrollPosition,
     this.lineNumbers = true,
+    this.lineNumbersMinChars = EditorViewGeometry.lineNumbersMinChars,
+    this.lineDecorationsWidth = EditorViewGeometry.defaultLineDecorationsWidth,
     this.glyphMargin = true,
+    this.glyphMarginWidth,
     this.folding = true,
     this.hiddenLines,
     this.foldingRules,
@@ -130,6 +141,7 @@ class EditorSurface extends StatefulWidget {
     this.renderWhitespace = EditorRenderWhitespace.none,
     this.showMinimap = true,
     this.minimapWidth = 80,
+    this.verticalScrollbar = true,
     this.scrollBeyondLastLine = true,
     this.stopRenderingLineAfter = ViewportLayout.defaultStopRenderingLineAfter,
     this.onKeyEvent,
@@ -212,8 +224,19 @@ class EditorSurface extends StatefulWidget {
 
   final bool lineNumbers;
 
+  /// The fewest digits the line numbers' column has room for
+  /// (`lineNumbersMinChars`).
+  final int lineNumbersMinChars;
+
+  /// The room between the line numbers and the text (`lineDecorationsWidth`),
+  /// besides the folding chevrons'.
+  final double lineDecorationsWidth;
+
   /// Reserves Monaco's glyph margin (one line height) left of line numbers.
   final bool glyphMargin;
+
+  /// The glyph margin's width; a line height when null.
+  final double? glyphMarginWidth;
 
   /// Indentation-based folding with chevrons in the gutter.
   final bool folding;
@@ -238,6 +261,10 @@ class EditorSurface extends StatefulWidget {
 
   /// Minimap on the right; hidden automatically in narrow editors.
   final bool showMinimap;
+
+  /// The vertical scrollbar at the right, with its overview ruler; off
+  /// where something else scrolls the editor (a diff editor's overview).
+  final bool verticalScrollbar;
 
   /// `editor.stopRenderingLineAfter`: longer lines are shaped and painted
   /// only this far, then end in a "Show more (…)" pill (-1 for never).
@@ -326,6 +353,11 @@ abstract interface class EditorSurfaceView {
   /// The caret box at [offset] (one line tall), clipped to nothing.
   Rect? caretRectAt(int offset);
 
+  /// The one-based model [lineNumber]'s rows (at a hidden line, where it
+  /// would be), across the text area: found without laying its text out,
+  /// for what follows many lines as the view scrolls.
+  Rect? lineRectAt(int lineNumber);
+
   /// The union of the boxes of `[start, end)` on the line of [start].
   Rect? rangeRectAt(int start, int end);
 
@@ -347,6 +379,10 @@ abstract interface class EditorSurfaceView {
 
   /// How far the text is scrolled, left and down.
   Offset get scrollOffset;
+
+  /// Where the view is (its scroll as a line, its folds), as given to its
+  /// controller when the surface lets it go; null before the first layout.
+  EditorViewState? get viewState;
 
   /// The first and last one-based model lines with a visible row; null
   /// before the first layout or when none is visible.
@@ -406,6 +442,16 @@ class _EditorSurfaceState extends State<EditorSurface>
   EditorGutterGlyphs? _glyphs;
   double _scrollLeft = 0;
   double _scrollTop = 0;
+
+  /// The view state to show at the next layout ([_showViewState]).
+  EditorViewState? _pendingView;
+
+  /// The controller [_layout] was last made for.
+  EditorSurfaceController? _laidOut;
+
+  /// Whether the view is as it was given back, the caret not moved since:
+  /// focus then leaves it there rather than revealing the caret.
+  bool _viewRestored = false;
 
   // Folding.
   final EditorFoldingModel _folding = EditorFoldingModel();
@@ -505,6 +551,36 @@ class _EditorSurfaceState extends State<EditorSurface>
       position.addListener(_followScrollPosition);
       _scrollLeft = position.value.dx;
       _scrollTop = position.value.dy;
+    } else if (widget.controller.viewState case final view?) {
+      _showViewState(view);
+    }
+  }
+
+  /// Where the view of the controller is, for it to keep: none where a
+  /// [EditorSurface.scrollPosition] keeps the scroll.
+  void _keepViewState(EditorSurface widget) {
+    if (widget.scrollPosition != null) return;
+    widget.controller.viewState = _viewStateOf(widget);
+  }
+
+  /// Shows [view] of the controller: its folds now, its scroll at the next
+  /// layout; the top for none.
+  void _showViewState(EditorViewState? view) {
+    _scrollToCaret = false;
+    _viewRestored = view != null;
+    _pendingView = view;
+    if (view == null) {
+      _scrollTop = 0;
+      _scrollLeft = 0;
+      return;
+    }
+    if (widget.folding &&
+        view.folds.isNotEmpty &&
+        _folding.restoreCollapsed(
+          view.folds,
+          widget.controller.document.snapshot,
+        )) {
+      _foldingVersion++;
     }
   }
 
@@ -544,6 +620,9 @@ class _EditorSurfaceState extends State<EditorSurface>
   void didUpdateWidget(covariant EditorSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      _keepViewState(oldWidget);
+      _wheel?.stop();
+      _fling?.stop();
       oldWidget.controller.removeListener(_onControllerChange);
       widget.controller.addListener(_onControllerChange);
       _foldTimer?.cancel();
@@ -556,6 +635,9 @@ class _EditorSurfaceState extends State<EditorSurface>
       _foldingVersion++;
       _inputWindow = null;
       _sendInputWindow();
+      if (widget.scrollPosition == null) {
+        _showViewState(widget.controller.viewState);
+      }
     }
     if (oldWidget.focusNode != widget.focusNode) {
       _focusNode.removeListener(_onFocusChange);
@@ -580,13 +662,21 @@ class _EditorSurfaceState extends State<EditorSurface>
     if (oldWidget.scrollPosition != widget.scrollPosition) {
       oldWidget.scrollPosition?.removeListener(_followScrollPosition);
       widget.scrollPosition?.addListener(_followScrollPosition);
+      // Scrolled as the new one says.
+      if (widget.scrollPosition case final position?) {
+        _pendingView = null;
+        _scrollLeft = position.value.dx;
+        _scrollTop = position.value.dy;
+      }
     }
   }
 
   void _onFocusChange() {
     // Focus from a pointer press must not reveal the old caret (e.g. when
     // clicking the minimap or a scrollbar); the press sets its own selection.
-    if (_focusNode.hasFocus && !_focusFromPointer) _scrollToCaret = true;
+    if (_focusNode.hasFocus && !_focusFromPointer && !_viewRestored) {
+      _scrollToCaret = true;
+    }
     _focusFromPointer = false;
     if (_focusNode.hasFocus && !widget.readOnly) {
       if (_connection?.attached != true) {
@@ -641,6 +731,7 @@ class _EditorSurfaceState extends State<EditorSurface>
   void _onControllerChange() {
     // While drag-selecting, auto-scroll (not caret reveal) moves the view.
     if (!_isSelectionDrag) _scrollToCaret = true;
+    _viewRestored = false;
     if (!_updatingFromPlatform) _sendInputWindow();
     _restartBlink();
     if (mounted) setState(() {});
@@ -942,6 +1033,28 @@ class _EditorSurfaceState extends State<EditorSurface>
   Offset get scrollOffset => Offset(_scrollLeft, _scrollTop);
 
   @override
+  EditorViewState? get viewState => _viewStateOf(widget);
+
+  /// The view of [widget]'s controller (this surface's, or the one it had).
+  EditorViewState? _viewStateOf(EditorSurface widget) {
+    final layout = _layout;
+    // Not laid out since its controller came.
+    if (layout == null || !identical(_laidOut, widget.controller)) {
+      return widget.controller.viewState;
+    }
+    if (_pendingView case final pending?) return pending;
+    final line = layout.lineNumberAt(_scrollTop);
+    return EditorViewState(
+      firstLine: line,
+      firstLineOffset: _scrollTop - layout.lineTop(line),
+      scrollLeft: _scrollLeft,
+      folds: widget.folding
+          ? _folding.collapsedState(layout.snapshot)
+          : const [],
+    );
+  }
+
+  @override
   ({int first, int last})? get visibleLineRange {
     final lines = _layout?.visibleLineNumbers;
     if (lines == null) return null;
@@ -956,6 +1069,20 @@ class _EditorSurfaceState extends State<EditorSurface>
 
   @override
   Rect? get textArea => _geometry?.contentRect;
+
+  @override
+  Rect? lineRectAt(int lineNumber) {
+    final layout = _layout;
+    final geometry = _geometry;
+    if (layout == null || geometry == null) return null;
+    final content = geometry.contentRect;
+    return Rect.fromLTWH(
+      content.left,
+      content.top + layout.lineTop(lineNumber) - layout.verticalScrollOffset,
+      content.width,
+      layout.lineRowsHeight(lineNumber),
+    );
+  }
 
   @override
   Rect? caretRectAt(int offset) {
@@ -2359,6 +2486,7 @@ class _EditorSurfaceState extends State<EditorSurface>
     ViewportLayout layout,
     EditorViewGeometry geometry, {
     required bool content,
+    EditorGutterGlyphs? glyphs,
   }) {
     final area = content ? geometry.contentRect : geometry.gutterRect;
     if (area.isEmpty) return const [];
@@ -2368,7 +2496,20 @@ class _EditorSurfaceState extends State<EditorSurface>
         : area.width;
     final children = <Widget>[];
     for (final (index, zone) in _zones.indexed) {
-      final child = content ? zone.content : zone.margin;
+      var child = content ? zone.content : zone.margin;
+      if (!content && glyphs != null && geometry.lineNumbersWidth > 0) {
+        if (zone.firstLineNumber case final first?) {
+          child = CustomPaint(
+            foregroundPainter: _ZoneLineNumbersPainter(
+              first: first,
+              glyphs: glyphs,
+              right: geometry.annotationsLeft,
+              lineHeight: layout.lineHeight,
+            ),
+            child: child ?? const SizedBox.expand(),
+          );
+        }
+      }
       if (child == null || index >= layout.zones.length) continue;
       final top = layout.zoneTop(index) - _scrollTop;
       final height = layout.zones[index].height;
@@ -2436,13 +2577,24 @@ class _EditorSurfaceState extends State<EditorSurface>
           folding: widget.folding,
           minimapWidth: widget.showMinimap ? widget.minimapWidth : 0,
           annotationsWidth: widget.lineAnnotations?.width ?? 0,
+          verticalScrollbar: widget.verticalScrollbar,
+          minLineNumberChars: widget.lineNumbersMinChars,
+          glyphMarginWidth: widget.glyphMarginWidth,
+          lineDecorationsWidth: widget.lineDecorationsWidth,
         );
         _geometry = geometry;
         _zones = _computeZones(glyphs.lineHeight);
         final layout = _ensureLayout(snapshot, geometry, direction, scaler);
+        _laidOut = controller;
         if (widget.codeLens != null) _scheduleViewportReport();
         final maxTop = _maxScrollTop(layout);
         final maxLeft = _maxScrollLeft(layout);
+        if (_pendingView case final view?) {
+          _pendingView = null;
+          _scrollTop = (layout.lineTop(view.firstLine) + view.firstLineOffset)
+              .clamp(0.0, maxTop);
+          _scrollLeft = view.scrollLeft.clamp(0.0, maxLeft);
+        }
         if (_scrollTop > maxTop || _scrollLeft > maxLeft) {
           _scrollTop = math.min(_scrollTop, maxTop);
           _scrollLeft = math.min(_scrollLeft, maxLeft);
@@ -2583,7 +2735,7 @@ class _EditorSurfaceState extends State<EditorSurface>
               ),
             ),
             if (_zones.isNotEmpty)
-              ..._zoneWidgets(layout, geometry, content: false),
+              ..._zoneWidgets(layout, geometry, content: false, glyphs: glyphs),
             if (widget.gutterIconBuilder != null &&
                 widget.glyphMargin &&
                 !_decorations.isEmpty)
@@ -2717,6 +2869,7 @@ class _EditorSurfaceState extends State<EditorSurface>
 
   @override
   void dispose() {
+    _keepViewState(widget);
     widget.scrollPosition?.removeListener(_followScrollPosition);
     widget.controller.removeListener(_onControllerChange);
     for (final listenable in _listened(widget)) {
@@ -2739,6 +2892,43 @@ class _EditorSurfaceState extends State<EditorSurface>
     _layout?.dispose();
     super.dispose();
   }
+}
+
+/// [EditorViewZone.firstLineNumber] on: a number by each of a zone's
+/// lines, as the gutter paints its lines'.
+class _ZoneLineNumbersPainter extends CustomPainter {
+  _ZoneLineNumbersPainter({
+    required this.first,
+    required this.glyphs,
+    required this.right,
+    required this.lineHeight,
+  });
+
+  final int first;
+  final EditorGutterGlyphs glyphs;
+  final double right;
+  final double lineHeight;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (lineHeight <= 0) return;
+    final lines = (size.height / lineHeight).round();
+    for (var i = 0; i < lines; i++) {
+      glyphs.paintNumber(
+        canvas,
+        first + i,
+        right,
+        i * lineHeight + (lineHeight - glyphs.lineHeight) / 2,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ZoneLineNumbersPainter old) =>
+      old.first != first ||
+      old.glyphs != glyphs ||
+      old.right != right ||
+      old.lineHeight != lineHeight;
 }
 
 class _EditorTextAction<T extends Intent> extends Action<T> {

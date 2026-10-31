@@ -1237,13 +1237,13 @@ class StashViewState extends State<StashView>
               ),
               for (final project in _controller.workspace.projects)
                 IdeMenuAction(
-                  project.name,
+                  stashProjectLabel(_controller.workspace, project),
                   icon: stashProjectIcon(_controller.workspace, project),
                   keepOpen: true,
                   checkedNow: () => _projects.contains(project.path),
                   onSelected: () => toggle(_projects, project.path),
                 ),
-            ]),
+            ], projects: true),
           ),
         ),
         StashChip(
@@ -1355,6 +1355,7 @@ class StashViewState extends State<StashView>
                       _projectEntries(
                         (project) => unawaited(_setProject(ids, project)),
                       ),
+                      projects: true,
                     ),
                   );
                 },
@@ -1410,6 +1411,7 @@ mixin _StashActions<T extends StatefulWidget> on State<T> {
         note.project = project;
         note.suggestedProject = '';
       }, touch: false);
+      await _controller.forge?.projectChanged(id);
     }
   }
 
@@ -1494,7 +1496,7 @@ mixin _StashActions<T extends StatefulWidget> on State<T> {
       const IdeMenuSeparator(),
       for (final project in _controller.workspace.projects)
         IdeMenuAction(
-          project.name,
+          stashProjectLabel(_controller.workspace, project),
           icon: stashProjectIcon(_controller.workspace, project),
           checked: project.path == current,
           onSelected: () => pick(project.path),
@@ -1581,13 +1583,26 @@ mixin _StashActions<T extends StatefulWidget> on State<T> {
     );
   }
 
-  Future<void> _filterMenu(Rect anchor, List<IdeMenuEntry> entries) =>
-      showIdeMenu(context, anchor: anchor, entries: entries);
+  /// [projects]: a menu of projects, typed over to find one, their icons
+  /// where the checks go.
+  Future<void> _filterMenu(
+    Rect anchor,
+    List<IdeMenuEntry> entries, {
+    bool projects = false,
+  }) => showIdeMenu(
+    context,
+    anchor: anchor,
+    speedSearch: projects,
+    iconsInCheckColumn: projects,
+    entries: entries,
+  );
 
   String? _projectName(String? path) {
     if (path == null || path.isEmpty) return null;
     for (final project in _controller.workspace.projects) {
-      if (project.path == path) return project.name;
+      if (project.path == path) {
+        return stashProjectLabel(_controller.workspace, project);
+      }
     }
     return p.basename(path);
   }
@@ -1624,10 +1639,15 @@ FileView stashFileView(
   id: 'stash',
   matches: (path) => controller.store.idOfFile(path) != null,
   build: (context, path) => switch (controller.store.idOfFile(path)) {
-    final id? => StashDetail(
-      controller: controller,
-      id: id,
-      onOpenAgent: onOpenAgent,
+    // Its text where it was, when its tab shows again.
+    final id? => KeptScrolling(
+      identifier: ('stash', id),
+      builder: (context, scroll) => StashDetail(
+        controller: controller,
+        id: id,
+        onOpenAgent: onOpenAgent,
+        scrollController: scroll,
+      ),
     ),
     null => const SizedBox.shrink(),
   },
@@ -1645,10 +1665,14 @@ class StashDetail extends StatefulWidget {
     this.onOpenLink,
     this.onClose,
     this.autofocus = false,
+    this.scrollController,
   });
 
   final StashController controller;
   final int id;
+
+  /// Scrolls its text; its own when null.
+  final ScrollController? scrollController;
 
   /// Whether its text has the keyboard as it shows (one just made).
   final bool autofocus;
@@ -1844,6 +1868,7 @@ class _StashDetailState extends State<StashDetail> with _StashActions {
                       (project) => unawaited(_setProject([note.id], project)),
                       current: note.project,
                     ),
+                    projects: true,
                   ),
                 ),
               ),
@@ -2017,6 +2042,7 @@ class _StashDetailState extends State<StashDetail> with _StashActions {
             refs: _controller.refs(_openLink),
             placeholder: context.l10n.stashPlaceholder,
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            scrollController: widget.scrollController,
           ),
         ),
       ],

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../ide/terminal/terminal_colors.dart';
 import '../platform/app_platform.dart';
 import 'code_font.dart';
+import 'window_blur.dart';
 import 'workbench_theme.dart' hide ColorScheme;
 
 /// The app's colors, from the workbench's color theme: each is a VS Code
@@ -25,9 +26,10 @@ abstract final class AppColors {
 
   /// Whether the window has the system's material under it, to show
   /// through the sidebar and the conversation: macOS (see
-  /// MainFlutterWindow.swift) and Windows 11 (see win32_window.cpp).
+  /// MainFlutterWindow.swift) and Windows 11 (see win32_window.cpp), once
+  /// Settings → Appearance turns it on ([WindowBlur]).
   static bool get usesSystemMaterial =>
-      AppPlatform.isMacOS || AppPlatform.isWindows11;
+      WindowBlur.available && WindowBlur.enabled.value;
 
   /// Under everything: the material itself where there is one. All but the
   /// sidebar cover it (see Workbench).
@@ -251,8 +253,9 @@ abstract final class AppFonts {
   /// A style for code drawn at [size], as the code's size is moved (see
   /// [CodeFont.sized]), in [mono] with [monoFallbacks], and with ligatures
   /// as [CodeFont.features] says. The caller adds the color and the height.
-  /// For an editor or a file's view, under a [CodeTextScale]; code among
-  /// the window's own text takes [uiCodeStyle].
+  /// For an editor or a file's view, zoomed with the window as the rest is
+  /// (13 at 120% looks 15.6); code among the window's own text takes
+  /// [uiCodeStyle].
   static TextStyle codeStyle(double size) => TextStyle(
     fontFamily: mono,
     fontFamilyFallback: monoFallbacks,

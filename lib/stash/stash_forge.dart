@@ -189,28 +189,54 @@ class StashForge extends ChangeNotifier {
       _inFlight.addAll(started);
       notifyListeners();
     }
-    await Future.wait([
-      for (final url in asking)
-        if (refOf(url) case final ref?)
-          if (accounts.apiOf(ref) case final api?)
-            api
-                .item(ref)
-                .then((item) {
-                  answers[url] = item;
-                  _failures.remove(url);
-                })
-                .catchError((Object error) {
-                  _failures[url] = error is ForgeException
-                      ? error
-                      : ForgeException('$error');
-                })
-                .whenComplete(() => _asked[url] = now),
-    ]);
+    await _eachAtOnce(
+      [
+        for (final url in asking)
+          if (refOf(url) case final ref?)
+            if (accounts.apiOf(ref) case final api?) (url, ref, api),
+      ],
+      (each) async {
+        final (url, ref, api) = each;
+        try {
+          answers[url] = await api.item(ref);
+          _failures.remove(url);
+        } on Object catch (error) {
+          _failures[url] = error is ForgeException
+              ? error
+              : ForgeException('$error');
+        } finally {
+          _asked[url] = now;
+        }
+      },
+    );
     _inFlight.removeAll(started);
     if (_disposed) return;
     _items.addAll(answers);
     notifyListeners();
     await _keep(answers);
+  }
+
+  /// How many requests go to the forges at once: the stashes link many
+  /// issues (more than a thousand, some), and asked all at once a forge
+  /// refuses them (GitHub's secondary rate limit).
+  static const atOnce = 6;
+
+  /// [ask]s each of [items], [atOnce] of them at a time; the rest let be
+  /// once disposed. [ask] throws nothing.
+  Future<void> _eachAtOnce<T>(
+    List<T> items,
+    Future<void> Function(T item) ask,
+  ) async {
+    final next = items.iterator;
+    Future<void> asking() async {
+      while (!_disposed && next.moveNext()) {
+        await ask(next.current);
+      }
+    }
+
+    await Future.wait([
+      for (var i = 0; i < atOnce && i < items.length; i++) asking(),
+    ]);
   }
 
   /// Whether [url] is being asked now (its row shows it loading).
@@ -400,44 +426,44 @@ class StashForge extends ChangeNotifier {
       }
     }
     final said = <String, ({List<ForgeComment> others, DateTime? latest})>{};
-    await Future.wait([
-      for (final MapEntry(key: url, value: link) in asking.entries)
-        if (refOf(url) case final ref?)
-          if (accounts.apiOf(ref) case final api?)
-            () async {
-              final item = answers[url]!;
-              try {
-                final comments = await api.comments(ref, total: item.comments);
-                _comments[url] = (
-                  at: _clock(),
-                  total: item.comments,
-                  comments: Future.value(comments),
-                );
-                final after = DateTime.tryParse(link.commentAt ?? '');
-                final fresh = after == null
-                    ? comments.sublist(
-                        max(
-                          0,
-                          comments.length - (item.comments - link.comments!),
-                        ),
-                      )
-                    : [
-                        for (final comment in comments)
-                          if (comment.created?.isAfter(after) ?? false) comment,
-                      ];
-                final me = _me(ref)?.toLowerCase();
-                said[url] = (
-                  others: [
-                    for (final comment in fresh)
-                      if (comment.author.toLowerCase() != me) comment,
-                  ],
-                  latest: comments.lastOrNull?.created ?? after,
-                );
-              } on Object {
-                // Told by their number.
-              }
-            }(),
-    ]);
+    await _eachAtOnce(
+      [
+        for (final MapEntry(key: url, value: link) in asking.entries)
+          if (refOf(url) case final ref?)
+            if (accounts.apiOf(ref) case final api?) (url, link, ref, api),
+      ],
+      (each) async {
+        final (url, link, ref, api) = each;
+        final item = answers[url]!;
+        try {
+          final comments = await api.comments(ref, total: item.comments);
+          _comments[url] = (
+            at: _clock(),
+            total: item.comments,
+            comments: Future.value(comments),
+          );
+          final after = DateTime.tryParse(link.commentAt ?? '');
+          final fresh = after == null
+              ? comments.sublist(
+                  max(0, comments.length - (item.comments - link.comments!)),
+                )
+              : [
+                  for (final comment in comments)
+                    if (comment.created?.isAfter(after) ?? false) comment,
+                ];
+          final me = _me(ref)?.toLowerCase();
+          said[url] = (
+            others: [
+              for (final comment in fresh)
+                if (comment.author.toLowerCase() != me) comment,
+            ],
+            latest: comments.lastOrNull?.created ?? after,
+          );
+        } on Object {
+          // Told by their number.
+        }
+      },
+    );
     return said;
   }
 
@@ -1005,6 +1031,7 @@ class StashForge extends ChangeNotifier {
         ..title = title
         ..issue = url
         ..local = false
+        ..letGo = null
         ..synced = StashNote.syncHash(title, note.issueText)
         ..syncedRemote = _remoteHash(item);
       note.issues.removeWhere((link) => link.url == url);
@@ -1077,6 +1104,7 @@ class StashForge extends ChangeNotifier {
       note
         ..issue = null
         ..local = true
+        ..letGo = null
         ..synced = null
         ..syncedRemote = null;
       if (own != null) note.issues.removeWhere((link) => link.url == own);
@@ -1086,6 +1114,75 @@ class StashForge extends ChangeNotifier {
   /// [id]'s stash may be made an issue again (see [keepLocal]).
   Future<void> allowIssue(int id) =>
       store.update(id, (note) => note.local = false, touch: false);
+
+  /// [id]'s stash's project changed. Its issue is let go where the project
+  /// is of none of the issue's repository (or the stash is of no project
+  /// any more): neither shown nor kept in step, and not made a stash again,
+  /// as [keepLocal] has it; but kept as it was ([StashNote.letGo]), and the
+  /// stash's again once its project is one of the issue's. A project
+  /// picked by mistake and put back loses nothing.
+  Future<void> projectChanged(int id) async {
+    final note = store.byId(id);
+    final url = note?.ownIssue ?? note?.letGo?.link.url;
+    if (note == null || url == null) return;
+    final project = note.project;
+    final repo = refOf(url)?.repo;
+    final fits =
+        project != null &&
+        (repo == null || (await reposOf(project)).contains(repo));
+    final now = store.byId(id);
+    // Changed again meanwhile: that change's to tell.
+    if (now == null || now.project != project) return;
+    if (now.ownIssue != null) {
+      if (!fits) await _letGo(id);
+    } else if (fits && now.letGo != null) {
+      await _takeBack(id);
+    }
+  }
+
+  Future<void> _letGo(int id) async {
+    final own = store.byId(id)?.ownIssue;
+    if (own == null) return;
+    await store.ignoreIssue(own);
+    await store.reload();
+    await store.update(id, (note) {
+      note
+        ..letGo = StashLetGo(
+          link: note.issueOf(own) ?? StashIssueLink(url: own),
+          synced: note.synced,
+          syncedRemote: note.syncedRemote,
+        )
+        ..issue = null
+        ..local = true
+        ..synced = null
+        ..syncedRemote = null;
+      note.issues.removeWhere((link) => link.url == own);
+    }, touch: false);
+  }
+
+  Future<void> _takeBack(int id) async {
+    final letGo = store.byId(id)?.letGo;
+    if (letGo == null) return;
+    final url = letGo.link.url;
+    // Made a stash again meanwhile (picked by hand): that one's now.
+    if (store.notes.any((note) => note.ownIssue == url)) {
+      await store.update(id, (note) => note.letGo = null, touch: false);
+      return;
+    }
+    await store.unignoreIssue(url);
+    await store.reload();
+    await store.update(id, (note) {
+      note
+        ..issue = url
+        ..local = false
+        ..letGo = null
+        ..synced = letGo.synced
+        ..syncedRemote = letGo.syncedRemote;
+      note.issues
+        ..removeWhere((link) => link.url == url)
+        ..insert(0, letGo.link);
+    }, touch: false);
+  }
 
   /// [text] as it goes to [repo]'s issue: its pictures (in the stash's
   /// folder) put there and linked by their address, its other files'

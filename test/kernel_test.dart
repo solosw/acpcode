@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart' show Icons;
+import 'package:flutter/material.dart' show ChangeNotifier, Icons;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bao_remote/claude.dart'
     show ClaudeHistoryPage, ClaudeNotInstalled;
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/widgets/agent_step.dart' show AgentStep;
+import 'package:baocode/models/model_provider.dart' show ModelProvider;
+import 'package:baocode/models/model_providers.dart' show ModelProviders;
 import 'package:baocode/chat/widgets/tool_call_row.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
@@ -23,6 +26,7 @@ import 'package:baocode/kernel/claude_code/turn_stats.dart';
 import 'package:baocode/kernel/codex/codex_kernel.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
 import 'package:baocode/kernel/commit_attribution.dart';
+import 'package:baocode/kernel/extension_switches.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
@@ -451,6 +455,224 @@ void main() {
       expect(toolVerb(ToolKind.message), 'Said');
     });
 
+    test('todos written read as a step: the list its text', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      void call(
+        String id,
+        String name,
+        Map<String, Object?> input,
+        String result, {
+        Map<String, Object?>? structured,
+      }) => translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-$id',
+            'role': 'assistant',
+            'content': [
+              {'type': 'tool_use', 'id': id, 'name': name, 'input': input},
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': id, 'content': result},
+            ],
+          },
+          'tool_use_result': ?structured,
+        });
+      call('t1', 'TodoWrite', {
+        'todos': [
+          {
+            'content': 'Read it',
+            'status': 'completed',
+            'activeForm': 'Reading',
+          },
+          {
+            'content': 'Fix it',
+            'status': 'in_progress',
+            'activeForm': 'Fixing',
+          },
+          {'content': 'Test it', 'status': 'pending', 'activeForm': 'Testing'},
+        ],
+      }, 'Todos have been modified successfully.');
+      call(
+        't2',
+        'TaskCreate',
+        {'subject': 'Ship it'},
+        'Task #1 created successfully: Ship it',
+        structured: {
+          'task': {'id': '1', 'subject': 'Ship it'},
+        },
+      );
+      call('t3', 'TaskUpdate', {
+        'taskId': '1',
+        'status': 'completed',
+      }, 'Updated task #1 status');
+      call('t4', 'TaskUpdate', {
+        'taskId': '7',
+        'status': 'deleted',
+      }, 'Updated task #7 deleted');
+      final items = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<ToolCallItem>().toList();
+      expect(items.map((item) => (item.kind, item.target, item.output)), [
+        (ToolKind.todo, 'Fix it', '☒ Read it\n◐ Fix it\n☐ Test it'),
+        (ToolKind.todo, 'Ship it', 'Task #1 created successfully: Ship it'),
+        (ToolKind.todo, 'Ship it', 'Updated task #1 status'),
+        (ToolKind.todo, '#7', 'Updated task #7 deleted'),
+      ]);
+      // What each did, said by its line.
+      expect(
+        [
+          for (final item in items)
+            todoStep(item.tool, item.input, item.target),
+        ],
+        [
+          (verb: 'Todos 1/3', object: 'Fix it', detail: null),
+          (verb: 'Added todo', object: 'Ship it', detail: null),
+          (verb: 'Completed todo', object: 'Ship it', detail: null),
+          (verb: 'Removed todo', object: '#7', detail: null),
+        ],
+      );
+      expect(
+        todoStep('TodoWrite', {
+          'todos': [
+            {'content': 'Read it', 'status': 'completed'},
+          ],
+        }, ''),
+        (verb: 'Todos 1/1', object: 'All done', detail: null),
+      );
+      // A list read: from the lines it returned.
+      const listed =
+          '#1 [completed] Ship it\n'
+          '#2 [in_progress] Tag it (alice)\n'
+          '#3 [pending] Tell them [blocked by #2]';
+      expect(todoItems('TaskList', const {}, listed), [
+        (content: 'Ship it', status: 'completed'),
+        (content: 'Tag it (alice)', status: 'in_progress'),
+        (content: 'Tell them [blocked by #2]', status: 'pending'),
+      ]);
+      expect(todoStep('TaskList', const {}, '', output: listed), (
+        verb: 'Checked todos',
+        object: 'Tag it (alice)',
+        detail: '1/3',
+      ));
+      expect(
+        todoStep('TaskList', const {}, '', output: '#1 [completed] Ship it'),
+        (verb: 'Checked todos', object: 'All done', detail: '1/1'),
+      );
+      expect(todoStep('TaskList', const {}, '', output: 'No tasks found'), (
+        verb: 'Checked todos',
+        object: 'List empty',
+        detail: null,
+      ));
+    });
+
+    test('a subagent shows the model its messages ran on, as it runs; '
+        'the one the CLI resolved only without them', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      void start(String id) => translator.translate({
+        'type': 'assistant',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': 'msg-$id',
+          'role': 'assistant',
+          'content': [
+            {
+              'type': 'tool_use',
+              'id': id,
+              'name': 'Agent',
+              'input': {'description': 'Look $id', 'prompt': 'look'},
+            },
+          ],
+        },
+      });
+      void said(String parent, String model) => translator.translate({
+        'type': 'assistant',
+        'parent_tool_use_id': parent,
+        'message': {
+          'id': 'msg-$parent-$model',
+          'role': 'assistant',
+          'model': model,
+          'content': [
+            {'type': 'text', 'text': 'looking'},
+          ],
+        },
+      });
+      void done(String id) => translator.translate({
+        'type': 'user',
+        'parent_tool_use_id': null,
+        'message': {
+          'role': 'user',
+          'content': [
+            {'type': 'tool_result', 'tool_use_id': id, 'content': 'ok'},
+          ],
+        },
+        'tool_use_result': {'resolvedModel': 'claude-sonnet-5-5'},
+      });
+      String? model(String id) => [
+        for (final (key, item) in transcript.liveItems)
+          if (key == id && item is AgentItem) item.model,
+      ].single;
+
+      start('a1');
+      expect(model('a1'), isNull);
+      said('a1', 'claude-haiku-5-5');
+      expect(model('a1'), 'claude-haiku-5-5');
+      // A synthetic message (an error) is no model's.
+      said('a1', '<synthetic>');
+      done('a1');
+      expect(model('a1'), 'claude-haiku-5-5');
+
+      start('a2');
+      done('a2');
+      expect(model('a2'), 'claude-sonnet-5-5');
+    });
+
+    test('a subagent\'s model reads as people read it', () {
+      final providers = ModelProviders.memory(
+        providers: [
+          ModelProvider.fromJson({
+            'id': 'od',
+            'name': 'open-design',
+            'protocol': 'openai',
+            'baseUrl': 'https://example.com/v1',
+            'models': [
+              {'id': 'deepseek-v4.1-flash', 'label': 'DeepSeek V4.1 Flash'},
+            ],
+          })!,
+        ],
+      );
+      ({String label, String? upstream}) name(String model) =>
+          AgentStep.modelName(model, providers: providers);
+      expect(name('deepseek-v4.1-flash'), (
+        label: 'DeepSeek V4.1 Flash',
+        upstream: 'open-design',
+      ));
+      expect(name('@od/deepseek-v4.1-flash').label, 'DeepSeek V4.1 Flash');
+      expect(name('claude-opus-5-5'), (label: 'Opus 5.5', upstream: null));
+      expect(name('claude-haiku-4-5-20251001').label, 'Haiku 4.5');
+      expect(name('claude-3-5-sonnet-20241022').label, 'Sonnet 3.5');
+      expect(name('claude-sonnet-4-20250514[1m]').label, 'Sonnet 4');
+      expect(name('glm-5.3').label, 'glm-5.3');
+    });
+
     test('a notebook edit shows its cell changed, line by line', () {
       final transcript = Transcript();
       var seq = 0;
@@ -693,18 +915,19 @@ void main() {
         for (final event in events.whereType<FileEdited>()) event.original,
       ];
       expect(originals.first, isNull);
-      expect(
-        (originals.last! as OriginalByEdits).edits,
-        [(before: 'x', after: 'y\nz')],
-      );
+      expect((originals.last! as OriginalByEdits).edits, [
+        (before: 'x', after: 'y\nz'),
+      ]);
       expect(events.whereType<FilesMayHaveChanged>(), isEmpty);
 
       call('b1', 'Bash', {'command': 'echo c > c.txt'}, parent: 'agent-1');
       expect(events.whereType<FilesMayHaveChanged>(), hasLength(1));
-      call('agent-1', 'Agent', {
-        'description': 'Make files',
-        'prompt': 'make them',
-      }, result: {'status': 'completed', 'content': []});
+      call(
+        'agent-1',
+        'Agent',
+        {'description': 'Make files', 'prompt': 'make them'},
+        result: {'status': 'completed', 'content': []},
+      );
       expect(events.whereType<FilesMayHaveChanged>(), hasLength(2));
 
       // A kept session's, replayed: nothing to look at.
@@ -1052,6 +1275,13 @@ void main() {
       expect(worked('p1'), const Duration(seconds: 45));
       expect(worked('p2'), isNull, reason: 'stopped');
       expect(worked('p3'), const Duration(seconds: 3));
+      // When each was sent, as kept: for a chat app's times.
+      expect(
+        (transcript.itemAt(
+          transcript.indexOf('p2')!,
+        ) as UserMessageItem).sentAt,
+        DateTime.utc(2026, 10, 1, 10, 0, 50).toLocal(),
+      );
     });
 
     test('translating a message twice changes nothing', () {
@@ -1197,6 +1427,62 @@ void main() {
         kernel.dispose();
       },
     );
+
+    test("a model's usage given as strings counts as the numbers", () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      Future<void> stream(Map<String, Object?> event) async {
+        cli.push({'type': 'stream_event', 'event': event});
+        await pumpEventQueue();
+      }
+
+      await stream({
+        'type': 'message_start',
+        'message': {
+          'id': 'm1',
+          'usage': {
+            'input_tokens': '10',
+            'cache_read_input_tokens': '1000',
+            'output_tokens': 'n/a',
+          },
+        },
+      });
+      await stream({
+        'type': 'content_block_start',
+        'index': '0',
+        'content_block': {'type': 'text', 'text': ''},
+      });
+      await stream({
+        'type': 'content_block_delta',
+        'index': '0',
+        'delta': {'type': 'text_delta', 'text': 'Hi.'},
+      });
+      await stream({'type': 'content_block_stop', 'index': '0'});
+      await stream({
+        'type': 'message_delta',
+        'usage': {'output_tokens': '40'},
+      });
+      await stream({'type': 'message_stop'});
+      expect(transcript.output?.tokens, 40);
+      cli.push({
+        'type': 'result',
+        'subtype': 'success',
+        'usage': {'input_tokens': '10', 'output_tokens': '40'},
+      });
+      await pumpEventQueue();
+      final usage = (transcript.itemAt(
+        transcript.indexOf('u1')!,
+      ) as UserMessageItem).usage!;
+      expect(usage.inputTokens, 1010);
+      expect(usage.outputTokens, 40);
+      expect([
+        for (final (_, item) in transcript.liveItems)
+          if (item is NoticeItem && item.kind == NoticeKind.error) item,
+      ], isEmpty);
+      kernel.dispose();
+    });
 
     test('starts on first send, then writes the message', () async {
       final cli = FakeCli();
@@ -1389,8 +1675,8 @@ void main() {
         await pumpEventQueue();
         final content = (cli.users.last['message'] as Map)['content'] as List;
         expect(content, [
-          {'type': 'text', 'text': 'Carry out the plan'},
           {'type': 'text', 'text': ClaudeTranslator.planStartedNote(planFile)},
+          {'type': 'text', 'text': 'Carry out the plan'},
         ]);
         // Only the message that starts it says so.
         kernel.send(const KernelTurn(id: 'u3', text: 'And test it'));
@@ -1463,13 +1749,57 @@ void main() {
       await pumpEventQueue();
       final content = (cli.users.last['message'] as Map)['content'] as List;
       expect(
-        (content.last as Map)['text'],
+        (content.first as Map)['text'],
         ClaudeTranslator.planStartedNote(''),
       );
       expect(
         ClaudeTranslator.planStartedNote(''),
         contains('Carry out the plan you put to them now.'),
       );
+      kernel.dispose();
+    });
+
+    test('full access with no one to ask approves what the CLI would ask '
+        'all the same', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        context: KernelContext(
+          cwd: '/p',
+          settings: const {'permission': 'bypassPermissions'},
+          workspace: () =>
+              const KernelWorkspace(folders: [], approvesAll: true),
+        ),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      const command = {'command': 'rm -rf build', 'description': 'Clean'};
+      for (final (i, why) in const [
+        {'decision_reason_type': 'safetyCheck'},
+        {'decision_reason_type': 'safetyCheck', 'classifier_approvable': false},
+        {
+          'decision_reason_type': 'rule',
+          'matched_ask_rule': {'toolName': 'Bash'},
+        },
+        {'decision_reason_code': 'outside_reads_blocked'},
+      ].indexed) {
+        cli.push({
+          'type': 'control_request',
+          'request_id': 'r$i',
+          'request': {
+            'subtype': 'can_use_tool',
+            'tool_name': 'Bash',
+            'input': command,
+            ...why,
+          },
+        });
+        await pumpEventQueue();
+        expect(transcript.pendingInteraction, isNull);
+        expect(cli.responses.last, {
+          'behavior': 'allow',
+          'updatedInput': command,
+        });
+      }
       kernel.dispose();
     });
 
@@ -1732,6 +2062,60 @@ void main() {
       kernel.dispose();
     });
 
+    test('skills, MCP servers and tools switched off: given at start, and '
+        'again whole as they change', () async {
+      final changes = ChangeNotifier();
+      var switches = const ExtensionSwitches(
+        disabledSkills: {'review'},
+        disabledServers: {'my.server'},
+      );
+      ExtensionSwitches.current = () => switches;
+      ExtensionSwitches.changes = changes;
+      addTearDown(() {
+        ExtensionSwitches.current = () => ExtensionSwitches.none;
+        ExtensionSwitches.changes = null;
+      });
+      final cli = FakeCli();
+      final launches = <ClaudeLaunch>[];
+      final kernel = ClaudeCodeKernel(
+        MockKernels.claudeCode,
+        const KernelContext(cwd: '/p'),
+        start: (launch) async {
+          launches.add(launch);
+          return cli;
+        },
+      );
+      kernel.prepare();
+      await pumpEventQueue();
+      final started = launches.single.settings;
+      final allow = (started['permissions'] as Map)['allow'];
+      expect((started['permissions'] as Map)['deny'], ['mcp__my_server']);
+      expect(started['skillOverrides'], {'review': 'off'});
+      expect(cli.requests('apply_flag_settings'), isEmpty);
+
+      // One back on, a tool off: all of it sent (the rules it started with
+      // kept), what is on now left out.
+      switches = switches
+          .withSkills(['review'], true)
+          .withServer('my.server', true)
+          .withTool('git', 'push', false);
+      changes.notifyListeners();
+      await pumpEventQueue();
+      expect(cli.requests('apply_flag_settings').single['settings'], {
+        'permissions': {
+          'allow': allow,
+          'deny': ['mcp__git__push'],
+        },
+        'skillOverrides': <String, String>{},
+      });
+      // The same again: nothing sent.
+      changes.notifyListeners();
+      await pumpEventQueue();
+      expect(cli.requests('apply_flag_settings'), hasLength(1));
+      kernel.dispose();
+      changes.dispose();
+    });
+
     test('Plan\'s commands are left to the classifier with the approvals '
         'that approve for the user', () async {
       final cli = FakeCli();
@@ -1767,6 +2151,78 @@ void main() {
       expect(sent(), [false, true, false]);
       kernel.dispose();
     });
+
+    test(
+      'a queued message sent now while the process starts is not lost',
+      () async {
+        final cli = FakeCli();
+        final started = Completer<ClaudeCodeTransport>();
+        final kernel = ClaudeCodeKernel(
+          MockKernels.claudeCode,
+          const KernelContext(cwd: '/p'),
+          start: (_) => started.future,
+        );
+        addTearDown(kernel.dispose);
+        final transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        kernel
+          ..send(const KernelTurn(id: 'u1', text: 'first'))
+          ..send(const KernelTurn(id: 'u2', text: 'second'));
+        await pumpEventQueue();
+        expect(kernel.health.status, KernelHealthStatus.starting);
+        expect(transcript.queued.single.$1, 'u2');
+
+        // The queue is already shown, even though the process is not ready.
+        // Pressing twice must not send the message or interrupt twice.
+        kernel
+          ..sendQueuedNow('u2')
+          ..sendQueuedNow('u2');
+        started.complete(cli);
+        await pumpEventQueue();
+
+        expect(cli.users.map((message) => message['uuid']), ['u1', 'u2']);
+        expect(cli.requests('interrupt'), hasLength(1));
+        expect(transcript.activeTurn, isNull);
+        cli.push({
+          'type': 'command_lifecycle',
+          'command_uuid': 'u2',
+          'state': 'started',
+        });
+        await pumpEventQueue();
+        expect(transcript.activeTurn, 'u2');
+        expect(transcript.queued, isEmpty);
+      },
+    );
+
+    test(
+      'a queued message sent now while initialization waits is not lost',
+      () async {
+        final cli = _SilentCli();
+        final (:kernel, :transcript, events: _) = claude(cli);
+        addTearDown(kernel.dispose);
+        kernel
+          ..send(const KernelTurn(id: 'u1', text: 'first'))
+          ..send(const KernelTurn(id: 'u2', text: 'second'));
+        await pumpEventQueue();
+        expect(kernel.health.status, KernelHealthStatus.starting);
+        final initialize = cli.written.single;
+
+        kernel.sendQueuedNow('u2');
+        cli.push({
+          'type': 'control_response',
+          'response': {
+            'subtype': 'success',
+            'request_id': initialize['request_id'],
+            'response': FakeCli._initialize,
+          },
+        });
+        await pumpEventQueue();
+
+        expect(cli.users.map((message) => message['uuid']), ['u1', 'u2']);
+        expect(cli.requests('interrupt'), hasLength(1));
+        expect(transcript.activeTurn, isNull);
+      },
+    );
 
     test('messages sent while busy queue, start in turn, or are taken '
         'back', () async {
@@ -2730,6 +3186,50 @@ void main() {
         },
       );
 
+      test("reads a model's usage given as strings", () async {
+        final kernel = open(
+          (session, {required turns, before}) async => ClaudeHistoryPage([
+            prompt('u1'),
+            {
+              ...answer('u1', 0),
+              'message': {
+                ...answer('u1', 0)['message']! as Map<String, Object?>,
+                'usage': {
+                  'input_tokens': '1',
+                  'cache_read_input_tokens': 'none',
+                  'cache_creation_input_tokens': '300',
+                },
+              },
+            },
+            // As some write the stream too.
+            {
+              'type': 'stream_event',
+              'event': {
+                'type': 'message_start',
+                'message': {
+                  'id': 'm-x',
+                  'usage': {'input_tokens': '1', 'output_tokens': '2'},
+                },
+              },
+            },
+            {
+              'type': 'stream_event',
+              'event': {'type': 'message_stop'},
+            },
+          ]),
+        );
+        final transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        await pumpEventQueue();
+        expect(prompts(transcript), ['u1']);
+        expect([
+          for (final (_, item) in transcript.liveItems)
+            if (item is NoticeItem) item.text,
+        ], isEmpty);
+        expect(transcript.stats!.cache!.conversation.written, 300);
+        kernel.dispose();
+      });
+
       test('turns kept show as their footers did, on every page; those '
           'not kept as before', () async {
         const usage = TurnUsage(
@@ -3514,6 +4014,8 @@ void main() {
         for (final part
             in ((cli.users[i]['message'] as Map)['content'] as List)
                 .cast<Map<Object?, Object?>>()
+                .toList()
+                .reversed
                 .skip(1))
           part['text'],
       ];
@@ -3532,7 +4034,7 @@ void main() {
       await pumpEventQueue();
       final content = ((cli.users.single['message'] as Map)['content'] as List)
           .cast<Map<Object?, Object?>>();
-      expect(content.first['text'], 'why is it slow?');
+      expect(content.last['text'], 'why is it slow?');
       expect(notes(0), [contains('in Ask mode')]);
       cli.push({...cli.users.single, 'isReplay': true});
       await pumpEventQueue();
@@ -3588,6 +4090,61 @@ void main() {
         isA<KernelOption>().having((o) => o.caution, 'caution', isTrue),
       );
       kernel.dispose();
+    });
+
+    test('the last turn\'s reply: all the agent said since the last '
+        'message, in order', () async {
+      final cli = FakeCli();
+      final descriptor = KernelDescriptor(
+        id: 'claude-code',
+        label: 'Claude Code',
+        icon: Icons.auto_awesome_rounded,
+        description: '',
+        create: (context) => ClaudeCodeKernel(
+          MockKernels.claudeCode,
+          context,
+          start: (_) async => cli,
+        ),
+      );
+      final session = ChatSession(
+        kernel: descriptor,
+        kernels: [descriptor],
+        historyCount: 0,
+      );
+      addTearDown(session.dispose);
+      Future<void> say(String id, String text) async {
+        cli.push({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': id,
+            'role': 'assistant',
+            'content': [
+              {'type': 'text', 'text': text},
+            ],
+          },
+        });
+        await pumpEventQueue();
+      }
+
+      expect(session.lastTurnReply, isNull);
+      session.send(const ComposerMessage(text: 'one'));
+      await pumpEventQueue();
+      await say('m1', 'Old answer.');
+      cli.push({
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': false,
+        'session_id': 's',
+      });
+      await pumpEventQueue();
+      expect(session.lastTurnReply, 'Old answer.');
+      session.send(const ComposerMessage(text: 'two'));
+      await pumpEventQueue();
+      expect(session.lastTurnReply, isNull);
+      await say('m2', 'Looking.');
+      await say('m3', 'Option 1 or 2?');
+      expect(session.lastTurnReply, 'Looking.\n\nOption 1 or 2?');
     });
 
     test('a status row stays at the end all through a turn, hidden where '
@@ -4818,6 +5375,33 @@ void main() {
         CliLocator.runnable(file('empty', const []).path, windows: false),
         isFalse,
       );
+    });
+
+    test('under WSL, Windows\' own build is passed over', () {
+      // As WSL 2 mounts the drives.
+      const mounts =
+          'none /dev/shm tmpfs rw,nosuid,nodev 0 0\n'
+          'drivers /usr/lib/wsl/drivers 9p ro,aname=drivers;fmask=222 0 0\n'
+          'C:\\134 /mnt/c 9p rw,noatime,aname=drvfs;path=C:\\;uid=1000 0 0\n'
+          'E: /mnt/e drvfs rw,noatime 0 0\n';
+      final drives = CliLocator.windowsDrivesIn(mounts);
+      expect(drives, ['/mnt/c', '/mnt/e']);
+      expect(
+        CliLocator.onWindowsDrive(
+          '/mnt/c/Users/me/AppData/Roaming/npm/claude',
+          drives: drives,
+        ),
+        isTrue,
+      );
+      expect(
+        CliLocator.onWindowsDrive('/home/me/.local/bin/claude', drives: drives),
+        isFalse,
+      );
+      expect(
+        CliLocator.onWindowsDrive('/mnt/cache/claude', drives: drives),
+        isFalse,
+      );
+      expect(CliLocator.onWindowsDrive('/mnt/c/claude', drives: []), isFalse);
     });
   });
 

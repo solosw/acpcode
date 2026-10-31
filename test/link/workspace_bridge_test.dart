@@ -1,7 +1,11 @@
+import 'dart:convert';
+
 import 'package:bao_link/bao_link.dart';
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:baocode/chat/chat_session.dart' show ComposerMessage;
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/bots/bot_folders.dart';
+import 'package:baocode/bots/bots.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/link/chat_codec.dart';
@@ -42,6 +46,7 @@ void main() {
   final asked = <String?>[];
 
   late Workspace workspace;
+  late FakeCli cli;
   late WorkspaceBridge bridge;
   late LinkPeer phone;
   late String id;
@@ -67,7 +72,7 @@ void main() {
             cwd: '/p',
           ),
         ),
-        start: (_) async => FakeCli(),
+        start: (_) async => cli = FakeCli(),
         readHistoryPage: (session, {required turns, before}) async {
           asked.add(before);
           return switch (before) {
@@ -87,18 +92,11 @@ void main() {
     await pumpEventQueue();
     id = WorkspaceBridge.idOf(thread);
 
-    final (a, b) = MemoryLinkSocket.pair();
-    final desktop = LinkIdentity.generate();
-    final accepted = SecureChannel.accept(b, identity: desktop);
-    final connected = await SecureChannel.connect(
-      a,
-      identity: LinkIdentity.generate(),
-      serverKey: desktop.publicKey,
-    );
-    phone = LinkPeer(connected);
+    final LinkPeer desktop;
+    (phone, desktop) = await peers();
     bridge = WorkspaceBridge(
       workspace: workspace,
-      peer: LinkPeer(await accepted),
+      peer: desktop,
       device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
       throttle: const Duration(milliseconds: 10),
     )..start();
@@ -275,6 +273,96 @@ void main() {
     });
   });
 
+  test('streamed text goes as what was added, and adds up the same', () async {
+    final mirror = LinkSessionMirror()
+      ..opened(
+        jsonDecode(
+          jsonEncode(await bridge.handle(LinkMethods.open, {'session': id})),
+        ) as Map<String, Object?>,
+      );
+    final wire = <Map<String, Object?>>[];
+    final sub = phone.events
+        .where((e) => e.name == LinkEvents.session)
+        .listen((e) => wire.add(e.data! as Map<String, Object?>));
+    addTearDown(sub.cancel);
+    await bridge.handle(LinkMethods.send, {'session': id, 'text': 'go'});
+    await settle();
+    Future<void> stream(Map<String, Object?> event) async {
+      cli.push({'type': 'stream_event', 'event': event});
+      await settle();
+    }
+
+    await stream({
+      'type': 'message_start',
+      'message': {
+        'id': 'm-live',
+        'usage': {'input_tokens': 1},
+      },
+    });
+    await stream({
+      'type': 'content_block_start',
+      'index': 0,
+      'content_block': {'type': 'text', 'text': ''},
+    });
+    for (final words in ['Once ', 'upon ', 'a ', 'time']) {
+      await stream({
+        'type': 'content_block_delta',
+        'index': 0,
+        'delta': {'type': 'text_delta', 'text': words},
+      });
+    }
+    final whole = [for (final update in wire) mirror.apply(update)];
+    expect(whole, everyElement(isNotNull));
+    expect(wire.where((w) => w['append'] != null), isNotEmpty);
+    expect(wire.skip(1).where((w) => w['partial'] != true), isEmpty);
+
+    final fresh = await open();
+    final last = whole.last!;
+    expect(last['count'], fresh.count);
+    final items = last['items']! as List;
+    expect(
+      jsonEncode(items),
+      jsonEncode(fresh.items.sublist(fresh.count - items.length)),
+    );
+    expect(jsonEncode(fresh.items), contains('Once upon a time'));
+  });
+
+  test('a task\'s output is watched: what was added, then all again', () async {
+    var text = 'one\n';
+    final sent = <LinkOutput>[];
+    final watch = OutputWatch(
+      session: 's',
+      task: 't',
+      text: text,
+      read: () async => text,
+      emit: sent.add,
+      every: const Duration(milliseconds: 5),
+    );
+    addTearDown(watch.dispose);
+    text += 'two\n';
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(sent.single.text, 'two\n');
+    expect(sent.single.offset, text.length);
+    expect(sent.single.reset, isFalse);
+
+    // Cut and written again: the phone is sent its tail whole.
+    text = 'fresh\n';
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(sent.last.reset, isTrue);
+    expect(sent.last.text, 'fresh\n');
+
+    // More at once than the phone keeps: its tail, whole.
+    text += 'x' * (LinkLimits.output + 10);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(sent.last.reset, isTrue);
+    expect(sent.last.text.length, LinkLimits.output);
+    final count = sent.length;
+    watch.dispose();
+    text += 'more';
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(sent, hasLength(count));
+  });
+
   test('a plan is not started while none awaits', () async {
     await open();
     expect(
@@ -288,4 +376,200 @@ void main() {
       ),
     );
   });
+
+  group('edit', () {
+    test('an answer is not a message to edit', () async {
+      await open();
+      expect(
+        bridge.handle(LinkMethods.edit, {
+          'session': id,
+          'index': 1,
+          'text': 'again',
+        }),
+        throwsA(
+          isA<LinkRemoteException>().having(
+            (e) => e.code,
+            'code',
+            LinkErrors.notFound,
+          ),
+        ),
+      );
+    });
+
+    test('the index is counted from the phone\'s first item', () async {
+      // a5, u6, a6: the phone's 1 is the session's u6.
+      final first = await open(3);
+      expect(texts(first.items), ['-', 'u6', '-']);
+      await bridge.handle(LinkMethods.edit, {
+        'session': id,
+        'index': 1,
+        'text': 'u6 again',
+      });
+      // Counted from the session's first, its 1 would be an answer.
+      expect(
+        bridge.handle(LinkMethods.edit, {
+          'session': id,
+          'index': 0,
+          'text': 'a5 is no message',
+        }),
+        throwsA(isA<LinkRemoteException>()),
+      );
+    });
+  });
+
+  group('image', () {
+    test('a file that is not a picture is refused', () async {
+      expect(
+        bridge.handle(LinkMethods.image, {'project': '/p', 'path': 'a.txt'}),
+        throwsA(isA<LinkRemoteException>()),
+      );
+    });
+
+    test('a picture not there is not found', () async {
+      expect(
+        bridge.handle(LinkMethods.image, {'project': '/p', 'path': 'x.png'}),
+        throwsA(
+          isA<LinkRemoteException>().having(
+            (e) => e.code,
+            'code',
+            LinkErrors.notFound,
+          ),
+        ),
+      );
+    });
+  });
+
+  test('a bot\'s agent: its model the user picks, not how it asks', () async {
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'claude-code',
+      label: 'Claude Code',
+      icon: Icons.auto_awesome_rounded,
+      description: '',
+      create: (context) =>
+          ClaudeCodeKernel(descriptor, context, start: (_) async => FakeCli()),
+    );
+    final workspace = Workspace(kernels: [descriptor]);
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (_, desktop) = await peers();
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
+      bots: bots,
+    );
+    addTearDown(withBots.dispose);
+    final assistant = bots.bots.single;
+    final thread = bots.threadFor(assistant);
+    final session = WorkspaceBridge.idOf(thread);
+    expect(
+      withBots.handle(LinkMethods.choose, {
+        'session': session,
+        'kind': 'permission',
+        'option': 'bypassPermissions',
+      }),
+      throwsA(
+        isA<LinkRemoteException>().having(
+          (e) => e.code,
+          'code',
+          LinkErrors.unsupported,
+        ),
+      ),
+    );
+    final models = thread.session.models!;
+    final other = models.options.firstWhere((o) => o != models.selected);
+    await withBots.handle(LinkMethods.choose, {
+      'session': session,
+      'kind': 'model',
+      'option': other.id,
+    });
+    expect(bots.byId('assistant')!.model, other.id);
+    expect(
+      withBots.state().bots.single,
+      isA<LinkBot>().having((b) => b.model, 'model', other.label),
+    );
+  });
+
+  test('a bot\'s picture: sent with it, asked for, kept', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (_, desktop) = await peers();
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
+      bots: bots,
+    );
+    addTearDown(withBots.dispose);
+    final jpeg = base64.encode([255, 216, 255, 1, 2, 3]);
+    final made = (await withBots.handle(LinkMethods.saveBot, {
+      'name': 'Mia',
+      'identity': '',
+      'abilities': <String>[],
+      'avatarImage': {'data': jpeg, 'type': 'image/jpeg'},
+    }) as Map)['bot'];
+    final mia = LinkBot.fromJson(made as Map<String, Object?>);
+    expect(mia.hasAvatarImage, isTrue);
+    expect(mia.avatar, endsWith('.jpg'));
+    expect(await withBots.handle(LinkMethods.botAvatar, {'bot': mia.id}), {
+      'type': 'image/jpeg',
+      'data': jpeg,
+    });
+    // Kept by its name as other things change.
+    await withBots.handle(LinkMethods.saveBot, {
+      'bot': mia.id,
+      'name': 'Mia B.',
+      'avatar': mia.avatar,
+      'identity': '',
+      'abilities': <String>[],
+    });
+    expect(bots.byId(mia.id)!.avatar, mia.avatar);
+    // What is not a picture, or too large, is refused.
+    for (final image in [
+      {'data': jpeg, 'type': 'text/html'},
+      {
+        'data': base64.encode(List.filled(LinkLimits.avatar + 1, 0)),
+        'type': 'image/png',
+      },
+    ]) {
+      expect(
+        withBots.handle(LinkMethods.saveBot, {
+          'bot': mia.id,
+          'name': 'Mia',
+          'identity': '',
+          'abilities': <String>[],
+          'avatarImage': image,
+        }),
+        throwsA(isA<LinkRemoteException>()),
+      );
+    }
+    // None for one with an emoji.
+    expect(
+      withBots.handle(LinkMethods.botAvatar, {'bot': 'assistant'}),
+      throwsA(
+        isA<LinkRemoteException>().having(
+          (e) => e.code,
+          'code',
+          LinkErrors.notFound,
+        ),
+      ),
+    );
+  });
+}
+
+/// A phone's end and a desktop's, connected.
+Future<(LinkPeer, LinkPeer)> peers() async {
+  final (a, b) = MemoryLinkConnection.pair(
+    a: LinkIdentity.generate().id,
+    b: LinkIdentity.generate().id,
+  );
+  final accepted = LinkPeer.accept(b);
+  final connected = await LinkPeer.connect(a);
+  return (connected, await accepted);
 }

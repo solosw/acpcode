@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert' show jsonEncode;
 import 'dart:ui' show AppExitResponse, AppExitType;
 
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
@@ -7,10 +8,13 @@ import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:bao_editor/textmate/textmate_syntax.dart';
+import 'package:bao_markdown/bao_markdown.dart' show MdClipboard;
 
 import 'package:bao_editor/monaco/flutter/language_assets.dart';
 
+import 'base/quiet_view.dart';
 import 'base/smooth_scroll.dart' show BaoScrollBehavior;
+import 'bots/bots.dart';
 import 'browser/browser_bridge.dart';
 import 'browser/browser_tools.dart' show BrowserHistory;
 import 'chat/composer/composer_files.dart' show ComposerFile, pastedAsPicture;
@@ -23,9 +27,13 @@ import 'chat/resume_after_reset.dart';
 import 'chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import 'customize/customization_store.dart';
 import 'diagnostics/app_event_watch.dart';
+import 'diagnostics/crash_reports.dart';
+import 'diagnostics/exit_watch.dart';
 import 'diagnostics/frame_watch.dart';
+import 'diagnostics/hang_watch.dart';
 import 'diagnostics/diagnostics_upload.dart';
 import 'extensions/theme_extensions.dart';
+import 'ide/editor_minimap_setting.dart';
 import 'ide/editor_word_wrap.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
@@ -52,6 +60,7 @@ import 'kernel/claude_code/turn_stats_stub.dart'
     show turnStatsIn;
 import 'kernel/commit_attribution.dart';
 import 'kernel/kernel_registry.dart';
+import 'kernel/extension_switches.dart';
 import 'kernel/prompt_suggestions.dart';
 import 'chat/composer/composer_polish.dart' show ComposerPolishSetting;
 import 'kernel/queued_messages.dart';
@@ -71,6 +80,7 @@ import 'network/network_proxy.dart';
 import 'notifications/attention_host.dart';
 import 'notifications/attention_settings.dart';
 import 'platform/memory_budget.dart';
+import 'platform/native_md_clipboard.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
@@ -111,6 +121,7 @@ import 'theme/app_theme.dart';
 import 'theme/code_font.dart';
 import 'theme/pixel_snapped_text_scaler.dart';
 import 'theme/ui_zoom.dart';
+import 'theme/window_blur.dart';
 import 'theme/workbench_theme.dart';
 import 'update/update_controller.dart';
 import 'update/update_platform.dart';
@@ -151,11 +162,15 @@ Future<void> main(List<String> arguments) async {
     }
     // What goes wrong unseen from here on, kept for the user to send.
     errors = ErrorLog(DataDirectory.current.logsDir)..install();
-    // And what the app went through, to read what led to it.
-    EventLog.current = EventLog(DataDirectory.current.logsDir);
-    // The agents that run beside the app (ACP ones) are given its own tools
-    // through a process of its starting (lib/mcp/tools_bridge.dart):
-    // listening in the data folder, before any of them starts.
+    // And what the app went through, to read what led to it; how the run
+    // before ended, if it did not say.
+    final crashFolders = platformCrashReportFolders();
+    EventLog.current = EventLog(
+      DataDirectory.current.logsDir,
+      crashSince: (since) => crashReportSince(crashFolders, since),
+    );
+    watchExit(DataDirectory.current.logsDir);
+    // Start the ACP tools bridge before any agent starts.
     await startToolsBridge();
   }
   unawaited(reapClaudeProcesses());
@@ -167,8 +182,9 @@ Future<void> main(List<String> arguments) async {
     AppEventWatch.start();
     FrameWatch.start();
   }
-  // The Windows app's own logs go beside it.
-  if (errors != null) unawaited(errors.shareWithHost());
+  // The Windows app's own logs and the macOS app's hang reports go beside
+  // them.
+  if (errors != null) unawaited(shareLogsFolder(errors.directory));
   // The editor's language packs are the language servers' (README.md in
   // lib/ide/lsp/packs).
   MonacoLanguageAssets.defaultPacks = () => LanguagePackRegistry.instance;
@@ -225,6 +241,19 @@ Future<void> main(List<String> arguments) async {
             );
           }),
     );
+    // Settings → Customize's switches: the skills, MCP servers and tools
+    // turned off, given each agent at start and as they change.
+    ExtensionSwitches.current = () =>
+        ExtensionSwitches.parse(files.settings.values);
+    ExtensionSwitches.changes = files.settings;
+    ExtensionSwitches.save = (switches) async {
+      final before = ExtensionSwitches.current().toSettings();
+      for (final MapEntry(:key, :value) in switches.toSettings().entries) {
+        if (jsonEncode(before[key]) != jsonEncode(value)) {
+          await files.settings.update(key, value);
+        }
+      }
+    };
     // Settings → General → Claude Code: the build to run, read as each
     // agent starts.
     ClaudePathSetting.current = () =>
@@ -288,6 +317,11 @@ Future<void> main(List<String> arguments) async {
     ChatMinimap.follow(files.settings, (key) => files.settings[key]);
     // Settings → Appearance: what an agent and a subagent show running.
     PixelLoaderRole.follow(files.settings, (key) => files.settings[key]);
+    // Settings → Appearance: whether the windows are blurred underneath.
+    WindowBlur.follow(
+      files.settings,
+      () => files.settings[WindowBlur.settingKey],
+    );
     // Settings → Appearance: whether the sidebar's agents show their times.
     SidebarTimes.follow(
       files.settings,
@@ -308,8 +342,25 @@ Future<void> main(List<String> arguments) async {
     CodeFont.follow(files.settings, (key) => files.settings[key]);
     SshHostSettings.instance = SshHostSettings(settings: files.settings);
     unawaited(SshHostSettings.instance.load());
+    // Interface Size as it changes, in the event log, with what
+    // settings.json held then: a window seen going back to 100% unasked
+    // tells there why.
+    var scale = CodeFont.uiScale.value;
+    CodeFont.uiScale.addListener(() {
+      final kept = files.settings[CodeFont.uiScaleSettingKey];
+      appEvent(
+        'zoom',
+        '$scale% -> ${CodeFont.uiScale.value}% '
+            '(settings.json: ${kept ?? 'unset'}, '
+            '${files.settings.values.length} settings'
+            '${files.settings.error == null ? '' : ', does not parse'})',
+      );
+      scale = CodeFont.uiScale.value;
+    });
     // Whether the editors wrap long lines.
     EditorWordWrap.follow(files.settings);
+    // Whether the code editors show their minimap.
+    EditorMinimap.follow(files.settings);
   }
   // Emoji as pictures: fetched into the cache the first run, in the
   // background, through the proxy.
@@ -360,9 +411,35 @@ Future<void> main(List<String> arguments) async {
   final customizations = CustomizationStore();
   // The phones paired with this computer (Settings → Mobile): listening
   // for them, if they are allowed to connect.
+  // The user's bots: agents that chat as a person does, with the phones.
+  final bots = kIsWeb
+      ? null
+      : Bots(
+          workspace: workspace,
+          store: PreferenceStore.file(
+            p.join(DataDirectory.current.botsDir, 'bots.json'),
+          ),
+          chinese:
+              (locale.locale ?? AppLocale.systemLocale()).languageCode == 'zh',
+        );
+  unawaited(bots?.start());
   final link = kIsWeb
       ? null
-      : LinkHost(workspace: workspace, customizations: customizations);
+      : LinkHost(
+          workspace: workspace,
+          customizations: customizations,
+          bots: bots,
+        );
+  if (bots != null && link != null) {
+    // The bots are the phones': with none paired, told of nothing.
+    var paired = false;
+    bots.hasPhone = () => link.phones.isNotEmpty;
+    link.addListener(() {
+      if (link.phones.isNotEmpty == paired) return;
+      paired = !paired;
+      bots.phonesChanged();
+    });
+  }
   unawaited(link?.load());
   // The first frame is in the kept theme, restored from storage as VS Code
   // does before the workbench shows; its file is read after. The setting
@@ -449,6 +526,10 @@ Future<void> main(List<String> arguments) async {
         .layoutAtLaunch(workspace.layout);
   }
   WindowControls.trackActiveView();
+  // What an editor copies, its tags and all, on the clipboard itself.
+  if (WindowControls.isDesktop) {
+    MdClipboard.instance = const NativeMdClipboard();
+  }
   // An older `code` script opened windows for `code --version`.
   unawaited(ShellCommand.refresh());
   final ColorThemeStorage colorTheme = files == null
@@ -489,7 +570,7 @@ Future<void> main(List<String> arguments) async {
       link: link,
       customizations: customizations,
     );
-    _startTelemetry(files);
+    _startTelemetry(files, link);
   }
   // The theme extensions (lib/extensions/): color and file icon themes
   // from Open VSX or a .vsix, `workbench.iconTheme` followed as
@@ -636,7 +717,7 @@ void _openChannelGate(SettingsFiles files) {
 /// The app's usage data (lib/telemetry/): once a UTC day it is in front,
 /// as settings.json's `telemetry.telemetryLevel` allows. None in a debug
 /// build, or with `DO_NOT_TRACK` set.
-void _startTelemetry(SettingsFiles files) {
+void _startTelemetry(SettingsFiles files, LinkHost? link) {
   final platform = platformTelemetry();
   if (platform == null) return;
   // The setup's, read back as it was set.
@@ -659,6 +740,8 @@ void _startTelemetry(SettingsFiles files) {
     inFront: inFront,
     edition: () => ChannelSetup.editionOf(channel),
     attribution: () => channel.attribution?.toJson(),
+    linkPaths: () => link?.pathCounts.pending,
+    linkPathsSent: link?.pathCountsSent,
   )..start();
   // Back in front: a new day, if it is one. For the app's whole run.
   AppLifecycleListener(onResume: telemetry.markActive);
@@ -727,11 +810,13 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
 
   late final AppLocale _locale = widget.appLocale ?? AppLocale();
 
-  /// The code's font, size and ligatures: what restyles all code.
+  /// The code's font, size and ligatures: what restyles all code; and the
+  /// windows' blur, which every surface over it is tinted for.
   static final Listenable _codeFont = Listenable.merge([
     CodeFont.families,
     CodeFont.size,
     CodeFont.ligatures,
+    WindowBlur.enabled,
   ]);
 
   late final AppSettings _settings =
@@ -752,16 +837,20 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
   /// terminals' shells are hung up, as closing their window would.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
     onExitRequested: () async {
+      appEvent('app', 'quit requested');
       // The unsaved files of all windows asked about at once, then the
       // agents at work; in the window in front.
       final updates = _settings.updates?.service;
       if (!await _windows.confirmQuit()) {
+        appEvent('app', 'quit cancelled');
         updates?.disarm();
         return AppExitResponse.cancel;
       }
       // Restart to Update: the installer waits for the app to go. One that
       // will not start keeps the app (and says why).
+      final updating = updates?.armed ?? false;
       if (updates != null && !await updates.launchArmed()) {
+        appEvent('app', 'quit cancelled: the update would not start');
         return AppExitResponse.cancel;
       }
       await Future.wait([
@@ -775,6 +864,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       ]);
       // The remote hosts' servers end, and all they run with them.
       await SshHosts.instance.closeAll();
+      appExit(updating ? 'quit to update' : 'quit');
       return AppExitResponse.exit;
     },
   );
@@ -854,7 +944,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
                       ])
                         if (_windows.host.viewOf(window.viewId)
                             case final view?)
-                          View(
+                          QuietView(
                             key: ValueKey(window.viewId),
                             view: view,
                             child: _app(window),
@@ -893,7 +983,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
             : scaler;
         final system = media.textScaler;
         return SystemTextScale(
-          // Code at its own size: the zoom taken back off.
+          // A terminal at a size of its own: the zoom taken back off.
           scaler: snapped(
             zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
           ),

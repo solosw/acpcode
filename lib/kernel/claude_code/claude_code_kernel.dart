@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../chat/chat_models.dart';
 import '../../chat/composer/paste_store.dart';
 import '../../chat/composer/remote_drops.dart';
+import '../../models/codex/codex_service.dart';
 import '../../models/launch_environment.dart';
 import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
@@ -19,6 +20,7 @@ import '../../settings/user_settings.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
 import '../commit_attribution.dart';
+import '../extension_switches.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../prompt_suggestions.dart';
@@ -28,6 +30,7 @@ import 'claude_code_transport.dart';
 import 'claude_code_translator.dart';
 import 'claude_elicitation.dart';
 import 'claude_goal.dart';
+import 'claude_numbers.dart';
 import 'claude_sdk_tools.dart';
 import 'turn_stats.dart';
 import 'control_channel.dart';
@@ -123,6 +126,7 @@ class ClaudeCodeKernel
     ClaudeUsageSwitch? usageOffBy,
     this._rejectTooOld,
     ModelProviders? providers,
+    this._codex,
     ProviderEnvironment? providerEnvironment,
     Future<bool> Function(String url)? openLink,
   }) : _openLink = openLink ?? openExternal,
@@ -135,6 +139,7 @@ class ClaudeCodeKernel
       goalSaid: _syncGoal,
     );
     _providers.addListener(_providersChanged);
+    ExtensionSwitches.changes?.addListener(_applySwitches);
     _live.add(this);
     _sessionId = _context.resume?.id;
     final settings = _context.settings;
@@ -206,6 +211,9 @@ class ClaudeCodeKernel
   /// The providers of the user's (Settings → Models), whose models are
   /// offered beside Claude Code's own.
   final ModelProviders _providers;
+
+  /// The ChatGPT providers' accounts: the app's when null.
+  final CodexService? _codex;
   final ProviderEnvironment _providerEnvironment;
 
   static Future<String?> _usageOn() async => null;
@@ -375,9 +383,14 @@ class ClaudeCodeKernel
   String? _reportedModel;
 
   /// When the usage limit the last turn hit resets (see
-  /// [ReportsUsageLimit]): on the account's own plan only, a provider's
-  /// limits being its own.
+  /// [ReportsUsageLimit]): the account's own plan's, or every ChatGPT
+  /// account of a provider out of quota; another provider's limits are
+  /// its own.
   DateTime? _limitResetsAt;
+
+  /// Whose limit [_limitResetsAt] is: '' the plan's, else the provider's
+  /// ([_providerKey]) whose accounts are out of quota.
+  String _limitOn = '';
   // What the agent does (Agent, Ask, Plan) and how its actions are
   // approved, picked apart: the CLI runs the approvals as they are, but in
   // Plan, which is a permission mode of its own (see _cliMode). Ask is only
@@ -417,6 +430,14 @@ class ClaudeCodeKernel
   /// ([PromptSuggestions]): taken only at start, so a change is taken up by
   /// a restart (see [_applyWindow]).
   bool _launchedSuggestions = true;
+
+  /// What the process was started with, its flag settings' permission
+  /// rules sent again with the [ExtensionSwitches] as they change.
+  ClaudeLaunch? _launched;
+
+  /// The [ExtensionSwitches] the process has: at start, then each change
+  /// sent ([_applySwitches]).
+  ExtensionSwitches _appliedSwitches = ExtensionSwitches.none;
 
   /// The context window, as the CLI reports it: the smaller of the
   /// model's and [_window].
@@ -472,6 +493,11 @@ class ClaudeCodeKernel
 
   /// The workspace [_cwd] is the folder of, as it is at this launch.
   KernelWorkspace? get _workspace => _context.workspace?.call();
+
+  /// When the messages sent while it works are taken up: as its workspace
+  /// would have them, else as the user set.
+  QueuedMessages get _queuedMessages =>
+      _workspace?.queuedMessages ?? QueuedMessages.current();
 
   /// Starts the process, if not yet, and waits until it is ready.
   Future<void> _ensureStarted() {
@@ -546,9 +572,10 @@ class ClaudeCodeKernel
       _launchedModel = custom != null ? _model : null;
       _launchedWindow = _autocompact;
       _launchedSuggestions = PromptSuggestions.current();
-      final sdkServers = ClaudeSdkTools.servers;
+      _appliedSwitches = ExtensionSwitches.current();
+      final sdkServers = ClaudeSdkTools.serversFor(_cwd);
       final transport = await _start(
-        ClaudeLaunch(
+        _launched = ClaudeLaunch(
           cwd: _cwd,
           sdkServers: sdkServers,
           resume: _sessionId,
@@ -562,15 +589,20 @@ class ClaudeCodeKernel
           thinking: custom != null && direct && effort == 'none' ? false : null,
           autocompact: _autocompact,
           promptSuggestions: _launchedSuggestions,
+          switches: _appliedSwitches,
           attribution: CommitAttribution.current(),
           env: env,
-          directories: workspace?.folders ?? const [],
+          directories: [...?workspace?.folders, ...?workspace?.reaches],
+          folderInstructions: workspace?.folders.isNotEmpty ?? false,
           // Long pastes are kept on this machine: only its agent reads them.
           // A remote one's reads the files of this machine's copied there.
           readable: RemoteLocation.isRemote(_cwd)
               ? RemoteDrops.folders
               : [?PasteStore.directory],
           instructions: workspace?.instructions,
+          ownPrompt: workspace?.ownPrompt ?? false,
+          tools: workspace?.tools,
+          allowed: workspace?.allowedTools ?? const [],
           models: switch (custom) {
             (final provider, _) => _requestedModels(provider),
             null => const [],
@@ -601,6 +633,8 @@ class ClaudeCodeKernel
         return await _launch();
       }
       _setHealth(KernelHealth.ready);
+      // Switched since it was started.
+      _applySwitches();
       _syncGoal();
       final window = _window;
       _change([
@@ -800,11 +834,28 @@ class ClaudeCodeKernel
     _setHealth(KernelHealth.idle);
   }
 
+  /// The skills, MCP servers and tools turned on or off since the process
+  /// started, given it as flag settings: taken up at once, the next request
+  /// to the model without them.
+  void _applySwitches() {
+    final launch = _launched;
+    final switches = ExtensionSwitches.current();
+    if (!_running || launch == null || switches == _appliedSwitches) return;
+    _appliedSwitches = switches;
+    _change([
+      (
+        'apply_flag_settings',
+        {'settings': launch.switchSettings(switches, whole: true)},
+      ),
+    ]);
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _goalRetry?.cancel();
     _providers.removeListener(_providersChanged);
+    ExtensionSwitches.changes?.removeListener(_applySwitches);
     _live.remove(this);
     _cancelSdkCalls();
     _teardown();
@@ -883,7 +934,12 @@ class ClaudeCodeKernel
       ItemUpserted(
         nextSeq,
         turn.id,
-        UserMessageItem(text: turn.text, queued: busy, images: turn.images),
+        UserMessageItem(
+          text: turn.text,
+          queued: busy,
+          images: turn.images,
+          sentAt: DateTime.now(),
+        ),
       ),
     );
     // Taken now, as the message was sent.
@@ -906,8 +962,7 @@ class ClaudeCodeKernel
   bool get _holds {
     final waiting = _queued.where((id) => !_held.containsKey(id));
     return waiting.any((id) => _sent[id]?.now ?? false) ||
-        (waiting.isNotEmpty &&
-            QueuedMessages.current() == QueuedMessages.afterTurn);
+        (waiting.isNotEmpty && _queuedMessages == QueuedMessages.afterTurn);
   }
 
   /// Gives the CLI the messages held for it, as far as [_holds] lets it: one
@@ -942,7 +997,7 @@ class ClaudeCodeKernel
         // CLI's own default).
         'priority': spareBackground
             ? 'now'
-            : switch (QueuedMessages.current()) {
+            : switch (_queuedMessages) {
                 QueuedMessages.afterTurn => 'later',
                 QueuedMessages.duringTurn => 'next',
               },
@@ -963,12 +1018,14 @@ class ClaudeCodeKernel
                 },
               },
             ],
-            if (turn.text.isNotEmpty) {'type': 'text', 'text': turn.text},
             for (final note in turn.notes) {'type': 'text', 'text': note},
             if (ask)
               {'type': 'text', 'text': _askNote}
             else if (askEnded)
               {'type': 'text', 'text': _askEndedNote},
+            // Last: the CLI takes a message for a command (`/compact`)
+            // only by its last block.
+            if (turn.text.isNotEmpty) {'type': 'text', 'text': turn.text},
           ],
         },
       });
@@ -1075,7 +1132,15 @@ class ClaudeCodeKernel
 
   @override
   void sendQueuedNow(String turnId) {
-    if (!_queued.contains(turnId) || !_running) return;
+    if (!_queued.contains(turnId)) return;
+    if (!_running) {
+      // The queue is shown before the process finishes starting. Keep the
+      // request behind its pending writes, then check the queue again.
+      _whenReady((_) {
+        if (_running) sendQueuedNow(turnId);
+      });
+      return;
+    }
     final others = [
       for (final id in _queued)
         if (id != turnId) id,
@@ -1477,14 +1542,15 @@ class ClaudeCodeKernel
       return;
     }
     // Full access is approved here (see _cliApproval), but for what the
-    // CLI's own would ask all the same. In Plan it leaves to the
+    // CLI's own would ask all the same: that too where no one is there to
+    // ask (a bot's, KernelWorkspace.approvesAll). In Plan it leaves to the
     // classifier what the CLI cannot tell is read-only; with no
     // classifier (another provider's model), that is approved here too,
     // as it would be by the classifier.
     if (_approval == 'bypassPermissions' &&
         (_work != 'plan' || !_classifies) &&
         tool != 'AskUserQuestion' &&
-        !_askedInFullAccess(request)) {
+        ((_workspace?.approvesAll ?? false) || !_askedInFullAccess(request))) {
       _control!.respond(requestId, {
         'behavior': 'allow',
         'updatedInput': input,
@@ -1711,7 +1777,10 @@ class ClaudeCodeKernel
         emitInfoChanged();
       case 'assistant':
         if (_countRequest(message)) _reportStats();
-        if (message['error'] == 'rate_limit') _limitSaid(message['message']);
+        if (message['error'] == 'rate_limit') {
+          _limitSaid(message['message']);
+          _accountsLimited();
+        }
         _translator.translate(message);
       case 'result':
         _result(message);
@@ -1823,6 +1892,7 @@ class ClaudeCodeKernel
               UserMessageItem(
                 text: _sent[id]?.text ?? '',
                 images: _sent[id]?.images ?? const [],
+                sentAt: DateTime.now(),
               ),
             ),
           );
@@ -1864,6 +1934,7 @@ class ClaudeCodeKernel
     if (message['is_error'] == true && message['result'] is String) {
       final error = message['result'] as String;
       if (_limitResetsAt == null) _limitSaid(error);
+      _accountsLimited();
       if (error.isNotEmpty) {
         final host = _remoteHost;
         emit(
@@ -1891,16 +1962,12 @@ class ClaudeCodeKernel
       // API time is the session's, too coarse for a speed).
       usage: switch (message['usage']) {
         final Map<Object?, Object?> usage => TurnUsage(
-          inputTokens:
-              [
-                'input_tokens',
-                'cache_creation_input_tokens',
-                'cache_read_input_tokens',
-              ].fold<int>(
-                0,
-                (sum, key) => sum + ((usage[key] as num?) ?? 0).toInt(),
-              ),
-          outputTokens: (usage['output_tokens'] as num?)?.toInt(),
+          inputTokens: [
+            'input_tokens',
+            'cache_creation_input_tokens',
+            'cache_read_input_tokens',
+          ].fold<int>(0, (sum, key) => sum + (claudeInt(usage[key]) ?? 0)),
+          outputTokens: claudeInt(usage['output_tokens']),
           costUsd: turnCost,
         ),
         _ => TurnUsage(costUsd: turnCost),
@@ -1994,21 +2061,44 @@ class ClaudeCodeKernel
   @override
   DateTime? get usageLimitResetsAt => usageLimitApplies ? _limitResetsAt : null;
 
-  /// A provider's model picked: the next message goes there, the plan's
-  /// limit no bar to it.
+  /// Another provider's model picked: the next message goes there, the
+  /// limit hit no bar to it. None hit, whether the one picked has a limit
+  /// known here.
   @override
-  bool get usageLimitApplies => _providerKey.isEmpty;
+  bool get usageLimitApplies =>
+      _limitResetsAt == null ? _hasLimit(_model) : _limitOn == _providerKey;
 
   @override
-  bool usageLimitAppliesTo(String model) => _providerKeyOf(model).isEmpty;
+  bool usageLimitAppliesTo(String model) => _hasLimit(model);
+
+  /// Whether [model] is held to a limit known here: the plan's, or its
+  /// ChatGPT accounts' quota; not another provider's.
+  bool _hasLimit(String? model) => switch (_providers.resolve(model)) {
+    (final provider, _) => provider.protocol.usesAccounts,
+    null => true,
+  };
 
   /// The usage limit is hit, to reset [at]; null, it no longer holds.
-  void _limitHit(DateTime? at) {
-    // A provider's limits are its own, and so is what it says of them.
-    if (at != null && _launchedProvider.isNotEmpty) return;
-    if (at == _limitResetsAt) return;
+  /// [on] is whose: '' the plan's, else the provider's of [_accountsLimited].
+  void _limitHit(DateTime? at, {String on = ''}) {
+    // A provider's limits are its own, and so is what it says of them:
+    // its accounts' quota is learned of them, not of the CLI.
+    if (at != null && on != _launchedProvider) return;
+    if (at == _limitResetsAt && on == _limitOn) return;
     _limitResetsAt = at;
+    _limitOn = on;
     emitInfoChanged();
+  }
+
+  /// A turn failed on a provider of ChatGPT accounts: if each one is out
+  /// of quota, its limit is hit, to reset as the first is back.
+  void _accountsLimited() {
+    if (_launchedProvider.isEmpty) return;
+    if (_custom case (final provider, _) when provider.protocol.usesAccounts) {
+      if ((_codex ?? codexService).backAt(provider) case final at?) {
+        _limitHit(at, on: _launchedProvider);
+      }
+    }
   }
 
   /// When the limit hit resets, as [said] (an error's text, or the
@@ -2275,10 +2365,7 @@ class ClaudeCodeKernel
     };
     if (id == null || usage == null) return false;
     final model = (body as Map)['model'] as String?;
-    int count(String key) => switch (usage[key]) {
-      final num n => n.toInt(),
-      _ => 0,
-    };
+    int count(String key) => claudeInt(usage[key]) ?? 0;
     final tokens = CacheTokens(
       read: count('cache_read_input_tokens'),
       written: count('cache_creation_input_tokens'),

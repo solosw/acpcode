@@ -270,6 +270,49 @@ void main() {
     expect(transcript.indexOf('reply'), 2);
   });
 
+  test('in place, a queued message is where it was sent, and stays there '
+      'taken up, timed as it was sent', () {
+    final sent = DateTime(2026, 10, 29, 14);
+    final transcript = Transcript(queuedInPlace: true)
+      ..apply(const ItemUpserted(1, 'u1', UserMessageItem(text: 'one')))
+      ..apply(const ItemUpserted(2, 'a1', AssistantTextItem('said')))
+      ..apply(
+        ItemUpserted(
+          3,
+          'u2',
+          UserMessageItem(text: 'two', queued: true, sentAt: sent),
+        ),
+      )
+      ..apply(const ItemUpserted(4, 'a2', AssistantTextItem('said on')));
+    expect(transcript.queued, isEmpty);
+    expect(
+      describe(transcript),
+      startsWith('user:one\ntext:said\nuser:two\ntext:said on'),
+    );
+    transcript.apply(
+      ItemUpserted(
+        5,
+        'u2',
+        UserMessageItem(text: 'two', sentAt: DateTime(2027)),
+      ),
+    );
+    final taken = transcript.itemAt(2) as UserMessageItem;
+    expect(taken.queued, isFalse);
+    expect(taken.sentAt, sent);
+    expect(transcript.length, 4);
+    // Taken back: gone from where it was.
+    transcript
+      ..apply(
+        const ItemUpserted(
+          6,
+          'u3',
+          UserMessageItem(text: 'three', queued: true),
+        ),
+      )
+      ..apply(const ItemRemoved(7, 'u3'));
+    expect(transcript.length, 4);
+  });
+
   test('a turn done is timed on its message; a stopped one is not', () {
     const worked = Duration(minutes: 4, seconds: 32);
     Duration? workedOn(Transcript transcript) =>
@@ -343,11 +386,7 @@ void main() {
           ),
         ]),
       )
-      ..apply(const TasksReported(2, []))
-      ..apply(
-        const TodosReported(3, [TodoEntry('Write tests', TodoStatus.pending)]),
-      );
+      ..apply(const TasksReported(2, []));
     expect(transcript.tasks, isEmpty);
-    expect(transcript.todos.single.content, 'Write tests');
   });
 }

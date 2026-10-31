@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -91,6 +93,17 @@ abstract final class WindowControls {
     }
   }
 
+  /// The system's blur under every window, or none (see WindowBlur); kept
+  /// for the next start, whose windows open as it says.
+  static Future<void> setWindowBlur(bool on) async {
+    if (!(AppPlatform.isMacOS || AppPlatform.isWindows)) return;
+    try {
+      await _main.invokeMethod<void>('setWindowBlur', on);
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
+  }
+
   /// Keeps the window above other apps' windows, or not.
   static Future<void> setAlwaysOnTop(bool onTop, {int? viewId}) async {
     if (!canKeepOnTop) return;
@@ -145,6 +158,18 @@ abstract final class WindowControls {
         'width': by.width,
         'height': by.height,
       });
+    } on MissingPluginException {
+      // A host without the channel (e.g. tests).
+    }
+  }
+
+  /// Moves the window with the press under way, as a drag on the system's
+  /// title bar would: macOS, where the window leaves that to the title bar
+  /// Flutter draws (see title_bar_double_click.dart).
+  static Future<void> dragWindow({int? viewId}) async {
+    if (!handlesTitleDoubleClick) return;
+    try {
+      await _of(viewId).invokeMethod<void>('dragWindow');
     } on MissingPluginException {
       // A host without the channel (e.g. tests).
     }
@@ -564,6 +589,42 @@ abstract final class WindowControls {
     } on MissingPluginException {
       return false;
     }
+  }
+
+  /// Puts [text] on the clipboard, and beside it, in a format of the app's
+  /// own, [markdown]: what an editor copied, its tags and all (see
+  /// NativeMdClipboard), [plain] where a plain text's. Whether it could;
+  /// throws [MissingPluginException] where the host has no such format.
+  static Future<bool> writePasteboardMarkdown(
+    String text,
+    String markdown, {
+    required bool plain,
+  }) async =>
+      // The host keeps the copy as it is given, its JSON.
+      await _channel.invokeMethod<bool>('writePasteboardMarkdown', {
+        'text': text,
+        'copy': jsonEncode({'markdown': markdown, 'plain': plain}),
+      }) ??
+      false;
+
+  /// The editors' copy on the clipboard ([writePasteboardMarkdown]); null
+  /// where it has none (it was copied elsewhere since). Throws
+  /// [MissingPluginException] where the host has no such format.
+  static Future<({String markdown, bool plain})?>
+  readPasteboardMarkdown() async {
+    final copy = await _channel.invokeMethod<String>('readPasteboardMarkdown');
+    if (copy == null) return null;
+    try {
+      if (jsonDecode(copy) case {
+        'markdown': final String markdown,
+        'plain': final bool plain,
+      }) {
+        return (markdown: markdown, plain: plain);
+      }
+    } on FormatException {
+      // Not one of ours after all.
+    }
+    return null;
   }
 
   /// The image file at [path] as the composer takes one (the formats it

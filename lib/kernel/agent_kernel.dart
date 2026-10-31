@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import 'kernel_event.dart';
+import 'queued_messages.dart';
 import 'kernel_types.dart';
 
 /// An agent runtime (Claude Code, Codex, …) behind one interface: the
@@ -79,12 +80,54 @@ class KernelContext {
 /// The folders an agent works in besides its directory, those of a
 /// multi-folder workspace, and what it is told of them.
 class KernelWorkspace {
-  const KernelWorkspace({required this.folders, this.instructions = ''});
+  const KernelWorkspace({
+    required this.folders,
+    this.instructions = '',
+    this.ownPrompt = false,
+    this.tools,
+    this.allowedTools = const [],
+    this.approvesAll = false,
+    this.reaches = const [],
+    this.queuedMessages,
+    this.queuedInPlace = false,
+  });
 
   final List<String> folders;
 
-  /// Added to the agent's system prompt.
+  /// Added to the agent's system prompt; or, when [ownPrompt], all of it.
   final String instructions;
+
+  /// Whether [instructions] are its whole system prompt, in place of the
+  /// agent's own (a coding agent's): for one that is not one.
+  final bool ownPrompt;
+
+  /// When the messages sent while it works are taken up, over the user's
+  /// setting; theirs when null.
+  final QueuedMessages? queuedMessages;
+
+  /// The only built-in tools it has (none for an empty list), the app's
+  /// own aside; all when null. Set, the app's MCP servers are its only
+  /// ones: none of the user's.
+  final List<String>? tools;
+
+  /// Built-in tools it uses without asking, whatever its permission mode
+  /// (permission rules: `WebFetch`, say).
+  final List<String> allowedTools;
+
+  /// Whether in full access it is let do all it would do, what Claude
+  /// Code asks about all the same too (its safety checks): no one is
+  /// there to ask. A bot's.
+  final bool approvesAll;
+
+  /// Folders it works in besides, not of a workspace of its own: working
+  /// directories (`--add-dir`), their `CLAUDE.md` not read, nor their
+  /// changes reviewed. A bot's reach into the user's projects.
+  final List<String> reaches;
+
+  /// Whether what the user writes while it works shows where they wrote
+  /// it, as a chat app's messages do, from the moment it is sent: not
+  /// apart, until taken up.
+  final bool queuedInPlace;
 }
 
 /// A setting the kernel offers a choice for. What is in effect is what the

@@ -82,8 +82,11 @@ void main() {
             {'command': 'ls && cat a.txt | head -1', 'description': 'List'},
           ),
           ('Read', {'file_path': p.join(h.cwd, 'a.txt')}),
-          ('Glob', {'pattern': '*.txt'}),
-          ('Grep', {'pattern': 'hello'}),
+          (
+            'Bash',
+            {'command': "find . -name '*.txt'", 'description': 'Find'},
+          ),
+          ('Bash', {'command': 'grep -rn hello .', 'description': 'Search'}),
         ]),
         Reply.text('ok'),
       ]);
@@ -256,8 +259,13 @@ void main() {
         h.permissionRequests.clear();
         h.onPermission = (_) async =>
             deny('Your plan is now shown to the user.');
+        final asked = h.model.turns.length;
         await h.turn('write the plan');
         expect(File(plan).readAsStringSync(), contains('Do it'));
+        // The plan put to the user ends the turn: the model is not asked
+        // again, to put it to them once more (it did, v31, v32...).
+        expect(h.model.turns.length - asked, 2);
+        expect(h.of('result').last['subtype'], 'success');
         final exit = h.permissionRequests.single;
         expect(exit['tool_name'], 'ExitPlanMode');
         expect((exit['input'] as Map)['plan'], contains('Do it'));
@@ -393,7 +401,7 @@ void main() {
         settings: {
           'permissions': {
             'deny': ['Read(./secret.env)', 'Edit(docs/**)'],
-            'ask': ['Edit(src/**)', 'Glob'],
+            'ask': ['Edit(src/**)', 'Bash(ls:*)'],
           },
         },
       );
@@ -409,7 +417,7 @@ void main() {
             {'file_path': p.join(h.cwd, 'src', 'new.txt'), 'content': 'x'},
           ),
           ('Write', {'file_path': p.join(outside, 'o.txt'), 'content': 'x'}),
-          ('Glob', {'pattern': '*'}),
+          ('Bash', {'command': 'ls', 'description': 'List'}),
         ]),
         Reply.text('ok'),
       ]);
@@ -441,7 +449,7 @@ void main() {
         ),
       );
       expect(far['blocked_path'], p.join(outside, 'o.txt'));
-      expect(asked['Glob']!['matched_ask_rule'], 'Glob');
+      expect(asked['Bash']!['matched_ask_rule'], 'Bash(ls:*)');
     });
 
     test('allow rules from the flag settings', () async {

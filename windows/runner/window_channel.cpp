@@ -504,6 +504,12 @@ void WindowChannel::HandleMethodCall(
     return;
   }
 
+  if (method == "setWindowBlur") {
+    Win32Window::SetWindowBlur(Boolean(call.arguments(), false));
+    result->Success();
+    return;
+  }
+
   if (method == "setAppearance") {
     Win32Window::SetDarkAppearance(Boolean(call.arguments(), false));
     result->Success();
@@ -630,6 +636,22 @@ void WindowChannel::HandleMethodCall(
         window_, String(arguments, "directory"), String(arguments, "name"));
     if (path.has_value()) {
       result->Success(flutter::EncodableValue(*path));
+    } else {
+      result->Success();
+    }
+    return;
+  }
+
+  if (method == "writePasteboardMarkdown") {
+    result->Success(flutter::EncodableValue(WriteClipboardMarkdown(
+        window_, Utf16FromUtf8(String(arguments, "text")),
+        String(arguments, "copy"))));
+    return;
+  }
+
+  if (method == "readPasteboardMarkdown") {
+    if (std::optional<std::string> copy = ClipboardMarkdown()) {
+      result->Success(flutter::EncodableValue(std::move(*copy)));
     } else {
       result->Success();
     }

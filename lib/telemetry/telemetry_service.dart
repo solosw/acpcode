@@ -85,6 +85,8 @@ class TelemetryService {
     String Function()? newId,
     this.edition,
     this.attribution,
+    this.linkPaths,
+    this.linkPathsSent,
     this.firstDelay = const Duration(seconds: 10),
     this.interval = const Duration(hours: 1),
   }) : url = url ?? Uri.parse(defaultUrl),
@@ -123,6 +125,12 @@ class TelemetryService {
   /// again each time, the server keeping the first it hears of (the page
   /// may have told it already).
   final Map<String, Object?>? Function()? attribution;
+
+  /// How many phone connections took each path (`lan`, `direct`,
+  /// `relay`) since last told, if any: sent with the report, and given to
+  /// [linkPathsSent] once it got through. Counts only.
+  final Map<String, int>? Function()? linkPaths;
+  final void Function(Map<String, int> sent)? linkPathsSent;
 
   /// After [start], the first look; then one every [interval], for a day
   /// that begins while the app stays open.
@@ -194,6 +202,7 @@ class TelemetryService {
     final days = store.pendingDays;
     if (_disposed || !enabled || days.isEmpty) return;
     final id = store.installId ??= _newId();
+    final link = linkPaths?.call();
     final int status;
     try {
       status = await sender.send(url, {
@@ -205,6 +214,7 @@ class TelemetryService {
         'arch': arch,
         'edition': ?edition?.call(),
         'attribution': ?attribution?.call(),
+        'link': ?link,
       });
     } on Object catch (error) {
       debugPrint('telemetry: not sent: $error');
@@ -217,6 +227,7 @@ class TelemetryService {
       return;
     }
     if (refused) debugPrint('telemetry: refused: HTTP $status');
+    if (link != null) linkPathsSent?.call(link);
     // Days marked while it was sent wait for the next.
     store.pendingDays = [
       for (final day in store.pendingDays)

@@ -21,9 +21,10 @@ import '../extensions/ui/extensions_model.dart';
 import '../extensions/ui/extensions_view.dart';
 import '../extensions/ui/vsix_drop.dart';
 import '../platform/data_dir.dart';
-import '../chat/composer/composer_files.dart' show ComposerFile;
+import '../chat/composer/composer_files.dart' show CodeReference, ComposerFile;
 import '../chat/composer/file_drop.dart';
 import '../chat/open_editor.dart';
+import '../keybindings/chat_keybindings.dart' show ChatCommandIds;
 import '../keybindings/default_keybindings.dart'
     show commandCatalog, openSettingsCommandId;
 import '../keybindings/key_chord.dart';
@@ -134,6 +135,7 @@ import 'terminal/terminal_panel.dart';
 import 'terminal/terminal_tasks.dart';
 import 'terminal/terminal_profile_service.dart';
 import 'terminal/terminal_profiles.dart';
+import 'terminal/terminal_hosts.dart';
 import 'terminal/terminal_service.dart';
 
 part 'ide_workbench_extensions.dart';
@@ -149,6 +151,7 @@ class IdeWorkbench extends StatefulWidget {
     required this.visible,
     required this.chat,
     this.onAddToChat,
+    this.onAddCodeToChat,
     this.onAskInChat,
     required this.onBack,
     this.backLabel,
@@ -169,6 +172,8 @@ class IdeWorkbench extends StatefulWidget {
     this.onPinnedChanged,
     this.terminalBackend = const TerminalBackend(),
     this.terminalTasks,
+    this.terminals,
+    this.terminalHosts,
     this.colorThemes,
     this.recentFolders = const [],
     this.onOpenRecent,
@@ -217,6 +222,11 @@ class IdeWorkbench extends StatefulWidget {
   /// Puts files and folders in [chat]'s composer (Source Control's Add to
   /// Chat); none offered when null.
   final ValueChanged<List<ComposerFile>>? onAddToChat;
+
+  /// Puts lines of code in [chat]'s composer, after what is typed there
+  /// (Add Selection to Chat), and the keyboard in it; with none, only the
+  /// keyboard. None offered when null.
+  final ValueChanged<List<CodeReference>>? onAddCodeToChat;
 
   /// Puts a request in [chat]'s composer, to be sent once looked over
   /// (Ask AI about a commit, changes, a conflict); none offered when null.
@@ -277,6 +287,13 @@ class IdeWorkbench extends StatefulWidget {
   /// The background commands of the agent in its chat, listed with the
   /// terminals (see [IdeWorkbenchState.showTerminalTask]).
   final TerminalTasks? terminalTasks;
+
+  /// The project's terminals where the chat has them too, the same in
+  /// both (kept by the chat, not disposed here); else the IDE's own, on
+  /// [terminalBackend]. [terminalHosts] has where each shows, the IDE's
+  /// panel one of the places.
+  final TerminalService? terminals;
+  final TerminalHosts? terminalHosts;
 
   /// The color themes Preferences: Color Theme (⌘K ⌘T) picks from; the
   /// command is disabled without them.
@@ -378,9 +395,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   final LinkedHashSet<String> _markdownSources = LinkedHashSet();
   static const _keptMarkdownSources = 300;
 
-  /// The line (one-based) each markdown document's preview shows first:
-  /// where it was, or the caret's line in its source.
-  final Map<IdeDocument, int> _previewLines = {};
   final FocusNode _workbenchFocus = FocusNode(debugLabel: 'ide workbench');
   final FocusNode _explorerFocus = FocusNode(debugLabel: 'ide explorer');
   late IdeExplorerController _explorer;
@@ -609,6 +623,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   /// The panel's terminals; none where they cannot run (the web).
   TerminalService? _terminals;
+
+  /// Whether [_terminals] are the IDE's own, not the chat's.
+  bool _ownsTerminals = true;
   List<StreamSubscription<Object?>> _terminalRequests = const [];
 
   /// Commands explicitly configured for this project; never run on restore.
@@ -760,6 +777,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         if (mounted) _terminals?.ensureTerminal();
       });
     }
+    widget.workspace.viewStates.restore(kept['editorViews']);
     final editors = switch (kept['editors']) {
       final List<Object?> paths => paths.whereType<String>().toList(),
       _ => const <String>[],
@@ -784,6 +802,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     ];
     final active = widget.workspace.active?.key;
     final search = _search.kept;
+    _editor?.keepViewStates();
+    final paths = widget.workspace.paths;
+    // Those of files (not a diff's or a revision's, nor an untitled one).
+    final views = widget.workspace.viewStates.toJson(
+      (key) => !key.contains('\u0000') && paths.isAbsolute(key),
+    );
     return {
       'sidebarWidth': _sidebarWidth,
       'chatWidth': _chatWidth,
@@ -798,8 +822,19 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       if (_changelists.several) 'gitChangelists': _changelists.toJson(),
       'editors': editors,
       if (editors.contains(active)) 'active': active,
+      if (views.isNotEmpty) 'editorViews': views,
     };
   }
+
+  /// Once the editor has come to rest (scrolled, its caret moved): where
+  /// it is kept, a scroll not written at each frame.
+  void _editorViewChanged() {
+    if (widget.onViewState == null) return;
+    _editorViewTimer?.cancel();
+    _editorViewTimer = Timer(const Duration(seconds: 1), _keepViewSoon);
+  }
+
+  Timer? _editorViewTimer;
 
   /// A moment after a change, as a sash dragged changes it at each frame.
   void _keepViewSoon() {
@@ -918,7 +953,11 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     var column = 1;
     if (preview) {
       await _flushEditor();
-      _previewLines[doc] = _caretPosition.lineNumber;
+      // The preview shows first the caret's line in its source.
+      widget.workspace.keepViewState(
+        doc,
+        (kept) => kept.copyWith(previewLine: _caretPosition.lineNumber),
+      );
       _markdownSources.remove(doc.path);
     } else {
       // The preview's caret, where it was put; else the line at its top.
@@ -1002,9 +1041,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
       },
       // A remote project's host is Linux or macOS: POSIX paths.
       pathContext: _local ? p.context : p.posix,
-      initialLine: _previewLines[doc],
+      // Where it was.
+      initialLine: widget.workspace.viewStateOf(doc).previewLine,
       onLeave: (line) {
-        if (line != null) _previewLines[doc] = line;
+        if (line == null) return;
+        widget.workspace.keepViewState(
+          doc,
+          (kept) => kept.copyWith(previewLine: line),
+        );
       },
       onEdited: () => widget.workspace.notifyDocumentChanged(doc),
       onPaste: doc.readOnly ? null : () => _markdownPaste().paste(doc.path),
@@ -1125,11 +1169,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     widget.agentEdits?.open = _openAgentChange;
     widget.settings?.addListener(_settingsChanged);
     widget.remote?.addListener(_remoteChanged);
-    if (widget.terminalBackend.supported) {
-      final terminals = _terminals = TerminalService(
-        root: widget.workspace.root,
-        backend: widget.terminalBackend,
-      )..addListener(_terminalsChanged);
+    if (widget.terminals != null || widget.terminalBackend.supported) {
+      _ownsTerminals = widget.terminals == null;
+      final terminals = _terminals =
+          (widget.terminals ??
+                TerminalService(
+                  root: widget.workspace.root,
+                  backend: widget.terminalBackend,
+                ))
+            ..addListener(_terminalsChanged);
       // An extension's `Terminal.show()` and `hide()`.
       _terminalRequests = [
         terminals.onDidRequestShow.listen((preserveFocus) {
@@ -1148,13 +1196,15 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _search.keptChanges.addListener(_keepViewSoon);
     _favoriteBranches.addListener(_keepViewSoon);
     _changelists.addListener(_keepViewSoon);
-    widget.agentEdits?.addListener(_assignTurns);
     _attach();
     _lifecycle = AppLifecycleListener(
       onResume: () => unawaited(_git?.refresh()),
       // The window left: `onFocusChange` and `onWindowChange` save.
-      onInactive: () =>
-          unawaited(_autoSaveNow(const {'onFocusChange', 'onWindowChange'})),
+      onInactive: () {
+        unawaited(_autoSaveNow(const {'onFocusChange', 'onWindowChange'}));
+        // Where the editors are, should the app be quit from elsewhere.
+        _keepView();
+      },
     );
     IdeLanguageNames.ensureLoaded(() {
       if (mounted) setState(() {});
@@ -1236,8 +1286,10 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     _git = workspace.git?..addListener(_gitChanged);
     _gitChanged();
     // New terminals start in the project (a workspace's first folder);
-    // those running stay where they are.
-    _terminals?.root = workspace.roots.firstOrNull ?? workspace.root;
+    // those running stay where they are. The chat's start where it says.
+    if (_ownsTerminals) {
+      _terminals?.root = workspace.roots.firstOrNull ?? workspace.root;
+    }
     _attachDebug();
   }
 
@@ -1316,7 +1368,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     if (workspace.isMultiRoot) {
       _explorer.setRoots(workspace.roots, multiRoot: true);
       _fileIndex.roots = workspace.roots;
-      _terminals?.root = workspace.roots.firstOrNull ?? workspace.root;
+      if (_ownsTerminals) {
+        _terminals?.root = workspace.roots.firstOrNull ?? workspace.root;
+      }
     }
     final git = workspace.git;
     if (identical(git, _git)) return;
@@ -1507,8 +1561,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         oldWidget.agentEdits?.open = null;
       }
       widget.agentEdits?.open = _openAgentChange;
-      oldWidget.agentEdits?.removeListener(_assignTurns);
-      widget.agentEdits?.addListener(_assignTurns);
     }
     if (!identical(oldWidget.commands, widget.commands)) {
       _registerCommandKeybindings();
@@ -1540,12 +1592,12 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     if (widget.agentEdits?.open == _openAgentChange) {
       widget.agentEdits?.open = null;
     }
-    widget.agentEdits?.removeListener(_assignTurns);
     FocusManager.instance.removeEarlyKeyEventHandler(_onChordKey);
     FocusManager.instance.removeLateKeyEventHandler(_onLateKey);
     KeybindingService.instance.removeListener(_keybindingsChanged);
     widget.settings?.removeListener(_settingsChanged);
     widget.remote?.removeListener(_remoteChanged);
+    _editorViewTimer?.cancel();
     _keepView();
     _chordChecker?.cancel();
     _statusMessageTimer?.cancel();
@@ -1566,9 +1618,8 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     for (final subscription in _terminalRequests) {
       unawaited(subscription.cancel());
     }
-    _terminals
-      ?..removeListener(_terminalsChanged)
-      ..dispose();
+    _terminals?.removeListener(_terminalsChanged);
+    if (_ownsTerminals) _terminals?.dispose();
     _panelFocus.dispose();
     _problemsList.dispose();
     _referencesList.dispose();
@@ -2069,27 +2120,6 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     return IdeDiffAgentMarks(edit.base, turns.values.toList());
   }
 
-  /// The agents' changes in a changelist of the turn that made them, named
-  /// after what it was asked (the start of its first line).
-  void _assignTurns() {
-    final edits = widget.agentEdits;
-    if (edits == null || !mounted) return;
-    final turns = <String, ({String request, List<String> paths})>{};
-    for (final edit in edits.turnEdits) {
-      turns
-          .putIfAbsent(edit.turn, () => (request: edit.request, paths: []))
-          .paths
-          .add(edit.path);
-    }
-    final l10n = context.l10n;
-    for (final MapEntry(key: turn, value: (:request, :paths))
-        in turns.entries) {
-      final line = request.trim().split('\n').first.trim();
-      final title = line.length > 40 ? '${line.substring(0, 40)}…' : line;
-      _changelists.assignTurn(turn, l10n.gitChangelistTurn(title), paths);
-    }
-  }
-
   /// What was edited in a diff in the Git log's place: into the file's
   /// open document, saved, where it has one; else into the file.
   Future<void> _writeFromDiff(
@@ -2351,25 +2381,24 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
     final searched = <String>{};
     for (final doc in [...widget.workspace.documents]) {
       if (!doc.isFile || !searched.add(doc.path)) continue;
-      final matches = <IdeTextMatch>[];
-      for (final (line, text) in doc.text.split(_lineBreak).indexed) {
-        for (final match in pattern.allMatches(text)) {
-          if (match.end == match.start) continue;
-          if (count == query.maxResults) {
-            limitHit = true;
-            break;
-          }
-          count++;
-          matches.add(IdeTextMatch(line, match.start, match.end, text));
-        }
+      final left = query.maxResults - count;
+      final matches = ideMatchLines(
+        doc.text,
+        pattern,
+        // One more: whether the limit cut it short.
+        limit: left + 1,
+        multiline: query.isMultiline,
+      );
+      if (matches.length > left) {
+        limitHit = true;
+        matches.removeRange(left, matches.length);
       }
+      count += matches.length;
       if (matches.isNotEmpty) yield IdeFileMatches(doc.path, matches);
       if (limitHit) break;
     }
     yield IdeTextSearchComplete(limitHit: limitHit);
   }
-
-  static final _lineBreak = RegExp(r'\r\n|\r|\n');
 
   void _tabAction(IdeDocument doc, IdeTabAction action) {
     final docs = widget.workspace.documents;
@@ -2839,6 +2868,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
   }
 
   void _toggleChat() => _layout.toggleChat();
+
+  /// The editor's lines selected in the chat's composer, the chat shown
+  /// and the keyboard in it (as Cursor's ⌘L).
+  void _addSelectionToChat() {
+    final code = _editor?.selectedCode() ?? const <CodeReference>[];
+    if (!_chatShown) _toggleChat();
+    widget.onAddCodeToChat?.call(code);
+  }
 
   /// [text] in the chat's composer, the chat shown.
   void _askInChat(String text) {
@@ -3634,6 +3671,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         label: 'Toggle Chat',
         run: _toggleChat,
       ),
+      IdeCommand(
+        id: ChatCommandIds.attachSelection,
+        category: 'Chat',
+        label: 'Add Selection to Chat',
+        enabled: widget.onAddCodeToChat != null && _editor != null,
+        run: _addSelectionToChat,
+      ),
       // VS Code's ⌘J toggles the panel; here it is the chat's.
       IdeCommand(
         id: 'workbench.action.togglePanel',
@@ -4123,20 +4167,38 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
         keys.titleWithKeybinding(l10n.extTitle, 'workbench.view.extensions'),
       ),
     ];
+    // Settings at its foot, as upstream's Manage gear: the chat's sidebar
+    // has them, the IDE had no way to them but the palette.
+    final settings = _hostCommand(openSettingsCommandId);
     return SizedBox(
       width: IdeModernUI.activityBarWidth,
       child: IdePart(
         color: IdeModernUI.activityBarBackground,
         border: Border(right: IdePart.side('activityBar.border')),
         child: Padding(
-          // Half the lane above; the items centered across.
-          padding: const EdgeInsets.only(top: IdeModernUI.activityLane / 2),
+          // Half the lane above and below; the items centered across.
+          padding: const EdgeInsets.symmetric(
+            vertical: IdeModernUI.activityLane / 2,
+          ),
           child: Column(
             children: [
               for (final (index, item) in items.indexed) ...[
                 if (index > 0)
                   const SizedBox(height: IdeModernUI.activityItemGap),
                 item,
+              ],
+              if (settings != null) ...[
+                const Spacer(),
+                _ActivityItem(
+                  key: const ValueKey('ide.activity.settings'),
+                  icon: Codicons.settingsGear,
+                  label: keys.titleWithKeybinding(
+                    l10n.settingsTitle,
+                    openSettingsCommandId,
+                  ),
+                  selected: false,
+                  onTap: settings.run,
+                ),
               ],
             ],
           ),
@@ -4574,8 +4636,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                           )
                         : active.view != null &&
                               FileViews.byId(active.view!) != null
-                        ? KeyedSubtree(
+                        // Its lists scrolled as they were, those of them
+                        // keyed with a PageStorageKey.
+                        ? PageStorage(
                             key: ValueKey(active),
+                            bucket: widget.workspace.viewStates.bucket(
+                              active.key,
+                            ),
                             child: FileViews.byId(active.view!)!
                                 .build(context, active.path),
                           )
@@ -4590,6 +4657,14 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         ? IdeImagePreview(
                             key: ValueKey(active),
                             path: active.path,
+                            initialTransform: widget.workspace
+                                .viewStateOf(active)
+                                .image,
+                            onLeave: (transform) =>
+                                widget.workspace.keepViewState(
+                                  active,
+                                  (kept) => kept.copyWith(image: transform),
+                                ),
                             read: switch (widget.workspace.files) {
                               final IdeHostFiles files => files.readBytes,
                               _ => null,
@@ -4604,6 +4679,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         ? IdeEditorPlaceholder(
                             key: ValueKey(active),
                             error: active.openError!,
+                            path: active.path,
                             onOpenAnyway: () => unawaited(
                               widget.workspace.reopen(active, force: true),
                             ),
@@ -4634,6 +4710,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                                   onError: _report,
                                   onLspStatus: (_) {},
                                   onPositionChanged: _positionChanged,
+                                  onScrolled: _editorViewChanged,
                                   // Go to Definition's target (F12),
                                   // centered even when already in view.
                                   onOpenLocation: (location) =>
@@ -4681,6 +4758,7 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
 
   void _positionChanged(IdeEditorPosition selection) {
     _caretMoved(selection.position);
+    _editorViewChanged();
     if (mounted &&
         (!_caretPosition.equals(selection.position) ||
             _statusColumn != selection.statusColumn ||
@@ -5083,6 +5161,9 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         onOpenLink: _openTerminalLink,
                         shouldSkipShell: _terminalSkipsShell,
                         resolveKey: _terminalFindKey,
+                        hosts: widget.terminalHosts,
+                        place: this,
+                        shown: widget.visible,
                       ),
                       null => null,
                     },
@@ -5369,11 +5450,13 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                         ),
                       ),
                       // Typing moves the caret and edits the document, and
-                      // the status bar is all that shows either.
+                      // the status bar is all that shows either; as it is
+                      // all that shows a language server's progress.
                       ListenableBuilder(
                         listenable: Listenable.merge([
                           _caret,
                           widget.workspace.edits,
+                          _languages?.progressChanges,
                         ]),
                         builder: (context, _) => _statusBar(),
                       ),
@@ -5670,6 +5753,7 @@ class _SashState extends State<_Sash> {
 /// the hovered item sit on a rounded 32px box.
 class _ActivityItem extends StatefulWidget {
   const _ActivityItem({
+    super.key,
     required this.icon,
     required this.label,
     required this.selected,

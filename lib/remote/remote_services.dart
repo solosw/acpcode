@@ -224,7 +224,8 @@ IdeGitService remoteGitService(SshHost host, String root) => IdeGitService(
   watcher: (repository) => resilientStream(
     host,
     (client) => client.watchRepository(repository),
-    resumed: () {},
+    // Where is not known: changes may have been missed meanwhile.
+    resumed: () => '',
   ),
 );
 

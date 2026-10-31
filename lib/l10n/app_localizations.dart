@@ -908,6 +908,12 @@ abstract class AppLocalizations {
   /// **'Add Context…'**
   String get cmdChatAttachContext;
 
+  /// No description provided for @cmdChatAttachSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Add Selection to Chat'**
+  String get cmdChatAttachSelection;
+
   /// No description provided for @cmdChatPasteRaw.
   ///
   /// In en, this message translates to:
@@ -2540,6 +2546,24 @@ abstract class AppLocalizations {
   /// **'Toggle Full Screen'**
   String get cmdToggleFullScreen;
 
+  /// No description provided for @cmdZoomIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom In'**
+  String get cmdZoomIn;
+
+  /// No description provided for @cmdZoomOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Zoom Out'**
+  String get cmdZoomOut;
+
+  /// No description provided for @cmdZoomReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset Zoom'**
+  String get cmdZoomReset;
+
   /// No description provided for @cmdToggleWordWrap.
   ///
   /// In en, this message translates to:
@@ -2551,6 +2575,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Word Wrap'**
   String get menuWordWrap;
+
+  /// No description provided for @cmdToggleMinimap.
+  ///
+  /// In en, this message translates to:
+  /// **'Toggle Minimap'**
+  String get cmdToggleMinimap;
+
+  /// No description provided for @menuMinimap.
+  ///
+  /// In en, this message translates to:
+  /// **'Minimap'**
+  String get menuMinimap;
 
   /// No description provided for @cmdTogglePanel.
   ///
@@ -3662,6 +3698,24 @@ abstract class AppLocalizations {
   /// **'Image'**
   String get agentImageUntitled;
 
+  /// In the list under a chat's title being renamed: has a model title the conversation from what the user asked.
+  ///
+  /// In en, this message translates to:
+  /// **'Summarize into a new title'**
+  String get chatTitleSummarize;
+
+  /// In place of Summarize into a new title while the model writes one.
+  ///
+  /// In en, this message translates to:
+  /// **'Summarizing…'**
+  String get chatTitleSummarizing;
+
+  /// In place of Summarize into a new title when the model gave none.
+  ///
+  /// In en, this message translates to:
+  /// **'No title could be had. Try again'**
+  String get chatTitleSummarizeFailed;
+
   /// Button that starts a new agent.
   ///
   /// In en, this message translates to:
@@ -4627,6 +4681,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Updated todos'**
   String get toolUpdatedTodos;
+
+  /// No description provided for @todoCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Todos {done}/{total}'**
+  String todoCount(int done, int total);
+
+  /// No description provided for @todoAllDone.
+  ///
+  /// In en, this message translates to:
+  /// **'All done'**
+  String get todoAllDone;
+
+  /// No description provided for @todoNone.
+  ///
+  /// In en, this message translates to:
+  /// **'List empty'**
+  String get todoNone;
+
+  /// No description provided for @todoAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Added todo'**
+  String get todoAdded;
+
+  /// No description provided for @todoStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Started todo'**
+  String get todoStarted;
+
+  /// No description provided for @todoCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed todo'**
+  String get todoCompleted;
+
+  /// No description provided for @todoRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Removed todo'**
+  String get todoRemoved;
+
+  /// No description provided for @todoUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Updated todo'**
+  String get todoUpdated;
+
+  /// No description provided for @todoChecked.
+  ///
+  /// In en, this message translates to:
+  /// **'Checked todos'**
+  String get todoChecked;
 
   /// No description provided for @toolSending.
   ///
@@ -5803,12 +5911,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Started and greeted with MCP\'s initialize, as `claude mcp list` checks it.'**
   String get mcpProbeNote;
-
-  /// No description provided for @todoCount.
-  ///
-  /// In en, this message translates to:
-  /// **'Todos {done}/{total}'**
-  String todoCount(int done, int total);
 
   /// No description provided for @queuedMessages.
   ///
@@ -8367,6 +8469,18 @@ abstract class AppLocalizations {
   /// **'{kind, select, definition{No definition found for \'{word}\'} typeDefinition{No type definition found for \'{word}\'} implementation{No implementation found for \'{word}\'} other{No references found for \'{word}\'}}'**
   String langNoneFoundFor(String kind, String word);
 
+  /// No description provided for @langNavigationUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'No language server is available for code navigation in this file.'**
+  String get langNavigationUnavailable;
+
+  /// No description provided for @langNavigationInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install the \'{id}\' language server to enable code navigation in this file.'**
+  String langNavigationInstall(String id);
+
   /// No description provided for @langReferences.
   ///
   /// In en, this message translates to:
@@ -8618,6 +8732,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Kill Terminal'**
   String get termKillTerminal;
+
+  /// No description provided for @termKillOtherTerminals.
+  ///
+  /// In en, this message translates to:
+  /// **'Kill Other Terminals'**
+  String get termKillOtherTerminals;
+
+  /// No description provided for @termKillAllTerminals.
+  ///
+  /// In en, this message translates to:
+  /// **'Kill All Terminals'**
+  String get termKillAllTerminals;
+
+  /// No description provided for @termStopAllTasks.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop All Running Tasks'**
+  String get termStopAllTasks;
+
+  /// No description provided for @termRunInNewTerminal.
+  ///
+  /// In en, this message translates to:
+  /// **'Run in New Terminal'**
+  String get termRunInNewTerminal;
+
+  /// No description provided for @termNoTerminals.
+  ///
+  /// In en, this message translates to:
+  /// **'No terminals'**
+  String get termNoTerminals;
 
   /// No description provided for @termNewTerminal.
   ///
@@ -8990,6 +9134,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Close pane'**
   String get workspaceClosePane;
+
+  /// A pane's close button, where it covers another conversation, which shows again once it closes.
+  ///
+  /// In en, this message translates to:
+  /// **'Close pane, back to {title}'**
+  String workspaceCloseBackTo(String title);
+
+  /// Shown while dropping a conversation over a pane of several.
+  ///
+  /// In en, this message translates to:
+  /// **'Over {title}, which shows again once this closes'**
+  String workspaceCovers(String title);
+
+  /// A pane's button that lists the conversations it covers, to show one again.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 conversation under this one} other{{count} conversations under this one}}'**
+  String workspaceCovered(int count);
 
   /// No description provided for @workspaceLoadingProjects.
   ///
@@ -11121,6 +11283,12 @@ abstract class AppLocalizations {
   /// **'Use {name}'**
   String modelsAccountEnable(String name);
 
+  /// No description provided for @modelsAccountDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Disabled'**
+  String get modelsAccountDisabled;
+
   /// No description provided for @modelsAccountLimited.
   ///
   /// In en, this message translates to:
@@ -11132,6 +11300,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Quota not known yet'**
   String get modelsAccountQuotaUnknown;
+
+  /// No description provided for @modelsQuotaShortWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Short window'**
+  String get modelsQuotaShortWindow;
+
+  /// No description provided for @modelsQuotaLongWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'Long window'**
+  String get modelsQuotaLongWindow;
+
+  /// No description provided for @modelsQuotaLastUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Last updated {time}'**
+  String modelsQuotaLastUpdated(String time);
 
   /// No description provided for @modelsQuotaWeek.
   ///
@@ -11156,6 +11342,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{percent}% used'**
   String modelsQuotaUsed(int percent);
+
+  /// No description provided for @modelsQuotaRemaining.
+  ///
+  /// In en, this message translates to:
+  /// **'{percent}% left'**
+  String modelsQuotaRemaining(int percent);
+
+  /// No description provided for @quotaBarWindowLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{window} {percent}% left'**
+  String quotaBarWindowLeft(String window, int percent);
+
+  /// No description provided for @quotaBarAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}/{total} available'**
+  String quotaBarAvailable(int count, int total);
+
+  /// No description provided for @quotaBarAllOut.
+  ///
+  /// In en, this message translates to:
+  /// **'All accounts out of quota · back {time}'**
+  String quotaBarAllOut(String time);
+
+  /// No description provided for @quotaBarBackAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Out of quota · back {time}'**
+  String quotaBarBackAt(String time);
+
+  /// No description provided for @quotaBarNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No account can be used'**
+  String get quotaBarNone;
+
+  /// No description provided for @quotaBarThisChat.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat'**
+  String get quotaBarThisChat;
+
+  /// No description provided for @quotaBarRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh Quota'**
+  String get quotaBarRefresh;
 
   /// No description provided for @modelsQuotaResetsIn.
   ///
@@ -11312,6 +11546,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'As the upstream documents it; without a version in its path (…/v1), /v1 is added.'**
   String get modelsBaseUrlOpenAIHint;
+
+  /// No description provided for @modelsCustomUrls.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom URLs'**
+  String get modelsCustomUrls;
+
+  /// No description provided for @modelsCustomUrlsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Where models are listed and conversations go is made from the Base URL. When the upstream has them elsewhere, give them in full here.'**
+  String get modelsCustomUrlsDescription;
+
+  /// No description provided for @modelsModelsUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Models URL'**
+  String get modelsModelsUrl;
+
+  /// No description provided for @modelsModelsUrlDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Testing the connection and fetching models GET it. Empty, the one in grey (from the Base URL) is used.'**
+  String get modelsModelsUrlDescription;
+
+  /// No description provided for @modelsEndpointUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Endpoint URL'**
+  String get modelsEndpointUrl;
+
+  /// No description provided for @modelsEndpointUrlDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Every conversation is POSTed to it. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.'**
+  String get modelsEndpointUrlDescription;
+
+  /// No description provided for @modelsEndpointUrlAnthropicDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Every conversation is POSTed to it, Claude Code through the local proxy. Empty, the one in grey (from the Base URL) is used. A model of another endpoint type still goes by the Base URL.'**
+  String get modelsEndpointUrlAnthropicDescription;
 
   /// No description provided for @modelsApiKey.
   ///
@@ -11703,12 +11979,6 @@ abstract class AppLocalizations {
   /// **'One Name: Value a line, sent on every request to this upstream. Values may use the CLAUDE_SESSION_ID variable (this conversation\'s session) and ANTHROPIC_MODEL (the model asked for), each between double braces; over the direct Anthropic protocol those two go as written, so only fixed values work there. Auth headers (Authorization, x-api-key) are ignored here: the key is set above.'**
   String get modelsHeadersDescription;
 
-  /// No description provided for @modelsHeadersPlaceholder.
-  ///
-  /// In en, this message translates to:
-  /// **'x-session-id: my-session'**
-  String get modelsHeadersPlaceholder;
-
   /// No description provided for @modelsDuplicateProvider.
   ///
   /// In en, this message translates to:
@@ -11990,6 +12260,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Which API this model\'s requests go to, at the upstream\'s base URL and with its key: on a relay that serves several, its Claude models at the Anthropic one and its GPT at Responses, say.'**
   String get modelsEndpointDescription;
+
+  /// No description provided for @modelsModelEndpointUrlDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Where this model\'s requests go, in full. Apart from the endpoint type: that says how a request is made, this only where it goes. Empty, the one in grey is used.'**
+  String get modelsModelEndpointUrlDescription;
 
   /// No description provided for @modelsImageBadge.
   ///
@@ -12288,7 +12564,7 @@ abstract class AppLocalizations {
   /// No description provided for @diagnosticsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Send BaoCode\'s error logs to its developers to help track down a problem. Nothing is sent until you upload.'**
+  /// **'Send BaoCode\'s error logs and the crash and hang reports the system kept of it to its developers to help track down a problem. Nothing is sent until you upload.'**
   String get diagnosticsDescription;
 
   /// No description provided for @diagnosticsUpload.
@@ -12723,6 +12999,18 @@ abstract class AppLocalizations {
   /// **'A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.'**
   String get appearanceSettingsMinimapDescription;
 
+  /// No description provided for @appearanceSettingsWindowBlur.
+  ///
+  /// In en, this message translates to:
+  /// **'Native Window Blur'**
+  String get appearanceSettingsWindowBlur;
+
+  /// No description provided for @appearanceSettingsWindowBlurDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The system\'s blur under the windows (macOS\'s sidebar material, Windows 11\'s acrylic): what is behind them shows through the sidebar and the conversation. Off: the windows are opaque.'**
+  String get appearanceSettingsWindowBlurDescription;
+
   /// No description provided for @appearanceSettingsSidebarTimes.
   ///
   /// In en, this message translates to:
@@ -12834,7 +13122,7 @@ abstract class AppLocalizations {
   /// No description provided for @appearanceSettingsCodeSizeDescription.
   ///
   /// In en, this message translates to:
-  /// **'The size of code in the IDE editor and the side panel\'s file and changes views. Code in the chat follows the interface size; the terminal has its own size.'**
+  /// **'The size of code in the IDE editor and the side panel\'s file and changes views at 100% interface size; zooming the interface scales it in proportion. Code in the chat follows the interface size; the terminal has its own size.'**
   String get appearanceSettingsCodeSizeDescription;
 
   /// No description provided for @appearanceSettingsCodeSizeLabel.
@@ -12867,6 +13155,18 @@ abstract class AppLocalizations {
   /// **'Wraps long lines at the editor\'s width, in every editor. An editor\'s context menu and the Command Palette (Toggle Word Wrap) switch it too. Files of more than 5,000 lines are not wrapped.'**
   String get appearanceSettingsWordWrapDescription;
 
+  /// No description provided for @appearanceSettingsCodeMinimap.
+  ///
+  /// In en, this message translates to:
+  /// **'Code Minimap'**
+  String get appearanceSettingsCodeMinimap;
+
+  /// No description provided for @appearanceSettingsCodeMinimapDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A minimap of the file at the right of the code editor, in every editor; it is not shown in an editor too narrow for it. An editor tab\'s context menu and the Command Palette (Toggle Minimap) switch it too.'**
+  String get appearanceSettingsCodeMinimapDescription;
+
   /// No description provided for @appearanceSettingsUiScale.
   ///
   /// In en, this message translates to:
@@ -12876,7 +13176,7 @@ abstract class AppLocalizations {
   /// No description provided for @appearanceSettingsUiScaleDescription.
   ///
   /// In en, this message translates to:
-  /// **'Zooms the whole interface (its text, icons and spacing), code in the chat, and terminal text while the terminal size follows it. Code in the IDE editor and side panel files and changes keeps its own size.'**
+  /// **'Zooms the whole interface (its text, icons and spacing) and the code in it, and terminal text while the terminal size follows it. Code in the editor zooms from its code size.'**
   String get appearanceSettingsUiScaleDescription;
 
   /// No description provided for @appearanceSettingsUiScaleLabel.
@@ -13077,6 +13377,12 @@ abstract class AppLocalizations {
   /// **'A folder on {host}: pick one, or type a path'**
   String remoteFolderPlaceholder(String host);
 
+  /// The button at the right of the quick pick browsing a remote host's folders: it lists the folder again, e.g. one made in a terminal since.
+  ///
+  /// In en, this message translates to:
+  /// **'Read the folders again'**
+  String get remoteFolderRefresh;
+
   /// No description provided for @remoteOpenThisFolder.
   ///
   /// In en, this message translates to:
@@ -13100,6 +13406,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not list {path}'**
   String remoteListFailed(String path);
+
+  /// No description provided for @remoteReadingFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading {path}…'**
+  String remoteReadingFolder(String path);
 
   /// No description provided for @remoteFileHostPlaceholder.
   ///
@@ -14448,7 +14760,7 @@ abstract class AppLocalizations {
   /// No description provided for @mobileSettingsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Follow and drive this computer\'s agents from BaoCode on your phone, over the local network or the internet. What goes between them is end-to-end encrypted.'**
+  /// **'Follow and drive this computer\'s agents from BaoCode on your phone: directly on the same network, across the internet through a hole punched in the routers between them, or through BaoCode\'s relay when neither works. What goes between them is end-to-end encrypted; a relay cannot read it.'**
   String get mobileSettingsDescription;
 
   /// No description provided for @mobileAllow.
@@ -14460,7 +14772,7 @@ abstract class AppLocalizations {
   /// No description provided for @mobileAllowDescription.
   ///
   /// In en, this message translates to:
-  /// **'Phones paired with this computer connect to it directly.'**
+  /// **'Phones paired with this computer can connect to it, wherever they are.'**
   String get mobileAllowDescription;
 
   /// No description provided for @mobileStatus.
@@ -14481,89 +14793,23 @@ abstract class AppLocalizations {
   /// **'Starting…'**
   String get mobileStatusStarting;
 
-  /// No description provided for @mobileStatusListening.
-  ///
-  /// In en, this message translates to:
-  /// **'Listening on port {port}'**
-  String mobileStatusListening(int port);
-
   /// No description provided for @mobileStatusFailed.
   ///
   /// In en, this message translates to:
-  /// **'Could not listen: {error}'**
+  /// **'Could not start: {error}'**
   String mobileStatusFailed(String error);
-
-  /// No description provided for @mobileAddresses.
-  ///
-  /// In en, this message translates to:
-  /// **'Addresses'**
-  String get mobileAddresses;
-
-  /// No description provided for @mobileAddressesDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Where phones reach this computer, in the order they try them: the local network first, then the internet.'**
-  String get mobileAddressesDescription;
-
-  /// No description provided for @mobileAddressesNone.
-  ///
-  /// In en, this message translates to:
-  /// **'No network found.'**
-  String get mobileAddressesNone;
-
-  /// No description provided for @mobileAddressesRefresh.
-  ///
-  /// In en, this message translates to:
-  /// **'Refresh'**
-  String get mobileAddressesRefresh;
-
-  /// No description provided for @mobilePort.
-  ///
-  /// In en, this message translates to:
-  /// **'Port'**
-  String get mobilePort;
-
-  /// No description provided for @mobilePortDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'The port phones connect to. Forward it on the router to reach this computer from the internet.'**
-  String get mobilePortDescription;
-
-  /// No description provided for @mobilePortInvalid.
-  ///
-  /// In en, this message translates to:
-  /// **'Not a port: {text}. Enter a number from 1 to 65535.'**
-  String mobilePortInvalid(String text);
-
-  /// No description provided for @mobilePublicAddress.
-  ///
-  /// In en, this message translates to:
-  /// **'Public Address'**
-  String get mobilePublicAddress;
-
-  /// No description provided for @mobilePublicAddressDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.'**
-  String get mobilePublicAddressDescription;
 
   /// No description provided for @mobileRelay.
   ///
   /// In en, this message translates to:
-  /// **'Relay'**
+  /// **'Relays'**
   String get mobileRelay;
 
   /// No description provided for @mobileRelayDescription.
   ///
   /// In en, this message translates to:
-  /// **'Reach this computer through BaoCode\'s relay when none of its addresses can be reached. Coming later.'**
+  /// **'Phones that cannot reach this computer directly go through one. It only passes along what is sealed between the two. Nothing to set on the phone: it learns them when paired, and again each time it connects.'**
   String get mobileRelayDescription;
-
-  /// No description provided for @mobileRelayUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Not Available Yet'**
-  String get mobileRelayUnavailable;
 
   /// No description provided for @mobilePair.
   ///
@@ -14720,6 +14966,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Allow'**
   String get mobilePairAllow;
+
+  /// No description provided for @mobileStatusOnline.
+  ///
+  /// In en, this message translates to:
+  /// **'On, reachable through {relay}'**
+  String mobileStatusOnline(String relay);
+
+  /// No description provided for @mobileStatusNoRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'On; no relay reached yet, so only phones on the same network can connect'**
+  String get mobileStatusNoRelay;
+
+  /// No description provided for @mobileStatusDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'On, but the relay turned this computer away: {reason}'**
+  String mobileStatusDenied(String reason);
+
+  /// No description provided for @mobileRelayInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a relay address; one looks like https://relay.example.com'**
+  String get mobileRelayInvalid;
+
+  /// No description provided for @mobileRelayPinned.
+  ///
+  /// In en, this message translates to:
+  /// **'Relay Used'**
+  String get mobileRelayPinned;
+
+  /// No description provided for @mobileRelayCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom'**
+  String get mobileRelayCustom;
+
+  /// No description provided for @mobileRelayCustomAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom Address'**
+  String get mobileRelayCustomAddress;
+
+  /// No description provided for @mobileRelayCustomDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The address of a relay you run yourself (baocode-relay).'**
+  String get mobileRelayCustomDescription;
+
+  /// No description provided for @mobileRelayMode.
+  ///
+  /// In en, this message translates to:
+  /// **'How'**
+  String get mobileRelayMode;
+
+  /// No description provided for @mobileRelayModeAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic'**
+  String get mobileRelayModeAuto;
+
+  /// No description provided for @mobileRelayModeAutoDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode\'s relays, the nearest that answers.'**
+  String get mobileRelayModeAutoDescription;
+
+  /// No description provided for @mobileRelayModePinned.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick One'**
+  String get mobileRelayModePinned;
+
+  /// No description provided for @mobileRelayModePinnedDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the one picked: one of BaoCode\'s, or a custom address.'**
+  String get mobileRelayModePinnedDescription;
+
+  /// No description provided for @mobilePathLan.
+  ///
+  /// In en, this message translates to:
+  /// **'Same network'**
+  String get mobilePathLan;
+
+  /// No description provided for @mobilePathDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct'**
+  String get mobilePathDirect;
+
+  /// No description provided for @mobilePathRelay.
+  ///
+  /// In en, this message translates to:
+  /// **'Through the relay'**
+  String get mobilePathRelay;
+
+  /// No description provided for @mobilePathRtt.
+  ///
+  /// In en, this message translates to:
+  /// **'{ms} ms'**
+  String mobilePathRtt(int ms);
+
+  /// No description provided for @mobileLegacyPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs pairing again: paired before the connection was rebuilt'**
+  String get mobileLegacyPhone;
+
+  /// No description provided for @mobileLegacyRepair.
+  ///
+  /// In en, this message translates to:
+  /// **'Pair Again'**
+  String get mobileLegacyRepair;
 
   /// No description provided for @settingsSectionStash.
   ///
@@ -15072,37 +15432,37 @@ abstract class AppLocalizations {
   /// No description provided for @composerPolish.
   ///
   /// In en, this message translates to:
-  /// **'Polish'**
+  /// **'Enhance prompt'**
   String get composerPolish;
 
   /// No description provided for @composerPolishing.
   ///
   /// In en, this message translates to:
-  /// **'Polishing…'**
+  /// **'Enhancing…'**
   String get composerPolishing;
 
   /// No description provided for @composerPolishHint.
   ///
   /// In en, this message translates to:
-  /// **'Polish: the auxiliary model makes the message clearer, in your words; pictures, files, code and links stay as they are; Undo takes it back'**
+  /// **'Enhance prompt: the auxiliary model makes the message a clearer, more specific prompt for the agent, filling in what you left vague; pictures, files, code and links stay as they are; Undo takes it back'**
   String get composerPolishHint;
 
   /// No description provided for @composerPolishFailed.
   ///
   /// In en, this message translates to:
-  /// **'Could not polish: {error}'**
+  /// **'Could not enhance the prompt: {error}'**
   String composerPolishFailed(String error);
 
   /// No description provided for @generalSettingsComposerPolish.
   ///
   /// In en, this message translates to:
-  /// **'Polish button'**
+  /// **'Enhance Prompt button'**
   String get generalSettingsComposerPolish;
 
   /// No description provided for @generalSettingsComposerPolishDescription.
   ///
   /// In en, this message translates to:
-  /// **'A button in the message box that has the auxiliary model make what you wrote clearer before you send it'**
+  /// **'A button in the message box that has the auxiliary model make what you wrote a clearer, more specific prompt before you send it'**
   String get generalSettingsComposerPolishDescription;
 
   /// No description provided for @generalSettingsLiveTurnStats.
@@ -15884,12 +16244,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Detached HEAD'**
   String get branchBarDetached;
-
-  /// Tooltip of the branch under the chat input while the agent is working.
-  ///
-  /// In en, this message translates to:
-  /// **'Branches can\'t be switched while the agent works'**
-  String get branchBarRunning;
 
   /// Message of the dialog shown when Git refused to check out or create the branch {branch}; Git's own message is the detail.
   ///
@@ -18501,6 +18855,12 @@ abstract class AppLocalizations {
   /// **'No branch has this commit.'**
   String get gitLogInNoBranch;
 
+  /// No description provided for @gitLogInBranches.
+  ///
+  /// In en, this message translates to:
+  /// **'In {count, plural, =1{1 branch} other{{count} branches}}'**
+  String gitLogInBranches(int count);
+
   /// No description provided for @gitLogList.
   ///
   /// In en, this message translates to:
@@ -18644,6 +19004,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Copy the full hash'**
   String get gitLogCopyHash;
+
+  /// No description provided for @gitLogCopyRefNames.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Branch or Tag Name'**
+  String get gitLogCopyRefNames;
+
+  /// No description provided for @gitLogCopyName.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy \'{name}\''**
+  String gitLogCopyName(String name);
 
   /// No description provided for @gitLogLoading.
   ///
@@ -18801,12 +19173,6 @@ abstract class AppLocalizations {
   /// **'Collapse All'**
   String get gitCommitCollapseAll;
 
-  /// No description provided for @gitCommitGroupByDirectory.
-  ///
-  /// In en, this message translates to:
-  /// **'Group by Directory'**
-  String get gitCommitGroupByDirectory;
-
   /// No description provided for @gitCommitEmptyMessage.
   ///
   /// In en, this message translates to:
@@ -18864,13 +19230,13 @@ abstract class AppLocalizations {
   /// No description provided for @diffRevertChange.
   ///
   /// In en, this message translates to:
-  /// **'Revert'**
+  /// **'Undo this change (back to the left side)'**
   String get diffRevertChange;
 
   /// No description provided for @diffRemoveChange.
   ///
   /// In en, this message translates to:
-  /// **'Remove'**
+  /// **'Undo this change (remove the added lines)'**
   String get diffRemoveChange;
 
   /// No description provided for @diffPreviousDifference.
@@ -18968,12 +19334,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Highlight Lines'**
   String get diffHighlightLines;
-
-  /// No description provided for @diffHighlightNone.
-  ///
-  /// In en, this message translates to:
-  /// **'Do Not Highlight'**
-  String get diffHighlightNone;
 
   /// No description provided for @diffGoToFile.
   ///
@@ -19922,12 +20282,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Delete Changelist'**
   String get gitChangelistDelete;
-
-  /// No description provided for @gitChangelistTurn.
-  ///
-  /// In en, this message translates to:
-  /// **'AI: {request}'**
-  String gitChangelistTurn(String request);
 
   /// No description provided for @gitStashChangesTitle.
   ///
