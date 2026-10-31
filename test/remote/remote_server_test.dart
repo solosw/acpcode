@@ -311,7 +311,7 @@ void main() {
       final subscription = client().watchRepository(root).listen(heard.add);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       File(at('y.txt')).writeAsStringSync('y');
-      await until(() => heard.isNotEmpty);
+      await until(() => heard.any((path) => path.endsWith('y.txt')));
       await subscription.cancel();
       // Where: the app skips what is ignored.
       expect(heard, contains(endsWith('y.txt')));

@@ -558,7 +558,7 @@ class _TasksTab extends StatelessWidget {
   /// or all those ended.
   List<List<IdeMenuEntry>> _actions(AppLocalizations l10n, KernelTask task) {
     bool runs(KernelTask task) => task.status == CommandStatus.running;
-    final running = list.where(runs).toList();
+    final running = list.where((task) => runs(task) && task.canStop).toList();
     final ended = [
       for (final task in list)
         if (!runs(task)) task,
@@ -569,7 +569,7 @@ class _TasksTab extends StatelessWidget {
         unawaited(Clipboard.setData(ClipboardData(text: text)));
     return [
       [
-        if (runs(task))
+        if (runs(task) && task.canStop)
           IdeMenuAction(l10n.chatStop, onSelected: () => tasks.stop(task)),
         if (running.length > 1)
           IdeMenuAction(

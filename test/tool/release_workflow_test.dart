@@ -18,6 +18,17 @@ void main() {
     expect(workflow, contains('curl -fsSL'));
   });
 
+  test('desktop builds set up the upstream Rust native dependency', () {
+    final workflow = File('.github/workflows/release.yml').readAsStringSync();
+    expect(
+      'uses: ./.github/actions/setup-rust'.allMatches(workflow),
+      hasLength(3),
+    );
+    expect(workflow, contains('lib/libbao_iroh.so'));
+    expect(workflow, isNot(contains('  share:')));
+    expect(workflow, contains(r'symbols-linux-${{ matrix.arch }}'));
+  });
+
   test('Linux packages join the existing GitHub release channel', () {
     final workflow = File('.github/workflows/release.yml').readAsStringSync();
     expect(

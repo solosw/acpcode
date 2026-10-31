@@ -36,6 +36,7 @@ import 'package:baocode/ide/ide_code_diff.dart';
 import 'package:baocode/ide/ide_code_editor.dart';
 import 'package:baocode/ide/ide_explorer.dart';
 import 'package:baocode/ide/ide_list.dart';
+import 'package:baocode/ide/ide_menu.dart';
 import 'package:baocode/ide/ide_tab_bar.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
 import 'package:baocode/ide/terminal/terminal_service.dart';
@@ -367,11 +368,14 @@ void main() {
     panel.openTerminal(session, 'one');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    final list = find.byKey(const ValueKey('side-panel-terminals'));
-    expect(
-      find.descendant(of: list, matching: find.text('Background Tasks')),
-      findsOneWidget,
-    );
+    final taskMenu = find.byKey(const ValueKey('terminal-deck-tasks'));
+    expect(taskMenu, findsOneWidget);
+    final actions = (await tester.widget<IdeMenuButton>(taskMenu).entries())
+        .whereType<IdeMenuAction>()
+        .map((action) => action.label);
+    expect(actions, containsAll(['First command', 'Second command']));
+    expect(actions, isNot(contains('Stop')));
+    expect(actions, isNot(contains('Stop All Running Tasks')));
     expect(await _previewScreen(tester), '\$ printf hello\nWaiting for output');
     final preview = find.byType(TerminalPreview);
     expect(
@@ -400,7 +404,11 @@ void main() {
       'status': 'completed',
     });
     await tester.pump();
-    expect(find.text('First command  ·  Completed'), findsOneWidget);
+    expect(find.text('First command'), findsWidgets);
+    expect(
+      tester.widget<TerminalPreview>(preview).task.status,
+      CommandStatus.succeeded,
+    );
     expect(await _previewScreen(tester), '\$ printf hello\nhello');
     expect(session.terminalTasks, hasLength(2));
     session.clearTasks(session.terminalTasks);
@@ -419,7 +427,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(await _previewScreen(tester), '\$ echo two\ntwo');
-    expect(find.text('Second command  ·  Failed'), findsOneWidget);
+    expect(find.text('Second command'), findsWidgets);
+    expect(
+      tester.widget<TerminalPreview>(preview).task.status,
+      CommandStatus.failed,
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
