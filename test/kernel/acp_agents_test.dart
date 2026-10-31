@@ -51,6 +51,68 @@ void main() {
   });
 
   test(
+    'host configurations persist and never reuse local credentials',
+    () async {
+      await agents.add(
+        const AcpAgentConfig(
+          id: 'scoped',
+          label: 'Scoped',
+          command: '/local/agent',
+          hostScoped: true,
+          environment: {'TOKEN': 'local-only'},
+          hostConfigurations: {
+            'dev': AcpAgentConfig(
+              id: 'scoped',
+              label: 'Scoped',
+              command: '/remote/agent',
+              arguments: ['with spaces'],
+              environment: {'TOKEN': 'remote-only'},
+              skillsDirectory: '/remote/skills',
+            ),
+          },
+        ),
+      );
+      await settings.load();
+      final agent = agents.agents.single;
+      expect(agent.forHost(null).environment, {'TOKEN': 'local-only'});
+      expect(agent.forHost('dev').command, '/remote/agent');
+      expect(agent.forHost('dev').arguments, ['with spaces']);
+      expect(agent.forHost('dev').environment, {'TOKEN': 'remote-only'});
+      expect(agent.forHost('dev').skillsDirectory, '/remote/skills');
+      expect(() => agent.forHost('other'), throwsStateError);
+      expect(agent.hostScoped, isTrue);
+    },
+  );
+
+  test(
+    'remote-only and legacy entries have explicit, different resolution',
+    () {
+      const legacy = AcpAgentConfig(
+        id: 'legacy',
+        label: 'Legacy',
+        command: 'agent',
+      );
+      expect(legacy.forHost('dev'), same(legacy));
+      const remote = AcpAgentConfig(
+        id: 'remote',
+        label: 'Remote',
+        command: '',
+        hostScoped: true,
+        hostConfigurations: {
+          'dev': AcpAgentConfig(
+            id: 'remote',
+            label: 'Remote',
+            command: 'agent',
+          ),
+        },
+      );
+      expect(remote.forHost('dev').command, 'agent');
+      expect(() => remote.forHost(null), throwsStateError);
+      expect(() => remote.forHost('other'), throwsStateError);
+    },
+  );
+
+  test(
     'legacy and malformed customization fields default to disabled',
     () async {
       await settings.update(AcpAgents.settingKey, [

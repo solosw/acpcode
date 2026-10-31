@@ -10,6 +10,155 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get agentsDescription =>
+      'Manage your Agent Client Protocol connections.';
+
+  @override
+  String get agentsEmpty => 'No ACP agents configured';
+
+  @override
+  String get agentsEmptyDetail =>
+      'Add an agent from the ACP Registry or configure your own executable.';
+
+  @override
+  String get agentsAdd => 'Add agent';
+
+  @override
+  String get agentsEdit => 'Edit agent';
+
+  @override
+  String get agentsDelete => 'Delete agent';
+
+  @override
+  String get agentsDeleteDetail =>
+      'Remove this configuration? Installed programs and user files will not be deleted.';
+
+  @override
+  String get agentsName => 'Name';
+
+  @override
+  String get agentsCommand => 'Command';
+
+  @override
+  String get agentsArguments => 'Arguments';
+
+  @override
+  String get agentsArgumentsHint =>
+      'JSON array, e.g. [\"--profile\", \"my profile\"]';
+
+  @override
+  String get agentsEnvironment => 'Environment';
+
+  @override
+  String get agentsEnvironmentHint => 'One KEY=value per line';
+
+  @override
+  String get agentsSkills => 'Skills directory';
+
+  @override
+  String get agentsRules => 'Rules directory';
+
+  @override
+  String get agentsChooseFolder => 'Choose folder…';
+
+  @override
+  String get agentsClearFolder => 'Clear folder';
+
+  @override
+  String get agentsFolderHint =>
+      'Browse folders on the selected host, or enter its path manually.';
+
+  @override
+  String get agentsConnection => 'Connection';
+
+  @override
+  String get agentsCustomizations => 'Skills & Rules';
+
+  @override
+  String get agentsRequired => 'Name and command are required.';
+
+  @override
+  String get agentsInvalidArguments =>
+      'Arguments must be a JSON array of strings.';
+
+  @override
+  String get agentsInvalidEnvironment =>
+      'Use KEY=value on each non-empty environment line.';
+
+  @override
+  String get agentsCustom => 'Custom configuration';
+
+  @override
+  String get agentsRegistry => 'ACP Registry';
+
+  @override
+  String get agentsSearch => 'Search agents…';
+
+  @override
+  String get agentsInstallTarget => 'Configuration / installation target';
+
+  @override
+  String get agentsLocalTarget => 'This machine';
+
+  @override
+  String get agentsHostIsolation =>
+      'Commands, credentials and directories are saved separately for each host. New configurations never fall back to another host. Legacy configurations retain their behavior until a host-specific configuration is saved.';
+
+  @override
+  String get agentsUseNetworkSettings => 'Use BaoCode network settings';
+
+  @override
+  String get agentsUseServerNetwork => 'Use server network';
+
+  @override
+  String get agentsRemoteInstallHint =>
+      'npm/uvx runs on the server. BaoCode network mode uses a temporary authenticated tunnel. Binary archives are always downloaded locally and uploaded via SSH. The tunnel ends after installation; it is not used when the agent runs.';
+
+  @override
+  String get agentsSelectFolder => 'Select this folder';
+
+  @override
+  String get agentsRegistryDescription =>
+      'Discover agents from the official ACP Registry. The target needs Node.js/npm for npm agents, or uv for Python agents. System runtimes and login credentials are not installed automatically.';
+
+  @override
+  String get agentsRegistryTrust =>
+      'Installing downloads third-party code and may run package installation scripts. Authentication may still be required. Review the source and command before continuing.';
+
+  @override
+  String get agentsInstall => 'Install and configure';
+
+  @override
+  String get agentsInstalling => 'Installing… Keep this window open.';
+
+  @override
+  String get agentsRetry => 'Retry';
+
+  @override
+  String get agentsUnsupported =>
+      'No supported distribution for this platform.';
+
+  @override
+  String get agentsNoResults => 'No matching agents';
+
+  @override
+  String get agentsInstallFailed =>
+      'Installation failed. You can retry or use custom configuration.';
+
+  @override
+  String get agentsSource => 'Source';
+
+  @override
+  String get agentsLaunch => 'Launch command';
+
+  @override
+  String get agentsVersion => 'Version';
+
+  @override
+  String get agentsRegistryUnavailable =>
+      'Could not load the ACP Registry. Retry or configure an agent manually.';
+
+  @override
   String get documentPreviewLegacyFormat =>
       'Legacy .doc / .xls binary files are not supported by the built-in renderer. Save as .docx / .xlsx to preview.';
 

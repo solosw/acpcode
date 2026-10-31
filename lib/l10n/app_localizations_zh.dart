@@ -10,6 +10,146 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get agentsDescription => '管理 Agent Client Protocol 智能体连接。';
+
+  @override
+  String get agentsEmpty => '尚未配置 ACP Agent';
+
+  @override
+  String get agentsEmptyDetail => '从 ACP 注册表安装，或配置你自己的可执行程序。';
+
+  @override
+  String get agentsAdd => '添加 Agent';
+
+  @override
+  String get agentsEdit => '编辑 Agent';
+
+  @override
+  String get agentsDelete => '删除 Agent';
+
+  @override
+  String get agentsDeleteDetail => '删除此配置？不会删除已安装的程序或用户文件。';
+
+  @override
+  String get agentsName => '名称';
+
+  @override
+  String get agentsCommand => '启动命令';
+
+  @override
+  String get agentsArguments => '参数';
+
+  @override
+  String get agentsArgumentsHint =>
+      'JSON 数组，例如 [\"--profile\", \"my profile\"]';
+
+  @override
+  String get agentsEnvironment => '环境变量';
+
+  @override
+  String get agentsEnvironmentHint => '每行一个 KEY=value';
+
+  @override
+  String get agentsSkills => 'Skills 目录';
+
+  @override
+  String get agentsRules => 'Rules 目录';
+
+  @override
+  String get agentsChooseFolder => '选择文件夹…';
+
+  @override
+  String get agentsClearFolder => '清空目录';
+
+  @override
+  String get agentsFolderHint => '浏览所选主机上的文件夹，也可手动输入该主机上的路径。';
+
+  @override
+  String get agentsConnection => '连接配置';
+
+  @override
+  String get agentsCustomizations => 'Skills 与 Rules';
+
+  @override
+  String get agentsRequired => '名称和启动命令不能为空。';
+
+  @override
+  String get agentsInvalidArguments => '参数必须是仅包含字符串的 JSON 数组。';
+
+  @override
+  String get agentsInvalidEnvironment => '每行非空环境变量请使用 KEY=value 格式。';
+
+  @override
+  String get agentsCustom => '自定义配置';
+
+  @override
+  String get agentsRegistry => 'ACP 注册表';
+
+  @override
+  String get agentsSearch => '搜索 Agent…';
+
+  @override
+  String get agentsInstallTarget => '配置 / 安装位置';
+
+  @override
+  String get agentsLocalTarget => '本机';
+
+  @override
+  String get agentsHostIsolation =>
+      '启动命令、凭据和目录按主机分别保存，新配置不会回退到其他主机。旧配置保留原有行为，保存主机专属配置后改为隔离。';
+
+  @override
+  String get agentsUseNetworkSettings => '使用 BaoCode 网络设置';
+
+  @override
+  String get agentsUseServerNetwork => '使用服务器自身网络';
+
+  @override
+  String get agentsRemoteInstallHint =>
+      'npm/uvx 在服务器执行，BaoCode 网络模式通过临时认证通道访问网络。二进制归档始终在本机下载后经 SSH 上传。安装后通道关闭，不用于 Agent 运行时。';
+
+  @override
+  String get agentsSelectFolder => '选择此文件夹';
+
+  @override
+  String get agentsRegistryDescription =>
+      '从 ACP 官方公共注册表发现 Agent。安装目标需已有 Node.js/npm（npm 类型）或 uv（Python 类型），不会自动安装系统运行时或配置登录凭据。';
+
+  @override
+  String get agentsRegistryTrust =>
+      '安装将下载第三方代码，可能运行软件包安装脚本。安装后可能仍需登录，请先检查来源和启动命令。';
+
+  @override
+  String get agentsInstall => '安装并配置';
+
+  @override
+  String get agentsInstalling => '正在安装…请保持此窗口打开。';
+
+  @override
+  String get agentsRetry => '重试';
+
+  @override
+  String get agentsUnsupported => '此平台没有受支持的安装方式。';
+
+  @override
+  String get agentsNoResults => '没有匹配的 Agent';
+
+  @override
+  String get agentsInstallFailed => '安装失败，可以重试或使用自定义配置。';
+
+  @override
+  String get agentsSource => '来源';
+
+  @override
+  String get agentsLaunch => '启动命令';
+
+  @override
+  String get agentsVersion => '版本';
+
+  @override
+  String get agentsRegistryUnavailable => '无法加载 ACP 注册表，请重试或手动配置 Agent。';
+
+  @override
   String get documentPreviewLegacyFormat =>
       '内置渲染器暂不支持旧版 .doc / .xls 二进制文件。请另存为 .docx / .xlsx 后预览。';
 

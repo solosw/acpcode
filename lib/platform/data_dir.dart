@@ -149,6 +149,7 @@ class DataDirectory {
     'workspaces',
     'logs',
     'extensions',
+    'acp-agents',
     'browser',
     'images',
     // Where the providers' keys are kept where the system has no keychain

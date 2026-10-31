@@ -19,26 +19,32 @@ class AgentCustomizationCopy extends StatefulWidget {
     required this.store,
     this.hosts = const [],
     this.enabled = true,
+    this.fixedHost,
   });
 
   final AcpAgentConfig agent;
   final CustomizationStore store;
   final List<String> hosts;
   final bool enabled;
+  final String? fixedHost;
 
   @override
   State<AgentCustomizationCopy> createState() => _AgentCustomizationCopyState();
 }
 
 class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
-  String _host = '';
+  late String _host = widget.fixedHost ?? '';
   bool _busy = false;
   String? _status;
 
   @override
   void didUpdateWidget(AgentCustomizationCopy oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_host.isNotEmpty && !widget.hosts.contains(_host)) _host = '';
+    if (widget.fixedHost case final host?) {
+      _host = host;
+    } else if (_host.isNotEmpty && !widget.hosts.contains(_host)) {
+      _host = '';
+    }
     if (oldWidget.agent.skillsDirectory != widget.agent.skillsDirectory ||
         oldWidget.agent.rulesDirectory != widget.agent.rulesDirectory) {
       _status = null;
@@ -165,7 +171,7 @@ class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
         'copying does not guarantee loading. Rule conditions and relative '
         'references are not rewritten.',
       ),
-      if (widget.hosts.isNotEmpty)
+      if (widget.fixedHost == null && widget.hosts.isNotEmpty)
         DropdownButton<String>(
           value: _host,
           isExpanded: true,

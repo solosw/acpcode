@@ -98,6 +98,276 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @agentsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage your Agent Client Protocol connections.'**
+  String get agentsDescription;
+
+  /// No description provided for @agentsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No ACP agents configured'**
+  String get agentsEmpty;
+
+  /// No description provided for @agentsEmptyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an agent from the ACP Registry or configure your own executable.'**
+  String get agentsEmptyDetail;
+
+  /// No description provided for @agentsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add agent'**
+  String get agentsAdd;
+
+  /// No description provided for @agentsEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit agent'**
+  String get agentsEdit;
+
+  /// No description provided for @agentsDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete agent'**
+  String get agentsDelete;
+
+  /// No description provided for @agentsDeleteDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this configuration? Installed programs and user files will not be deleted.'**
+  String get agentsDeleteDetail;
+
+  /// No description provided for @agentsName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get agentsName;
+
+  /// No description provided for @agentsCommand.
+  ///
+  /// In en, this message translates to:
+  /// **'Command'**
+  String get agentsCommand;
+
+  /// No description provided for @agentsArguments.
+  ///
+  /// In en, this message translates to:
+  /// **'Arguments'**
+  String get agentsArguments;
+
+  /// No description provided for @agentsArgumentsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'JSON array, e.g. [\"--profile\", \"my profile\"]'**
+  String get agentsArgumentsHint;
+
+  /// No description provided for @agentsEnvironment.
+  ///
+  /// In en, this message translates to:
+  /// **'Environment'**
+  String get agentsEnvironment;
+
+  /// No description provided for @agentsEnvironmentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'One KEY=value per line'**
+  String get agentsEnvironmentHint;
+
+  /// No description provided for @agentsSkills.
+  ///
+  /// In en, this message translates to:
+  /// **'Skills directory'**
+  String get agentsSkills;
+
+  /// No description provided for @agentsRules.
+  ///
+  /// In en, this message translates to:
+  /// **'Rules directory'**
+  String get agentsRules;
+
+  /// No description provided for @agentsChooseFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose folder…'**
+  String get agentsChooseFolder;
+
+  /// No description provided for @agentsClearFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear folder'**
+  String get agentsClearFolder;
+
+  /// No description provided for @agentsFolderHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Browse folders on the selected host, or enter its path manually.'**
+  String get agentsFolderHint;
+
+  /// No description provided for @agentsConnection.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection'**
+  String get agentsConnection;
+
+  /// No description provided for @agentsCustomizations.
+  ///
+  /// In en, this message translates to:
+  /// **'Skills & Rules'**
+  String get agentsCustomizations;
+
+  /// No description provided for @agentsRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Name and command are required.'**
+  String get agentsRequired;
+
+  /// No description provided for @agentsInvalidArguments.
+  ///
+  /// In en, this message translates to:
+  /// **'Arguments must be a JSON array of strings.'**
+  String get agentsInvalidArguments;
+
+  /// No description provided for @agentsInvalidEnvironment.
+  ///
+  /// In en, this message translates to:
+  /// **'Use KEY=value on each non-empty environment line.'**
+  String get agentsInvalidEnvironment;
+
+  /// No description provided for @agentsCustom.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom configuration'**
+  String get agentsCustom;
+
+  /// No description provided for @agentsRegistry.
+  ///
+  /// In en, this message translates to:
+  /// **'ACP Registry'**
+  String get agentsRegistry;
+
+  /// No description provided for @agentsSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Search agents…'**
+  String get agentsSearch;
+
+  /// No description provided for @agentsInstallTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Configuration / installation target'**
+  String get agentsInstallTarget;
+
+  /// No description provided for @agentsLocalTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'This machine'**
+  String get agentsLocalTarget;
+
+  /// No description provided for @agentsHostIsolation.
+  ///
+  /// In en, this message translates to:
+  /// **'Commands, credentials and directories are saved separately for each host. New configurations never fall back to another host. Legacy configurations retain their behavior until a host-specific configuration is saved.'**
+  String get agentsHostIsolation;
+
+  /// No description provided for @agentsUseNetworkSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Use BaoCode network settings'**
+  String get agentsUseNetworkSettings;
+
+  /// No description provided for @agentsUseServerNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Use server network'**
+  String get agentsUseServerNetwork;
+
+  /// No description provided for @agentsRemoteInstallHint.
+  ///
+  /// In en, this message translates to:
+  /// **'npm/uvx runs on the server. BaoCode network mode uses a temporary authenticated tunnel. Binary archives are always downloaded locally and uploaded via SSH. The tunnel ends after installation; it is not used when the agent runs.'**
+  String get agentsRemoteInstallHint;
+
+  /// No description provided for @agentsSelectFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Select this folder'**
+  String get agentsSelectFolder;
+
+  /// No description provided for @agentsRegistryDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Discover agents from the official ACP Registry. The target needs Node.js/npm for npm agents, or uv for Python agents. System runtimes and login credentials are not installed automatically.'**
+  String get agentsRegistryDescription;
+
+  /// No description provided for @agentsRegistryTrust.
+  ///
+  /// In en, this message translates to:
+  /// **'Installing downloads third-party code and may run package installation scripts. Authentication may still be required. Review the source and command before continuing.'**
+  String get agentsRegistryTrust;
+
+  /// No description provided for @agentsInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Install and configure'**
+  String get agentsInstall;
+
+  /// No description provided for @agentsInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Installing… Keep this window open.'**
+  String get agentsInstalling;
+
+  /// No description provided for @agentsRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get agentsRetry;
+
+  /// No description provided for @agentsUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'No supported distribution for this platform.'**
+  String get agentsUnsupported;
+
+  /// No description provided for @agentsNoResults.
+  ///
+  /// In en, this message translates to:
+  /// **'No matching agents'**
+  String get agentsNoResults;
+
+  /// No description provided for @agentsInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Installation failed. You can retry or use custom configuration.'**
+  String get agentsInstallFailed;
+
+  /// No description provided for @agentsSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Source'**
+  String get agentsSource;
+
+  /// No description provided for @agentsLaunch.
+  ///
+  /// In en, this message translates to:
+  /// **'Launch command'**
+  String get agentsLaunch;
+
+  /// No description provided for @agentsVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get agentsVersion;
+
+  /// No description provided for @agentsRegistryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load the ACP Registry. Retry or configure an agent manually.'**
+  String get agentsRegistryUnavailable;
+
   /// No description provided for @documentPreviewLegacyFormat.
   ///
   /// In en, this message translates to:

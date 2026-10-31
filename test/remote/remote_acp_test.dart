@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:baocode/kernel/acp/acp_kernel.dart';
+import 'package:baocode/kernel/acp/acp_agent.dart';
 import 'package:baocode/kernel/acp/mock_acp_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_event.dart';
@@ -118,6 +119,73 @@ void main() {
       }
     }
   });
+
+  test(
+    'host-specific transport uses only its remote command and environment',
+    () async {
+      final data = Directory.systemTemp.createTempSync('baocode-acp-scoped-');
+      final connector = MemoryConnector(data.path);
+      final previous = SshHosts.instance;
+      SshHosts.instance = SshHosts(connect: connector.call);
+      final script = File(p.join(data.path, 'agent.dart'))
+        ..writeAsStringSync(
+          _agent.replaceFirst(
+            'Directory.current.path',
+            "Platform.environment['ACP_TEST_TOKEN'] ?? ''",
+          ),
+        );
+      final config = AcpAgentConfig(
+        id: 'scoped',
+        label: 'Scoped',
+        command: '/not-a-local-executable',
+        environment: const {'ACP_TEST_TOKEN': 'local-token'},
+        hostScoped: true,
+        hostConfigurations: {
+          'dev': AcpAgentConfig(
+            id: 'scoped',
+            label: 'Scoped',
+            command: dartExecutable,
+            arguments: [script.path],
+            environment: const {'ACP_TEST_TOKEN': 'remote-token'},
+          ),
+        },
+      );
+      try {
+        final transport = await config.transport(
+          KernelContext(cwd: RemoteLocation.of('dev', data.path)),
+        );
+        try {
+          final update = transport.messages.firstWhere(
+            (m) => m['method'] == 'session/update',
+          );
+          transport.write({
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'session/new',
+            'params': {'cwd': data.path},
+          });
+          final message = await update.timeout(const Duration(seconds: 10));
+          final commands =
+              ((message['params'] as Map)['update'] as Map)['availableCommands']
+                  as List;
+          expect((commands.single as Map)['description'], 'remote-token');
+          await expectLater(
+            config.transport(
+              KernelContext(cwd: RemoteLocation.of('other', data.path)),
+            ),
+            throwsStateError,
+          );
+          expect(connector.attempts, 1);
+        } finally {
+          await transport.close();
+        }
+      } finally {
+        await SshHosts.instance.closeAll();
+        SshHosts.instance = previous;
+        data.deleteSync(recursive: true);
+      }
+    },
+  );
 
   test('session/new is told the path on the host, not ssh://', () async {
     final transport = MockAcpTransport();

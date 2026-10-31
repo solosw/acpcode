@@ -206,6 +206,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(find.byType(EditableText), findsNothing);
+      await tester.tap(find.text('Edit agent'));
+      await tester.pumpAndSettle();
       final inputs = find.byType(EditableText);
       expect(inputs, findsNWidgets(6));
       await tester.enterText(inputs.at(4), target);

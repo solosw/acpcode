@@ -7,6 +7,7 @@ import 'acp/acp_kernel.dart';
 import 'acp/acp_mcp.dart';
 import 'claude_code/claude_code_kernel.dart';
 import '../remote/remote_claude.dart';
+import '../remote/remote_location.dart';
 
 /// The kernels the user can pick from. Another kernel is an adapter and a
 /// line here.
@@ -48,7 +49,13 @@ abstract final class KernelRegistry {
         loadMcpServers: (context, capabilities) => loadAcpMcpServers(
           context,
           capabilities,
-          environment: config.environment,
+          environment: config
+              .forHost(
+                context.cwd == null
+                    ? null
+                    : RemoteLocation.hostOf(context.cwd!),
+              )
+              .environment,
         ),
       ),
     );

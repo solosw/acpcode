@@ -4,12 +4,19 @@ import 'package:flutter/material.dart';
 
 import '../../customize/customization_store.dart';
 import '../../ide/ide_button.dart';
-import '../../ide/ide_input.dart';
+import '../../ide/ide_dialog.dart';
 import '../../kernel/acp/acp_agent.dart';
 import '../../kernel/acp_agents.dart';
+import '../../kernel/acp_registry.dart';
+import '../../l10n/l10n.dart';
 import '../../theme/codicons.dart';
-import 'agent_customization_copy.dart';
+import '../../workspace/window_controls.dart';
+import 'agent_edit_dialog.dart';
+import '../../remote/remote_acp_registry.dart';
+import 'agent_remote_folder_dialog.dart';
 import 'settings_widgets.dart';
+
+export 'agent_edit_dialog.dart' show formatEnvironment, parseEnvironment;
 
 class AgentsSettingsPage extends StatelessWidget {
   const AgentsSettingsPage({
@@ -17,242 +24,147 @@ class AgentsSettingsPage extends StatelessWidget {
     required this.agents,
     this.customizations,
     this.hosts = const [],
+    this.pickDirectory,
+    this.registry = const AcpRegistry(),
+    this.initialHost = '',
+    this.connectRegistry = RemoteAcpRegistry.connect,
+    this.pickRemoteDirectory = showAgentRemoteFolderDialog,
   });
 
   final AcpAgents agents;
   final CustomizationStore? customizations;
   final List<String> hosts;
+  final Future<String?> Function()? pickDirectory;
+  final AcpRegistry registry;
+  final String initialHost;
+  final Future<AcpRegistry> Function(String, AcpRegistry, bool) connectRegistry;
+  final Future<String?> Function(BuildContext, String) pickRemoteDirectory;
 
-  Future<void> _add(BuildContext context) async {
-    final id = agents.newId('ACP Agent');
-    await agents.add(
-      AcpAgentConfig(id: id, label: 'ACP Agent', command: 'agent'),
+  Future<void> _edit(BuildContext context, [AcpAgentConfig? agent]) =>
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AgentEditDialog(
+          agent: agent,
+          customizations: customizations ?? CustomizationStore(),
+          hosts: hosts,
+          initialHost: initialHost,
+          connectRegistry: connectRegistry,
+          pickRemoteDirectory: pickRemoteDirectory,
+          registry: registry,
+          pickDirectory: pickDirectory ?? WindowControls.pickDirectory,
+          onSave: (updated) => agent == null
+              ? agents.add(
+                  AcpAgentConfig(
+                    id: agents.newId(updated.label),
+                    label: updated.label,
+                    command: updated.command,
+                    arguments: updated.arguments,
+                    environment: updated.environment,
+                    description: updated.description,
+                    skillsDirectory: updated.skillsDirectory,
+                    rulesDirectory: updated.rulesDirectory,
+                    hostScoped: updated.hostScoped,
+                    hostConfigurations: updated.hostConfigurations,
+                  ),
+                )
+              : agents.save([
+                  for (final item in agents.agents)
+                    item.id == agent.id ? updated : item,
+                ]),
+        ),
+      );
+
+  Future<void> _delete(BuildContext context, AcpAgentConfig agent) async {
+    final l10n = context.l10n;
+    final confirmed = await showIdeDialog(
+      context,
+      message: '${l10n.agentsDelete}: ${agent.label}',
+      detail: l10n.agentsDeleteDetail,
+      buttons: [l10n.commonDelete],
     );
+    if (confirmed != 0) return;
+    try {
+      await agents.remove(agent.id);
+    } catch (error) {
+      if (context.mounted) {
+        await showIdeDialog(
+          context,
+          message: '$error',
+          buttons: [l10n.commonOk],
+          cancel: null,
+          type: IdeDialogType.error,
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: agents,
-    builder: (context, _) => SettingsPage(
-      title: 'Agents',
-      description: 'Configure multiple Agent Client Protocol agents.',
-      children: [
-        SettingsGroup(
-          title: 'ACP agents',
-          children: [
-            if (agents.agents.isEmpty)
-              const SettingsRow(label: 'No ACP agents configured'),
-            for (final agent in agents.agents)
-              _AgentSettingsRow(
-                key: ValueKey(agent.id),
-                agent: agent,
-                customizations: customizations ?? CustomizationStore(),
-                hosts: hosts,
-                onSave: (updated) => unawaited(
-                  agents.save([
-                    for (final item in agents.agents)
-                      item.id == agent.id ? updated : item,
-                  ]),
-                ),
-                onDelete: () => unawaited(agents.remove(agent.id)),
-              ),
-            SettingsRow(
-              label: 'Add ACP agent',
-              trailing: IdeButton(
-                label: 'Add ACP agent',
-                icon: Codicons.add,
-                onPressed: () => unawaited(_add(context)),
-              ),
+    builder: (context, _) {
+      final l10n = context.l10n;
+      return SettingsPage(
+        title: 'Agents',
+        description: l10n.agentsDescription,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: IdeButton(
+              label: l10n.agentsAdd,
+              icon: Codicons.add,
+              onPressed: () => unawaited(_edit(context)),
             ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-class _AgentSettingsRow extends StatefulWidget {
-  const _AgentSettingsRow({
-    super.key,
-    required this.agent,
-    required this.onSave,
-    required this.onDelete,
-    required this.customizations,
-    required this.hosts,
-  });
-
-  final CustomizationStore customizations;
-  final List<String> hosts;
-  final AcpAgentConfig agent;
-  final ValueChanged<AcpAgentConfig> onSave;
-  final VoidCallback onDelete;
-
-  @override
-  State<_AgentSettingsRow> createState() => _AgentSettingsRowState();
-}
-
-class _AgentSettingsRowState extends State<_AgentSettingsRow> {
-  late final TextEditingController _label = TextEditingController(
-    text: widget.agent.label,
-  );
-  late final TextEditingController _command = TextEditingController(
-    text: widget.agent.command,
-  );
-  late final TextEditingController _arguments = TextEditingController(
-    text: widget.agent.arguments.join(' '),
-  );
-  late final TextEditingController _environment = TextEditingController(
-    text: formatEnvironment(widget.agent.environment),
-  );
-  late final TextEditingController _skillsDirectory = TextEditingController(
-    text: widget.agent.skillsDirectory,
-  );
-  late final TextEditingController _rulesDirectory = TextEditingController(
-    text: widget.agent.rulesDirectory,
-  );
-  bool _dirty = false;
-
-  @override
-  void dispose() {
-    _label.dispose();
-    _command.dispose();
-    _arguments.dispose();
-    _environment.dispose();
-    _skillsDirectory.dispose();
-    _rulesDirectory.dispose();
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(_AgentSettingsRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!_dirty &&
-        (oldWidget.agent.id != widget.agent.id ||
-            oldWidget.agent.label != widget.agent.label ||
-            oldWidget.agent.command != widget.agent.command ||
-            oldWidget.agent.arguments != widget.agent.arguments ||
-            oldWidget.agent.environment != widget.agent.environment ||
-            oldWidget.agent.skillsDirectory != widget.agent.skillsDirectory ||
-            oldWidget.agent.rulesDirectory != widget.agent.rulesDirectory)) {
-      _label.text = widget.agent.label;
-      _command.text = widget.agent.command;
-      _arguments.text = widget.agent.arguments.join(' ');
-      _environment.text = formatEnvironment(widget.agent.environment);
-      _skillsDirectory.text = widget.agent.skillsDirectory;
-      _rulesDirectory.text = widget.agent.rulesDirectory;
-    }
-  }
-
-  void _markDirty([String? _]) {
-    if (_dirty) return;
-    setState(() => _dirty = true);
-  }
-
-  void _save() {
-    final label = _label.text.trim();
-    final command = _command.text.trim();
-    if (label.isEmpty || command.isEmpty) return;
-    widget.onSave(
-      AcpAgentConfig(
-        id: widget.agent.id,
-        label: label,
-        command: command,
-        arguments: _arguments.text == widget.agent.arguments.join(' ')
-            ? widget.agent.arguments
-            : _arguments.text.trim().isEmpty
-            ? const []
-            : _arguments.text.trim().split(RegExp(r'\s+')),
-        environment: parseEnvironment(_environment.text),
-        description: widget.agent.description,
-        skillsDirectory: _skillsDirectory.text.trim(),
-        rulesDirectory: _rulesDirectory.text.trim(),
-      ),
-    );
-    setState(() => _dirty = false);
-  }
-
-  @override
-  Widget build(BuildContext context) => SettingsCard(
-    children: [
-      SettingsRow(label: 'Name', trailing: _field(_label, 'Agent name')),
-      SettingsRow(
-        label: 'Command',
-        trailing: _field(_command, 'Executable on the project machine'),
-      ),
-      SettingsRow(
-        label: 'Arguments',
-        trailing: _field(_arguments, 'Arguments separated by spaces'),
-      ),
-      SettingsRow(
-        label: 'Environment',
-        below: [
-          IdeInputBox(
-            controller: _environment,
-            semanticsLabel: 'Environment',
-            minLines: 2,
-            maxLines: 5,
-            onChanged: _markDirty,
+          ),
+          SettingsGroup(
+            title: 'ACP Agents',
+            children: [
+              if (agents.agents.isEmpty)
+                SettingsRow(
+                  label: l10n.agentsEmpty,
+                  description: l10n.agentsEmptyDetail,
+                ),
+              for (final agent in agents.agents)
+                SettingsRow(
+                  key: ValueKey(agent.id),
+                  label: agent.label,
+                  description: agent.description,
+                  below: [
+                    Text(
+                      [
+                        if (agent.command.isNotEmpty)
+                          [agent.command, ...agent.arguments].join(' '),
+                        for (final host in agent.hostConfigurations.keys)
+                          'SSH: $host',
+                      ].join(' · '),
+                      style: SettingsText.path,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IdeButton(
+                        label: l10n.agentsEdit,
+                        icon: Codicons.edit,
+                        secondary: true,
+                        onPressed: () => unawaited(_edit(context, agent)),
+                      ),
+                      const SizedBox(width: 8),
+                      IdeButton(
+                        label: l10n.commonDelete,
+                        icon: Codicons.trash,
+                        secondary: true,
+                        onPressed: () => unawaited(_delete(context, agent)),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ],
-      ),
-      SettingsRow(
-        label: 'User skills directory',
-        trailing: _field(
-          _skillsDirectory,
-          'Skills destination on selected host',
-        ),
-      ),
-      SettingsRow(
-        label: 'User rules directory',
-        trailing: _field(_rulesDirectory, 'Rules destination on selected host'),
-      ),
-      AgentCustomizationCopy(
-        agent: widget.agent,
-        store: widget.customizations,
-        hosts: widget.hosts,
-        enabled: !_dirty,
-      ),
-      SettingsRow(
-        label: 'Actions',
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IdeButton(
-              label: 'Save',
-              icon: Codicons.check,
-              onPressed: _dirty ? _save : null,
-            ),
-            const SizedBox(width: 8),
-            IdeButton(
-              label: 'Remove agent',
-              icon: Codicons.trash,
-              secondary: true,
-              onPressed: widget.onDelete,
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  Widget _field(TextEditingController controller, String label) => SizedBox(
-    width: 300,
-    child: IdeInputBox(
-      controller: controller,
-      semanticsLabel: label,
-      onChanged: _markDirty,
-    ),
+      );
+    },
   );
 }
-
-String formatEnvironment(Map<String, String> environment) =>
-    [for (final entry in environment.entries) '${entry.key}=${entry.value}']
-        .join('\n');
-
-Map<String, String> parseEnvironment(String text) => {
-  for (final line in text.split('\n'))
-    if (line.contains('='))
-      line.substring(0, line.indexOf('=')).trim(): line
-          .substring(line.indexOf('=') + 1)
-          .trim(),
-};

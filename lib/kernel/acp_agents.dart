@@ -53,10 +53,23 @@ class AcpAgents extends ChangeNotifier {
     return id;
   }
 
-  static AcpAgentConfig _fromJson(Map value) => AcpAgentConfig(
+  static AcpAgentConfig _fromJson(
+    Map value, {
+    bool nested = false,
+  }) => AcpAgentConfig(
     id: value['id'] is String ? value['id'] as String : 'acp-agent',
     label: value['label'] is String ? value['label'] as String : 'ACP Agent',
     command: value['command'] is String ? value['command'] as String : '',
+    hostScoped: value['hostScoped'] == true,
+    hostConfigurations: {
+      if (!nested)
+        if (value['hosts'] case final Map hosts)
+          for (final entry in hosts.entries)
+            if (entry.key is String &&
+                (entry.key as String).isNotEmpty &&
+                entry.value is Map)
+              entry.key as String: _fromJson(entry.value as Map, nested: true),
+    },
     arguments: [
       for (final argument
           in value['arguments'] is List ? value['arguments'] as List : const [])
@@ -85,6 +98,12 @@ class AcpAgents extends ChangeNotifier {
     'id': agent.id,
     'label': agent.label,
     'command': agent.command,
+    if (agent.hostScoped) 'hostScoped': true,
+    if (agent.hostConfigurations.isNotEmpty)
+      'hosts': {
+        for (final entry in agent.hostConfigurations.entries)
+          entry.key: _toJson(entry.value),
+      },
     if (agent.arguments.isNotEmpty) 'arguments': agent.arguments,
     if (agent.environment.isNotEmpty) 'environment': agent.environment,
     if (agent.description.isNotEmpty) 'description': agent.description,
