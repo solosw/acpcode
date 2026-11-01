@@ -322,6 +322,7 @@ class _TaskEditorState extends State<_TaskEditor> {
   @override
   void initState() {
     super.initState();
+    widget.workspace.addListener(_changed);
     unawaited(_configure(widget.task?.settings ?? const {}));
   }
 
@@ -378,6 +379,21 @@ class _TaskEditorState extends State<_TaskEditor> {
         setState(() => _loading = false);
       }
     }
+  }
+
+  String? get _selectableSessionId {
+    final id = _sessionId;
+    if (id == null) return null;
+    return widget.workspace.threads.any(
+          (thread) =>
+              thread.id == id &&
+              thread.kernel.id == _kernel &&
+              thread.project.path ==
+                  (_sessionLocation ?? _worktree ?? _project) &&
+              thread.archived,
+        )
+        ? null
+        : id;
   }
 
   void _resetSession() {
@@ -490,8 +506,10 @@ class _TaskEditorState extends State<_TaskEditor> {
             days: _days,
           ),
           enabled: widget.task?.enabled ?? true,
-          sessionId: _reuse ? _sessionId : null,
-          sessionLocation: _reuse ? _sessionLocation : null,
+          sessionId: _reuse ? _selectableSessionId : null,
+          sessionLocation: _reuse && _selectableSessionId != null
+              ? _sessionLocation
+              : null,
           lastRun: widget.task?.lastRun,
         ),
       );
@@ -533,8 +551,10 @@ class _TaskEditorState extends State<_TaskEditor> {
     final mode = preview?.modes;
     final permission = preview?.permissions;
     final models = preview?.models;
+    final selectedSessionId = _selectableSessionId;
     final sessions = workspace.threads.where(
       (t) =>
+          !t.archived &&
           t.project.path == (_worktree ?? _project) &&
           t.kernel.id == _kernel &&
           t.id != null,
@@ -759,8 +779,8 @@ class _TaskEditorState extends State<_TaskEditor> {
               ),
               if (_reuse && !_newWorktree)
                 DropdownButtonFormField<String>(
-                  key: ValueKey('session-$_sessionId'),
-                  initialValue: _sessionId ?? '',
+                  key: ValueKey('session-$selectedSessionId'),
+                  initialValue: selectedSessionId ?? '',
                   isExpanded: true,
                   items: [
                     DropdownMenuItem(
@@ -775,11 +795,11 @@ class _TaskEditorState extends State<_TaskEditor> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                    if (_sessionId != null &&
-                        !sessions.any((t) => t.id == _sessionId))
+                    if (selectedSessionId != null &&
+                        !sessions.any((t) => t.id == selectedSessionId))
                       DropdownMenuItem(
-                        value: _sessionId,
-                        child: Text(_sessionId!),
+                        value: selectedSessionId,
+                        child: Text(selectedSessionId),
                       ),
                   ],
                   onChanged: (v) => setState(() {
@@ -956,6 +976,7 @@ class _TaskEditorState extends State<_TaskEditor> {
 
   @override
   void dispose() {
+    widget.workspace.removeListener(_changed);
     _generation++;
     _disposePreview();
     _name.dispose();

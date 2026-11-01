@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import IOKit.pwr_mgt
 import UniformTypeIdentifiers
 
 /// What each of the app's windows is: the main one (the chat's, from
@@ -616,12 +617,88 @@ class BaoWindow: NSWindow {
   }
 }
 
+/// Process-wide power assertions and a native heartbeat, independent of Flutter
+/// frames and window visibility. No mouse or keyboard events are synthesized.
+final class SleepPreventionController {
+  private var assertions: [IOPMAssertionID] = []
+  private var userActivity = IOPMAssertionID(kIOPMNullAssertionID)
+  private var activity: NSObjectProtocol?
+  private var timer: Timer?
+  private let activityInterval: TimeInterval
+  private let reason = "BaoCode: prevent idle sleep"
+
+  init(activityInterval: TimeInterval = 30) {
+    self.activityInterval = activityInterval
+  }
+
+  func setEnabled(_ enabled: Bool) throws {
+    if !enabled {
+      stop()
+      return
+    }
+    if timer != nil { return }
+    do {
+      for type in [kIOPMAssertionTypePreventUserIdleSystemSleep,
+                   kIOPMAssertionTypePreventUserIdleDisplaySleep] {
+        var id = IOPMAssertionID(kIOPMNullAssertionID)
+        try check(IOPMAssertionCreateWithName(
+          type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+          reason as CFString, &id))
+        assertions.append(id)
+      }
+      // Also opt out of App Nap so the heartbeat runs with every window hidden.
+      activity = ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiated, .idleDisplaySleepDisabled], reason: reason)
+      try declareActivity()
+      let timer = Timer(timeInterval: activityInterval, repeats: true) { [weak self] _ in
+        do {
+          try self?.declareActivity()
+        } catch {
+          // The persistent system/display assertions still hold.
+          NSLog("BaoCode: could not refresh user activity: %@", String(describing: error))
+        }
+      }
+      RunLoop.main.add(timer, forMode: .common)
+      self.timer = timer
+    } catch {
+      stop()
+      throw error
+    }
+  }
+
+  private func declareActivity() throws {
+    try check(IOPMAssertionDeclareUserActivity(
+      reason as CFString, kIOPMUserActiveLocal, &userActivity))
+  }
+
+  private func check(_ status: IOReturn) throws {
+    guard status == kIOReturnSuccess else {
+      throw NSError(domain: "BaoCode.SleepPrevention", code: Int(status))
+    }
+  }
+
+  private func stop() {
+    timer?.invalidate()
+    timer = nil
+    if userActivity != kIOPMNullAssertionID {
+      IOPMAssertionRelease(userActivity)
+      userActivity = IOPMAssertionID(kIOPMNullAssertionID)
+    }
+    for id in assertions { IOPMAssertionRelease(id) }
+    assertions.removeAll()
+    if let activity { ProcessInfo.processInfo.endActivity(activity) }
+    activity = nil
+  }
+
+  deinit { stop() }
+}
+
 /// The main window: the chat's, the engine's implicit view (MainMenu.xib).
 /// It also answers for the app what is the app's, not a window's: the color
 /// theme's appearance, the File menu.
 class MainFlutterWindow: BaoWindow {
   /// Process-wide, not tied to a visible window. The OS releases it on exit.
-  private static var sleepPreventionActivity: NSObjectProtocol?
+  private static let sleepPrevention = SleepPreventionController()
 
   /// MCP clients start a separate copy for stdio. This must be decided before
   /// a view, plugins, app channels or any window-launch observers are created:
@@ -738,15 +815,13 @@ class MainFlutterWindow: BaoWindow {
       }
       result(nil)
     case "setPreventSleep":
-      let enabled = call.arguments as? Bool ?? false
-      if enabled && Self.sleepPreventionActivity == nil {
-        Self.sleepPreventionActivity = ProcessInfo.processInfo.beginActivity(
-          options: [.idleSystemSleepDisabled], reason: "BaoCode: prevent idle sleep")
-      } else if !enabled, let activity = Self.sleepPreventionActivity {
-        ProcessInfo.processInfo.endActivity(activity)
-        Self.sleepPreventionActivity = nil
+      do {
+        try Self.sleepPrevention.setEnabled(call.arguments as? Bool ?? false)
+        result(nil)
+      } catch {
+        result(FlutterError(code: "sleep_prevention",
+                            message: "Could not prevent idle sleep: \(error)", details: nil))
       }
-      result(nil)
     case "setWindowBlur":
       // Settings → Appearance: the system's blur under every window, or
       // none. Kept for the next start.

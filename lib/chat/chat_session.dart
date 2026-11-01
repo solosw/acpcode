@@ -195,6 +195,26 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   ChangeReview? _review;
   final List<FileEdited> _pendingReviewEdits = [];
   bool _reviewUnavailable = false;
+  Timer? _reviewScanTimer;
+  Future<void>? _reviewScanning;
+
+  Iterable<String> get _reviewRoots => [
+    if (kernelContext.cwd case final cwd?) RemoteLocation.pathOf(cwd),
+    for (final folder
+        in kernelContext.workspace?.call()?.folders ?? const <String>[])
+      if (RemoteLocation.hostOf(folder) ==
+          RemoteLocation.hostOf(kernelContext.cwd ?? ''))
+        RemoteLocation.pathOf(folder),
+  ];
+
+  void _startReviewScanning(ChangeReview review) {
+    _reviewScanTimer ??= Timer.periodic(const Duration(seconds: 3), (_) {
+      if (_disposed || !isStreaming) return;
+      _reviewScanning ??= review.observe().whenComplete(
+        () => _reviewScanning = null,
+      );
+    });
+  }
 
   /// The review, while it holds: null before it opened, or once it failed
   /// (the changes are then those the kernel reported).
@@ -223,6 +243,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         _review = review
           ..session = sessionId
           ..addListener(_reviewChanged);
+        unawaited(review.begin(roots: _reviewRoots));
+        if (isStreaming) _startReviewScanning(review);
         for (final edit in _pendingReviewEdits) {
           if (edit.seq <= math.max(_keptSeq, _transcript.revertedSeq) ||
               edit.seq <= (_keptPaths[_absolute(edit.change.path)] ?? -1)) {
@@ -270,8 +292,15 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     }
     review.session = sessionId;
     switch (event) {
+      case TurnStarted():
+        _startReviewScanning(review);
       case TurnEnded():
-        unawaited(review.look());
+        if (!isStreaming) {
+          _reviewScanTimer?.cancel();
+          _reviewScanTimer = null;
+        }
+        // Never coalesce away the final observation behind an in-flight poll.
+        unawaited(review.observe().then((_) => review.look()));
       case FileEdited():
         review.reportEdit(event);
       default:
@@ -1162,6 +1191,10 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       now: now,
       notes: [...notes, if (editor != null) ..._editorNotes(editor())],
     );
+    if (!isStreaming) {
+      _startReview();
+      unawaited(_activeReview?.begin(roots: _reviewRoots));
+    }
     _kernel.send(turn);
   }
 
@@ -1275,6 +1308,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   void dispose() {
     _disposed = true;
     _quietTimer?.cancel();
+    _reviewScanTimer?.cancel();
     _pendingReviewEdits.clear();
     _review
       ?..removeListener(_reviewChanged)

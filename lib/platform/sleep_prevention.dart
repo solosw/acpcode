@@ -8,7 +8,7 @@ import 'app_platform.dart';
 
 /// One owner in the main window keeps the local computer awake while the
 /// app runs, including when hidden in the tray. Never changes the OS's
-/// saved power settings or prevents the display from turning off.
+/// saved power settings. Prevents both system and display idle sleep.
 class SleepPrevention {
   SleepPrevention(
     this.settings, {

@@ -63,8 +63,8 @@ bool _same(ReviewBlob? a, ReviewBlob? b) =>
 /// The kernel tells it of each edit as the agent makes it: [before], it
 /// keeps what the file is (the agent writes once that is done), and
 /// [after], what the agent left. One that tells of an edit only once it is
-/// made ([report]) tells what the file was ([FileOriginal]). What a
-/// command writes is not seen.
+/// made ([report]) tells what the file was ([FileOriginal]). Workspace
+/// snapshots also discover writes made without edit events, including commands.
 ///
 /// Its account is of its own agent's edits alone: what else changes a
 /// file it changed (another agent, the user) is not its, and is put into
@@ -190,6 +190,118 @@ class ChangeReview extends ChangeNotifier {
     _failure = reason;
     _changes = const [];
     if (!_disposed) notifyListeners();
+  }
+
+  final Map<String, String> _snapshots = {};
+  final Map<String, Set<String>> _omitted = {};
+  final Map<String, ReviewBlob?> _settledSnapshots = {};
+  List<String>? _snapshotRoots;
+
+  /// Keeps a baseline independently of the kernel's edit notifications.
+  Future<void> begin({Iterable<String>? roots}) => _enqueue(() async {
+    if (_store is! ReviewSnapshots) return;
+    if (roots != null) {
+      final distinct = roots.map(_key).toSet();
+      _snapshotRoots = [
+        for (final root in distinct)
+          if (!distinct.any((other) => _paths.isWithin(other, root))) root,
+      ];
+    }
+    for (final path in _entries.keys.toList()) {
+      final entry = _entries[path]!;
+      final now = await _store.current(path);
+      if (!_same(now, entry.after) && entry.writing == 0) {
+        await _rebase(entry, path);
+      }
+    }
+    await _scanSnapshots(agent: false);
+    await _refresh();
+    await _persist();
+  });
+
+  /// Discovers command, subagent and other writes by comparing private Git trees.
+  Future<void> observe() => _enqueue(() async {
+    if (_store is! ReviewSnapshots) return;
+    await _scanSnapshots(agent: true);
+    await _refresh();
+    await _persist();
+  });
+
+  Future<void> _scanSnapshots({required bool agent}) async {
+    final store = _store;
+    if (store is! ReviewSnapshots) return;
+    for (final folder in _snapshotRoots ?? [root]) {
+      final previous = _snapshots[folder];
+      final ReviewSnapshot? snapshot;
+      try {
+        snapshot = await (store as ReviewSnapshots).snapshot(
+          folder,
+          previous: previous,
+        );
+      } on ReviewUnavailable catch (error) {
+        // A failed baseline cannot be used to attribute later user writes.
+        if (!agent) _snapshots.remove(folder);
+        if (error.retryable) continue;
+        rethrow;
+      }
+      if (snapshot == null) {
+        _snapshots.remove(folder);
+        continue;
+      }
+      final omittedBefore = _omitted[folder] ?? const <String>{};
+      bool omitted(String path, Set<String> omitted) => omitted.any(
+        (other) => _paths.equals(other, path) || _paths.isWithin(other, path),
+      );
+      if (agent && previous != null) {
+        final ignoresChanged = snapshot.changes.any(
+          (change) =>
+              _paths.basename(change.path) == '.gitignore' &&
+              change.before != null,
+        );
+        for (final change in snapshot.changes) {
+          final path = _key(change.path);
+          final after = change.after;
+          final before = _settledSnapshots.containsKey(path)
+              ? _settledSnapshots.remove(path)
+              : change.before;
+          if (_same(before, after)) continue;
+          // Files omitted by either tree must never be guessed as creations/deletions.
+          if (omitted(path, snapshot.omitted) ||
+              (before == null &&
+                  (omitted(path, omittedBefore) || ignoresChanged))) {
+            _entries.remove(path);
+            _unseen[path] = FileChange(
+              path: path,
+              added: 0,
+              removed: 0,
+              tracked: false,
+            );
+            continue;
+          }
+          final entry = _entries[path];
+          if (entry == null) {
+            _entries[path] = _Entry(before)
+              ..after = after
+              ..current = after;
+          } else if (!_same(entry.after, after)) {
+            if (!_same(entry.after, before)) await _rebaseOnto(entry, before);
+            entry
+              ..after = after
+              ..current = after
+              ..conflict = entry.unsafe;
+          }
+          _unseen.remove(path);
+        }
+      }
+      if (!agent) {
+        _settledSnapshots.removeWhere(
+          (path, _) =>
+              _paths.equals(folder, path) || _paths.isWithin(folder, path),
+        );
+      }
+      _snapshots[folder] = snapshot.tree;
+      _omitted[folder] = snapshot.omitted;
+    }
   }
 
   // --- The agent's edits --------------------------------------------------------
@@ -501,6 +613,7 @@ class ChangeReview extends ChangeNotifier {
         if (entry == null || !entry.pending) continue;
         try {
           if (await _undo(path, entry)) {
+            _settledSnapshots[path] = await _store.take(path);
             _entries.remove(path);
           } else {
             entry.conflict = true;
@@ -596,6 +709,7 @@ class ChangeReview extends ChangeNotifier {
     return _enqueue(() async {
       for (final key in keys) {
         if (_entries[key] case final entry?) await _taken(entry, key);
+        _settledSnapshots[key] = await _store.take(key);
       }
       await _refresh();
       await _persist();

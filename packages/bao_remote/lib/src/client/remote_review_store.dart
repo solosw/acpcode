@@ -2,11 +2,12 @@ import 'dart:typed_data';
 
 import '../protocol.dart';
 import '../review/review_store.dart';
+import '../review/review_snapshot.dart';
 import '../rpc/rpc_peer.dart';
 
 /// [ReviewStore] of the remote host: its checkpoints there (in the
 /// server's data folder), every call a request.
-class RemoteReviewStore implements ReviewStore {
+class RemoteReviewStore implements ReviewStore, ReviewSnapshots {
   RemoteReviewStore(
     this._peer,
     this._id, {
@@ -55,6 +56,15 @@ class RemoteReviewStore implements ReviewStore {
   }
 
   static ReviewBlob? _blob(Object? json) => ReviewBlob.fromJson(json);
+
+  @override
+  Future<ReviewSnapshot?> snapshot(String root, {String? previous}) async =>
+      ReviewSnapshot.fromJson(
+        await _call('snapshot', {
+          'root': root,
+          if (previous != null) 'previous': previous,
+        }),
+      );
 
   @override
   Future<ReviewBlob?> take(String path) async =>

@@ -69,6 +69,7 @@ class AcpKernel
 
   KernelHealth _health = KernelHealth.idle;
   String? _sessionId;
+  late String _sessionTitle = _context.resume?.title ?? '';
   String? _turnId;
   DateTime? _turnStarted;
   int _nextId = 0;
@@ -309,13 +310,18 @@ class AcpKernel
       throw StateError('ACP session returned no sessionId');
     }
     _sessionLoaded = true;
+    // Preparing a new session (including task configuration previews) must
+    // not publish an empty conversation to the history catalog. Existing
+    // conversations keep their title and timestamp when merely opened.
+    if (!_everLoaded && resume != null) {
+      _rememberSession(updatedAt: resume.updatedAt);
+    }
     _everLoaded = true;
-    _rememberSession(title: resume?.title);
   }
 
   /// Keeps [sessionId] in the local catalog so the sidebar can open it
   /// again after a restart and call [session/load].
-  void _rememberSession({String? title, DateTime? updatedAt}) {
+  void _rememberSession({DateTime? updatedAt}) {
     final catalog = _catalog;
     final id = _sessionId;
     final cwd = _context.cwd ?? _context.resume?.cwd;
@@ -324,7 +330,7 @@ class AcpKernel
       catalog.upsert(
         SessionRecord(
           id: id,
-          title: title ?? _context.resume?.title ?? '',
+          title: _sessionTitle,
           updatedAt: updatedAt ?? DateTime.now().toUtc(),
           cwd: cwd,
         ),
@@ -366,6 +372,15 @@ class AcpKernel
       _cancelling = false;
       _turnStarted = DateTime.now();
       _turnCount++;
+      if (_sessionTitle.isEmpty) {
+        _sessionTitle = turn.text
+            .trim()
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .characters
+            .take(120)
+            .toString();
+      }
+      _rememberSession();
       _closeAssistantStream();
       emit(TurnStarted(nextSeq, turn.id));
       emit(

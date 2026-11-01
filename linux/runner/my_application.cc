@@ -259,7 +259,9 @@ static void window_method_call_cb(FlMethodChannel* channel, FlMethodCall* call,
         fl_value_get_type(args) == FL_VALUE_TYPE_BOOL && fl_value_get_bool(args);
     if (enabled && self->sleep_inhibit_cookie == 0) {
       self->sleep_inhibit_cookie = gtk_application_inhibit(
-          GTK_APPLICATION(self), nullptr, GTK_APPLICATION_INHIBIT_SUSPEND,
+          GTK_APPLICATION(self), nullptr,
+          static_cast<GtkApplicationInhibitFlags>(
+              GTK_APPLICATION_INHIBIT_SUSPEND | GTK_APPLICATION_INHIBIT_IDLE),
           "BaoCode: prevent idle sleep");
     } else if (!enabled && self->sleep_inhibit_cookie != 0) {
       gtk_application_uninhibit(GTK_APPLICATION(self), self->sleep_inhibit_cookie);

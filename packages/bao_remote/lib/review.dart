@@ -3,3 +3,4 @@
 library;
 
 export 'src/review/review_store.dart';
+export 'src/review/review_snapshot.dart';

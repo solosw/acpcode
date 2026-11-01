@@ -1,6 +1,7 @@
 import '../protocol.dart';
 import '../review/blob_review_store.dart';
 import '../review/review_store.dart';
+import '../review/review_snapshot.dart';
 import '../rpc/rpc_peer.dart';
 import 'remote_server.dart';
 
@@ -34,6 +35,12 @@ class ServerReview {
   ) async {
     String string(String name) => args[name] as String;
     switch (method) {
+      case 'snapshot':
+        if (store is! ReviewSnapshots) return null;
+        return (await (store as ReviewSnapshots).snapshot(
+          string('root'),
+          previous: args['previous'] as String?,
+        ))?.toJson();
       case 'take':
         return (await store.take(string('path')))?.toJson();
       case 'current':

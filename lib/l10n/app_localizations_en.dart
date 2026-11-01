@@ -14,7 +14,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsPreventSleepDescription =>
-      'Keep this computer awake while BaoCode is running, including in the background, so agents and scheduled tasks can continue. The display may still turn off. Closing the lid or manually choosing Sleep may still suspend it.';
+      'Keep this computer and its display awake while BaoCode is running, including in the background, so agents and scheduled tasks can continue. On macOS, periodically declare user activity without moving the mouse or pressing keys. Closing the lid, manually choosing Sleep or critical battery protection may still suspend it.';
 
   @override
   String generalSettingsPreventSleepError(String error) {

@@ -29,6 +29,22 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.7.5">
+    <h2 class="plain"><a href="#v1.7.5">1.7.5</a></h2>
+    <p>Conversation tracking and background reliability</p>
+    <p>Fixed</p>
+    <ul>
+    <li>Restore independent workspace snapshots in chat: discover file additions, edits and deletions made by commands or agents without edit notifications, locally and over SSH, including multi-folder workspaces.</li>
+    <li>Preserve Keep and Undo behavior, protect intervening user edits and leave the project's own Git index untouched.</li>
+    <li>Prevent ACP configuration previews and unsent sessions from appearing as empty conversations titled Image. Save new history only after a prompt is sent, with a stable title from the first message.</li>
+    <li>Exclude archived conversations from the scheduled-task conversation picker, including previously selected conversations and archive changes made while editing.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Keep both the computer and display awake when sleep prevention is enabled. On macOS, refresh user activity every 30 seconds without moving the mouse or sending keys; release all assertions when disabled or the app exits. Closing the lid, manually choosing Sleep and critical battery protection remain under system control.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.7.4">
     <h2 class="plain"><a href="#v1.7.4">1.7.4</a></h2>
     <p>Upstream integration and conversation usage</p>

@@ -9,13 +9,15 @@ import 'package:path/path.dart' as p;
 
 import 'line_diff.dart' as diff;
 import 'review_store.dart';
+import 'review_snapshot.dart';
+import 'git_review_store.dart';
 
 /// [ReviewStore] over a folder of this machine's: each blob a file named
 /// by its content's SHA-256 (`blobs/<first two>/<the rest>`), each
 /// session's account a file of its own (`sessions/<name>.json`, with the
 /// blobs it keeps). What files are put back is byte for byte what they
 /// were.
-class BlobReviewStore implements ReviewStore {
+class BlobReviewStore implements ReviewStore, ReviewSnapshots {
   BlobReviewStore._(this.checkpoints);
 
   /// The store in [checkpoints] (made as it is needed), which is tidied
@@ -48,6 +50,45 @@ class BlobReviewStore implements ReviewStore {
       p.join(_blobs, oid.substring(0, 2), oid.substring(2));
 
   static String _hash(List<int> bytes) => sha256.convert(bytes).toString();
+
+  final Map<String, Future<GitReviewStore?>> _snapshotStores = {};
+
+  @override
+  Future<ReviewSnapshot?> snapshot(String root, {String? previous}) async {
+    root = p.normalize(p.absolute(root));
+    final git = await (_snapshotStores[root] ??=
+        GitReviewStore.open(
+          root,
+          checkpoints: p.join(checkpoints, 'snapshots'),
+          excludedRoot: checkpoints,
+        ).catchError((Object error) {
+          _snapshotStores.remove(root);
+          throw error;
+        }));
+    if (git == null) {
+      _snapshotStores.remove(root);
+      return null;
+    }
+    final tree = await git.snapshot();
+    if (tree == null) return null;
+    Future<ReviewBlob?> copy(ReviewBlob? blob) async =>
+        blob == null ? null : store(await git.read(blob), mode: blob.mode);
+    final changes = <ReviewTreeChange>[];
+    if (previous != null) {
+      for (final change in await git.diff(previous, tree)) {
+        changes.add(
+          ReviewTreeChange(
+            p.join(root, change.path),
+            await copy(change.before),
+            await copy(change.after),
+          ),
+        );
+      }
+    }
+    return ReviewSnapshot(tree, changes, {
+      for (final path in await git.omitted()) p.join(root, path),
+    });
+  }
 
   // --- Files -----------------------------------------------------------------
 
@@ -311,6 +352,7 @@ class BlobReviewStore implements ReviewStore {
         // What a conversation at work took within the hour stays.
         grace: const Duration(hours: 1),
       );
+      await GitReviewStore.clear(p.join(checkpoints, 'snapshots'));
     } on Object {
       // What is left stays.
     }
@@ -336,7 +378,10 @@ class BlobReviewStore implements ReviewStore {
 
     for (final entry in Directory(checkpoints).listSync(followLinks: false)) {
       final name = p.basename(entry.path);
-      if (name != 'blobs' && name != 'sessions' && name != _tidiedFile) {
+      if (name != 'blobs' &&
+          name != 'sessions' &&
+          name != 'snapshots' &&
+          name != _tidiedFile) {
         delete(entry);
       }
     }

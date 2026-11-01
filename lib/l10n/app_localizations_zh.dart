@@ -14,7 +14,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsPreventSleepDescription =>
-      'BaoCode 运行期间（包括后台运行）阻止本机自动休眠，便于智能体和定时任务持续执行。不阻止屏幕关闭；合盖或手动选择休眠仍可能使电脑休眠。';
+      'BaoCode 运行期间（包括后台运行）阻止本机和屏幕因空闲而休眠，便于智能体和定时任务持续执行。macOS 会定期向系统声明用户活动，不移动鼠标或发送按键；合盖、手动休眠或低电量保护仍可能使电脑休眠。';
 
   @override
   String generalSettingsPreventSleepError(String error) {

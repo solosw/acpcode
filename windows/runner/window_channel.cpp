@@ -508,7 +508,8 @@ void WindowChannel::HandleMethodCall(
     // The channel runs on the platform thread; Windows releases its
     // execution-state requirement automatically when that thread exits.
     const bool enabled = Boolean(call.arguments(), false);
-    const EXECUTION_STATE state = ES_CONTINUOUS | (enabled ? ES_SYSTEM_REQUIRED : 0);
+    const EXECUTION_STATE state =
+        ES_CONTINUOUS | (enabled ? ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED : 0);
     if (::SetThreadExecutionState(state) == 0) {
       result->Error("sleep_prevention", "Could not change sleep prevention.");
     } else {
