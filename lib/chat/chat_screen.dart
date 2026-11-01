@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:bao_editor/textmate/textmate_syntax.dart' show TextMateSyntax;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +19,7 @@ import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
 import '../stash/stash_store.dart';
 import '../theme/app_theme.dart';
+import '../theme/codicons.dart';
 import '../workspace/editor_launcher.dart';
 import '../workspace/agent_title.dart' show askedTitles;
 import '../workspace/title_bar_double_click.dart';
@@ -46,6 +48,7 @@ import 'panels/context_usage_panel.dart';
 import 'panels/goal_panel.dart';
 import 'panels/queue_panel.dart';
 import 'panels/todo_panel.dart';
+import 'panels/reset_credits_hint.dart';
 import 'side_panel/file_link.dart';
 import 'side_panel/file_open.dart';
 import 'stop_confirmation.dart';
@@ -72,6 +75,7 @@ class ChatScreen extends StatefulWidget {
     this.onRename,
     this.onSummarizeTitle,
     this.subtitle,
+    this.titleTabs,
     this.titleDragBuilder,
     this.onTitleDragStart,
     this.autofocus = false,
@@ -85,6 +89,7 @@ class ChatScreen extends StatefulWidget {
     this.onOpenTerminalTask,
     this.colorizeCode,
     this.colorizeCodeBlock,
+    this.codeSyntax,
     this.start,
     this.startHint,
     this.below,
@@ -92,6 +97,9 @@ class ChatScreen extends StatefulWidget {
     this.fileMentions,
     this.commandFile,
     this.openEditor,
+    this.onSideQuestion,
+    this.asideAt,
+    this.back,
   });
 
   final String title;
@@ -118,6 +126,10 @@ class ChatScreen extends StatefulWidget {
   /// After the title, fainter: e.g. a pane's project, and the host it is
   /// on.
   final Widget? subtitle;
+
+  /// In the title bar in place of the title (and [subtitle]), but while
+  /// it is renamed: e.g. a pane's tabs.
+  final Widget? titleTabs;
 
   /// Wraps the title as a drag source, when not renaming. Its double click
   /// still renames; the title bar's controls are never part of the source.
@@ -168,6 +180,9 @@ class ChatScreen extends StatefulWidget {
   /// Colors code blocks by the language their fences name.
   final CodeBlockColorizer? colorizeCodeBlock;
 
+  /// See [CodeCitationScope.syntax].
+  final TextMateSyntax Function()? codeSyntax;
+
   /// Over the composer while nothing was sent, e.g. where the agent is to
   /// work: given, the composer waits in the middle of the screen until then.
   final Widget? start;
@@ -195,6 +210,19 @@ class ChatScreen extends StatefulWidget {
   /// The file open in the editor beside it, where there is one: the agent
   /// is told of it with the messages sent (see [ChatSession.send]).
   final OpenEditor? Function()? openEditor;
+
+  /// Given, `/btw …` sent here is not the agent's: what follows it, with
+  /// the message's images and mentions, is asked in a conversation of its
+  /// own beside this one, from all of this one so far.
+  final ValueChanged<ComposerMessage>? onSideQuestion;
+
+  /// What shows under the conversation's item of the id given: the
+  /// conversations asked beside it from there (see [onSideQuestion]).
+  final Widget? Function(String itemId)? asideAt;
+
+  /// Over the conversation, as over a subagent's: the way back to the one
+  /// it was asked beside, [label] that one's title. None for most.
+  final ({String label, VoidCallback onBack})? back;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -264,7 +292,7 @@ class _ChatScreenState extends State<ChatScreen>
   _AgentLayer? get _agentShown =>
       _layers.lastOrNull?.leaving == false ? _layers.last : null;
 
-  static const _layerDuration = Duration(milliseconds: 300);
+  static const _layerDuration = ConversationLayer.duration;
 
   /// The subagents left open when this conversation last showed, as they
   /// were: no way in to play again.
@@ -368,6 +396,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _backMinimapRoom.dispose();
     _session.removeListener(_checkStarting);
     _session.removeListener(_followPlan);
     _session.removeListener(_welcomeToModels);
@@ -489,6 +518,7 @@ class _ChatScreenState extends State<ChatScreen>
     ChatContextKeys.hasToolConfirmation =>
       _session.pendingInteraction is ApprovalRequest,
     ChatContextKeys.subagentVisible => _agentShown != null,
+    ChatContextKeys.asideVisible => widget.back != null && _agentShown == null,
     _ => null,
   };
 
@@ -508,7 +538,10 @@ class _ChatScreenState extends State<ChatScreen>
     ChatCommandIds.toggleContextPanel: _toggleContextPanel,
     if (_renames)
       ChatCommandIds.renameAgent: () => setState(() => _renaming = true),
-    if (_agentShown != null) ChatCommandIds.closeSubagent: _back,
+    if (_agentShown != null)
+      ChatCommandIds.closeSubagent: _back
+    else if (widget.back case final back?)
+      ChatCommandIds.closeSubagent: back.onBack,
   };
 
   Widget _buildTitleBar() {
@@ -566,6 +599,8 @@ class _ChatScreenState extends State<ChatScreen>
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: switch (widget.subtitle) {
+                      _ when !_renaming && widget.titleTabs != null =>
+                        widget.titleTabs!,
                       final subtitle? when !_renaming => LayoutBuilder(
                         builder: (context, constraints) => Row(
                           children: [
@@ -665,19 +700,49 @@ class _ChatScreenState extends State<ChatScreen>
     final commands = _session.commands;
     if (!identical(commands, _commandSource)) {
       _commandSource = commands;
+      final aside = widget.onSideQuestion != null;
       _commands = [
-        for (final command in commands)
+        // Taken here, not by the agent: a conversation beside this one
+        // (see [ChatScreen.onSideQuestion]), in place of the CLI's own.
+        if (aside)
           Suggestion(
             kind: SuggestionKind.command,
-            label: command.name,
-            detail: command.argumentHint.isEmpty
-                ? command.description
-                : '${command.argumentHint}  ${command.description}',
-            icon: command.icon,
+            label: _asideCommand,
+            detail: context.l10n.btwCommandDetail,
+            icon: Codicons.commentDiscussion,
           ),
+        for (final command in commands)
+          if (!aside || command.name != _asideCommand)
+            Suggestion(
+              kind: SuggestionKind.command,
+              label: command.name,
+              detail: command.argumentHint.isEmpty
+                  ? command.description
+                  : '${command.argumentHint}  ${command.description}',
+              icon: command.icon,
+            ),
       ];
     }
     return _commands;
+  }
+
+  static const _asideCommand = 'btw';
+
+  /// Takes `/btw …` for a conversation beside this one: true when it was
+  /// one. What follows, on this line or the next, is asked there with the
+  /// message's images and mentions; `/btw` alone asks nothing.
+  bool _interceptSideQuestion(ComposerMessage message) {
+    final handler = widget.onSideQuestion;
+    if (handler == null) return false;
+    final text = message.text.trimLeft();
+    if (!text.startsWith(RegExp('^/$_asideCommand(\\s|\$)'))) return false;
+    final question = ComposerMessage(
+      text: text.substring(_asideCommand.length + 1).trim(),
+      mentions: message.mentions,
+      images: message.images,
+    );
+    if (!question.isEmpty) handler(question);
+    return true;
   }
 
   List<KernelCommand>? _commandSource;
@@ -835,6 +900,7 @@ class _ChatScreenState extends State<ChatScreen>
           onOpen: links == null ? widget.onOpenCode : _openCode,
           colorize: widget.colorizeCode,
           colorizeBlock: widget.colorizeCodeBlock,
+          syntax: widget.codeSyntax,
           child: ComposerVocabulary(
             commands: _commandSuggestions(),
             suggestFiles: _suggestFiles(root),
@@ -928,14 +994,28 @@ class _ChatScreenState extends State<ChatScreen>
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      ChatHistoryView(
-                        key: _historyKey,
-                        feed: _session,
-                        maxContentWidth: _maxContentWidth,
-                        minimap: _minimap,
-                        onOpenAgent: _openAgent,
-                        onSetGoal: _setGoal,
-                        onFindClosed: () => _composerKey.currentState?.focus(),
+                      _withBack(
+                        ChatHistoryView(
+                          key: _historyKey,
+                          feed: _session,
+                          maxContentWidth: _maxContentWidth,
+                          minimap: _minimap,
+                          minimapRoom: widget.back == null
+                              ? null
+                              : _backMinimapRoom,
+                          onOpenAgent: _openAgent,
+                          onSetGoal: _setGoal,
+                          onFindClosed: () =>
+                              _composerKey.currentState?.focus(),
+                          after: switch (widget.asideAt) {
+                            final asideAt? => (index) => switch (_session
+                                .itemIdAt(index)) {
+                              final id? => asideAt(id),
+                              null => null,
+                            },
+                            null => null,
+                          },
+                        ),
                       ),
                       // The start hint, before the first message.
                       ListenableBuilder(
@@ -1013,6 +1093,9 @@ class _ChatScreenState extends State<ChatScreen>
                   ClaudeInstallBanner(location: _session.kernelContext.cwd),
                   // BaoCode's own core picked: the CLI suggested.
                   if (_localClaudeCode) ClaudeCoreHint(onSwitched: _movedToCli),
+                  // Reset credits of the model's ChatGPT accounts about to
+                  // expire: a plan to use them.
+                  ResetCreditsHint(model: _session.models?.selected.id),
                   _PanelSlot(
                     child: switch (_session.pendingInteraction) {
                       final request? => InteractionPanel(
@@ -1046,6 +1129,33 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   /// The subagent [layer], [index] in: the way here, and its conversation.
+  /// Whether the history keeps the minimap's room, for the way back over
+  /// it (see [ChatScreen.back]) to be level with it.
+  final ValueNotifier<bool> _backMinimapRoom = ValueNotifier(false);
+
+  /// [history] under the way back to the conversation this one was asked
+  /// beside, as a subagent's is under its own (see [ChatScreen.back]).
+  Widget _withBack(Widget history) {
+    final back = widget.back;
+    if (back == null) return history;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ValueListenableBuilder(
+          valueListenable: _backMinimapRoom,
+          builder: (context, room, _) => SubagentHeader(
+            trail: const [],
+            backText: back.label,
+            onBack: (_) => back.onBack(),
+            maxContentWidth: _maxContentWidth,
+            minimap: room,
+          ),
+        ),
+        Expanded(child: history),
+      ],
+    );
+  }
+
   Widget _buildAgentPage(int index, _AgentLayer layer) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1139,6 +1249,7 @@ class _ChatScreenState extends State<ChatScreen>
           child: switch (_session.queued) {
             final queued when queued.isNotEmpty => QueuePanel(
               messages: queued,
+              onMove: _session.moveQueued,
               onEdit: (id) => unawaited(_session.editQueued(id)),
               onSendNow: _session.sendQueuedNow,
               onRemove: _session.cancelQueued,
@@ -1160,6 +1271,9 @@ class _ChatScreenState extends State<ChatScreen>
           },
           contextPanelOpen: _contextPanelOpen,
           onToggleContextPanel: _toggleContextPanel,
+          onIntercept: widget.onSideQuestion == null
+              ? null
+              : _interceptSideQuestion,
         ),
         ?widget.below,
       ],
@@ -1337,11 +1451,7 @@ class _RenderConversationColumn extends RenderShiftedBox {
 /// An open subagent: its conversation, and its way in and out.
 class _AgentLayer {
   _AgentLayer(this.feed, this.controller)
-    : animation = CurvedAnimation(
-        parent: controller,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      );
+    : animation = ConversationLayer.curve(controller);
 
   final SubagentFeed feed;
   final AnimationController controller;

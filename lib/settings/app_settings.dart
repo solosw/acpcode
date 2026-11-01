@@ -24,6 +24,7 @@ import '../tips/builtin_tips.dart';
 import '../tips/feature_tip.dart';
 import '../tips/feature_tips_controller.dart';
 import '../update/update_controller.dart';
+import '../usage/ui/usage_dashboard.dart';
 import '../workspace/workspace.dart';
 import 'app_locale.dart';
 import 'pages/agents_page.dart';
@@ -189,6 +190,8 @@ class AppSettings {
               ?project.host,
           }.toList()..sort(),
         );
+      case SettingsSection.usage:
+        return UsageSettingsPage(workspace: workspace);
       case SettingsSection.network:
         return NetworkSettingsPage(settings: files?.settings);
       case SettingsSection.ssh:

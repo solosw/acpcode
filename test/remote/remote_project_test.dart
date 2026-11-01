@@ -455,15 +455,15 @@ void main() {
         File(path).writeAsStringSync('before\n');
         final host = hosts['dev'];
         // The review id must be refreshed too, not just the RPC peer.
-        await (await host.ready).openReview(root);
-        final store = (await remoteReviewStore(host, root))!;
-        final review = ChangeReview(store);
+        await (await host.ready).openReview();
+        final store = (await remoteReviewStore(host))!;
+        final review = ChangeReview(store, root: root);
         addTearDown(review.dispose);
         review.session = 'reconnect-review';
-        await review.begin();
+        await review.before(path);
 
         File(path).writeAsStringSync('first edit\n');
-        await review.observe();
+        await review.after(path);
         expect(review.failure, isNull);
         expect(review.changes.single.path, path);
         expect(await review.original(path)!(), 'before\n');
@@ -471,8 +471,9 @@ void main() {
         final reconnected = host.reconnected.first;
         await connector.links.last.drop();
         await reconnected;
+        await review.before(path);
         File(path).writeAsStringSync('second edit\n');
-        await review.observe();
+        await review.after(path);
 
         expect(review.failure, isNull);
         expect(review.changes.single.path, path);
@@ -483,11 +484,11 @@ void main() {
         await connector.links.last.drop();
         await nextConnection;
         final reads = await Future.wait([
-          store.exists('a.txt'),
-          store.current('a.txt'),
+          store.take(path),
+          store.current(path),
           review.original(path)!(),
         ]);
-        expect(reads[0], isTrue);
+        expect(reads[0], isNotNull);
         expect(reads[1], isNotNull);
         expect(reads[2], 'before\n');
 
@@ -497,24 +498,24 @@ void main() {
       },
     );
 
-    test('retries a snapshot interrupted by SSH reconnecting', () async {
+    test('retries a checkpoint interrupted by SSH reconnecting', () async {
       final path = p.join(root, 'a.txt');
       File(path).writeAsStringSync('before\n');
       final host = hosts['dev'];
-      final store = (await remoteReviewStore(host, root))!;
-      final review = ChangeReview(store);
+      final store = (await remoteReviewStore(host))!;
+      final review = ChangeReview(store, root: root);
       addTearDown(review.dispose);
       review.session = 'interrupted-scan';
-      await review.begin();
+      await review.before(path);
       File(path).writeAsStringSync('after\n');
 
       final entered = Completer<void>();
       final peer = connector.links.last.server.peer;
       final callReview = peer.handlers[RemoteProtocol.reviewCall]!;
       peer.handlers[RemoteProtocol.reviewCall] = (params, call) async {
-        if ((params as Map)['method'] == 'snapshot') {
-          // Capture the files, but lose the response. Retrying must keep
-          // the original baseline and discover later writes as well.
+        if ((params as Map)['method'] == 'take') {
+          // Keep the blob, but lose the response. Retrying must retain
+          // the original blob without adopting unrelated file writes.
           await callReview(params, call);
           entered.complete();
           await call.cancelled;
@@ -522,7 +523,7 @@ void main() {
         }
         return callReview(params, call);
       };
-      final observing = review.observe();
+      final observing = review.after(path);
       await entered.future.timeout(const Duration(seconds: 10));
       final created = p.join(root, 'during-reconnect.txt');
       File(created).writeAsStringSync('created after the interrupted scan\n');
@@ -533,14 +534,16 @@ void main() {
 
       expect(connector.links, hasLength(2));
       expect(review.failure, isNull);
-      expect(review.changes.map((change) => change.path), [path, created]);
+      expect(review.changes.map((change) => change.path), [path]);
       expect(review.changes.every((change) => change.tracked), isTrue);
       expect(await review.original(path)!(), 'before\n');
-      expect(await review.original(created)!(), isEmpty);
       await review.undoAll();
       expect(File(path).readAsStringSync(), 'before\n');
-      expect(File(created).existsSync(), isFalse);
-      await review.observe();
+      expect(
+        File(created).readAsStringSync(),
+        'created after the interrupted scan\n',
+      );
+      await review.after(path);
       expect(review.failure, isNull);
       expect(review.changes, isEmpty);
     });

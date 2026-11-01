@@ -3,7 +3,7 @@ library;
 
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show GitReviewStore;
+import 'package:bao_remote/local.dart' show BlobReviewStore;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,14 +29,11 @@ void main() {
         root = (Directory(p.join(temp.path, 'project'))..createSync()).path;
         if (remote) {
           harness = await RemoteHarness.start();
-          store = (await harness!.client.openReview(root))!;
+          store = (await harness!.client.openReview())!;
         } else {
-          store = (await GitReviewStore.open(
-            root,
-            checkpoints: p.join(temp.path, 'checkpoints'),
-          ))!;
+          store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
         }
-        review = ChangeReview(store)..session = 'safety';
+        review = ChangeReview(store, root: root)..session = 'safety';
       });
 
       tearDown(() async {
@@ -50,34 +47,37 @@ void main() {
       test('Undo after two turns preserves intervening user edits', () async {
         const initial = 'agent=0\nline1\nline2\nline3\nline4\nuser=0\n';
         write('file.txt', initial);
-        await review.begin();
+        await review.before(p.join(root, 'file.txt'));
         write('file.txt', initial.replaceFirst('agent=0', 'agent=1'));
-        await review.observe();
+        await review.after(p.join(root, 'file.txt'));
         write('file.txt', read('file.txt').replaceFirst('user=0', 'user=1'));
-        await review.begin();
+        await review.before(p.join(root, 'file.txt'));
         write('file.txt', read('file.txt').replaceFirst('agent=1', 'agent=2'));
-        await review.observe();
+        await review.after(p.join(root, 'file.txt'));
         await review.undoAll();
         expect(read('file.txt'), initial.replaceFirst('user=0', 'user=1'));
         expect(review.failure, isNull);
       });
 
       test(
-        'conflicting user edits stay protected across scan and resume',
+        'conflicting user edits stay protected across edits and resume',
         () async {
           write('file.txt', 'initial\n');
-          await review.begin();
+          await review.before(p.join(root, 'file.txt'));
           write('file.txt', 'first agent\n');
-          await review.observe();
+          await review.after(p.join(root, 'file.txt'));
           write('file.txt', 'user\n');
-          await review.begin();
-          expect(review.changes.single.conflict, isTrue);
+          await review.before(p.join(root, 'file.txt'));
           write('file.txt', 'second agent\n');
-          await review.observe();
+          await review.after(p.join(root, 'file.txt'));
           expect(review.changes.single.conflict, isTrue);
           await review.undoAll();
           expect(read('file.txt'), 'second agent\n');
-          final resumed = await ChangeReview.resume(store, 'safety');
+          final resumed = await ChangeReview.resume(
+            store,
+            'safety',
+            root: root,
+          );
           addTearDown(resumed.dispose);
           await resumed.undoAll();
           expect(read('file.txt'), 'second agent\n');
@@ -89,13 +89,13 @@ void main() {
       test(
         'a user-edited agent creation is never deleted by a later Undo',
         () async {
-          await review.begin();
+          await review.before(p.join(root, 'file.txt'));
           write('file.txt', 'agent=1\nuser=0\n');
-          await review.observe();
+          await review.after(p.join(root, 'file.txt'));
           write('file.txt', 'agent=1\nuser=1\n');
-          await review.begin();
+          await review.before(p.join(root, 'file.txt'));
           write('file.txt', 'agent=2\nuser=1\n');
-          await review.observe();
+          await review.after(p.join(root, 'file.txt'));
           await review.undoAll();
           expect(read('file.txt'), 'agent=2\nuser=1\n');
           expect(review.changes.single.conflict, isTrue);
@@ -109,14 +109,12 @@ void main() {
           Directory(p.join(root, 'notes')).createSync();
           write('.gitignore', 'notes/\n');
           write('notes/user.txt', 'existing user notes\n');
-          await review.begin();
+          await review.before(p.join(root, '.gitignore'));
           write('.gitignore', '');
-          await review.observe();
+          await review.after(p.join(root, '.gitignore'));
           expect(
-            review.changes
-                .singleWhere((change) => change.path.endsWith('user.txt'))
-                .tracked,
-            isFalse,
+            review.changes.where((change) => change.path.endsWith('user.txt')),
+            isEmpty,
           );
           await review.undoAll();
           expect(read('notes/user.txt'), 'existing user notes\n');
@@ -127,9 +125,9 @@ void main() {
       test('unignoring an existing file never makes Undo delete it', () async {
         write('.gitignore', 'notes.txt\n');
         write('notes.txt', 'existing user notes\n');
-        await review.begin();
+        await review.before(p.join(root, '.gitignore'));
         write('.gitignore', '');
-        await review.observe();
+        await review.after(p.join(root, '.gitignore'));
         await review.undoAll();
         expect(File(p.join(root, 'notes.txt')).existsSync(), isTrue);
         expect(read('notes.txt'), 'existing user notes\n');

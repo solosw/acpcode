@@ -5,7 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show GitReviewStore;
+import 'package:bao_remote/local.dart' show BlobReviewStore;
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/review/change_review.dart';
@@ -92,15 +92,12 @@ Future<void> _delayedReview({
   final ReviewStore store;
   if (remote) {
     harness = await RemoteHarness.start();
-    store = (await harness.client.openReview(root))!;
+    store = (await harness.client.openReview())!;
   } else {
-    store = (await GitReviewStore.open(
-      root,
-      checkpoints: p.join(temp.path, 'checkpoints'),
-    ))!;
+    store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
   }
   final gate = Completer<ChangeReview?>();
-  final review = ChangeReview(store);
+  final review = ChangeReview(store, root: root);
   late _FastKernel kernel;
   late final KernelDescriptor descriptor;
   descriptor = KernelDescriptor(
@@ -133,7 +130,7 @@ Future<void> _delayedReview({
     beforeOpen?.call(session);
     if (!reviewReady) gate.complete(review);
     await pumpEventQueue(times: 100);
-    await review.refresh();
+    await review.look();
     await verify(session, file);
   } finally {
     session.dispose();
@@ -552,15 +549,12 @@ void main() {
         final ReviewStore store;
         if (remote) {
           harness = await RemoteHarness.start();
-          store = (await harness.client.openReview(root))!;
+          store = (await harness.client.openReview())!;
         } else {
-          store = (await GitReviewStore.open(
-            root,
-            checkpoints: p.join(temp.path, 'checkpoints'),
-          ))!;
+          store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
         }
         final gate = Completer<ChangeReview?>();
-        final review = ChangeReview(store);
+        final review = ChangeReview(store, root: root);
         late final KernelDescriptor descriptor;
         descriptor = KernelDescriptor(
           id: 'fast',
@@ -584,7 +578,7 @@ void main() {
           if (keep) session.keepAllChanges();
           gate.complete(review);
           await pumpEventQueue(times: 100);
-          await review.refresh();
+          await review.look();
           if (keep) {
             expect(session.fileChanges, isEmpty);
             expect(file.readAsStringSync(), 'agent edit\n');

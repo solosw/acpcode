@@ -275,11 +275,32 @@ abstract interface class QueuesMessages {
   /// Takes up the queued message [turnId] at once, before any queued ahead
   /// of it: the turn running is stopped for it.
   void sendQueuedNow(String turnId);
+
+  /// Puts the queued message [turnId] at [index] among those queued, the
+  /// next first: the ones before it wait for it.
+  void moveQueued(String turnId, int index);
 }
 
 abstract interface class RevertsChanges {
   /// Puts back the files changed since turn [turnId] began.
   void revertChanges({required String sinceTurn});
+}
+
+/// Told of each file the agent (or one of its subagents) edits as it edits
+/// it: what the review of its changes keeps.
+abstract interface class EditWatch {
+  /// The agent is about to write [path] (absolute): it writes once this
+  /// completes.
+  Future<void> beforeEdit(String path);
+
+  /// It wrote [path], or gave up writing it.
+  Future<void> afterEdit(String path);
+}
+
+/// A kernel that tells an [EditWatch] of its edits, before and after each:
+/// set before it starts.
+abstract interface class WatchesEdits {
+  set editWatch(EditWatch? watch);
 }
 
 abstract interface class RewindsConversation {

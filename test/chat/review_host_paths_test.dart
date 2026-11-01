@@ -4,32 +4,20 @@ import 'dart:typed_data';
 import 'package:bao_remote/client.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/review/change_review.dart';
-import 'package:baocode/chat/review/change_reviews.dart';
 import 'package:baocode/chat/review/review_store.dart';
-import 'package:baocode/remote/remote_location.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-/// Only store-relative POSIX paths go to the store; host paths go to the UI.
+/// Both the store and the UI use absolute paths in the host context.
 class _Store implements ReviewStore {
   _Store(this.root);
 
-  @override
   final String root;
   final files = <String, ReviewBlob>{};
   final _texts = <ReviewBlob, String>{};
   final _saved = <String, String>{};
   final restored = <String>[];
-  final _trees = <String, Map<String, ReviewBlob>>{};
-  Map<String, ReviewBlob> _latest = {};
-
-  String _tree(Map<String, ReviewBlob> files) {
-    final id = 'tree-${_trees.length}';
-    _trees[id] = Map.of(files);
-    return id;
-  }
-
   ReviewBlob _blob(String mode, String text) {
     for (final MapEntry(key: blob, value: stored) in _texts.entries) {
       if (stored == text && blob.mode == mode) return blob;
@@ -44,46 +32,6 @@ class _Store implements ReviewStore {
   }
 
   @override
-  Future<String?> snapshot({Iterable<String>? paths}) async {
-    if (paths == null) {
-      _latest = Map.of(files);
-    } else {
-      for (final path in paths) {
-        if (files[path] case final blob?) {
-          _latest[path] = blob;
-        } else {
-          _latest.remove(path);
-        }
-      }
-    }
-    return _tree(_latest);
-  }
-
-  @override
-  Future<List<ReviewTreeChange>> diff(String from, String to) async => [
-    for (final path in {..._trees[from]!.keys, ..._trees[to]!.keys})
-      if (_trees[from]![path] != _trees[to]![path])
-        ReviewTreeChange(path, _trees[from]![path], _trees[to]![path]),
-  ];
-
-  @override
-  Future<String> overlay(String tree, Map<String, ReviewBlob?> entries) async {
-    final files = <String, ReviewBlob>{...?_trees[tree]};
-    for (final MapEntry(key: path, value: blob) in entries.entries) {
-      if (blob == null) {
-        files.remove(path);
-      } else {
-        files[path] = blob;
-      }
-    }
-    return _tree(files);
-  }
-
-  @override
-  Future<bool> contains(String tree, String path) async =>
-      _trees[tree]!.containsKey(path);
-
-  @override
   Future<ReviewBlob?> take(String path) async => files[path];
 
   @override
@@ -92,16 +40,10 @@ class _Store implements ReviewStore {
   }
 
   @override
-  Future<Map<String, ({int added, int removed})?>> lineCounts(
-    String from,
-    String to,
-  ) async => {
-    for (final change in await diff(from, to))
-      change.path: (added: 1, removed: 1),
-  };
-
-  @override
-  Future<bool> exists(String path) async => files.containsKey(path);
+  Future<({int added, int removed})?> lineCounts(
+    ReviewBlob? from,
+    ReviewBlob? to,
+  ) async => (added: 1, removed: 1);
 
   @override
   Future<ReviewBlob?> current(String path) async => files[path];
@@ -111,7 +53,7 @@ class _Store implements ReviewStore {
       Uint8List.fromList(utf8.encode(_texts[blob]!));
 
   @override
-  Future<void> restore(String path, ReviewBlob? blob) async {
+  Future<void> restore(String path, ReviewBlob? blob, {String? root}) async {
     restored.add(path);
     if (blob == null) {
       files.remove(path);
@@ -121,7 +63,7 @@ class _Store implements ReviewStore {
   }
 
   @override
-  Future<Uint8List?> merge(String path, ReviewBlob from, ReviewBlob to) =>
+  Future<Uint8List?> merge(ReviewBlob mine, ReviewBlob from, ReviewBlob to) =>
       throw UnimplementedError();
 
   @override
@@ -147,7 +89,8 @@ void main() {
     final peer = RpcPeer(const Stream.empty(), (_) {});
     addTearDown(peer.close);
     final review = ChangeReview(
-      RemoteReviewStore(peer, 1, '/home/dev/project'),
+      RemoteReviewStore(peer, 1),
+      root: '/home/dev/project',
     );
     addTearDown(review.dispose);
     expect(review.paths, same(p.posix));
@@ -163,16 +106,17 @@ void main() {
       final absolute = context.join(root, 'lib', 'main.dart');
 
       setUp(() async {
-        store = _Store(root)..edit('lib/main.dart', 'before\n');
-        review = ChangeReview(store, paths: context)..session = 's1';
+        store = _Store(root)..edit(absolute, 'before\n');
+        review = ChangeReview(store, root: root, paths: context)
+          ..session = 's1';
         addTearDown(review.dispose);
-        await review.begin();
+        await review.before(absolute);
       });
 
       test(
         'listed files, originals and undo use the host path context',
         () async {
-          store.edit('lib/main.dart', 'after\n');
+          store.edit(absolute, 'after\n');
           review.reportEdit(
             FileEdited(
               1,
@@ -180,13 +124,13 @@ void main() {
               after: FileSnapshot.text('after\n'),
             ),
           );
-          await review.observe();
+          await review.after(absolute);
           expect(review.changes.single.path, absolute);
           expect(review.changes.single.tracked, isTrue);
           expect(await review.original(absolute)!(), 'before\n');
 
           await review.undo([absolute]);
-          expect(store.restored, ['lib/main.dart']);
+          expect(store.restored, [absolute]);
           expect(review.changes, isEmpty);
           expect(review.failure, isNull);
         },
@@ -194,10 +138,15 @@ void main() {
 
       test('resumed changes and keep preserve host paths', () async {
         review.session = 's1';
-        store.edit('lib/main.dart', 'after\n');
-        await review.observe();
+        store.edit(absolute, 'after\n');
+        await review.after(absolute);
 
-        final resumed = await ChangeReview.resume(store, 's1', paths: context);
+        final resumed = await ChangeReview.resume(
+          store,
+          's1',
+          root: root,
+          paths: context,
+        );
         addTearDown(resumed.dispose);
         expect(resumed.changes.single.path, absolute);
         expect(await resumed.original(absolute)!(), 'before\n');
@@ -208,71 +157,24 @@ void main() {
       });
     });
 
-    test('${context.style} multi-folder review routes host paths', () async {
-      final other = context.join(context.dirname(root), 'other');
-      final stores = <String, _Store>{};
-      final reviews = await ChangeReviews.open(
-        [root, other, context.join(root, 'nested'), root],
-        paths: context,
-        open: (root, {session}) async {
-          final store = stores[root] = _Store(root)
-            ..edit('lib/main.dart', 'before\n');
-          return ChangeReview(store, paths: context);
-        },
-      );
-      addTearDown(reviews!.dispose);
-      expect(stores.keys, [root, other]);
-      reviews.session = 's1';
-      await reviews.begin();
-      for (final store in stores.values) {
-        store.edit('lib/main.dart', 'after\n');
-      }
-      final first = context.join(root, 'lib', 'main.dart');
-      final second = context.join(other, 'lib', 'main.dart');
-      reviews
-        ..reportEdit(
-          FileEdited(
-            1,
-            const FileChange(path: 'lib/main.dart', added: 1, removed: 1),
-            after: FileSnapshot.text('after\n'),
-          ),
-        )
-        ..reportEdit(
-          FileEdited(
-            2,
-            FileChange(path: second, added: 1, removed: 1),
-            after: FileSnapshot.text('after\n'),
-          ),
-        );
-      await reviews.observe();
-      expect(reviews.changes.map((c) => c.path), [first, second]);
-      expect(await reviews.original(second)!(), 'before\n');
-      await reviews.undo([second]);
-      expect(stores[other]!.restored, ['lib/main.dart']);
-      expect(stores[root]!.restored, isEmpty);
-      await reviews.keep(['lib/main.dart']);
-      expect(reviews.changes, isEmpty);
-    });
-  }
-
-  test('remote multi-folder roots are filtered with POSIX rules', () async {
-    final opened = <String>[];
-    final reviews = await ChangeReviews.open(
-      [
-        'ssh://dev/home/Project',
-        'ssh://dev/home/project',
-        'ssh://dev/home/Project/nested',
-        'ssh://dev/home/Project',
-      ],
-      open: (location, {session}) async {
-        opened.add(location);
-        return ChangeReview(
-          _Store(RemoteLocation.pathOf(location)),
-          paths: p.posix,
-        );
+    test(
+      'one conversation reviews absolute paths in another workspace folder',
+      () async {
+        final store = _Store(root);
+        final review = ChangeReview(store, root: root, paths: context)
+          ..session = 'workspace';
+        addTearDown(review.dispose);
+        final other = context.join(context.dirname(root), 'other', 'file.dart');
+        store.edit(other, 'before\n');
+        await review.before(other);
+        store.edit(other, 'after\n');
+        await review.after(other);
+        expect(review.changes.single.path, other);
+        expect(await review.original(other)!(), 'before\n');
+        await review.undoAll();
+        expect(store.restored, [other]);
+        expect(review.failure, isNull);
       },
     );
-    addTearDown(reviews!.dispose);
-    expect(opened, ['ssh://dev/home/Project', 'ssh://dev/home/project']);
-  });
+  }
 }

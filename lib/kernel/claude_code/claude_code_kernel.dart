@@ -17,6 +17,8 @@ import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
 import '../../remote/remote_location.dart';
 import '../../settings/user_settings.dart';
+import '../../usage/claude_usage_meter.dart';
+import '../../usage/usage_ledger.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
 import '../commit_attribution.dart';
@@ -114,6 +116,7 @@ class ClaudeCodeKernel
         SuggestsPrompts,
         ManagesMcpServers,
         ConfirmsModelSwitch,
+        WatchesEdits,
         LoadsHistory {
   ClaudeCodeKernel(
     this.descriptor,
@@ -221,6 +224,11 @@ class ClaudeCodeKernel
   ClaudeCodeTransport? _transport;
   ControlChannel? _control;
   StreamSubscription<Map<String, Object?>>? _subscription;
+
+  /// Keeps the calls of a process on Claude Code's own models (Settings →
+  /// Usage): those to a provider of the user's go through the model proxy,
+  /// which keeps them.
+  ClaudeUsageMeter? _usage;
   Future<void>? _starting;
 
   /// The build that exited too old as it started, and what it printed:
@@ -614,12 +622,21 @@ class ClaudeCodeKernel
         return;
       }
       _transport = transport;
+      _usage = custom == null
+          ? ClaudeUsageMeter(
+              record: (call) => UsageLedger.current.record(call),
+              session: () => _sessionId,
+              providerName: 'Claude Code',
+              quota: () => _quota,
+            )
+          : null;
       final control = _control = ControlChannel(transport.write);
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
         await control.request('initialize', {
           'promptSuggestions': _launchedSuggestions,
           if (sdkServers.isNotEmpty) 'sdkMcpServers': sdkServers,
+          if (_editWatch != null) 'hooks': _editHooks,
         }),
       );
       if (_mode != _cliMode) {
@@ -710,6 +727,8 @@ class ClaudeCodeKernel
   }
 
   void _teardown() {
+    _usage?.close();
+    _usage = null;
     unawaited(_subscription?.cancel());
     _subscription = null;
     _control?.failAll('Claude Code stopped');
@@ -1039,6 +1058,7 @@ class ClaudeCodeKernel
     _turn = id;
     _limitHit(null);
     _turnStarted = DateTime.now();
+    _usage?.requested();
     _translator.turnId = id;
     emit(TurnStarted(nextSeq, id, unprompted: unprompted));
     _translator.begin();
@@ -1158,7 +1178,63 @@ class ClaudeCodeKernel
     // The CLI takes up all it queued as one turn, in the order sent: the
     // others are taken back too, and sent again after it, held until it is
     // taken up. Those held first, for none to be given the CLI meanwhile.
-    final order = [turnId, ...others];
+    _resendQueued([turnId, ...others], now: turnId);
+  }
+
+  @override
+  void moveQueued(String turnId, int index) {
+    final order = [..._queued];
+    if (!order.remove(turnId)) return;
+    order.insert(index.clamp(0, order.length), turnId);
+    if (_reorderHere(order)) return;
+    if (!_running) {
+      // The queue is shown before the process finishes starting. Keep the
+      // request behind its pending writes, then check the queue again.
+      _whenReady((_) {
+        if (_running) moveQueued(turnId, index);
+      });
+      return;
+    }
+    // Those given the CLI go in the order sent: it takes them back, and is
+    // sent all again in this one, none taken up at once.
+    _resendQueued(order);
+  }
+
+  /// Puts the queued messages in [order] here, if the CLI's part is left as
+  /// it is; returns whether it could.
+  bool _reorderHere(List<String> order) {
+    final given = [
+      for (final id in _queued)
+        if (!_held.containsKey(id)) id,
+    ];
+    final nowGiven = [
+      for (final id in order)
+        if (!_held.containsKey(id)) id,
+    ];
+    // The ones held here may go in any order among themselves, but none
+    // may go before those given the CLI, which take their turn first.
+    if (!listEquals(given, nowGiven)) return false;
+    if (!order.take(nowGiven.length).every((id) => !_held.containsKey(id))) {
+      return false;
+    }
+    _queued
+      ..clear()
+      ..addAll(order);
+    final held = {
+      for (final id in order)
+        if (_held.containsKey(id)) id: _held[id]!,
+    };
+    _held
+      ..clear()
+      ..addAll(held);
+    emit(QueueReordered(nextSeq, order));
+    return true;
+  }
+
+  /// Takes back what is queued and sends it again in [order]: the one [now]
+  /// (if any) to be taken up at once, the turn running stopped for it.
+  /// Those held here first, for none to be given the CLI meanwhile.
+  void _resendQueued(List<String> order, {String? now}) {
     unawaited(() async {
       final taken = {
         for (final id in [
@@ -1176,7 +1252,7 @@ class ClaudeCodeKernel
             mentions: turn.mentions,
             images: turn.images,
             notes: turn.notes,
-            now: id == turnId,
+            now: id == now,
           ),
         );
       }
@@ -1698,6 +1774,7 @@ class ClaudeCodeKernel
 
   void _receive(Map<String, Object?> message) {
     if (_control?.receive(message) ?? false) return;
+    _usage?.receive(message);
     switch (message['type']) {
       case ClaudeExit.type:
         _exited(
@@ -1817,9 +1894,73 @@ class ClaudeCodeKernel
         _elicitation(id, request);
       case 'mcp_message':
         unawaited(_mcpMessage(id, request));
+      case 'hook_callback':
+        unawaited(_hookCallback(id, request));
       default:
         control.refuse(id, 'Not supported by this client');
     }
+  }
+
+  // --- Edits, as they are made ------------------------------------------------
+
+  @override
+  set editWatch(EditWatch? watch) => _editWatch = watch;
+  EditWatch? _editWatch;
+
+  /// The hooks it has the CLI call back, around each edit of the agent's or
+  /// a subagent's, for an [EditWatch].
+  static const _beforeEdit = 'baocode-before-edit';
+  static const _afterEdit = 'baocode-after-edit';
+  static const _editTools = 'Edit|Write|MultiEdit|NotebookEdit';
+
+  static final Map<String, Object?> _editHooks = {
+    'PreToolUse': [
+      {
+        'matcher': _editTools,
+        'hookCallbackIds': [_beforeEdit],
+      },
+    ],
+    // Done, failed, or not let do.
+    for (final event in const [
+      'PostToolUse',
+      'PostToolUseFailure',
+      'PermissionDenied',
+    ])
+      event: [
+        {
+          'matcher': _editTools,
+          'hookCallbackIds': [_afterEdit],
+        },
+      ],
+  };
+
+  /// How long an edit waits on the watch at most.
+  static const _editWait = Duration(seconds: 10);
+
+  /// One of [_editHooks] called back: the watch told of the edit, and the
+  /// CLI answered once it is done with it (the edit waits on that).
+  Future<void> _hookCallback(String id, Map<String, Object?> request) async {
+    final input = (request['input'] as Map?)?.cast<String, Object?>();
+    final tool = (input?['tool_input'] as Map?)?.cast<String, Object?>();
+    final path = tool?['file_path'] ?? tool?['notebook_path'];
+    final watch = _editWatch;
+    // A plan is not a change to review.
+    if (watch != null &&
+        path is String &&
+        path.isNotEmpty &&
+        !ClaudeTranslator.isPlanPath(path)) {
+      final told = switch (request['callback_id']) {
+        _beforeEdit => watch.beforeEdit(path),
+        _afterEdit => watch.afterEdit(path),
+        _ => null,
+      };
+      try {
+        await told?.timeout(_editWait);
+      } on Object {
+        // The edit goes on all the same.
+      }
+    }
+    _control?.respond(id, const {});
   }
 
   /// What the agent says to one of the app's own MCP servers (see
@@ -2048,6 +2189,36 @@ class ClaudeCodeKernel
       return null;
     }
   }
+
+  /// What the account it is logged in as is called, for its calls kept:
+  /// its Claude plan's, else Anthropic's API.
+  static String? _planName(Object? account) {
+    if (account is! Map) return null;
+    if (account['subscriptionType'] case final String plan
+        when plan.trim().isNotEmpty) {
+      final name = plan.trim();
+      return 'Claude ${name[0].toUpperCase()}${name.substring(1)}';
+    }
+    return account['apiKeySource'] != null ? 'Anthropic API' : null;
+  }
+
+  /// The plan's limits as last told, by their type (`five_hour`…), for the
+  /// calls kept.
+  static Map<String, double> get _quota => {
+    for (final limit in _limits)
+      _limitTypes[limit.label] ?? limit.label: limit.utilization,
+  };
+
+  static final _limitTypes = {
+    for (final type in const [
+      'five_hour',
+      'seven_day',
+      'seven_day_opus',
+      'seven_day_sonnet',
+      'seven_day_overage_included',
+    ])
+      _limitLabel(type): type,
+  };
 
   static String _limitLabel(Object? type) => switch (type) {
     'five_hour' => '5-hour limit',
@@ -2406,8 +2577,10 @@ class ClaudeCodeKernel
     final control = _control;
     if (control == null) return;
     try {
+      // In full: each part's things too (the system prompt's sections,
+      // the built-in tools, the messages by tool), counted where it runs.
       final usage = await control.request('get_context_usage', {
-        'detail': 'summary',
+        'detail': 'full',
       }, const Duration(seconds: 20));
       final max = usage['maxTokens'] as int? ?? _contextWindow;
       _contextWindow = max;
@@ -2440,6 +2613,7 @@ class ClaudeCodeKernel
                     },
                   ),
             ],
+            detail: ContextDetail.parse(usage),
           ),
         ),
       );
@@ -2644,6 +2818,9 @@ class ClaudeCodeKernel
     // Claude Code's own models are those it lists set up as the user has
     // it: one on a provider lists what the provider's names stand in for.
     final own = _launchedProvider.isEmpty;
+    if (_planName(response['account']) case final plan?) {
+      _usage?.providerName = plan;
+    }
     final listed = [
       for (final raw in response['models'] as List? ?? const [])
         if (raw is Map) raw.cast<Object?, Object?>(),

@@ -32,6 +32,8 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/usage/usage_ledger.dart';
+import 'package:baocode/usage/usage_prices.dart';
 
 /// Lines Claude Code 2.1.281 printed (recorded, with paths and account
 /// details replaced).
@@ -838,8 +840,7 @@ void main() {
     });
 
     test("a subagent's edits, sent without their patches, are told from "
-        'their input; its commands and its end, as files that may have '
-        'changed', () {
+        'their input', () {
       final events = <KernelEvent>[];
       var seq = 0;
       final translator = ClaudeTranslator(
@@ -918,25 +919,12 @@ void main() {
       expect((originals.last! as OriginalByEdits).edits, [
         (before: 'x', after: 'y\nz'),
       ]);
-      expect(events.whereType<FilesMayHaveChanged>(), isEmpty);
 
-      call('b1', 'Bash', {'command': 'echo c > c.txt'}, parent: 'agent-1');
-      expect(events.whereType<FilesMayHaveChanged>(), hasLength(1));
-      call(
-        'agent-1',
-        'Agent',
-        {'description': 'Make files', 'prompt': 'make them'},
-        result: {'status': 'completed', 'content': []},
-      );
-      expect(events.whereType<FilesMayHaveChanged>(), hasLength(2));
-
-      // A kept session's, replayed: nothing to look at.
+      // A kept session's, replayed: nothing to review.
       events.clear();
       translator.replaying = true;
       call('w2', 'Write', {'file_path': '/p/d.txt', 'content': 'd'});
-      call('b2', 'Bash', {'command': 'true'});
       expect(events.whereType<FileEdited>(), isEmpty);
-      expect(events.whereType<FilesMayHaveChanged>(), isEmpty);
     });
 
     test('each round of planning is one card; a plan sent back gives way '
@@ -2383,6 +2371,89 @@ void main() {
       kernel.dispose();
     });
 
+    test('a queued message moved among those held here is reordered there, '
+        'the CLI left as it is', () async {
+      final cli = FakeCli(
+        answers: {
+          'cancel_async_message': {'cancelled': true},
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel
+        ..send(const KernelTurn(id: 'u1', text: 'first'))
+        ..send(const KernelTurn(id: 'u2', text: 'second'))
+        ..send(const KernelTurn(id: 'u3', text: 'third'))
+        ..send(const KernelTurn(id: 'u4', text: 'fourth'));
+      await pumpEventQueue();
+      // One waits in the CLI at a time: the rest are held here.
+      expect(cli.users.map((m) => m['uuid']), ['u1', 'u2']);
+      List<String> queued() => [for (final (id, _) in transcript.queued) id];
+      expect(queued(), ['u2', 'u3', 'u4']);
+
+      kernel.moveQueued('u4', 1);
+      await pumpEventQueue();
+      expect(queued(), ['u2', 'u4', 'u3']);
+      // Nothing taken back or sent again: it waits here either way.
+      expect(cli.requests('cancel_async_message'), isEmpty);
+      expect(cli.requests('interrupt'), isEmpty);
+      expect(cli.users.map((m) => m['uuid']), ['u1', 'u2']);
+      kernel.dispose();
+    });
+
+    test('a queued message moved before the one given the CLI is sent '
+        'before it, the turn running not stopped', () async {
+      final cli = FakeCli(
+        answers: {
+          'cancel_async_message': {'cancelled': true},
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel
+        ..send(const KernelTurn(id: 'u1', text: 'first'))
+        ..send(const KernelTurn(id: 'u2', text: 'second'))
+        ..send(const KernelTurn(id: 'u3', text: 'third'))
+        ..send(const KernelTurn(id: 'u4', text: 'fourth'));
+      await pumpEventQueue();
+
+      kernel.moveQueued('u4', 0);
+      await pumpEventQueue();
+      // The one in the CLI taken back; all sent again in the new order,
+      // the first waiting in the CLI, the rest held here.
+      expect(
+        cli.requests('cancel_async_message').map((r) => r['message_uuid']),
+        ['u2'],
+      );
+      expect(cli.requests('interrupt'), isEmpty);
+      expect(
+        [for (final m in cli.users.skip(2)) (m['message'] as Map)['content']],
+        [
+          [
+            {'type': 'text', 'text': 'fourth'},
+          ],
+        ],
+      );
+      expect(
+        [for (final (_, item) in transcript.queued) item.text],
+        ['fourth', 'second', 'third'],
+      );
+
+      cli.push({
+        'type': 'command_lifecycle',
+        'command_uuid': cli.users.last['uuid'],
+        'state': 'started',
+      });
+      await pumpEventQueue();
+      // The next held given the CLI once the one before it is taken up.
+      expect((cli.users.last['message'] as Map)['content'], [
+        {'type': 'text', 'text': 'second'},
+      ]);
+      expect(
+        [for (final (_, item) in transcript.queued) item.text],
+        ['second', 'third'],
+      );
+      kernel.dispose();
+    });
+
     test('a queued message sent now with a task in the background does not '
         'interrupt, which would end the task too: the CLI takes it up '
         'next', () async {
@@ -3029,6 +3100,47 @@ void main() {
       expect(
         usage.segments.map((s) => s.kind).toSet(),
         containsAll([ContextKind.used, ContextKind.free, ContextKind.buffer]),
+      );
+      kernel.dispose();
+    });
+
+    test("keeps the calls on Claude Code's own models, timed, and priced "
+        "at Anthropic's as the CLI prices them", () async {
+      final ledger = UsageLedger.current = UsageLedger(MemoryUsageStorage());
+      addTearDown(
+        () => UsageLedger.current = UsageLedger(MemoryUsageStorage()),
+      );
+      final cli = FakeCli();
+      final (:kernel, transcript: _, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      final messages = recorded('question');
+      final result = messages.indexWhere((m) => m['type'] == 'result');
+      for (final message in messages.take(result + 1)) {
+        if (message['type'] case 'control_response' || 'control_request') {
+          continue;
+        }
+        cli.push(message);
+      }
+      await pumpEventQueue();
+      ledger.flush();
+      final calls = await ledger.range();
+      // Its two requests; the CLI's totals no more than theirs.
+      expect(calls, hasLength(2));
+      expect(calls.map((c) => (c.provider, c.model)).toSet(), {
+        ('claude-code', 'claude-sonnet-5'),
+      });
+      expect(calls.map((c) => c.output), [122, 5]);
+      expect(calls.first.cacheWriteLong, 6455);
+      expect(calls.first.stopReason, 'tool_use');
+      expect(calls.first.firstToken, isNotNull);
+      expect(calls.first.toolCalls, isNotEmpty);
+      // The plan's limits, told between them.
+      expect(calls.last.quota, isNotEmpty);
+      // What the CLI said they cost (its modelUsage's costUSD).
+      expect(
+        UsagePrices().costOf(calls).byCurrency['USD'],
+        closeTo(0.0425954, 1e-9),
       );
       kernel.dispose();
     });

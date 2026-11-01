@@ -1,6 +1,7 @@
 // Under the chat input, the Git branch the agent works on: switched from
 // its menu, while the agent works too; a workspace's folders' branch, or
-// each one's; only the name without a repository. Worktrees made and
+// each one's; a workspace's name only, and a project's nothing, without a
+// repository. Worktrees made and
 // switched to from it.
 
 import 'package:baocode/chat/chat_session.dart';
@@ -254,13 +255,21 @@ void main() {
     ]);
   });
 
-  testWidgets('a folder without Git shows its name only', (tester) async {
+  testWidgets('a project without Git shows nothing: its name is elsewhere', (
+    tester,
+  ) async {
     final fake = _git('/work/notes')..isRepository = false;
     final git = fake.repository();
     addTearDown(git.dispose);
     await _pump(tester, name: 'notes', repositories: [('/work/notes', git)]);
-    expect(find.text('notes'), findsOneWidget);
-    await tester.tap(find.text('notes'));
+    expect(find.text('notes'), findsNothing);
+    expect(tester.getSize(find.byType(ChatBranchBar)).height, 0);
+  });
+
+  testWidgets('a workspace without Git shows its name only', (tester) async {
+    await _pump(tester, name: 'BaoCode', workspace: true);
+    expect(find.text('BaoCode'), findsOneWidget);
+    await tester.tap(find.text('BaoCode'));
     await tester.pumpAndSettle();
     expect(find.text('Switch Branch'), findsNothing);
   });
@@ -380,5 +389,43 @@ void main() {
       tester.getCenter(find.byIcon(Icons.check_rounded)).dy,
       tester.getCenter(branches.last).dy,
     );
+  });
+
+  testWidgets("a folder's branches taller than the window scroll", (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 500));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final monad =
+        (FakeGit('/work/monad')
+              ..status = '## main\x00'
+              ..forEachRef = [
+                for (var i = 0; i < 40; i++)
+                  gitRefRecord('refs/heads/b$i', 'a' * 40),
+                gitRefRecord('refs/heads/main', 'a' * 40),
+              ].join('\n'))
+            .repository();
+    final relay = _git('/work/relay').repository();
+    for (final git in [monad, relay]) {
+      addTearDown(git.dispose);
+    }
+    await _pump(
+      tester,
+      name: 'BaoCode',
+      workspace: true,
+      repositories: [('/work/monad', monad), ('/work/relay', relay)],
+    );
+    await tester.tap(find.text('main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('monad'));
+    await tester.pumpAndSettle();
+    final last = find.text('Create Branch…');
+    expect(last, findsOneWidget);
+    // Past the window's bottom, till scrolled to.
+    expect(tester.getBottomLeft(last).dy, greaterThan(500));
+    await tester.drag(find.text('b3'), const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    expect(tester.getBottomLeft(last).dy, lessThan(500));
+    expect(tester.takeException(), isNull);
   });
 }

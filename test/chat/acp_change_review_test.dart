@@ -3,9 +3,11 @@ library;
 
 import 'dart:io';
 
-import 'package:bao_remote/local.dart' show GitReviewStore;
+import 'package:bao_remote/local.dart' show BlobReviewStore;
+import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
+import 'package:baocode/kernel/kernel_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -13,167 +15,119 @@ import '../remote/remote_harness.dart';
 
 void main() {
   for (final remote in [false, true]) {
-    group(remote ? 'remote ACP discovery' : 'local ACP discovery', () {
+    group(remote ? 'remote ACP ledger' : 'local ACP ledger', () {
       late Directory temp;
       late String root;
-      late ReviewStore store;
       late ChangeReview review;
       RemoteHarness? harness;
+      var seq = 0;
 
-      void write(String path, String text) {
-        final file = File(p.join(root, path));
+      String at(String name) => p.join(root, name);
+      void write(String name, String text) {
+        final file = File(at(name));
         file.parent.createSync(recursive: true);
         file.writeAsStringSync(text);
       }
 
-      String read(String path) => File(p.join(root, path)).readAsStringSync();
+      Future<void> edit(String name, String? text) async {
+        final file = File(at(name));
+        final original = file.existsSync() ? file.readAsStringSync() : null;
+        if (text == null) {
+          file.deleteSync();
+        } else {
+          write(name, text);
+        }
+        review.reportEdit(
+          FileEdited(
+            ++seq,
+            FileChange(
+              path: at(name),
+              added: text == null ? 0 : 1,
+              removed: original == null ? 0 : 1,
+            ),
+            original: OriginalText(original),
+            after: text == null ? FileSnapshot(null) : FileSnapshot.text(text),
+          ),
+        );
+        await review.look();
+      }
 
       setUp(() async {
-        temp = Directory.systemTemp.createTempSync('acp-review-');
+        temp = Directory.systemTemp.createTempSync('acp-ledger-');
         root = (Directory(p.join(temp.path, 'project'))..createSync()).path;
+        final ReviewStore store;
         if (remote) {
           harness = await RemoteHarness.start();
-          store = (await harness!.client.openReview(root))!;
+          store = (await harness!.client.openReview())!;
         } else {
-          store = (await GitReviewStore.open(
-            root,
-            checkpoints: p.join(temp.path, 'checkpoints'),
-          ))!;
+          store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
         }
-        review = ChangeReview(store)..session = 'acp';
+        review = ChangeReview(store, root: root)..session = 'acp';
       });
 
       tearDown(() async {
-        review.dispose();
-        // Dispose also drops the transient scan baseline, after queued work.
         await review.discard();
+        review.dispose();
         await harness?.close();
         harness = null;
         if (temp.existsSync()) temp.deleteSync(recursive: true);
       });
 
-      test('shell edits, creations and deletions can be undone', () async {
+      test('reported edits, creations and deletions can be undone', () async {
         write('edit.txt', 'before\n');
         write('delete.txt', 'delete me\n');
-        await review.begin();
-        write('edit.txt', 'after\n');
-        write('new.txt', 'created\n');
-        File(p.join(root, 'delete.txt')).deleteSync();
-        // No FileEdited events: these edits came from a shell.
-        await review.observe();
-        expect(review.failure, isNull);
+        await edit('edit.txt', 'after\n');
+        await edit('new.txt', 'created\n');
+        await edit('delete.txt', null);
         expect(review.changes, hasLength(3));
         expect(review.changes.every((change) => change.tracked), isTrue);
-        expect(await review.original(p.join(root, 'edit.txt'))!(), 'before\n');
         await review.undoAll();
-        expect(read('edit.txt'), 'before\n');
-        expect(read('delete.txt'), 'delete me\n');
-        expect(File(p.join(root, 'new.txt')).existsSync(), isFalse);
-        await review.observe();
-        expect(review.changes, isEmpty);
-      });
-
-      test('Keep preserves the scan baseline for a later shell edit', () async {
-        write('file.txt', 'before\n');
-        await review.begin();
-        write('file.txt', 'kept\n');
-        await review.observe();
-        await review.keepAll();
-        await review.observe();
-        expect(review.changes, isEmpty);
-        write('file.txt', 'later\n');
-        await review.observe();
-        expect(await review.original(p.join(root, 'file.txt'))!(), 'kept\n');
-        await review.undoAll();
-        expect(read('file.txt'), 'kept\n');
+        expect(File(at('edit.txt')).readAsStringSync(), 'before\n');
+        expect(File(at('delete.txt')).readAsStringSync(), 'delete me\n');
+        expect(File(at('new.txt')).existsSync(), isFalse);
+        expect(review.failure, isNull);
       });
 
       test(
-        'between-turn user edits and editor undo are not rediscovered',
+        'Keep makes the next reported edit start from the kept content',
         () async {
           write('file.txt', 'before\n');
-          await review.begin();
-          write('file.txt', 'agent\n');
-          await review.observe();
+          await edit('file.txt', 'kept\n');
           await review.keepAll();
-          write('file.txt', 'user\n');
-          await review.begin();
-          await review.observe();
-          expect(review.changes, isEmpty);
-          write('file.txt', 'agent again\n');
-          await review.observe();
-          write('file.txt', 'user\n');
-          await review.settle([p.join(root, 'file.txt')]);
-          await review.observe();
-          expect(review.changes, isEmpty);
+          await edit('file.txt', 'later\n');
+          expect(await review.original(at('file.txt'))!(), 'kept\n');
+          await review.undoAll();
+          expect(File(at('file.txt')).readAsStringSync(), 'kept\n');
         },
       );
 
-      test('ignores build files and visits nested repositories', () async {
-        write('.gitignore', 'ignored.txt\n');
-        write('ignored.txt', 'ignored\n');
-        write('node_modules/dependency.js', 'generated\n');
-        write('nested/a.txt', 'before\n');
-        final git = await Process.run('git', [
-          'init',
-          '-q',
-          '--template=',
-          p.join(root, 'nested'),
-        ]);
-        expect(git.exitCode, 0);
-        await review.begin();
-        write('ignored.txt', 'changed\n');
-        write('node_modules/dependency.js', 'changed\n');
-        write('nested/a.txt', 'after\n');
-        await review.observe();
-        expect(review.failure, isNull);
+      test('unreported files never belong to the conversation', () async {
+        write('user.txt', 'user content\n');
+        await edit('nested/agent.txt', 'agent content\n');
         expect(review.changes.map((change) => change.path), [
-          p.join(root, 'nested/a.txt'),
+          at('nested/agent.txt'),
         ]);
         await review.undoAll();
-        expect(read('nested/a.txt'), 'before\n');
+        expect(File(at('user.txt')).readAsStringSync(), 'user content\n');
       });
 
-      if (!remote) {
-        test('checkpoints inside the project are never rediscovered', () async {
-          review.dispose();
-          store = (await GitReviewStore.open(
-            root,
-            checkpoints: p.join(root, '.checkpoints'),
-          ))!;
-          review = ChangeReview(store)..session = 'inside';
-          write('file.txt', 'before\n');
-          await review.begin();
-          write('file.txt', 'after\n');
-          await review.observe();
-          expect(review.failure, isNull);
-          expect(review.changes.map((change) => change.path), [
-            p.join(root, 'file.txt'),
-          ]);
-          await review.keepAll();
-          await review.observe();
-          expect(review.failure, isNull);
-          expect(review.changes, isEmpty);
-        });
-      }
-
       test(
-        'a file that grows too large is not mistaken for a deletion',
+        'an unknown after snapshot cannot undo a later user write',
         () async {
-          final beforeLimit = GitReviewStore.maxFileBytes;
-          addTearDown(() => GitReviewStore.maxFileBytes = beforeLimit);
-          GitReviewStore.maxFileBytes = 32;
-          write('file.txt', 'small\n');
-          await review.begin();
-          write('file.txt', 'x' * 40);
-          await review.observe();
-          expect(review.failure, isNull);
+          write('file.txt', 'user content\n');
+          review.reportEdit(
+            FileEdited(
+              ++seq,
+              FileChange(path: at('file.txt'), added: 1, removed: 1),
+              original: const OriginalText('before\n'),
+              after: const FileSnapshot.unknown(),
+            ),
+          );
+          await review.look();
           expect(review.changes.single.tracked, isFalse);
           await review.undoAll();
-          expect(read('file.txt'), 'x' * 40);
-          await review.keepAll();
-          await review.observe();
-          expect(review.changes, isEmpty);
+          expect(File(at('file.txt')).readAsStringSync(), 'user content\n');
+          expect(review.failure, isNull);
         },
       );
     });

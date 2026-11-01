@@ -103,9 +103,8 @@ void _awaitClient(
 /// The review checkpoints on [host], reopened after SSH reconnects. The
 /// same store object stays with the conversation, retaining its pending
 /// changes and original blobs, with the host's POSIX paths on Windows too.
-Future<RemoteReviewStore?> remoteReviewStore(SshHost host, String root) async =>
+Future<RemoteReviewStore?> remoteReviewStore(SshHost host) async =>
     (await host.ready).openReview(
-      root,
       reconnect: (previous) {
         final ready = Completer<RemoteClient>();
         void check() {
