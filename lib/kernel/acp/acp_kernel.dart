@@ -356,7 +356,11 @@ class AcpKernel
       }
       if (!_initialized || obsolete()) return;
       await _ensureSession();
-      if (obsolete()) return;
+      // Picker callbacks return before ACP acknowledges their settings. A
+      // scheduled prompt (and a promptly submitted manual one) must not
+      // overtake the configuration requests, including legacy modes.
+      await _configChanges;
+      if (obsolete() || _health.status == KernelHealthStatus.failed) return;
       final sessionId = _sessionId!;
       _turnId = turn.id;
       _cancelling = false;
@@ -507,17 +511,19 @@ class AcpKernel
     final generation = _startGeneration;
     final sessionId = _sessionId;
     if (sessionId == null) return;
-    unawaited(
-      _request('session/set_mode', {
-        'sessionId': sessionId,
-        'modeId': modeId,
-      }).then(
-        (_) {},
-        onError: (Object error) {
-          if (generation == _startGeneration) _fail(error);
-        },
-      ),
-    );
+    if (_disposed) return;
+    // Preserve the legacy picker's immediate request, but keep its
+    // acknowledgment with the config changes a prompt waits for.
+    _configChanges =
+        Future.wait<Object?>([
+          _configChanges,
+          _request('session/set_mode', {
+            'sessionId': sessionId,
+            'modeId': modeId,
+          }),
+        ]).then<void>((_) {}).catchError((Object error) {
+          if (!_disposed && generation == _startGeneration) _fail(error);
+        });
   }
 
   void _setCommands(Object? raw) {

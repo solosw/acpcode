@@ -182,6 +182,8 @@ class Sidebar extends StatefulWidget {
     this.customizing = false,
     this.onStash,
     this.stashing = false,
+    this.onScheduledTasks,
+    this.scheduling = false,
     this.stashes,
     this.drag,
     this.link,
@@ -262,6 +264,12 @@ class Sidebar extends StatefulWidget {
 
   /// They show: the Stash row is selected.
   final bool stashing;
+
+  /// Opens the locally scheduled automations below Stash.
+  final VoidCallback? onScheduledTasks;
+
+  /// The scheduled tasks page replaces the conversations.
+  final bool scheduling;
 
   /// The stashes each conversation carries out, on its row; none without
   /// the Stash.
@@ -427,8 +435,9 @@ class _SidebarState extends State<Sidebar>
     }
   }
 
-  /// Customize or the Stash is shown in place of the chat.
-  bool get _onPage => widget.customizing || widget.stashing;
+  /// A page (Customize, Stash or Scheduled Tasks) replaces the chat.
+  bool get _onPage =>
+      widget.customizing || widget.stashing || widget.scheduling;
 
   @override
   void dispose() {
@@ -1030,9 +1039,17 @@ class _SidebarState extends State<Sidebar>
                 onTap: stash,
               ),
             },
+          if (widget.onScheduledTasks case final scheduled?)
+            _NavRow(
+              icon: Codicons.clock,
+              label: context.l10n.scheduledTitle,
+              selected: widget.scheduling,
+              onTap: scheduled,
+            ),
           if (widget.onSearch != null ||
               widget.onCustomize != null ||
-              widget.onStash != null)
+              widget.onStash != null ||
+              widget.onScheduledTasks != null)
             const SizedBox(height: 4),
           _buildGroupingBar(),
           Expanded(child: _buildList()),

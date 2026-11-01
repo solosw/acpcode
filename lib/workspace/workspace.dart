@@ -3050,9 +3050,71 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return thread;
   }
 
+  /// Creates or loads an automation's conversation without changing the
+  /// focused pane. A missing saved conversation is an error, not a silent
+  /// replacement that would lose the task's context.
+  Future<AgentThread> scheduledAgent({
+    required String location,
+    required String kernelId,
+    required Map<String, String> settings,
+    String? resumeId,
+  }) async {
+    final descriptor = kernels.where((k) => k.id == kernelId).firstOrNull;
+    if (descriptor == null) throw StateError('Agent unavailable: $kernelId');
+    final project = _openProject(location);
+    if (resumeId != null) {
+      var thread = _threads
+          .where(
+            (t) =>
+                t.id == resumeId &&
+                t.kernel.id == kernelId &&
+                t.project == project,
+          )
+          .firstOrNull;
+      if (thread == null) {
+        final records =
+            await descriptor.catalog?.sessionsIn(location) ??
+            const <SessionRecord>[];
+        final record = records
+            .where((r) => r.id == resumeId && r.cwd == location)
+            .firstOrNull;
+        if (record == null) {
+          throw StateError('Saved conversation unavailable: $resumeId');
+        }
+        _addKept(descriptor, project, record);
+        thread = _threads
+            .where(
+              (t) =>
+                  t.id == resumeId &&
+                  t.kernel.id == kernelId &&
+                  t.project == project,
+            )
+            .firstOrNull;
+      }
+      if (thread == null) {
+        throw StateError('Saved conversation unavailable: $resumeId');
+      }
+      _listen(thread);
+      notifyListeners();
+      return thread;
+    }
+    final thread = _newThread(
+      project,
+      descriptor: descriptor,
+      overrides: settings,
+    );
+    notifyListeners();
+    return thread;
+  }
+
   /// A new, empty agent in [project], listed here but not shown.
-  AgentThread _newThread(Project project) {
+  AgentThread _newThread(
+    Project project, {
+    KernelDescriptor? descriptor,
+    Map<String, String> overrides = const {},
+  }) {
     final kernel =
+        descriptor ??
         switch (agentSetup?.call(project.path)?.kernel) {
           final id? => kernels.where((k) => k.id == id).firstOrNull,
           null => null,
@@ -3062,6 +3124,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       ..._preferredSettings,
       // Settings → Models' pick, if any, over the last one.
       KernelChoiceKind.model.name: ?ModelProviders.current.defaultModel,
+      ...overrides,
     });
     final cwd = project.path;
     final thread = AgentThread._(

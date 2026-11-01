@@ -16,6 +16,7 @@ import '../../chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import '../../kernel/queued_messages.dart';
 import '../../l10n/l10n.dart';
 import '../../platform/app_platform.dart';
+import '../../platform/sleep_prevention.dart';
 import '../../platform/context_menu.dart';
 import '../../platform/shell_command.dart';
 import '../../telemetry/telemetry_service.dart' show TelemetrySetting;
@@ -298,6 +299,14 @@ class GeneralSettingsPage extends StatelessWidget {
               ),
             SettingsCard(
               children: [
+                if (SleepPrevention.supported)
+                  SettingsSwitchRow(
+                    label: l10n.generalSettingsPreventSleep,
+                    description: l10n.generalSettingsPreventSleepDescription,
+                    value: settings?[SleepPrevention.settingKey] == true,
+                    onChanged: (on) =>
+                        _write(SleepPrevention.settingKey, on ? true : null),
+                  ),
                 SettingsRow(
                   label: l10n.generalSettingsMainWindow,
                   description: l10n.generalSettingsMainWindowDescription,

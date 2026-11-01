@@ -504,6 +504,19 @@ void WindowChannel::HandleMethodCall(
     return;
   }
 
+  if (method == "setPreventSleep") {
+    // The channel runs on the platform thread; Windows releases its
+    // execution-state requirement automatically when that thread exits.
+    const bool enabled = Boolean(call.arguments(), false);
+    const EXECUTION_STATE state = ES_CONTINUOUS | (enabled ? ES_SYSTEM_REQUIRED : 0);
+    if (::SetThreadExecutionState(state) == 0) {
+      result->Error("sleep_prevention", "Could not change sleep prevention.");
+    } else {
+      result->Success();
+    }
+    return;
+  }
+
   if (method == "setWindowBlur") {
     Win32Window::SetWindowBlur(Boolean(call.arguments(), false));
     result->Success();

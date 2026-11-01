@@ -10,6 +10,124 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get generalSettingsPreventSleep => '防止电脑休眠';
+
+  @override
+  String get generalSettingsPreventSleepDescription =>
+      'BaoCode 运行期间（包括后台运行）阻止本机自动休眠，便于智能体和定时任务持续执行。不阻止屏幕关闭；合盖或手动选择休眠仍可能使电脑休眠。';
+
+  @override
+  String generalSettingsPreventSleepError(String error) {
+    return '无法阻止电脑休眠：$error';
+  }
+
+  @override
+  String get scheduledTitle => '定时任务';
+
+  @override
+  String get scheduledCreate => '创建任务';
+
+  @override
+  String get scheduledClose => '关闭';
+
+  @override
+  String get scheduledRunNow => '立即运行';
+
+  @override
+  String get scheduledEdit => '编辑';
+
+  @override
+  String get scheduledDelete => '删除任务';
+
+  @override
+  String get scheduledCancel => '取消';
+
+  @override
+  String get scheduledNextRun => '下次运行';
+
+  @override
+  String get scheduledLastRun => '上次运行';
+
+  @override
+  String get scheduledOpenChat => '打开对话';
+
+  @override
+  String get scheduledEmpty => '还没有定时任务，创建一个任务开始吧。';
+
+  @override
+  String get scheduledAgent => '智能体';
+
+  @override
+  String get scheduledHost => '主机';
+
+  @override
+  String get scheduledLocalHost => '本机';
+
+  @override
+  String get scheduledProject => '项目';
+
+  @override
+  String get scheduledOpenProjectHint => '请先在侧栏打开项目';
+
+  @override
+  String get scheduledWorkspace => '工作区';
+
+  @override
+  String get scheduledExistingWorktree => '现有工作树';
+
+  @override
+  String get scheduledNewWorktree => '新建工作树';
+
+  @override
+  String get scheduledNewWorktreeHint =>
+      '在项目旁新建 Git 分支和工作树。复用会话时保留首次创建的工作树，不会自动删除。';
+
+  @override
+  String get scheduledLoadWorktrees => '加载 Git 工作树';
+
+  @override
+  String get scheduledSession => '会话';
+
+  @override
+  String get scheduledFreshSession => '每次新建对话';
+
+  @override
+  String get scheduledReuseSession => '复用对话';
+
+  @override
+  String get scheduledAutomaticSession => '首次自动创建，之后复用';
+
+  @override
+  String get scheduledSchedule => '日程';
+
+  @override
+  String get scheduledDaily => '每天';
+
+  @override
+  String get scheduledWeekdays => '工作日';
+
+  @override
+  String get scheduledCustomDays => '指定星期';
+
+  @override
+  String get scheduledTime => '时间（本机时区）';
+
+  @override
+  String get scheduledName => '名称（可选）';
+
+  @override
+  String get scheduledPrompt => '提示词';
+
+  @override
+  String get scheduledPromptHint => '支持智能体已有的技能、文件路径和斜杠命令。';
+
+  @override
+  String get scheduledSave => '保存任务';
+
+  @override
+  String get scheduledRuntimeHint => '由本机存储和调度。应用需保持运行，错过的触发不补跑；忙碌中的对话不会被打断。';
+
+  @override
   String get agentsDescription => '管理 Agent Client Protocol 智能体连接。';
 
   @override

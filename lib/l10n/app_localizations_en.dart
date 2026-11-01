@@ -10,6 +10,127 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get generalSettingsPreventSleep => 'Prevent computer sleep';
+
+  @override
+  String get generalSettingsPreventSleepDescription =>
+      'Keep this computer awake while BaoCode is running, including in the background, so agents and scheduled tasks can continue. The display may still turn off. Closing the lid or manually choosing Sleep may still suspend it.';
+
+  @override
+  String generalSettingsPreventSleepError(String error) {
+    return 'Could not prevent computer sleep: $error';
+  }
+
+  @override
+  String get scheduledTitle => 'Scheduled Tasks';
+
+  @override
+  String get scheduledCreate => 'Create task';
+
+  @override
+  String get scheduledClose => 'Close';
+
+  @override
+  String get scheduledRunNow => 'Run now';
+
+  @override
+  String get scheduledEdit => 'Edit';
+
+  @override
+  String get scheduledDelete => 'Delete task';
+
+  @override
+  String get scheduledCancel => 'Cancel';
+
+  @override
+  String get scheduledNextRun => 'Next run';
+
+  @override
+  String get scheduledLastRun => 'Last run';
+
+  @override
+  String get scheduledOpenChat => 'Open conversation';
+
+  @override
+  String get scheduledEmpty =>
+      'No scheduled tasks yet. Create a task to get started.';
+
+  @override
+  String get scheduledAgent => 'Agent';
+
+  @override
+  String get scheduledHost => 'Host';
+
+  @override
+  String get scheduledLocalHost => 'This computer';
+
+  @override
+  String get scheduledProject => 'Project';
+
+  @override
+  String get scheduledOpenProjectHint => 'Open a project in the sidebar first';
+
+  @override
+  String get scheduledWorkspace => 'Workspace';
+
+  @override
+  String get scheduledExistingWorktree => 'Existing working tree';
+
+  @override
+  String get scheduledNewWorktree => 'New working tree';
+
+  @override
+  String get scheduledNewWorktreeHint =>
+      'Creates a new Git branch and working tree beside the project. Reuse keeps the first working tree. These are not automatically deleted.';
+
+  @override
+  String get scheduledLoadWorktrees => 'Load Git working trees';
+
+  @override
+  String get scheduledSession => 'Conversation';
+
+  @override
+  String get scheduledFreshSession => 'New conversation each run';
+
+  @override
+  String get scheduledReuseSession => 'Reuse conversation';
+
+  @override
+  String get scheduledAutomaticSession => 'Create on first run, then reuse';
+
+  @override
+  String get scheduledSchedule => 'Schedule';
+
+  @override
+  String get scheduledDaily => 'Every day';
+
+  @override
+  String get scheduledWeekdays => 'Weekdays';
+
+  @override
+  String get scheduledCustomDays => 'Selected days';
+
+  @override
+  String get scheduledTime => 'Time (this computer’s time zone)';
+
+  @override
+  String get scheduledName => 'Name (optional)';
+
+  @override
+  String get scheduledPrompt => 'Prompt';
+
+  @override
+  String get scheduledPromptHint =>
+      'Supports the agent’s skills, file paths and slash commands.';
+
+  @override
+  String get scheduledSave => 'Save task';
+
+  @override
+  String get scheduledRuntimeHint =>
+      'Scheduled on this computer. Keep the app running; missed runs are skipped. Busy conversations are not interrupted.';
+
+  @override
   String get agentsDescription =>
       'Manage your Agent Client Protocol connections.';
 

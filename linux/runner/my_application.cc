@@ -15,6 +15,7 @@ struct _MyApplication {
   GtkWindow* window;
   GtkWidget* view;
   FlMethodChannel* window_channel;
+  guint sleep_inhibit_cookie;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -253,7 +254,24 @@ static void window_method_call_cb(FlMethodChannel* channel, FlMethodCall* call,
   FlValue* args = fl_method_call_get_args(call);
   g_autoptr(FlMethodResponse) response = nullptr;
 
-  if (strcmp(name, "pickDirectory") == 0) {
+  if (strcmp(name, "setPreventSleep") == 0) {
+    const bool enabled = args != nullptr &&
+        fl_value_get_type(args) == FL_VALUE_TYPE_BOOL && fl_value_get_bool(args);
+    if (enabled && self->sleep_inhibit_cookie == 0) {
+      self->sleep_inhibit_cookie = gtk_application_inhibit(
+          GTK_APPLICATION(self), nullptr, GTK_APPLICATION_INHIBIT_SUSPEND,
+          "BaoCode: prevent idle sleep");
+    } else if (!enabled && self->sleep_inhibit_cookie != 0) {
+      gtk_application_uninhibit(GTK_APPLICATION(self), self->sleep_inhibit_cookie);
+      self->sleep_inhibit_cookie = 0;
+    }
+    if (enabled && self->sleep_inhibit_cookie == 0) {
+      response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+          "sleep_prevention", "The desktop could not inhibit sleep.", nullptr));
+    } else {
+      response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+    }
+  } else if (strcmp(name, "pickDirectory") == 0) {
     GSList* names = choose_files(self->window, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
                                  "Open Folder", FALSE, nullptr, nullptr, FALSE);
     g_autoptr(FlValue) result = nullptr;
@@ -424,6 +442,11 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
+  MyApplication* self = MY_APPLICATION(application);
+  if (self->sleep_inhibit_cookie != 0) {
+    gtk_application_uninhibit(GTK_APPLICATION(self), self->sleep_inhibit_cookie);
+    self->sleep_inhibit_cookie = 0;
+  }
   G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
 }
 

@@ -98,6 +98,234 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @generalSettingsPreventSleep.
+  ///
+  /// In en, this message translates to:
+  /// **'Prevent computer sleep'**
+  String get generalSettingsPreventSleep;
+
+  /// No description provided for @generalSettingsPreventSleepDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep this computer awake while BaoCode is running, including in the background, so agents and scheduled tasks can continue. The display may still turn off. Closing the lid or manually choosing Sleep may still suspend it.'**
+  String get generalSettingsPreventSleepDescription;
+
+  /// No description provided for @generalSettingsPreventSleepError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not prevent computer sleep: {error}'**
+  String generalSettingsPreventSleepError(String error);
+
+  /// No description provided for @scheduledTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Scheduled Tasks'**
+  String get scheduledTitle;
+
+  /// No description provided for @scheduledCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create task'**
+  String get scheduledCreate;
+
+  /// No description provided for @scheduledClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get scheduledClose;
+
+  /// No description provided for @scheduledRunNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Run now'**
+  String get scheduledRunNow;
+
+  /// No description provided for @scheduledEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get scheduledEdit;
+
+  /// No description provided for @scheduledDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete task'**
+  String get scheduledDelete;
+
+  /// No description provided for @scheduledCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get scheduledCancel;
+
+  /// No description provided for @scheduledNextRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Next run'**
+  String get scheduledNextRun;
+
+  /// No description provided for @scheduledLastRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Last run'**
+  String get scheduledLastRun;
+
+  /// No description provided for @scheduledOpenChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Open conversation'**
+  String get scheduledOpenChat;
+
+  /// No description provided for @scheduledEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No scheduled tasks yet. Create a task to get started.'**
+  String get scheduledEmpty;
+
+  /// No description provided for @scheduledAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent'**
+  String get scheduledAgent;
+
+  /// No description provided for @scheduledHost.
+  ///
+  /// In en, this message translates to:
+  /// **'Host'**
+  String get scheduledHost;
+
+  /// No description provided for @scheduledLocalHost.
+  ///
+  /// In en, this message translates to:
+  /// **'This computer'**
+  String get scheduledLocalHost;
+
+  /// No description provided for @scheduledProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Project'**
+  String get scheduledProject;
+
+  /// No description provided for @scheduledOpenProjectHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Open a project in the sidebar first'**
+  String get scheduledOpenProjectHint;
+
+  /// No description provided for @scheduledWorkspace.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace'**
+  String get scheduledWorkspace;
+
+  /// No description provided for @scheduledExistingWorktree.
+  ///
+  /// In en, this message translates to:
+  /// **'Existing working tree'**
+  String get scheduledExistingWorktree;
+
+  /// No description provided for @scheduledNewWorktree.
+  ///
+  /// In en, this message translates to:
+  /// **'New working tree'**
+  String get scheduledNewWorktree;
+
+  /// No description provided for @scheduledNewWorktreeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Creates a new Git branch and working tree beside the project. Reuse keeps the first working tree. These are not automatically deleted.'**
+  String get scheduledNewWorktreeHint;
+
+  /// No description provided for @scheduledLoadWorktrees.
+  ///
+  /// In en, this message translates to:
+  /// **'Load Git working trees'**
+  String get scheduledLoadWorktrees;
+
+  /// No description provided for @scheduledSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation'**
+  String get scheduledSession;
+
+  /// No description provided for @scheduledFreshSession.
+  ///
+  /// In en, this message translates to:
+  /// **'New conversation each run'**
+  String get scheduledFreshSession;
+
+  /// No description provided for @scheduledReuseSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Reuse conversation'**
+  String get scheduledReuseSession;
+
+  /// No description provided for @scheduledAutomaticSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Create on first run, then reuse'**
+  String get scheduledAutomaticSession;
+
+  /// No description provided for @scheduledSchedule.
+  ///
+  /// In en, this message translates to:
+  /// **'Schedule'**
+  String get scheduledSchedule;
+
+  /// No description provided for @scheduledDaily.
+  ///
+  /// In en, this message translates to:
+  /// **'Every day'**
+  String get scheduledDaily;
+
+  /// No description provided for @scheduledWeekdays.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekdays'**
+  String get scheduledWeekdays;
+
+  /// No description provided for @scheduledCustomDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected days'**
+  String get scheduledCustomDays;
+
+  /// No description provided for @scheduledTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Time (this computer’s time zone)'**
+  String get scheduledTime;
+
+  /// No description provided for @scheduledName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name (optional)'**
+  String get scheduledName;
+
+  /// No description provided for @scheduledPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Prompt'**
+  String get scheduledPrompt;
+
+  /// No description provided for @scheduledPromptHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Supports the agent’s skills, file paths and slash commands.'**
+  String get scheduledPromptHint;
+
+  /// No description provided for @scheduledSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save task'**
+  String get scheduledSave;
+
+  /// No description provided for @scheduledRuntimeHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Scheduled on this computer. Keep the app running; missed runs are skipped. Busy conversations are not interrupted.'**
+  String get scheduledRuntimeHint;
+
   /// No description provided for @agentsDescription.
   ///
   /// In en, this message translates to:

@@ -611,6 +611,9 @@ class BaoWindow: NSWindow {
 /// It also answers for the app what is the app's, not a window's: the color
 /// theme's appearance, the File menu.
 class MainFlutterWindow: BaoWindow {
+  /// Process-wide, not tied to a visible window. The OS releases it on exit.
+  private static var sleepPreventionActivity: NSObjectProtocol?
+
   /// MCP clients start a separate copy for stdio. This must be decided before
   /// a view, plugins, app channels or any window-launch observers are created:
   /// Dart main's early return cannot undo AppKit showing a native window.
@@ -723,6 +726,16 @@ class MainFlutterWindow: BaoWindow {
       UserDefaults.standard.set(dark, forKey: Self.darkAppearanceKey)
       for window in NSApp.windows where window is FlutterHostWindow {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+      }
+      result(nil)
+    case "setPreventSleep":
+      let enabled = call.arguments as? Bool ?? false
+      if enabled && Self.sleepPreventionActivity == nil {
+        Self.sleepPreventionActivity = ProcessInfo.processInfo.beginActivity(
+          options: [.idleSystemSleepDisabled], reason: "BaoCode: prevent idle sleep")
+      } else if !enabled, let activity = Self.sleepPreventionActivity {
+        ProcessInfo.processInfo.endActivity(activity)
+        Self.sleepPreventionActivity = nil
       }
       result(nil)
     case "setWindowBlur":

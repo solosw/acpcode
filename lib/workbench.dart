@@ -11,6 +11,11 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
+import 'platform/sleep_prevention.dart';
+import 'scheduled/scheduled_executor.dart';
+import 'scheduled/scheduled_tasks_view.dart';
+import 'scheduled/task_scheduler.dart';
+import 'workspace/preference_store.dart';
 import 'browser/browser_bridge.dart';
 import 'browser/browser_tools.dart';
 import 'browser/browser_welcome.dart';
@@ -575,6 +580,29 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     widget.window?.attach(this);
     _windows?.addListener(_windowsChanged);
     if (_main) {
+      if (widget.settings?.files?.settings case final settings?
+          when SleepPrevention.supported) {
+        _sleepPrevention = SleepPrevention(
+          settings,
+          onError: (error) {
+            if (mounted) {
+              _notifications.notify(
+                IdeSeverity.error,
+                context.l10n.generalSettingsPreventSleepError(error.toString()),
+              );
+            }
+          },
+        );
+        unawaited(_sleepPrevention!.start());
+      }
+      final executor = ScheduledExecutor(_workspace);
+      _taskScheduler = TaskScheduler(
+        store: PreferenceStore.file(
+          p.join(DataDirectory.current.stateDir, 'scheduled-tasks.json'),
+        ),
+        execute: executor.execute,
+      );
+      unawaited(_startTaskScheduler());
       // A link to a stash (#12 references) shows it here.
       StashController.current?.showPage = _showStash;
       // A stash's file opens as the Stash page shows it.
@@ -793,6 +821,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    _taskScheduler?.dispose();
+    unawaited(_sleepPrevention?.dispose());
     ChannelGate.current?.removeListener(_channelGateChanged);
     for (final edits in _ideAgentEdits.values) {
       edits.dispose();
@@ -1231,14 +1261,15 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     setState(() {
       _customizing = true;
       _stashing = false;
+      _scheduling = false;
       if (kind != null) _customizeKind = kind;
     });
   }
 
   /// The conversations show again, in place of Customize or the stashes.
   void _closeCustomize() {
-    if (_customizing || _stashing) {
-      setState(() => _customizing = _stashing = false);
+    if (_customizing || _stashing || _scheduling) {
+      setState(() => _customizing = _stashing = _scheduling = false);
     }
   }
 
@@ -1253,7 +1284,25 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   final GlobalKey<StashViewState> _stashKey = GlobalKey();
 
   /// Something shows in place of the conversations.
-  bool get _replacingChat => _customizing || _stashing;
+  bool get _replacingChat => _customizing || _stashing || _scheduling;
+
+  SleepPrevention? _sleepPrevention;
+  TaskScheduler? _taskScheduler;
+  bool _scheduling = false;
+
+  Future<void> _startTaskScheduler() async {
+    await _workspace.loaded;
+    if (!mounted) return;
+    await _taskScheduler?.load();
+  }
+
+  void _showScheduledTasks() {
+    _closeDrawer();
+    setState(() {
+      _scheduling = true;
+      _customizing = _stashing = false;
+    });
+  }
 
   /// Shows the stashes, [id]'s if given.
   void _showStash([int? id]) {
@@ -1263,6 +1312,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     setState(() {
       _stashing = true;
       _customizing = false;
+      _scheduling = false;
       _stashShown = id;
     });
   }
@@ -3083,6 +3133,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ? null
           : () => _stashing ? _closeCustomize() : _showStash(),
       stashing: _stashing,
+      onScheduledTasks: _main
+          ? () => _scheduling ? _closeCustomize() : _showScheduledTasks()
+          : null,
+      scheduling: _scheduling,
       // Opened on the Stash page, which an agent's window has not.
       stashes: switch (StashController.current) {
         final stash? when agent == null => sidebarStashes(stash, _showStash),
@@ -4207,6 +4261,26 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       };
 
   Widget _buildGrid({required bool showToggle}) {
+    if (_scheduling && _taskScheduler != null) {
+      final header = WindowControls.drawsHeader;
+      return ScheduledTasksView(
+        scheduler: _taskScheduler!,
+        workspace: _workspace,
+        onClose: _closeCustomize,
+        onOpenAgent: _openAgent,
+        leading: !header && showToggle
+            ? SidebarIconButton(
+                icon: Codicons.layoutSidebarLeftOff,
+                tooltip: context.l10n.windowShowSidebar,
+                command: 'workbench.action.toggleSidebarVisibility',
+                onTap: _toggle,
+              )
+            : null,
+        titleBarInset: !header && showToggle
+            ? AppMetrics.trafficLightsWidth + 8
+            : 12,
+      );
+    }
     if (_stashing) {
       if (StashController.current case final stash?) {
         return _buildStash(stash, showToggle: showToggle);

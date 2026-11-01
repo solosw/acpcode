@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:baocode/scheduled/scheduled_executor.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
@@ -42,6 +43,7 @@ class _Transport implements AcpTransport {
   List<Map<String, Object?>>? configs;
   List<Map<String, Object?>>? afterSetup;
   bool automatic = true;
+  bool holdMode = false;
   final written = <Map<String, Object?>>[];
   final _out = StreamController<Map<String, Object?>>.broadcast(sync: true);
 
@@ -86,6 +88,7 @@ class _Transport implements AcpTransport {
             'currentModeId': 'legacy',
             'availableModes': [
               {'id': 'legacy', 'name': 'Legacy mode'},
+              if (holdMode) {'id': 'other', 'name': 'Other mode'},
             ],
           },
         });
@@ -100,6 +103,7 @@ class _Transport implements AcpTransport {
               option,
         ]);
       case 'session/set_mode':
+        if (holdMode) return;
         reply(message, {});
       case 'session/prompt':
         reply(message, {'stopReason': 'end_turn'});
@@ -168,6 +172,132 @@ Future<ChatSession> _pump(WidgetTester tester, _Transport transport) async {
 }
 
 void main() {
+  for (final legacy in [false, true]) {
+    test(
+      'prompt waits for pending ACP configuration (legacy: $legacy)',
+      () async {
+        final transport = _Transport(configs: legacy ? null : _configs())
+          ..automatic = false
+          ..holdMode = legacy;
+        final session = ChatSession(
+          kernel: _descriptor(() => transport),
+          historyCount: 0,
+        );
+        addTearDown(session.dispose);
+        session.attach();
+        await waitForTaskSession(
+          session,
+          () => session.health.status == KernelHealthStatus.ready,
+        );
+        final choice = legacy ? session.modes! : session.models!;
+        choice.onSelected(choice.options.last);
+        session.send(const ComposerMessage(text: 'Run audit'));
+        await _settle();
+        expect(
+          transport.written.where((m) => m['method'] == 'session/prompt'),
+          isEmpty,
+        );
+        if (legacy) {
+          transport.reply(
+            transport.written.lastWhere(
+              (m) => m['method'] == 'session/set_mode',
+            ),
+            {},
+          );
+        } else {
+          transport.accept(transport.changes.last, _configs(model: 'Model B'));
+        }
+        await _settle();
+        expect(transport.written.last['method'], 'session/prompt');
+        session.detach();
+      },
+    );
+  }
+
+  test('scheduled settings await ACP model, mode and dependent thought-level reports', () async {
+    final transport = _Transport(configs: _configs())..automatic = false;
+    final session = ChatSession(
+      kernel: _descriptor(() => transport),
+      historyCount: 0,
+    );
+    addTearDown(session.dispose);
+    session.attach();
+    await waitForTaskSession(
+      session,
+      () => session.health.status == KernelHealthStatus.ready,
+    );
+    var completed = false;
+    final configured = applyTaskSettings(session, {
+      'model': 'Model B',
+      'mode': 'Code',
+      'effort': 'High',
+    }).then((_) => completed = true);
+    await _settle();
+    expect(completed, isFalse);
+    expect(
+      transport.changes.single['params'],
+      containsPair('configId', 'agent-model'),
+    );
+    transport.accept(transport.changes.last, _configs(model: 'Model B'));
+    await _settle();
+    expect(completed, isFalse);
+    expect(
+      transport.changes.last['params'],
+      containsPair('configId', 'agent-mode'),
+    );
+    final modeChanged = [
+      for (final option in _configs(model: 'Model B'))
+        if (option['category'] == 'mode')
+          {...option, 'currentValue': 'Code'}
+        else
+          option,
+    ];
+    transport.accept(transport.changes.last, modeChanged);
+    await _settle();
+    expect(
+      transport.changes.last['params'],
+      containsPair('configId', 'agent-thought_level'),
+    );
+    expect(completed, isFalse);
+    transport.accept(transport.changes.last, [
+      for (final option in modeChanged)
+        if (option['category'] == 'thought_level')
+          {...option, 'currentValue': 'High'}
+        else
+          option,
+    ]);
+    await configured;
+    expect(completed, isTrue);
+    session.send(const ComposerMessage(text: 'Run audit'));
+    await _settle();
+    expect(transport.written.last['method'], 'session/prompt');
+    expect(session.selected(KernelChoiceKind.effort), 'High');
+    session.detach();
+  });
+
+  test('closing configuration cancels an in-flight option wait', () async {
+    final transport = _Transport(configs: _configs())..automatic = false;
+    final session = ChatSession(
+      kernel: _descriptor(() => transport),
+      historyCount: 0,
+    );
+    addTearDown(session.dispose);
+    session.attach();
+    await waitForTaskSession(
+      session,
+      () => session.health.status == KernelHealthStatus.ready,
+    );
+    final cancel = Completer<void>();
+    final configured = applyTaskSettings(session, {
+      'model': 'Model B',
+    }, cancelled: cancel.future);
+    final assertion = expectLater(configured, throwsStateError);
+    await _settle();
+    cancel.complete();
+    await assertion;
+    session.detach();
+  });
+
   for (final resume in [false, true]) {
     test(
       'config categories from session ${resume ? 'load' : 'new'} supersede legacy modes',
