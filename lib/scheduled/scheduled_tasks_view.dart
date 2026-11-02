@@ -35,13 +35,13 @@ class ScheduledTasksView extends StatefulWidget {
   State<ScheduledTasksView> createState() => _ScheduledTasksViewState();
 }
 
+String _date(BuildContext context, DateTime? date) => date == null
+    ? '—'
+    : '${MaterialLocalizations.of(context).formatShortDate(date)} ${TimeOfDay.fromDateTime(date).format(context)}';
+
 class _ScheduledTasksViewState extends State<ScheduledTasksView> {
   ScheduledTask? _editing;
   bool _creating = false;
-
-  String _date(BuildContext context, DateTime? date) => date == null
-      ? '—'
-      : '${MaterialLocalizations.of(context).formatShortDate(date)} ${TimeOfDay.fromDateTime(date).format(context)}';
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -304,12 +304,55 @@ class _TaskEditorState extends State<_TaskEditor> {
   late String? _sessionLocation = widget.task?.sessionLocation;
   late Set<int> _days = {
     ...?widget.task?.schedule.days,
-    if (widget.task == null) ...[1, 2, 3, 4, 5],
+    if (widget.task?.schedule.kind != TaskScheduleKind.calendar) ...[
+      1,
+      2,
+      3,
+      4,
+      5,
+    ],
   };
   late TimeOfDay _time = TimeOfDay(
-    hour: widget.task?.schedule.hour ?? 9,
+    hour: widget.task?.schedule.kind == TaskScheduleKind.calendar
+        ? widget.task!.schedule.hour
+        : 9,
     minute: widget.task?.schedule.minute ?? 0,
   );
+  late TaskScheduleKind _scheduleKind =
+      widget.task?.schedule.kind ?? TaskScheduleKind.calendar;
+  late int _intervalUnit = switch (widget.task?.schedule.intervalMinutes) {
+    final int minutes when minutes % 1440 == 0 => 1440,
+    final int minutes when minutes % 60 == 0 => 60,
+    _ => 1,
+  };
+  late final _interval = TextEditingController(
+    text: ((widget.task?.schedule.intervalMinutes ?? 30) ~/ _intervalUnit)
+        .toString(),
+  );
+  late final _cron = TextEditingController(
+    text: widget.task?.schedule.cronExpression ?? '0 9 * * 1-5',
+  );
+
+  TaskSchedule? get _schedule {
+    try {
+      return switch (_scheduleKind) {
+        TaskScheduleKind.calendar => TaskSchedule(
+          hour: _time.hour,
+          minute: _time.minute,
+          days: _days,
+        ),
+        TaskScheduleKind.interval => TaskSchedule.interval(
+          minutes: (int.tryParse(_interval.text.trim()) ?? 0) * _intervalUnit,
+        ),
+        TaskScheduleKind.cron => TaskSchedule.cron(_cron.text),
+      };
+    } on ArgumentError {
+      return null;
+    } on FormatException {
+      return null;
+    }
+  }
+
   ChatSession? _preview;
   bool _loading = true;
   bool _picking = false;
@@ -467,10 +510,11 @@ class _TaskEditorState extends State<_TaskEditor> {
 
   Future<void> _save() async {
     final preview = _preview;
+    final schedule = _schedule;
     if (preview == null ||
         _loading ||
         _picking ||
-        _days.isEmpty ||
+        schedule == null ||
         _prompt.text.trim().isEmpty ||
         _project == null) {
       return;
@@ -500,11 +544,7 @@ class _TaskEditorState extends State<_TaskEditor> {
           newWorktree: _newWorktree,
           reuse: _reuse,
           settings: settings,
-          schedule: TaskSchedule(
-            hour: _time.hour,
-            minute: _time.minute,
-            days: _days,
-          ),
+          schedule: schedule,
           enabled: widget.task?.enabled ?? true,
           sessionId: _reuse ? _selectableSessionId : null,
           sessionLocation: _reuse && _selectableSessionId != null
@@ -552,6 +592,7 @@ class _TaskEditorState extends State<_TaskEditor> {
     final permission = preview?.permissions;
     final models = preview?.models;
     final selectedSessionId = _selectableSessionId;
+    final schedule = _schedule;
     final sessions = workspace.threads.where(
       (t) =>
           !t.archived &&
@@ -812,69 +853,170 @@ class _TaskEditorState extends State<_TaskEditor> {
         ),
         _field(
           l10n.scheduledSchedule,
-          DropdownButtonFormField<String>(
-            key: ValueKey(_days.toList()..sort()),
-            initialValue: _days.length == 7
-                ? 'daily'
-                : _days.length == 5 && !_days.contains(6) && !_days.contains(7)
-                ? 'weekdays'
-                : 'custom',
+          DropdownButtonFormField<TaskScheduleKind>(
+            key: const ValueKey('scheduled-schedule-kind'),
+            isExpanded: true,
+            initialValue: _scheduleKind,
             items: [
               DropdownMenuItem(
-                value: 'daily',
-                child: Text(l10n.scheduledDaily),
+                value: TaskScheduleKind.calendar,
+                child: Text(l10n.scheduledCalendar),
               ),
               DropdownMenuItem(
-                value: 'weekdays',
-                child: Text(l10n.scheduledWeekdays),
+                value: TaskScheduleKind.interval,
+                child: Text(l10n.scheduledInterval),
               ),
               DropdownMenuItem(
-                value: 'custom',
-                child: Text(l10n.scheduledCustomDays),
+                value: TaskScheduleKind.cron,
+                child: Text(l10n.scheduledCron),
               ),
             ],
-            onChanged: (v) => setState(
-              () => _days = v == 'daily'
-                  ? {1, 2, 3, 4, 5, 6, 7}
-                  : v == 'weekdays'
-                  ? {1, 2, 3, 4, 5}
-                  : {..._days},
+            onChanged: (value) {
+              if (value != null) setState(() => _scheduleKind = value);
+            },
+          ),
+        ),
+        if (_scheduleKind == TaskScheduleKind.calendar) ...[
+          _field(
+            l10n.scheduledDays,
+            DropdownButtonFormField<String>(
+              key: ValueKey(_days.toList()..sort()),
+              initialValue: _days.length == 7
+                  ? 'daily'
+                  : _days.length == 5 &&
+                        !_days.contains(6) &&
+                        !_days.contains(7)
+                  ? 'weekdays'
+                  : 'custom',
+              items: [
+                DropdownMenuItem(
+                  value: 'daily',
+                  child: Text(l10n.scheduledDaily),
+                ),
+                DropdownMenuItem(
+                  value: 'weekdays',
+                  child: Text(l10n.scheduledWeekdays),
+                ),
+                DropdownMenuItem(
+                  value: 'custom',
+                  child: Text(l10n.scheduledCustomDays),
+                ),
+              ],
+              onChanged: (v) => setState(
+                () => _days = v == 'daily'
+                    ? {1, 2, 3, 4, 5, 6, 7}
+                    : v == 'weekdays'
+                    ? {1, 2, 3, 4, 5}
+                    : {..._days},
+              ),
             ),
           ),
-        ),
-        Wrap(
-          spacing: 4,
-          children: [
-            for (var day = 1; day <= 7; day++)
-              FilterChip(
-                label: Text(
-                  MaterialLocalizations.of(context).narrowWeekdays[day % 7],
+          Wrap(
+            spacing: 4,
+            children: [
+              for (var day = 1; day <= 7; day++)
+                FilterChip(
+                  label: Text(
+                    MaterialLocalizations.of(context).narrowWeekdays[day % 7],
+                  ),
+                  selected: _days.contains(day),
+                  onSelected: (v) => setState(() {
+                    if (v) {
+                      _days.add(day);
+                    } else {
+                      _days.remove(day);
+                    }
+                  }),
                 ),
-                selected: _days.contains(day),
-                onSelected: (v) => setState(() {
-                  if (v) {
-                    _days.add(day);
-                  } else {
-                    _days.remove(day);
-                  }
-                }),
-              ),
-          ],
-        ),
-        _field(
-          l10n.scheduledTime,
-          OutlinedButton.icon(
-            onPressed: () async {
-              final time = await showTimePicker(
-                context: context,
-                initialTime: _time,
-              );
-              if (mounted && time != null) setState(() => _time = time);
-            },
-            icon: const Icon(Icons.schedule),
-            label: Text(_time.format(context)),
+            ],
           ),
-        ),
+          _field(
+            l10n.scheduledTime,
+            OutlinedButton.icon(
+              onPressed: () async {
+                final time = await showTimePicker(
+                  context: context,
+                  initialTime: _time,
+                );
+                if (mounted && time != null) setState(() => _time = time);
+              },
+              icon: const Icon(Icons.schedule),
+              label: Text(_time.format(context)),
+            ),
+          ),
+        ],
+        if (_scheduleKind == TaskScheduleKind.interval) ...[
+          _field(
+            l10n.scheduledInterval,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('scheduled-interval'),
+                    controller: _interval,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      errorText: schedule == null
+                          ? l10n.scheduledIntervalError
+                          : null,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    key: const ValueKey('scheduled-interval-unit'),
+                    isExpanded: true,
+                    initialValue: _intervalUnit,
+                    items: [
+                      DropdownMenuItem(
+                        value: 1,
+                        child: Text(l10n.scheduledMinutes),
+                      ),
+                      DropdownMenuItem(
+                        value: 60,
+                        child: Text(l10n.scheduledHours),
+                      ),
+                      DropdownMenuItem(
+                        value: 1440,
+                        child: Text(l10n.scheduledIntervalDays),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _intervalUnit = value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(l10n.scheduledIntervalHint),
+        ],
+        if (_scheduleKind == TaskScheduleKind.cron) ...[
+          _field(
+            l10n.scheduledCron,
+            TextField(
+              key: const ValueKey('scheduled-cron'),
+              controller: _cron,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                hintText: '*/30 * * * *',
+                errorText: schedule == null ? l10n.scheduledCronError : null,
+              ),
+            ),
+          ),
+          Text(l10n.scheduledCronHint),
+        ],
+        if (schedule != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              '${l10n.scheduledNextRun}: ${_date(context, schedule.nextAfter(DateTime.now()))}',
+              key: const ValueKey('scheduled-next-preview'),
+            ),
+          ),
       ],
     );
     final prompt = Column(
@@ -961,7 +1103,7 @@ class _TaskEditorState extends State<_TaskEditor> {
                         _picking ||
                         _error != null ||
                         _preview == null ||
-                        _days.isEmpty ||
+                        schedule == null ||
                         _prompt.text.trim().isEmpty
                     ? null
                     : _save,
@@ -981,6 +1123,8 @@ class _TaskEditorState extends State<_TaskEditor> {
     _disposePreview();
     _name.dispose();
     _prompt.dispose();
+    _interval.dispose();
+    _cron.dispose();
     super.dispose();
   }
 }

@@ -272,6 +272,72 @@ abstract class AppLocalizations {
   /// **'Schedule'**
   String get scheduledSchedule;
 
+  /// No description provided for @scheduledCalendar.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekday and time'**
+  String get scheduledCalendar;
+
+  /// No description provided for @scheduledDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Repeat on'**
+  String get scheduledDays;
+
+  /// No description provided for @scheduledInterval.
+  ///
+  /// In en, this message translates to:
+  /// **'Fixed interval'**
+  String get scheduledInterval;
+
+  /// No description provided for @scheduledCron.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom Cron'**
+  String get scheduledCron;
+
+  /// No description provided for @scheduledMinutes.
+  ///
+  /// In en, this message translates to:
+  /// **'Minutes'**
+  String get scheduledMinutes;
+
+  /// No description provided for @scheduledHours.
+  ///
+  /// In en, this message translates to:
+  /// **'Hours'**
+  String get scheduledHours;
+
+  /// No description provided for @scheduledIntervalDays.
+  ///
+  /// In en, this message translates to:
+  /// **'Days'**
+  String get scheduledIntervalDays;
+
+  /// No description provided for @scheduledIntervalHint.
+  ///
+  /// In en, this message translates to:
+  /// **'First run is one full interval after saving or enabling. Restarting preserves the cadence; missed runs are skipped.'**
+  String get scheduledIntervalHint;
+
+  /// No description provided for @scheduledIntervalError.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a positive whole number (1 minute to 365 days).'**
+  String get scheduledIntervalError;
+
+  /// No description provided for @scheduledCronError.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid five-field numeric Cron with a possible run date.'**
+  String get scheduledCronError;
+
+  /// No description provided for @scheduledCronHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Minute (0–59), hour (0–23), day (1–31), month (1–12), weekday (0–7; Sunday 0/7), in this computer’s time zone. Supports *, lists (,), ranges (-) and steps (/). Example: */30 * * * * runs every 30 minutes. When day and weekday are both restricted, either may match.'**
+  String get scheduledCronHint;
+
   /// No description provided for @scheduledDaily.
   ///
   /// In en, this message translates to:

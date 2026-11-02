@@ -36,7 +36,9 @@ class TaskScheduler extends ChangeNotifier {
         if (task == null || _tasks.any((other) => other.id == task.id)) {
           continue;
         }
-        task.nextRun = task.enabled ? task.schedule.nextAfter(now) : null;
+        task.nextRun = task.enabled
+            ? task.schedule.nextAfter(now, anchor: task.nextRun ?? task.lastRun)
+            : null;
         _tasks.add(task);
       }
     }
@@ -90,7 +92,7 @@ class TaskScheduler extends ChangeNotifier {
       final due = task.nextRun;
       if (!task.enabled || due == null || due.isAfter(now)) continue;
       // Advance before dispatch, even if this task is still running.
-      task.nextRun = task.schedule.nextAfter(now);
+      task.nextRun = task.schedule.nextAfter(now, anchor: due);
       if (now.difference(due) >= const Duration(minutes: 1) ||
           running(task.id)) {
         await _save();

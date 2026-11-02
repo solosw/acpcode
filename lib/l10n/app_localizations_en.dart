@@ -102,6 +102,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get scheduledSchedule => 'Schedule';
 
   @override
+  String get scheduledCalendar => 'Weekday and time';
+
+  @override
+  String get scheduledDays => 'Repeat on';
+
+  @override
+  String get scheduledInterval => 'Fixed interval';
+
+  @override
+  String get scheduledCron => 'Custom Cron';
+
+  @override
+  String get scheduledMinutes => 'Minutes';
+
+  @override
+  String get scheduledHours => 'Hours';
+
+  @override
+  String get scheduledIntervalDays => 'Days';
+
+  @override
+  String get scheduledIntervalHint =>
+      'First run is one full interval after saving or enabling. Restarting preserves the cadence; missed runs are skipped.';
+
+  @override
+  String get scheduledIntervalError =>
+      'Enter a positive whole number (1 minute to 365 days).';
+
+  @override
+  String get scheduledCronError =>
+      'Enter a valid five-field numeric Cron with a possible run date.';
+
+  @override
+  String get scheduledCronHint =>
+      'Minute (0–59), hour (0–23), day (1–31), month (1–12), weekday (0–7; Sunday 0/7), in this computer’s time zone. Supports *, lists (,), ranges (-) and steps (/). Example: */30 * * * * runs every 30 minutes. When day and weekday are both restricted, either may match.';
+
+  @override
   String get scheduledDaily => 'Every day';
 
   @override

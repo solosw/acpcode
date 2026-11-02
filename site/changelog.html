@@ -29,6 +29,21 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.7.6">
+    <h2 class="plain"><a href="#v1.7.6">1.7.6</a></h2>
+    <p>Flexible scheduled-task triggers</p>
+    <p>New</p>
+    <ul>
+    <li>Choose a fixed interval in minutes, hours or days, from one minute to 365 days. The first run waits a full interval after saving or enabling; restarting preserves the saved cadence without replaying missed runs.</li>
+    <li>Use a custom five-field numeric Cron expression in this computer's time zone: minute, hour, day, month and weekday (Sunday is 0 or 7). Supports wildcards, lists, ranges and steps; for example, */30 * * * * runs every 30 minutes and 0 9 * * 1-5 runs on weekdays at 09:00. When day and weekday are both restricted, either may match.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Preview the next trigger time while editing and validate interval limits, Cron syntax and impossible dates before saving.</li>
+    <li>Keep existing weekday/time schedules and saved tasks compatible. Busy tasks do not overlap and missed triggers are skipped; BaoCode must remain running.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.7.5">
     <h2 class="plain"><a href="#v1.7.5">1.7.5</a></h2>
     <p>Conversation tracking and background reliability</p>

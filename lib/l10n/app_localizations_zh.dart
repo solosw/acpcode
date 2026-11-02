@@ -101,6 +101,40 @@ class AppLocalizationsZh extends AppLocalizations {
   String get scheduledSchedule => '日程';
 
   @override
+  String get scheduledCalendar => '星期与时间';
+
+  @override
+  String get scheduledDays => '重复日期';
+
+  @override
+  String get scheduledInterval => '固定间隔';
+
+  @override
+  String get scheduledCron => '自定义 Cron';
+
+  @override
+  String get scheduledMinutes => '分钟';
+
+  @override
+  String get scheduledHours => '小时';
+
+  @override
+  String get scheduledIntervalDays => '天';
+
+  @override
+  String get scheduledIntervalHint => '保存或启用后等待一个完整间隔首次运行。重启保持原有节奏，错过的触发不补跑。';
+
+  @override
+  String get scheduledIntervalError => '请输入正整数，间隔范围为 1 分钟至 365 天。';
+
+  @override
+  String get scheduledCronError => '请输入合法的五字段数字 Cron，且必须存在可运行日期。';
+
+  @override
+  String get scheduledCronHint =>
+      '按本机时区：分（0–59）、时（0–23）、日（1–31）、月（1–12）、星期（0–7，周日为 0/7）。支持 *、列表（,）、范围（-）和步长（/）。例如 */30 * * * * 表示每 30 分钟运行；日和星期均受限时，满足任意一个即触发。';
+
+  @override
   String get scheduledDaily => '每天';
 
   @override

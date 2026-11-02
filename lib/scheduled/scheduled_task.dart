@@ -1,11 +1,18 @@
-/// A local-time recurring schedule. Calendar arithmetic keeps the chosen
-/// wall-clock time across daylight-saving changes.
+import 'cron_schedule.dart';
+
+enum TaskScheduleKind { calendar, interval, cron }
+
+/// Calendar/cron use this computer's wall-clock time; intervals use elapsed time.
 class TaskSchedule {
   TaskSchedule({
     required this.hour,
     required this.minute,
     required Set<int> days,
-  }) : days = Set.unmodifiable(days) {
+  }) : kind = TaskScheduleKind.calendar,
+       days = Set.unmodifiable(days),
+       intervalMinutes = null,
+       cronExpression = null,
+       _cron = null {
     if (hour < 0 ||
         hour > 23 ||
         minute < 0 ||
@@ -16,11 +23,47 @@ class TaskSchedule {
     }
   }
 
+  TaskSchedule.interval({required int minutes})
+    : kind = TaskScheduleKind.interval,
+      intervalMinutes = minutes,
+      hour = 0,
+      minute = 0,
+      days = const {},
+      cronExpression = null,
+      _cron = null {
+    if (minutes < 1 || minutes > 365 * 24 * 60) {
+      throw ArgumentError('Interval must be between one minute and 365 days');
+    }
+  }
+
+  TaskSchedule.cron(String expression)
+    : kind = TaskScheduleKind.cron,
+      cronExpression = expression.trim().replaceAll(RegExp(r'\s+'), ' '),
+      _cron = CronSchedule(expression),
+      hour = 0,
+      minute = 0,
+      days = const {},
+      intervalMinutes = null;
+
+  final TaskScheduleKind kind;
   final int hour;
   final int minute;
   final Set<int> days;
+  final int? intervalMinutes;
+  final String? cronExpression;
+  final CronSchedule? _cron;
 
-  DateTime nextAfter(DateTime now) {
+  /// [anchor] preserves interval cadence across late ticks and application restarts.
+  DateTime nextAfter(DateTime now, {DateTime? anchor}) {
+    if (kind == TaskScheduleKind.interval) {
+      final interval = Duration(minutes: intervalMinutes!);
+      if (anchor == null) return now.add(interval);
+      if (anchor.isAfter(now)) return anchor;
+      final steps =
+          now.difference(anchor).inMicroseconds ~/ interval.inMicroseconds + 1;
+      return anchor.add(interval * steps);
+    }
+    if (_cron case final cron?) return cron.nextAfter(now);
     for (var offset = 0; offset <= 7; offset++) {
       final next = DateTime(
         now.year,
@@ -34,27 +77,45 @@ class TaskSchedule {
     throw StateError('No next occurrence');
   }
 
-  Map<String, Object?> toJson() => {
-    'hour': hour,
-    'minute': minute,
-    'days': days.toList()..sort(),
+  Map<String, Object?> toJson() => switch (kind) {
+    TaskScheduleKind.calendar => {
+      'hour': hour,
+      'minute': minute,
+      'days': days.toList()..sort(),
+    },
+    TaskScheduleKind.interval => {
+      'type': 'interval',
+      'minutes': intervalMinutes,
+    },
+    TaskScheduleKind.cron => {'type': 'cron', 'expression': cronExpression},
   };
 
   static TaskSchedule? fromJson(Object? json) {
-    if (json case {
-      'hour': final int hour,
-      'minute': final int minute,
-      'days': final List<Object?> days,
-    }) {
-      try {
+    if (json is! Map) return null;
+    try {
+      if (json['type'] == 'interval' && json['minutes'] is int) {
+        return TaskSchedule.interval(minutes: json['minutes'] as int);
+      }
+      if (json['type'] == 'cron' && json['expression'] is String) {
+        return TaskSchedule.cron(json['expression'] as String);
+      }
+      if (json['type'] != null && json['type'] != 'calendar') return null;
+      if (json case {
+        'hour': final int hour,
+        'minute': final int minute,
+        'days': final List<Object?> days,
+      }) {
+        if (days.any((day) => day is! int)) return null;
         return TaskSchedule(
           hour: hour,
           minute: minute,
-          days: days.whereType<int>().toSet(),
+          days: days.cast<int>().toSet(),
         );
-      } on ArgumentError {
-        return null;
       }
+    } on ArgumentError {
+      return null;
+    } on FormatException {
+      return null;
     }
     return null;
   }
