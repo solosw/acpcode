@@ -1046,8 +1046,57 @@ class AcpKernel
             kind: raw['kind'] as String?,
           ),
     ];
-    // Default ACP permissions to allow, selecting only an option actually
-    // advertised by the agent. Real command menus still need a user choice.
+    final previous = _tools[toolCall['toolCallId']];
+    final input = _jsonMap(
+      toolCall['rawInput'] ?? toolCall['raw_input'] ?? toolCall['input'],
+    );
+    final meta = _jsonMap(_jsonMap(toolCall['_meta'])?['claudeCode']);
+    final names = [
+      title,
+      toolCall['name'],
+      toolCall['toolName'],
+      meta?['toolName'],
+      input?['name'],
+      previous?.tool,
+    ];
+    final asksUser = names.any((name) {
+      final normalized =
+          name?.toString().toLowerCase().replaceAll(RegExp(r'[^a-z]'), '') ??
+          '';
+      return normalized.endsWith('askuser') ||
+          normalized.endsWith('askuserquestion') ||
+          normalized.endsWith('requestuserinput');
+    });
+    String? permissionKind(String? kind) => kind?.replaceAll('-', '_');
+    const permissionKinds = {
+      'allow_once',
+      'allow_always',
+      'reject_once',
+      'reject_always',
+    };
+    final kinds = options.map((option) => permissionKind(option.kind)).toList();
+    final content = toolCall['content'];
+    final questionText = content is List
+        ? content
+              .whereType<Map>()
+              .map(_contentText)
+              .whereType<String>()
+              .join('\n\n')
+        : null;
+    // Solcode AskUser sends each answer as an allow_once permission option.
+    // Repeated kinds represent answers, not multiple equivalent approvals.
+    final isUserChoice =
+        isCommandChoice ||
+        asksUser ||
+        kinds.any((kind) => !permissionKinds.contains(kind)) ||
+        kinds.toSet().length != kinds.length ||
+        (toolKind == 'other' &&
+            questionText != null &&
+            questionText.isNotEmpty &&
+            !kinds.any(
+              (kind) => kind == 'reject_once' || kind == 'reject_always',
+            ));
+    // Only ordinary tool permissions are automatically allowed.
     final allow = [
       for (final kind in const [
         'allow_once',
@@ -1057,7 +1106,7 @@ class AcpKernel
       ])
         ...options.where((option) => option.kind == kind),
     ].firstOrNull;
-    if (allow != null) {
+    if (!isUserChoice && allow != null) {
       _transport?.write({
         'jsonrpc': '2.0',
         'id': rpcId,
@@ -1067,11 +1116,11 @@ class AcpKernel
       });
       return;
     }
-    if (!isCommandChoice) {
+    if (!isUserChoice || options.isEmpty) {
       _replyCancelled(rpcId);
       return;
     }
-    _commandInteractionIds.add(requestId);
+    if (isCommandChoice) _commandInteractionIds.add(requestId);
     _permissionRpcIds[requestId] = rpcId;
     _permissionOptions[requestId] = {
       for (final option in options) option.name: option.id,
@@ -1091,8 +1140,10 @@ class AcpKernel
           title: isCommandChoice ? 'Choose a command' : title,
           questions: [
             Question(
-              prompt: title,
-              header: isCommandChoice ? 'Command' : (toolKind ?? 'Permission'),
+              prompt: questionText != null && questionText.isNotEmpty
+                  ? questionText
+                  : title,
+              header: isCommandChoice ? 'Command' : title,
               options: [
                 for (final option in options)
                   QuestionOption(

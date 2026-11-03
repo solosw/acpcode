@@ -8,6 +8,8 @@ import 'package:baocode/chat/widgets/agent_step.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/panels/todo_panel.dart';
+import 'package:baocode/chat/panels/interaction_panel.dart';
+import 'package:flutter/services.dart';
 import 'package:baocode/chat/widgets/step_header.dart';
 import 'package:baocode/chat/widgets/tool_call_row.dart';
 import 'package:baocode/kernel/acp/acp_kernel.dart';
@@ -19,6 +21,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Transport implements AcpTransport {
+  final List<Map<String, Object?>> written = [];
+
+  void question(Object id, {bool command = false}) => _messages.add({
+    'jsonrpc': '2.0',
+    'id': id,
+    'method': 'session/request_permission',
+    'params': {
+      'sessionId': 'session',
+      'toolCall': {
+        'toolCallId': 'question-$id',
+        'title': command ? '/choose' : 'Color',
+        'kind': command ? 'command' : 'other',
+        'status': 'pending',
+        'content': [
+          {
+            'type': 'content',
+            'content': {'type': 'text', 'text': 'Which color do you prefer?'},
+          },
+        ],
+      },
+      'options': [
+        {'optionId': 'red-id', 'name': 'Red', 'kind': 'allow_once'},
+        {'optionId': 'blue-id', 'name': 'Blue', 'kind': 'allow_once'},
+      ],
+    },
+  });
+
   _Transport({this.fixture});
 
   final List<Map<String, Object?>>? fixture;
@@ -82,7 +111,9 @@ class _Transport implements AcpTransport {
 
   @override
   void write(Map<String, Object?> message) {
+    written.add(message);
     final method = message['method'];
+    if (method == null) return;
     if (method == 'session/load' || method == 'session/prompt') history();
     _messages.add({
       'jsonrpc': '2.0',
@@ -158,6 +189,65 @@ String _pretty(Object? value) =>
     const JsonEncoder.withIndent('  ').convert(value);
 
 void main() {
+  for (final command in [false, true]) {
+    testWidgets(
+      'ACP ${command ? 'command' : 'AskUser'} mounts a selection panel, submits the chosen option and supports another question',
+      (tester) async {
+        final transport = _Transport();
+        final session = await _pump(tester, transport);
+        expect(find.byType(InteractionPanel), findsNothing);
+        transport.question(90, command: command);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(InteractionPanel), findsOneWidget);
+        expect(
+          find.textContaining('Which color do you prefer?', findRichText: true),
+          findsWidgets,
+        );
+        expect(session.pendingInteraction, isA<QuestionRequest>());
+        expect(transport.written.where((m) => m['id'] == 90), isEmpty);
+        final blue = find.descendant(
+          of: find.byType(InteractionPanel),
+          matching: find.text('Blue'),
+        );
+        await tester.tap(blue);
+        await tester.pump();
+        expect(
+          transport.written.where((m) => m['id'] == 90),
+          isEmpty,
+          reason: 'Selecting must wait for explicit submission',
+        );
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(transport.written.where((m) => m['id'] == 90).single['result'], {
+          'outcome': {'outcome': 'selected', 'optionId': 'blue-id'},
+        });
+        expect(session.pendingInteraction, isNull);
+        expect(find.byType(InteractionPanel), findsNothing);
+
+        transport.question('next-question', command: command);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.byType(InteractionPanel), findsOneWidget);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(
+          transport.written
+              .where((m) => m['id'] == 'next-question')
+              .single['result'],
+          {
+            'outcome': {'outcome': 'cancelled'},
+          },
+        );
+        expect(find.byType(InteractionPanel), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   for (final legacy in [false, true]) {
     testWidgets(
       'native ACP card opens child session and returns (legacy: $legacy)',

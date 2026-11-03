@@ -59,6 +59,7 @@ class _Transport implements AcpTransport {
   void permission(
     Object id, {
     bool commandChoice = false,
+    Map<String, Object?>? toolCall,
     List<Map<String, Object?>>? options,
   }) => _messages.add({
     'jsonrpc': '2.0',
@@ -66,11 +67,13 @@ class _Transport implements AcpTransport {
     'method': 'session/request_permission',
     'params': {
       'sessionId': 'session',
-      'toolCall': {
-        'toolCallId': 'tool_$id',
-        'title': commandChoice ? '/choose' : 'Run tool',
-        'kind': commandChoice ? 'command' : 'execute',
-      },
+      'toolCall':
+          toolCall ??
+          {
+            'toolCallId': 'tool_$id',
+            'title': commandChoice ? '/choose' : 'Run tool',
+            'kind': commandChoice ? 'command' : 'execute',
+          },
       'options':
           options ??
           (commandChoice
@@ -331,6 +334,248 @@ void main() {
         'outcome': {'outcome': 'selected', 'optionId': 'command-a'},
       });
       transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    },
+  );
+
+  for (final rpcId in <Object>[46, 'ask-47']) {
+    test(
+      'Solcode AskUser waits for an answer and preserves RPC id $rpcId',
+      () async {
+        await start();
+        transport.permission(
+          rpcId,
+          toolCall: {
+            'toolCallId': 'ask-color',
+            'title': 'Color',
+            'kind': 'other',
+            'status': 'pending',
+            'content': [
+              {
+                'type': 'content',
+                'content': {
+                  'type': 'text',
+                  'text': 'Which color do you prefer?',
+                },
+              },
+            ],
+          },
+          options: [
+            {'optionId': 'Red', 'name': 'Red', 'kind': 'allow_once'},
+            {'optionId': 'Blue', 'name': 'Blue', 'kind': 'allow_once'},
+          ],
+        );
+        final question =
+            events.whereType<InteractionRequested>().single.request
+                as QuestionRequest;
+        expect(question.title, 'Color');
+        expect(question.questions.single.prompt, 'Which color do you prefer?');
+        expect(question.questions.single.header, 'Color');
+        expect(question.questions.single.options.map((o) => o.label), [
+          'Red',
+          'Blue',
+        ]);
+        expect(question.questions.single.allowOther, isFalse);
+        expect(transport.written.where((m) => m['id'] == rpcId), isEmpty);
+        kernel.answer(
+          question.id,
+          const QuestionAnswer([
+            ['Blue'],
+          ]),
+        );
+        expect(transport.written.last, {
+          'jsonrpc': '2.0',
+          'id': rpcId,
+          'result': {
+            'outcome': {'outcome': 'selected', 'optionId': 'Blue'},
+          },
+        });
+        expect(
+          events.whereType<InteractionResolved>().single.requestId,
+          question.id,
+        );
+        expect(
+          events.whereType<TurnEnded>(),
+          isEmpty,
+          reason: 'AskUser is not a completed slash command',
+        );
+        kernel.answer(
+          question.id,
+          const QuestionAnswer([
+            ['Red'],
+          ]),
+        );
+        expect(transport.written.where((m) => m['id'] == rpcId), hasLength(1));
+        transport.completePrompt('end_turn');
+        await pumpEventQueue();
+      },
+    );
+  }
+
+  test(
+    'non-command choices without permission kinds open a question',
+    () async {
+      await start();
+      transport.permission(
+        48,
+        toolCall: {
+          'toolCallId': 'ask-db',
+          'title': 'Choose a database',
+          'kind': 'other',
+          'content': [
+            {'type': 'text', 'text': 'Which database should be used?'},
+          ],
+        },
+        options: [
+          {'optionId': 'pg', 'name': 'PostgreSQL'},
+          {'optionId': 'sqlite', 'name': 'SQLite'},
+        ],
+      );
+      final question =
+          events.whereType<InteractionRequested>().single.request
+              as QuestionRequest;
+      expect(
+        question.questions.single.prompt,
+        'Which database should be used?',
+      );
+      expect(transport.written.where((m) => m['id'] == 48), isEmpty);
+      kernel.answer(
+        question.id,
+        const QuestionAnswer([
+          ['SQLite'],
+        ]),
+      );
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'sqlite'},
+      });
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    },
+  );
+
+  for (final name in [
+    'AskUser',
+    'AskUserQuestion',
+    'functions.AskUser',
+    'request_user_input',
+  ]) {
+    test('$name is interactive even with unique permission kinds', () async {
+      await start();
+      transport.permission(
+        49,
+        toolCall: {'toolCallId': 'ask', 'title': name, 'kind': 'other'},
+      );
+      final question = events.whereType<InteractionRequested>().single.request;
+      expect(transport.written.where((m) => m['id'] == 49), isEmpty);
+      kernel.answer(question.id, const QuestionAnswer([], skipped: true));
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'reject'},
+      });
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    });
+  }
+
+  test('single-option AskUser content is not automatically answered', () async {
+    await start();
+    transport.permission(
+      50,
+      toolCall: {
+        'toolCallId': 'ask-one',
+        'title': 'Confirm choice',
+        'kind': 'other',
+        'content': [
+          {'type': 'text', 'text': 'Use the suggested setup?'},
+        ],
+      },
+      options: [
+        {'optionId': 'yes', 'name': 'Yes', 'kind': 'allow_once'},
+      ],
+    );
+    expect(events.whereType<InteractionRequested>(), hasLength(1));
+    expect(transport.written.where((m) => m['id'] == 50), isEmpty);
+    final question = events.whereType<InteractionRequested>().single.request;
+    kernel.answer(question.id, const QuestionAnswer([], skipped: true));
+    expect(transport.written.last['result'], {
+      'outcome': {'outcome': 'cancelled'},
+    });
+    transport.completePrompt('end_turn');
+    await pumpEventQueue();
+  });
+
+  test(
+    'command options carrying allow kinds still require an explicit choice',
+    () async {
+      await start();
+      transport.permission(
+        51,
+        commandChoice: true,
+        options: [
+          {'optionId': 'command-a', 'name': 'Command A', 'kind': 'allow_once'},
+          {
+            'optionId': 'command-b',
+            'name': 'Command B',
+            'kind': 'allow_always',
+          },
+        ],
+      );
+      final request = events.whereType<InteractionRequested>().single.request;
+      expect(transport.written.where((m) => m['id'] == 51), isEmpty);
+      kernel.answer(
+        request.id,
+        const QuestionAnswer([
+          ['Command B'],
+        ]),
+      );
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'selected', 'optionId': 'command-b'},
+      });
+      transport.completePrompt('end_turn');
+      await pumpEventQueue();
+    },
+  );
+
+  test(
+    'cancelling AskUser replies once and resolves the pending panel',
+    () async {
+      await start();
+      transport.permission(
+        'ask-cancel',
+        toolCall: {'title': 'AskUser', 'kind': 'other'},
+      );
+      final request = events.whereType<InteractionRequested>().single.request;
+      kernel.cancel();
+      expect(
+        transport.written
+            .where((m) => m['id'] == 'ask-cancel')
+            .single['result'],
+        {
+          'outcome': {'outcome': 'cancelled'},
+        },
+      );
+      expect(
+        events.whereType<InteractionResolved>().single.requestId,
+        request.id,
+      );
+      kernel.answer(
+        request.id,
+        const QuestionAnswer([
+          ['Allow once'],
+        ]),
+      );
+      expect(
+        transport.written.where((m) => m['id'] == 'ask-cancel'),
+        hasLength(1),
+      );
+      transport.permission(
+        'racing-ask',
+        toolCall: {'title': 'AskUser', 'kind': 'other'},
+      );
+      expect(transport.written.last['result'], {
+        'outcome': {'outcome': 'cancelled'},
+      });
+      expect(events.whereType<InteractionRequested>(), hasLength(1));
+      transport.completePrompt('cancelled');
       await pumpEventQueue();
     },
   );

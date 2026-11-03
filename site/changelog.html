@@ -29,6 +29,18 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.7.7">
+    <h2 class="plain"><a href="#v1.7.7">1.7.7</a></h2>
+    <p>Restore ACP question dialogs</p>
+    <p>Fixed</p>
+    <ul>
+    <li>Restore the selection panel for ACP AskUser questions, including Solcode questions whose answers are all marked allow_once. User choices are no longer silently answered by the ordinary permission auto-allow logic.</li>
+    <li>Display the question text and the agent's option labels. Selecting an option waits for explicit submission, then returns the chosen option with the original request ID.</li>
+    <li>Keep command menus interactive even when their options carry permission kinds, and show non-command choices without standard permission kinds.</li>
+    <li>Preserve question cancellation and consecutive questions without duplicate replies or prematurely ending an AskUser turn. Ordinary tool permissions retain their existing automatic allowance.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.7.6">
     <h2 class="plain"><a href="#v1.7.6">1.7.6</a></h2>
     <p>Flexible scheduled-task triggers</p>
