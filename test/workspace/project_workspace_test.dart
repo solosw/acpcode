@@ -18,6 +18,12 @@ class FakeWorkspaceDirectories extends ProjectWorkspaceDirectories {
   @override
   final String? root;
 
+  @override
+  ProjectWorkspace restore(
+    ProjectWorkspace workspace, {
+    List<String> previousPaths = const [],
+  }) => workspace;
+
   final List<ProjectWorkspace> written = [];
 
   @override

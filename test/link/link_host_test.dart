@@ -758,5 +758,11 @@ class _WorkspaceDirectories extends ProjectWorkspaceDirectories {
   String? get root => '/data/workspaces';
 
   @override
+  ProjectWorkspace restore(
+    ProjectWorkspace workspace, {
+    List<String> previousPaths = const [],
+  }) => workspace;
+
+  @override
   void write(ProjectWorkspace workspace) {}
 }

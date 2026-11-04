@@ -29,6 +29,17 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.7.8">
+    <h2 class="plain"><a href="#v1.7.8">1.7.8</a></h2>
+    <p>Restore workspaces after moving the data directory</p>
+    <p>Fixed</p>
+    <ul>
+    <li>Restore workspace folders from edited .code-workspace files instead of stale saved folder lists, preserving settings and relative folder paths.</li>
+    <li>Recover workspace files from the previous data directory when needed, and restore the explorer, recent items, editor tabs and chat references at the new location.</li>
+    <li>Prefer files and saved views at the current location, preserve saved folders when a workspace file is invalid, and recreate missing workspace files without deleting other files.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.7.7">
     <h2 class="plain"><a href="#v1.7.7">1.7.7</a></h2>
     <p>Restore ACP question dialogs</p>

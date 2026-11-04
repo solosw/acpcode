@@ -107,6 +107,16 @@ class ProjectWorkspaceDirectories {
   /// (the web).
   String? get root => platform.workspacesRoot();
 
+  /// Restores folder edits made in the workspace file, including after the
+  /// data directory moved. The current file wins over an old copy.
+  ProjectWorkspace restore(
+    ProjectWorkspace workspace, {
+    List<String> previousPaths = const [],
+  }) => platform.restoreWorkspaceDirectory(
+    workspace,
+    previousPaths: previousPaths,
+  );
+
   /// Makes [workspace]'s folder, with a `.code-workspace` file listing its
   /// folders (for VS Code and others to open it as such). Best effort: a
   /// workspace whose folder could not be made still lists.

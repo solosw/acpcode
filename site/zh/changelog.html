@@ -29,6 +29,17 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v1.7.8">
+    <h2 class="plain"><a href="#v1.7.8">1.7.8</a></h2>
+    <p>修复迁移数据目录后的工作区恢复</p>
+    <p>修复</p>
+    <ul>
+    <li>优先从编辑后的 .code-workspace 文件恢复工作区文件夹，不再被过期的已保存列表覆盖，并保留设置和相对路径指向。</li>
+    <li>必要时从旧数据目录恢复工作区文件，同步恢复新位置的资源管理器、最近项目、编辑器标签页和对话关联。</li>
+    <li>优先保留当前位置的文件和视图；工作区文件无效时保留已保存的文件夹，缺失时重建文件且不删除其他文件。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.7.7">
     <h2 class="plain"><a href="#v1.7.7">1.7.7</a></h2>
     <p>恢复 ACP 提问选择框</p>

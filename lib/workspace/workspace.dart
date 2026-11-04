@@ -2390,7 +2390,81 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     await _restoreDrafts();
     final store = _store;
     if (store == null) return;
-    final kept = await store.read();
+    final kept = Map<String, Object?>.from(await store.read());
+    final previousWorkspacePaths = <String, List<String>>{};
+    final movedWorkspacePaths = <String, String>{};
+    if (workspaceDirectories.root case final root?) {
+      final ide = kept['ide'];
+      final sidebar = kept['sidebar'];
+      final opened = <String>[
+        if (ide is Map && ide['folder'] is String) ide['folder'] as String,
+        if (ide is Map && ide['recentFolders'] is List)
+          ...(ide['recentFolders'] as List).whereType<String>(),
+        if (sidebar is Map && sidebar['folders'] is List)
+          ...(sidebar['folders'] as List).whereType<String>(),
+      ];
+      if (kept['workspaces'] case final List workspaces) {
+        for (final raw in workspaces) {
+          final workspace = ProjectWorkspace.fromJson(raw, root: root);
+          if (workspace == null || raw is! Map) continue;
+          final previous = <String>{
+            if (raw['path'] is String) raw['path'] as String,
+            // A prior run may already have saved the new workspace path,
+            // while leaving the IDE open at its former data-directory path.
+            for (final path in opened)
+              if (!RemoteLocation.isRemote(path) &&
+                  p.isAbsolute(path) &&
+                  p.basename(path) == workspace.id &&
+                  p.basename(p.dirname(path)) == 'workspaces')
+                path,
+          }..remove(workspace.path);
+          previousWorkspacePaths[workspace.path] = previous.toList();
+          for (final from in previous) {
+            movedWorkspacePaths[from] = workspace.path;
+          }
+        }
+      }
+    }
+    String relocate(String path) {
+      for (final MapEntry(key: from, value: to)
+          in movedWorkspacePaths.entries) {
+        if (p.equals(path, from)) return to;
+        if (!RemoteLocation.isRemote(path) && p.isWithin(from, path)) {
+          return p.join(to, p.relative(path, from: from));
+        }
+        if (path == projectGroup(from)) return projectGroup(to);
+      }
+      return path;
+    }
+
+    Object? relocateValues(Object? value) => switch (value) {
+      final String text => relocate(text),
+      final List list => [for (final item in list) relocateValues(item)],
+      final Map map => {
+        // Current-location state wins if both copies were saved.
+        for (final entry in map.entries)
+          if (entry.key is! String ||
+              relocate(entry.key as String) != entry.key)
+            (entry.key is String ? relocate(entry.key as String) : entry.key):
+                relocateValues(entry.value),
+        for (final entry in map.entries)
+          if (entry.key is! String ||
+              relocate(entry.key as String) == entry.key)
+            entry.key: relocateValues(entry.value),
+      },
+      _ => value,
+    };
+    if (movedWorkspacePaths.isNotEmpty) {
+      for (final key in [
+        'sidebar',
+        'ide',
+        'chat',
+        'projectIcons',
+        'sidePanel',
+      ]) {
+        if (kept.containsKey(key)) kept[key] = relocateValues(kept[key]);
+      }
+    }
     Map<String, String> strings(Object? raw) => {
       if (raw is Map)
         for (final MapEntry(:key, :value) in raw.entries)
@@ -2486,7 +2560,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       final root = workspaceDirectories.root;
       for (final json in workspaces) {
         if (ProjectWorkspace.fromJson(json, root: root) case final workspace?) {
-          _workspaces[workspace.path] = workspace;
+          _workspaces[workspace.path] = workspaceDirectories.restore(
+            workspace,
+            previousPaths: previousWorkspacePaths[workspace.path] ?? const [],
+          );
         }
       }
     }
