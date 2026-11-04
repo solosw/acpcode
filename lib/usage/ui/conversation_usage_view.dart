@@ -19,12 +19,12 @@ import 'usage_context.dart';
 import 'usage_filters.dart';
 import 'usage_sections.dart';
 import 'usage_style.dart';
+import '../../theme/svg_icons.dart';
 
 /// The side panel's Usage page: what [session]'s conversation took of
 /// its custom upstream, request by request, as the model proxy kept it:
-/// its context as it grew and was compacted, the main agent's and each
-/// subagent's share, the tools', each turn's, and every call; filtered by
-/// kind, agent and model.
+/// its context as it grew and was compacted, each turn's, and every
+/// call; filtered by kind, agent and model.
 class ConversationUsageView extends StatefulWidget {
   const ConversationUsageView({
     super.key,
@@ -57,6 +57,11 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
   UsageSummary? _all;
   UsageSummary? _summary;
 
+  /// Its calls under way, as last read: read again each second while
+  /// there are any.
+  List<UsageCall> _underway = const [];
+  Timer? _tick;
+
   @override
   void initState() {
     super.initState();
@@ -79,6 +84,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
       _filter = const UsageFilter();
       _sessionId = _idOf(widget);
       _calls = const [];
+      _underway = const [];
       _loading = true;
       unawaited(_load());
     }
@@ -92,6 +98,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
   @override
   void dispose() {
     _reload?.cancel();
+    _tick?.cancel();
     _ledger.removeListener(_ledgerChanged);
     UsagePrices.current.removeListener(_repriced);
     widget.session.removeListener(_sessionChanged);
@@ -110,32 +117,94 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
 
   void _ledgerChanged() {
     if (_ledger.version == _loadedVersion) {
-      setState(() {});
+      // A call begun or over (and not kept), or its choices: those beside
+      // the conversation shown or not.
+      setState(() {
+        _readUnderway();
+        _summarize();
+      });
       return;
     }
     _reload?.cancel();
     _reload = Timer(const Duration(milliseconds: 500), () => _load());
   }
 
-  Future<void> _load() async {
+  /// [force]: summed again though nothing changed (as of now).
+  Future<void> _load({bool force = false}) async {
     final id = _sessionId;
     final version = _ledger.version;
     final calls = id == null
         ? const <UsageCall>[]
         : await _ledger.ofSession(id);
     if (!mounted || id != _sessionId) return;
+    _loadedVersion = version;
+    // Another conversation's call: this one's page left as it is.
+    if (!force && !_loading && calls.isNotEmpty && _same(calls, _calls)) {
+      setState(_readUnderway);
+      return;
+    }
     setState(() {
       _loadedVersion = version;
       _calls = calls;
       _loading = false;
+      _readUnderway();
       _summarize();
     });
   }
 
+  /// [call] as the same as it goes on, and once kept.
+  static Object _keyOf(UsageCall call) =>
+      (call.at.millisecondsSinceEpoch, call.agentId, call.model);
+
+  /// Reads its calls under way again. [keepGone]: those over kept as they
+  /// were last read, till its calls are read again with them kept (they
+  /// would blink out first).
+  void _readUnderway({bool keepGone = false}) {
+    final id = _sessionId;
+    final now = id == null ? const <UsageCall>[] : _ledger.underway(id);
+    if (keepGone && _underway.isNotEmpty) {
+      final still = {for (final call in now) _keyOf(call)};
+      _underway = [
+        for (final call in _underway)
+          if (!still.contains(_keyOf(call))) call,
+        ...now,
+      ]..sort((a, b) => a.at.compareTo(b.at));
+    } else {
+      _underway = now;
+    }
+    if (_underway.isEmpty) {
+      _tick?.cancel();
+      _tick = null;
+    } else {
+      _tick ??= Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => setState(() => _readUnderway(keepGone: true)),
+      );
+    }
+  }
+
+  /// Its calls under way, as filtered.
+  List<UsageCall> get _shownUnderway => [
+    for (final call in _ledger.shown(_underway))
+      if (_filter.matches(call)) call,
+  ];
+
+  /// Whether [a] and [b] are the same calls, though read again.
+  static bool _same(List<UsageCall> a, List<UsageCall> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].at.millisecondsSinceEpoch != b[i].at.millisecondsSinceEpoch) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void _summarize() {
     final now = DateTime.now();
-    _all = UsageSummary.of(_calls, const UsageFilter(), now: now);
-    _summary = UsageSummary.of(_calls, _filter, now: now);
+    final calls = _ledger.shown(_calls);
+    _all = UsageSummary.of(calls, const UsageFilter(), now: now);
+    _summary = UsageSummary.of(calls, _filter, now: now);
   }
 
   void _setFilter(UsageFilter filter) => setState(() {
@@ -159,13 +228,6 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
     final models = all.models.toList()..sort();
     return UsageFilterBar(
       trailing: [
-        UsageTraceToggle(
-          on: _ledger.trace,
-          count: _ledger.traced,
-          onChanged: (on) =>
-              unawaited(_ledger.save(UsageLedger.traceKey, on ? true : null)),
-        ),
-        const SizedBox(width: 4),
         if (filter.narrowed)
           UsageIconButton(
             icon: Codicons.clearAll,
@@ -175,7 +237,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
         UsageIconButton(
           icon: Codicons.refresh,
           tooltip: l10n.ustatRefresh,
-          onPressed: () => unawaited(_load()),
+          onPressed: () => unawaited(_load(force: true)),
         ),
       ],
       children: [
@@ -229,45 +291,11 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
 
   List<Widget> _sections(UsageSummary summary) {
     final l10n = context.l10n;
-    final filter = _filter;
     final prompts = UsageSummary.ranked(summary.byPrompt)
       ..sort((a, b) => b.totals.first!.compareTo(a.totals.first!));
     return [
       UsageOverview(summary: summary, minWidth: 128),
       UsageContextSection(summary: summary, agentLabel: _agentLabel),
-      UsageClassSection(
-        summary: summary,
-        selected: filter.classes,
-        onToggle: (kind) {
-          final classes = {...filter.classes};
-          if (!classes.remove(kind)) classes.add(kind);
-          _setFilter(filter.copyWith(classes: classes));
-        },
-      ),
-      UsageRankCard(
-        summary: summary,
-        title: l10n.ustatByAgent,
-        builder: (context, byCost) => UsageRankList(
-          selected: filter.agents,
-          onTap: (item) {
-            final picked = {...filter.agents};
-            if (!picked.remove(item.key)) picked.add(item.key);
-            _setFilter(filter.copyWith(agents: picked));
-          },
-          moreLabel: (n) => l10n.ustatShowAll(n),
-          lessLabel: l10n.ustatShowLess,
-          items: UsageRanking(summary.byAgent.values, byCost: byCost).items(
-            (group, rank) => rankOf(
-              context,
-              group,
-              rank: rank,
-              label: _agentLabel(group.key),
-              detail: group.key.isEmpty ? null : group.detail,
-            ),
-          ),
-        ),
-      ),
-      UsageToolsSection(summary: summary),
       if (prompts.isNotEmpty)
         UsageRankCard(
           summary: summary,
@@ -286,7 +314,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
                 label: UsageFormat.when(group.totals.first!),
                 detail: l10n.ustatTurnDetail(
                   UsageFormat.duration(
-                    group.totals.last!.difference(group.totals.first!),
+                    group.totals.ended!.difference(group.totals.first!),
                   ),
                   group.totals.maxPrompt == 0
                       ? '—'
@@ -297,23 +325,26 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
           ),
         ),
       UsageTimeSection(summary: summary, height: 140),
-      UsageCard(
-        title: l10n.ustatCallsTitle,
-        subtitle: l10n.ustatRecentCallsDetail(summary.calls.length),
-        child: UsageCallsList(
-          calls: summary.calls,
-          showSession: false,
-          ledger: _ledger,
-        ),
-      ),
+      _callsCard(summary.calls),
     ];
   }
+
+  Widget _callsCard(List<UsageCall> calls) => UsageCard(
+    title: context.l10n.ustatCallsTitle,
+    subtitle: context.l10n.ustatRecentCallsDetail(calls.length),
+    child: UsageCallsList(
+      calls: calls,
+      underway: _shownUnderway,
+      showSession: false,
+      ledger: _ledger,
+    ),
+  );
 
   Widget _empty() {
     final l10n = context.l10n;
     if (!_ledger.enabled) {
       return UsageEmpty(
-        icon: Codicons.graph,
+        icon: SvgIcons.usage,
         title: l10n.ustatRecordOff,
         detail: l10n.ustatRecordOffDescription,
         action: IdeButton(
@@ -324,7 +355,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
       );
     }
     return UsageEmpty(
-      icon: Codicons.graph,
+      icon: SvgIcons.usage,
       title: _sessionId == null
           ? l10n.ustatConversationNew
           : l10n.ustatConversationEmpty,
@@ -337,34 +368,49 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
     final l10n = context.l10n;
     final all = _all;
     final summary = _summary;
-    final hasCalls = _calls.isNotEmpty && all != null && summary != null;
+    final hasCalls = all != null && all.calls.isNotEmpty && summary != null;
+    // Its filters stay at the top, what scrolls fading out under them.
     return ColoredBox(
       color: AppColors.code,
-      child: ScrollEdgeFade(
-        fadeLength: 40,
-        child: SmoothScrolling(
-          builder: (context, controller) => ListView(
-            controller: controller,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
-            children: [
-              if (!hasCalls)
-                _loading ? const SizedBox(height: 120) : _empty()
-              else ...[
-                _filters(all),
-                const SizedBox(height: 12),
-                if (summary.calls.isEmpty)
-                  UsageEmpty(
-                    icon: Codicons.filter,
-                    title: l10n.ustatEmptyFiltered,
-                  )
-                else
-                  for (final (i, section) in _sections(summary).indexed) ...[
-                    if (i > 0) const SizedBox(height: 12),
-                    section,
+      child: SmoothScrolling(
+        builder: (context, controller) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (hasCalls)
+              Padding(
+                // The cards under them a row's gap away, at rest.
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: _filters(all),
+              ),
+            Expanded(
+              child: ScrollEdgeFade(
+                fadeLength: hasCalls ? 28 : 40,
+                child: ListView(
+                  controller: controller,
+                  padding: EdgeInsets.fromLTRB(16, hasCalls ? 12 : 14, 16, 32),
+                  children: [
+                    // Its first call, under way.
+                    if (!hasCalls && !_loading && _shownUnderway.isNotEmpty)
+                      _callsCard(const [])
+                    else if (!hasCalls)
+                      _loading ? const SizedBox(height: 120) : _empty()
+                    else if (summary.calls.isEmpty)
+                      UsageEmpty(
+                        icon: Codicons.filter,
+                        title: l10n.ustatEmptyFiltered,
+                      )
+                    else
+                      for (final (i, section) in _sections(
+                        summary,
+                      ).indexed) ...[
+                        if (i > 0) const SizedBox(height: 12),
+                        section,
+                      ],
                   ],
-              ],
-            ],
-          ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

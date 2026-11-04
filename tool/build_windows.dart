@@ -3,6 +3,9 @@
 //
 //   dart run tool/build_windows.dart                build, then package
 //   dart run tool/build_windows.dart --skip-build   package what is built
+//   dart run tool/build_windows.dart --build-only   build, not package (CI,
+//                                                  while the remote server
+//                                                  is still building)
 //   dart run tool/build_windows.dart --remote-built take the remote server
 //                                                  already in build\remote\
 //                                                  (CI builds it once, for
@@ -60,6 +63,8 @@ const _required = [
   // installer's keys point the browsers to (windows/BrowserBridge).
   'baocode-browser-host.exe',
   'dev.baocode.browser.json',
+  // What writes down a fast fail (windows/wer), which the app registers.
+  'baocode_wer.dll',
   // The VC++ runtime, carried rather than taken from System32, which may
   // be older than the build's (see windows/CMakeLists.txt).
   'msvcp140.dll',
@@ -105,6 +110,10 @@ Future<void> main(List<String> arguments) async {
     );
   }
   final skipBuild = arguments.contains('--skip-build');
+  final buildOnly = arguments.contains('--build-only');
+  if (skipBuild && buildOnly) {
+    _fail('--skip-build and --build-only leave nothing to do.');
+  }
   final remoteBuilt = arguments.contains('--remote-built');
   final channel = arguments.contains('--channel');
   final archAt = arguments.indexOf('--arch');
@@ -146,6 +155,10 @@ Future<void> main(List<String> arguments) async {
 
   _step('Checking the bundle');
   _checkBundle(bundle, _required);
+  if (buildOnly) {
+    _step('Built: --skip-build packages it');
+    return;
+  }
 
   // The server remote projects run on their host (Linux and macOS, x64 and
   // arm64; macOS ones only when built on a Mac):

@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../base/give_way_row.dart';
+import '../../base/mouse_navigation.dart';
 import '../../base/smooth_scroll.dart';
 import '../../base/shown_when_ready.dart';
 import '../../chat/composer/composer_files.dart';
@@ -25,6 +26,9 @@ import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart';
+import '../../workspace/islands.dart';
+import '../host_paths.dart';
+import 'ide_git_commit_panel.dart' show IdeGitCommitPanel;
 import '../file_service.dart';
 import '../ide_button.dart';
 import '../ide_code_diff.dart';
@@ -268,6 +272,16 @@ class IdeGitLogController extends ChangeNotifier {
   void resizeDetails({double? width, double? height}) {
     if (width != null) detailsWidth = math.max(minDetails, width);
     if (height != null) detailsHeight = math.max(120, height);
+    notifyListeners();
+  }
+
+  /// The local changes' details, under the table, folded to their tabs'
+  /// row (see [IdeGitDetailsFold]).
+  bool _detailsFolded = false;
+  bool get detailsFolded => _detailsFolded;
+  set detailsFolded(bool value) {
+    if (value == _detailsFolded) return;
+    _detailsFolded = value;
     notifyListeners();
   }
 
@@ -566,6 +580,30 @@ IdeGitDiffFile ideLocalDiffFile(
 
 String _short(String id) => id.length > 7 ? id.substring(0, 7) : id;
 
+/// Over the details where they are under the table: whether the local
+/// changes' are folded to their tabs' row, [IdeGitCommitPanel.foldedHeight]
+/// high, and the way to fold or unfold them.
+class IdeGitDetailsFold extends InheritedWidget {
+  const IdeGitDetailsFold({
+    super.key,
+    required this.log,
+    required this.folded,
+    required super.child,
+  });
+
+  final IdeGitLogController log;
+  final bool folded;
+
+  void toggle() => log.detailsFolded = !folded;
+
+  static IdeGitDetailsFold? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<IdeGitDetailsFold>();
+
+  @override
+  bool updateShouldNotify(IdeGitDetailsFold old) =>
+      old.folded != folded || !identical(old.log, log);
+}
+
 class IdeGitLogView extends StatefulWidget {
   const IdeGitLogView({
     super.key,
@@ -578,10 +616,12 @@ class IdeGitLogView extends StatefulWidget {
     this.overlay,
     this.overlayTabs,
     this.onCloseOverlay,
+    this.onReopenOverlay,
     this.onAddToChat,
     this.worktrees = const IdeGitWorktreeChoice(),
     this.background,
     this.border,
+    this.islands = false,
     this.ai,
     this.onAsk,
     this.onFixup,
@@ -626,6 +666,10 @@ class IdeGitLogView extends StatefulWidget {
   final Widget? overlayTabs;
   final VoidCallback? onCloseOverlay;
 
+  /// The mouse's forward button, the overlay closed: shows it again, and
+  /// says whether there was one.
+  final bool Function()? onReopenOverlay;
+
   /// Puts files in the chat's composer; not offered when null.
   final ValueChanged<List<ComposerFile>>? onAddToChat;
 
@@ -634,6 +678,11 @@ class IdeGitLogView extends StatefulWidget {
 
   /// Behind it, and the lines between its parts; the editor's and the
   /// panel's when null.
+  /// Whether its parts are cards of [background] on what is under it
+  /// (see [Island]): the log, with its toolbar, and the details (the
+  /// commit's, or the changes to commit), a gap between them.
+  final bool islands;
+
   final Color? background;
   final Color? border;
 
@@ -672,6 +721,52 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
   void didUpdateWidget(IdeGitLogView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(_emailOf, _git)) _readEmail();
+    if (oldWidget.overlay != null && widget.overlay == null) {
+      _closed = _overlayClosed;
+    }
+  }
+
+  /// What the mouse's forward button shows again: the changes closed last,
+  /// the overlay's ([_overlayClosed]) or the log's own (with the row they
+  /// were of); none once others show.
+  Object? _closed;
+  String? _closedOf;
+  static const _overlayClosed = #overlay;
+
+  /// The mouse's back button: the changes shown close.
+  bool _mouseBack() {
+    if (widget.overlay != null) {
+      if (widget.onCloseOverlay case final close?) {
+        close();
+        return true;
+      }
+    }
+    if (_log.diff case final diff?) {
+      _closeDiff(diff);
+      return true;
+    }
+    return false;
+  }
+
+  void _closeDiff(IdeGitLogDiff diff) {
+    _closed = diff;
+    _closedOf = _log.selected;
+    _log.closeDiff();
+  }
+
+  /// The mouse's forward button: the changes closed last show again.
+  bool _mouseForward() {
+    if (widget.overlay != null || _log.diff != null) return false;
+    switch (_closed) {
+      case _overlayClosed:
+        _closed = null;
+        return widget.onReopenOverlay?.call() ?? false;
+      case final IdeGitLogDiff diff when _closedOf == _log.selected:
+        _closed = null;
+        _log.showDiff(diff.files, diff.index, focus: diff.focus);
+        return true;
+    }
+    return false;
   }
 
   @override
@@ -708,10 +803,11 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
   @override
   Widget build(BuildContext context) {
     final git = _git;
-    return ColoredBox(
-      color: _background,
+    Widget card(Widget child) => widget.islands ? _firstCard(child) : child;
+    final view = ColoredBox(
+      color: widget.islands ? Colors.transparent : _background,
       child: git == null
-          ? _overlay() ?? widget.changes
+          ? card(_overlay() ?? widget.changes)
           : ListenableBuilder(
               listenable: Listenable.merge([
                 git,
@@ -727,10 +823,15 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
                 return git.state == null
                     // Not a repository (yet): Source Control's welcome, but
                     // for a change opened.
-                    ? _overlay() ?? widget.changes
+                    ? card(_overlay() ?? widget.changes)
                     : _page(git, git.state!);
               },
             ),
+    );
+    return MouseNavigation(
+      onBack: _mouseBack,
+      onForward: _mouseForward,
+      child: view,
     );
   }
 
@@ -796,7 +897,129 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
   String _worktreeName(IdeGitRepository git, IdeGitWorktree worktree) =>
       git.service.pathContext.basename(worktree.path);
 
-  Widget _layout(IdeGitRepository git, IdeGitState state) => Column(
+  /// The card along the top, under a strip's tabs: its top left corner
+  /// square while their first is in front (see [IslandCorner]).
+  Widget _firstCard(Widget child) => IslandCornerRadius(
+    square: IslandCorner.of(context),
+    builder: (context, topLeft, child) => Island(
+      color: _background,
+      borderColor: _border,
+      topLeft: topLeft,
+      child: child!,
+    ),
+    child: child,
+  );
+
+  Widget _layout(IdeGitRepository git, IdeGitState state) =>
+      widget.islands ? _islandLayout(git, state) : _flatLayout(git, state);
+
+  /// [_flatLayout]'s parts on cards: the toolbar and the log on one, the
+  /// details on another, beside it once wide, else under it.
+  Widget _islandLayout(
+    IdeGitRepository git,
+    IdeGitState state,
+  ) => LayoutBuilder(
+    builder: (context, constraints) {
+      final wide = constraints.maxWidth >= IdeGitLogView.wideWidth;
+      final tree = wide && _branchTreeFits(constraints.maxWidth)
+          ? math.min(_log.branchTreeWidth, constraints.maxWidth * .3)
+          : null;
+      final main = _main(git, state);
+      Widget card(Widget child, {bool first = false}) => first
+          ? _firstCard(child)
+          : Island(color: _background, borderColor: _border, child: child);
+      final log = card(
+        first: true,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _toolbar(git, state, width: constraints.maxWidth),
+            Container(height: 1, color: _border),
+            if (git.busy)
+              SizedBox(
+                height: 2,
+                child: LinearProgressIndicator(
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  color: themeColors['progressBar.background'],
+                ),
+              ),
+            Expanded(
+              child: tree == null
+                  ? main
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(width: tree, child: _branchPane(git)),
+                        _Sash(
+                          vertical: false,
+                          color: _border,
+                          size: tree,
+                          onResize: _log.resizeBranchTree,
+                        ),
+                        Expanded(child: main),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      );
+      final details = card(_details(git, state));
+      if (wide) {
+        final width = math.min(
+          _log.detailsWidth,
+          constraints.maxWidth - 360 - (tree ?? 0),
+        );
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: log),
+            _Sash(
+              vertical: false,
+              color: Colors.transparent,
+              size: width,
+              after: true,
+              gap: true,
+              onResize: (width) => _log.resizeDetails(width: width),
+            ),
+            SizedBox(width: width, child: details),
+          ],
+        );
+      }
+      final folded = _detailsFolded(git, state);
+      // Half, or room for the commit panel's message and buttons under
+      // its files.
+      final height = folded
+          ? IdeGitCommitPanel.foldedHeight
+          : math.min(
+              _log.detailsHeight ?? math.max(constraints.maxHeight / 2, 340),
+              constraints.maxHeight * .75,
+            );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: log),
+          if (folded)
+            const SizedBox(height: Islands.gap)
+          else
+            _Sash(
+              vertical: true,
+              color: Colors.transparent,
+              size: height,
+              after: true,
+              gap: true,
+              onResize: (height) => _log.resizeDetails(height: height),
+            ),
+          SizedBox(
+            height: height,
+            child: IdeGitDetailsFold(log: _log, folded: folded, child: details),
+          ),
+        ],
+      );
+    },
+  );
+
+  Widget _flatLayout(IdeGitRepository git, IdeGitState state) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       _toolbar(git, state),
@@ -848,22 +1071,35 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
                 ],
               );
             }
-            final height = math.min(
-              _log.detailsHeight ?? constraints.maxHeight / 2,
-              constraints.maxHeight * .75,
-            );
+            final folded = _detailsFolded(git, state);
+            final height = folded
+                ? IdeGitCommitPanel.foldedHeight
+                : math.min(
+                    _log.detailsHeight ?? constraints.maxHeight / 2,
+                    constraints.maxHeight * .75,
+                  );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(child: main),
-                _Sash(
-                  vertical: true,
-                  color: _border,
-                  size: height,
-                  after: true,
-                  onResize: (height) => _log.resizeDetails(height: height),
+                if (folded)
+                  Container(height: 1, color: _border)
+                else
+                  _Sash(
+                    vertical: true,
+                    color: _border,
+                    size: height,
+                    after: true,
+                    onResize: (height) => _log.resizeDetails(height: height),
+                  ),
+                SizedBox(
+                  height: height,
+                  child: IdeGitDetailsFold(
+                    log: _log,
+                    folded: folded,
+                    child: details,
+                  ),
                 ),
-                SizedBox(height: height, child: details),
               ],
             );
           },
@@ -882,88 +1118,110 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
 
   // --- Toolbar -------------------------------------------------------------
 
-  Widget _toolbar(IdeGitRepository git, IdeGitState state) => LayoutBuilder(
-    builder: (context, constraints) {
-      final compact = constraints.maxWidth < _compactToolbar;
-      final filters = _filters(git);
-      if (!compact) {
-        return SizedBox(
-          height: 36,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
+  /// [width]: the page's, where the toolbar is narrower than it (on the
+  /// log's card, beside the details'); whether the branch tree has room
+  /// goes by it.
+  Widget _toolbar(IdeGitRepository git, IdeGitState state, {double? width}) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < _compactToolbar;
+          final filters = _filters(git);
+          final islands = widget.islands;
+          if (!compact) {
+            return SizedBox(
+              height: islands ? Islands.controlHeight + 2 * 8 : 36,
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: islands ? Islands.inset - 2 : 8,
+                  vertical: islands ? 8 : 0,
+                ),
+                child: Row(
+                  children: [
+                    if ((width ?? constraints.maxWidth) >=
+                        _branchTreeWidth) ...[
+                      IdeActionButton(
+                        icon: _log.branchTreeShown
+                            ? Codicons.layoutSidebarLeft
+                            : Codicons.layoutSidebarLeftOff,
+                        tooltip: _log.branchTreeShown
+                            ? context.l10n.gitHideBranches
+                            : context.l10n.gitShowBranches,
+                        checked: _log.branchTreeShown,
+                        onPressed: () =>
+                            _log.branchTreeShown = !_log.branchTreeShown,
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            ...filters.take(2),
+                            SizedBox(width: 240, child: _search(git)),
+                            const SizedBox(width: 6),
+                            ...filters.skip(2),
+                          ],
+                        ),
+                      ),
+                    ),
+                    _clearButton(git),
+                    const SizedBox(width: 8),
+                    ..._actions(git, state, compact: false),
+                  ],
+                ),
+              ),
+            );
+          }
+          // Narrow (the side panel): the search and the actions, then the
+          // filters under them.
+          return Padding(
+            // On a card: the search as far in as the card's other
+            // controls, the filters' text under its.
+            padding: islands
+                ? const EdgeInsets.fromLTRB(
+                    Islands.inset - 4,
+                    10,
+                    Islands.inset - 4,
+                    4,
+                  )
+                : const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (constraints.maxWidth >= _branchTreeWidth) ...[
-                  IdeActionButton(
-                    icon: _log.branchTreeShown
-                        ? Codicons.layoutSidebarLeft
-                        : Codicons.layoutSidebarLeftOff,
-                    tooltip: _log.branchTreeShown
-                        ? context.l10n.gitHideBranches
-                        : context.l10n.gitShowBranches,
-                    checked: _log.branchTreeShown,
-                    onPressed: () =>
-                        _log.branchTreeShown = !_log.branchTreeShown,
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
+                SizedBox(
+                  height: islands ? Islands.controlHeight : 34,
+                  child: Padding(
+                    padding: EdgeInsets.only(left: islands ? 4 : 0),
                     child: Row(
                       children: [
-                        ...filters.take(2),
-                        SizedBox(width: 240, child: _search(git)),
-                        const SizedBox(width: 6),
-                        ...filters.skip(2),
+                        Expanded(child: _search(git)),
+                        const SizedBox(width: 4),
+                        ..._actions(git, state, compact: true),
                       ],
                     ),
                   ),
                 ),
-                _clearButton(git),
-                const SizedBox(width: 8),
-                ..._actions(git, state, compact: false),
+                if (islands) const SizedBox(height: 4),
+                SizedBox(
+                  height: 28,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(children: filters),
+                        ),
+                      ),
+                      _clearButton(git),
+                    ],
+                  ),
+                ),
               ],
             ),
-          ),
-        );
-      }
-      // Narrow (the side panel): the search and the actions, then the
-      // filters under them.
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              height: 34,
-              child: Row(
-                children: [
-                  Expanded(child: _search(git)),
-                  const SizedBox(width: 4),
-                  ..._actions(git, state, compact: true),
-                ],
-              ),
-            ),
-            SizedBox(
-              height: 28,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(children: filters),
-                    ),
-                  ),
-                  _clearButton(git),
-                ],
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       );
-    },
-  );
 
   /// The branch's button: where the branch popup opens.
   final GlobalKey _branchButton = GlobalKey();
@@ -1005,6 +1263,11 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
       controller: _log.search,
       focusNode: _log.searchFocus,
       placeholder: l10n.gitLogSearch,
+      // On a card: as high as its buttons, rounded as they are.
+      padding: widget.islands
+          ? const EdgeInsets.symmetric(horizontal: 10, vertical: 5)
+          : const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      radius: widget.islands ? Islands.controlRadius : 4,
       onChanged: (text) {
         _searchDebounce?.cancel();
         _searchDebounce = Timer(
@@ -1058,7 +1321,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
           child: _DropButton(
             icon: Codicons.repo,
             // The folder's name, though a worktree of its shows.
-            label: p.basename(
+            label: hostBasename(
               repositories
                       .where((repository) => identical(repository.$2, git))
                       .firstOrNull
@@ -1071,8 +1334,8 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
                 IdeMenuAction(
                   switch (repo.state?.count) {
                     final count? when count > 0 =>
-                      '${p.basename(folder)}  ($count)',
-                    _ => p.basename(folder),
+                      '${hostBasename(folder)}  ($count)',
+                    _ => hostBasename(folder),
                   },
                   checked: identical(repo, git),
                   onSelected: () => widget.host.selectRepository(repo),
@@ -1413,14 +1676,14 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
   String _pathName(IdeGitRepository git, String path) {
     final paths = git.service.pathContext;
     final root = git.service.root;
-    if (paths.equals(path, root)) return p.basename(path);
+    if (paths.equals(path, root)) return hostBasename(path);
     return paths.isWithin(root, path)
         ? paths.relative(path, from: root).replaceAll(r'\', '/')
         : path;
   }
 
   String _linesLabel(IdeGitLogLines lines) => context.l10n.gitLogLinesOf(
-    p.basename(lines.path),
+    hostBasename(lines.path),
     lines.start,
     lines.end,
   );
@@ -1430,7 +1693,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
     if (filter.lines case final lines?) return _linesLabel(lines);
     return switch (filter.paths) {
       [] => context.l10n.gitLogPaths,
-      [final path] => p.basename(path),
+      [final path] => hostBasename(path),
       final paths => context.l10n.gitLogPathCount(paths.length),
     };
   }
@@ -1566,6 +1829,13 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
     ideGitWorkingTreeId,
     for (final row in git.graph ?? const <IdeGraphRow>[]) row.commit.id,
   ];
+
+  /// Whether the details under the table are folded: the local changes'
+  /// alone, a commit's not.
+  bool _detailsFolded(IdeGitRepository git, IdeGitState state) =>
+      _log.detailsFolded &&
+      _selectedOf(git, state) == ideGitWorkingTreeId &&
+      _log.moreSelected.isEmpty;
 
   /// The row selected: the one picked, else the local changes.
   String _selectedOf(IdeGitRepository git, IdeGitState state) =>
@@ -1746,7 +2016,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
         onAsk: widget.onAsk,
         onClose: () {
           final focused = diff.focus;
-          _log.closeDiff();
+          _closeDiff(diff);
           // Back to the table, where the keys were.
           if (!focused) return;
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -4460,10 +4730,15 @@ class _Sash extends StatefulWidget {
     required this.size,
     required this.onResize,
     this.after = false,
+    this.gap = false,
   });
 
   final bool vertical;
   final Color color;
+
+  /// Whether it is the gap between two cards (see [Islands.gap]), not a
+  /// line between two parts.
+  final bool gap;
 
   /// The size of what it sizes, now: the part before it, or ([after]) the
   /// one after it.
@@ -4548,15 +4823,20 @@ class _SashState extends State<_Sash> {
         onHorizontalDragEnd: vertical ? null : (_) => _end(),
         onHorizontalDragCancel: vertical ? null : _end,
         child: SizedBox(
-          width: vertical ? null : 5,
-          height: vertical ? 5 : null,
-          child: Center(
-            child: Container(
-              width: vertical ? null : (active ? 3 : 1),
-              height: vertical ? (active ? 3 : 1) : null,
-              color: active ? IdeModernUI.sashHover : widget.color,
-            ),
-          ),
+          width: vertical ? null : (widget.gap ? Islands.gap : 5),
+          height: vertical ? (widget.gap ? Islands.gap : 5) : null,
+          child: widget.gap
+              ? Islands.sashLine(
+                  dragging: _dragging,
+                  axis: vertical ? Axis.vertical : Axis.horizontal,
+                )
+              : Center(
+                  child: Container(
+                    width: vertical ? null : (active ? 3 : 1),
+                    height: vertical ? (active ? 3 : 1) : null,
+                    color: active ? IdeModernUI.sashHover : widget.color,
+                  ),
+                ),
         ),
       ),
     );

@@ -18,12 +18,19 @@ void main() {
     expect(workflow, contains('curl -fsSL'));
   });
 
-  test('desktop builds set up the upstream Rust native dependency', () {
+  test('desktop builds restore the native dependency with a Rust fallback', () {
     final workflow = File('.github/workflows/release.yml').readAsStringSync();
-    expect(
-      'uses: ./.github/actions/setup-rust'.allMatches(workflow),
-      hasLength(3),
-    );
+    for (final job in ['macos', 'windows', 'linux']) {
+      final header = '\n  $job:\n';
+      expect(workflow, contains(header));
+      final steps = workflow
+          .split(header)[1]
+          .split(RegExp(r'\n  [a-z][a-z0-9-]*:\n'))
+          .first;
+      expect(steps, contains('uses: ./.github/actions/bao-iroh-prebuilt'));
+      expect(steps, contains("if: steps.iroh.outputs.hit != 'true'"));
+      expect(steps, contains('uses: ./.github/actions/setup-rust'));
+    }
     expect(workflow, contains('lib/libbao_iroh.so'));
     expect(workflow, isNot(contains('  share:')));
     expect(workflow, contains(r'symbols-linux-${{ matrix.arch }}'));

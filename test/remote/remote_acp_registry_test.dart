@@ -60,9 +60,14 @@ class _Client extends RemoteClient {
   Future<RemoteForward> forward(
     int localPort, {
     String localHost = '127.0.0.1',
+    int? remotePort,
   }) {
     if (failForward) throw StateError('Forwarding unavailable');
-    return super.forward(localPort, localHost: localHost);
+    return super.forward(
+      localPort,
+      localHost: localHost,
+      remotePort: remotePort,
+    );
   }
 }
 

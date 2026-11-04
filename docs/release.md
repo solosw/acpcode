@@ -30,7 +30,8 @@ BaoCode 的版本号怎么定、一个版本怎么发出去、发到哪里、已
 ────────                       ──────
 tool/bump_version.dart          Actions：release.yml
 改版本号、写更新日志             ├ check         核对版本、标签，不比本仓库已发布版本旧
-git push / git push 标签 ─────▶ ├ remote        macOS 上编译四个平台的远程服务端
+git push / git push 标签 ─────▶ ├ remote-windows Windows 上编译 x64 / arm64 的远程服务端
+                               ├ remote        macOS 上编译其余四个平台的远程服务端
                                ├ remote-linux  Linux 版在 Docker 里运行验证
                                ├ macos         arm64 / x64，签名、公证、启动验证
                                ├ windows       x64 / arm64，各自原生 runner 打包
@@ -125,19 +126,24 @@ CI 会照常构建，重新建 GitHub Release（不删除触发构建的标签�
 
 | Job | 机器 | 做什么 |
 | --- | --- | --- |
-| `check` | Ubuntu | pubspec.yaml 和 `version.dart` 一致；版本是 `x.y.z+build`；标签是 `v<x.y.z>` |
-| `remote` | macOS 15 | 下载和 Flutter 同版本的 x64 Dart SDK → 编译远程服务端（`--all`：Linux x64/arm64 交叉编译；macOS arm64 用本机的 dart，macOS x64 用 x64 的 dart 经 Rosetta，`dart compile exe` 只能在 Mac 上、按 dart 自己的架构编 macOS 版）→ `tool/test_remote_server_macos.sh`：在这台 Mac 上把两份 macOS 版各跑一遍 → 上传 `remote`（`VERSION`、`servers.json`、`.gz`）和 `remote-linux`（Linux 的两个二进制）两个产物 |
+| `check` | Ubuntu | pubspec.yaml 和 `version.dart` 一致；版本是 `x.y.z+build`；标签是 `v<x.y.z>`；不比本仓库 GitHub Release 上已发布的版本旧（一样就是重新发布，给个提示） |
+| `remote-windows` | Windows（x64 在 `windows-latest`，arm64 在 `windows-11-arm`） | `tool/build_remote_server.dart --only windows-<x64\|arm64>`：Windows 版只能在 Windows 上编（`dart compile exe` 按运行它的 dart 的架构编本平台）→ `tool/test_remote_server_windows.ps1`：在这台机器上跑一遍，要能启动、回答 `initialize`、列出目录 → 上传 `remote-windows-<arch>` 产物 |
+| `remote` | macOS 15 | 下载和 Flutter 同版本的 x64 Dart SDK → 取 `remote-windows-*` 两个产物 → 编译其余四个平台的远程服务端（`--all --from build/remote-windows`：Linux x64/arm64 交叉编译；macOS arm64 用本机的 dart，macOS x64 用 x64 的 dart 经 Rosetta；Windows 的两份从 `--from` 拿）→ `tool/test_remote_server_macos.sh`：在这台 Mac 上把两份 macOS 版各跑一遍 → 上传 `remote`（`VERSION`、`servers.json`、`.gz`）和 `remote-linux`（Linux 的两个二进制）两个产物 |
 | `remote-linux` | Ubuntu | `tool/test_remote_server.sh`：在 Docker 里的 Ubuntu 20.04 / 24.04、Debian 12、Rocky Linux 8 上，两种架构各跑一遍（arm64 用 QEMU 模拟），要能启动、回答 `initialize`、列出目录 |
-| `macos` | macOS 15 | 有证书就导入临时钥匙串 → `tool/build_macos.dart --remote-built`：构建 universal 的 .app，**检查是 universal**（每个可执行文件都有 arm64 和 x86_64）→ 放进 `remote` 任务的 `servers.json` → 用 `ditto --arch` 拆成 Apple silicon（arm64）和 Intel（x64）两个应用，各自检查只剩一种架构，下面每个各做一遍：→ 签名（有证书用 Developer ID，带 hardened runtime；没有就 ad hoc，**不带** hardened runtime，否则系统拒绝加载应用自己的框架、一启动就崩；总要重签，因为放进去的文件要包进签名）→ 做 dmg → 有证书时签 dmg、公证、钉票据 → 打更新用的 zip → **把两个 zip 解开各真正启动一次**（Intel 版经 Rosetta），15 秒内退出就不发 |
-| `windows` | Windows（x64 在 `windows-latest`，arm64 在 `windows-11-arm`） | 装 Inno Setup → `tool/build_windows.dart --remote-built --arch <x64\|arm64>`：构建、放进 `servers.json`、打安装包。Flutter 只能给本机架构构建，所以 arm64 在 Arm 机器上编；Flutter 的 Windows 压缩包里是 x64 的 Dart，arm64 改为按标签 clone Flutter。fork 两种架构都保留 Flutter 自带的引擎，不恢复旧补丁引擎；OpenSSH 用 `OpenSSH-ARM64.zip`。安装包 `BaoCode-<版本>-setup-arm64.exe`，和 x64 同一个 AppId，互相覆盖安装 |
-| `linux` | Ubuntu 22.04（x64 / arm64 各一台） | 构建、打 `.deb` 和 tarball → 安装并启动验证 → 上传产物 |
-| `publish` | Ubuntu | 汇总所有架构的安装包、macOS 更新 zip 和四个 `baocode-server-*.gz` → 写 `latest.json` → 建 GitHub Release 并上传全部附件（重新发布时先删旧 Release，不删标签） |
+| `macos` | macOS 15 | 有证书就导入临时钥匙串 → `tool/build_macos.dart --build-only`：构建 universal 的 .app → 等 `remote` 产物传上来（`.github/actions/wait-for-artifact`）→ `tool/build_macos.dart --skip-build`：**检查是 universal**（每个可执行文件都有 arm64 和 x86_64）→ 放进 `remote` 任务的 `servers.json` → 用 `ditto --arch` 拆成 Apple silicon（arm64）和 Intel（x64）两个应用，各自检查只剩一种架构，下面每个各做一遍：→ 签名（有证书用 Developer ID，带 hardened runtime；没有就 ad hoc，**不带** hardened runtime，否则系统拒绝加载应用自己的框架、一启动就崩；总要重签，因为放进去的文件要包进签名）→ 做 dmg → 有证书时签 dmg、公证、钉票据 → 打更新用的 zip → **把两个 zip 解开各真正启动一次**（Intel 版经 Rosetta），15 秒内退出就不发 |
+| `windows` | Windows（x64 在 `windows-latest`，arm64 在 `windows-11-arm`） | 装 Inno Setup → `tool/build_windows.dart --build-only --arch <x64\|arm64>` 构建、留下去符号 → 等 `remote` 产物传上来 → `tool/build_windows.dart --skip-build --remote-built --arch <x64\|arm64>`：放进 `servers.json`、打安装包。Flutter 只能给本机架构构建，所以 arm64 在 Arm 机器上编；Flutter 的 Windows 压缩包里是 x64 的 Dart，arm64 改为按标签 clone Flutter。fork 两种架构都保留 Flutter 自带的引擎，不恢复旧补丁引擎；OpenSSH 用 `OpenSSH-ARM64.zip`。安装包 `BaoCode-<版本>-setup-arm64.exe`，和 x64 同一个 AppId，互相覆盖安装 |
+| `linux` | Ubuntu 22.04（x64 / arm64 各一台） | 构建、打 `.deb` 和 tarball → 等 `remote` 产物传上来 → 安装并启动验证 → 上传产物 |
+| `publish` | Ubuntu | 汇总所有架构的安装包、macOS 更新 zip 和六个 `baocode-server-*.gz` → 写 `latest.json` → 建 GitHub Release 并上传全部附件（重新发布时先删旧 Release，不删标签） |
 
 几个设计上的考虑：
 
-- **远程服务端和安装包一起上传**：`remote` 任务编译一次，macOS 和 Windows 两个应用带同一份 `servers.json`。四个 `baocode-server-*.gz` 作为 GitHub Release 附件，地址是 `https://github.com/solosw/baocode/releases/download/v<营销版本>/baocode-server-<平台>.gz`。重新发布同一个标签会替换这些文件。
+- **远程服务端和安装包一起上传**：`remote` 任务编译一次，macOS、Windows 和 Linux 的应用带同一份 `servers.json`（六个平台都有）。六个 `baocode-server-*.gz` 作为 GitHub Release 附件，地址是 `https://github.com/solosw/baocode/releases/download/v<营销版本>/baocode-server-<平台>.gz`。重新发布同一个标签会替换这些文件。
+- **应用和远程服务端同时编**：`macos`、`windows`、`linux` 不 `needs` `remote`，应用编完、打包前才用 `.github/actions/wait-for-artifact` 等 `remote` 产物（远程服务端的 job 失败或被取消——macOS 机器可能 15 分钟都分不到——就立刻跟着失败，像 `needs` 一样；最多等 20 分钟）；`publish` 仍然等 `remote` 和 `remote-linux` 整个跑完（含 Linux 上的测试）。
+- **Windows 的服务端在 Windows 上编**：`dart compile exe` 只编运行它的 dart 所在平台的架构，所以 `remote-windows` 任务在 Windows runner 上出 x64 和 arm64 两份，`remote` 用 `--from` 收进来；`VERSION` 由六份二进制一起算哈希，四份应用带的是同一个 `servers.json`。
+- **bao_iroh 的 Rust 不在发版时编**：`bao_iroh.yml` 在 main 上按 `packages/bao_iroh/rust/` 的哈希给每个目标编一次，存进 main 的缓存（标签上的运行只能读 main 的缓存，标签自己存的别的标签读不到，所以发版任务只读不存，flutter-action 也不开缓存）；各构建任务用 `.github/actions/bao-iroh-prebuilt` 取到 `packages/bao_iroh/build/prebuilt/<target>/`，构建钩子直接用。没取到（Rust 只在标签上改了、或 `bao_iroh.yml` 还没跑完）就照旧现编，所以取不到时紧跟一步 `.github/actions/setup-rust`。
 - **下载失败可以手动安装**：见 [ssh-remote.md 第 9.3 节](ssh-remote.md)。
 - **`downloads`**：给下载页面的条目是 `macos-arm64`、`macos-x64`、`windows`（兼容原 x64 键）、`windows-arm64`、`linux-x64`、`linux-arm64`。应用更新键则是 `windows-x64` / `windows-arm64`；x64 版即使在 Arm 上模拟运行也继续更新到 x64，不自动换架构。
+- **密钥只在 `release` 环境里**，只有 `v*` 标签能用（见 7.2）。PR 和手动运行拿不到：手动运行是 ad hoc 签名、只进 Artifacts。
 - Flutter 版本固定在工作流的 `FLUTTER_VERSION`，升级 Flutter 时一起改。
 
 ## 5. GitHub Release 上有什么
@@ -160,6 +166,8 @@ baocode-server-linux-x64.gz              SSH 远程服务端，连接时按需�
 baocode-server-linux-arm64.gz
 baocode-server-darwin-x64.gz
 baocode-server-darwin-arm64.gz
+baocode-server-windows-x64.gz
+baocode-server-windows-arm64.gz
 ```
 
 旧版本 Release 的服务端附件要保留，旧版应用的 `servers.json` 仍指向它们。最新版入口是 `https://github.com/solosw/baocode/releases/latest/download/latest.json`。清单格式见 [auto-update.md 第 5 节](auto-update.md#5-服务端约定)，其中上游 R2 部署说明不用于 fork。
@@ -272,7 +280,8 @@ fork 的更新私钥可选；macOS 的同 Team 校验仍保留。应用自己下
 | `check` 失败：版本不一致 / 标签不对 | 按报错改，删掉远端标签（`git push origin :refs/tags/v1.2.0`），重新打标签推送 |
 | `check` 失败：比已发布的旧 | `tool/bump_version.dart` 加到比已发布的新 |
 | `remote-linux` 失败：Docker 里跑不起来 | 日志里有每个系统、每种架构的结果和服务端的输出。在本机用 `dart run tool/build_remote_server.dart && tool/test_remote_server.sh` 复现（需要 Docker） |
-| `remote` 失败：macOS 版没编出来或跑不起来 | 多半是下载 x64 Dart SDK 失败（Flutter 带的 Dart 版本在 dart-archive 上没有对应的包），或 Rosetta 没装上。在 Apple silicon 的 Mac 上用 `dart run tool/build_remote_server.dart --all --macos-x64-dart <x64 sdk>/bin/dart && tool/test_remote_server_macos.sh` 复现 |
+| `remote` 失败：macOS 版没编出来或跑不起来 | 多半是下载 x64 Dart SDK 失败（Flutter 带的 Dart 版本在 dart-archive 上没有对应的包），或 Rosetta 没装上；也可能是 `remote-windows` 的产物没传到。在 Apple silicon 的 Mac 上把 Windows 两份二进制放进一个目录，用 `dart run tool/build_remote_server.dart --all --macos-x64-dart <x64 sdk>/bin/dart --from <那个目录> && tool/test_remote_server_macos.sh` 复现 |
+| `remote-windows` 失败：Windows 版没编出来或跑不起来 | 日志里有 `tool/test_remote_server_windows.ps1` 的输出。在 Windows 上用 `dart run tool/build_remote_server.dart --only windows-<arch> && pwsh tool/test_remote_server_windows.ps1 build/remote/baocode-server-windows-<arch> <arch>` 复现 |
 | `macos` 失败：Not universal | 某个框架只编了一种架构，日志里列出了是哪个。拆出来的某个包会少这个框架的代码，在用到它时崩溃，所以不发 |
 | `macos` 公证失败 | 日志里有 Apple 返回的详细原因（哪个文件、什么问题）。常见原因：某个二进制没开 hardened runtime、没有时间戳 |
 | `publish` 上传失败 | Release 附件可能不完整（重新发布时旧 Release 已删除）。检查日志和附件，修好后按第 3 节重新发布同一个版本 |
@@ -284,8 +293,13 @@ fork 的更新私钥可选；macOS 的同 Team 校验仍保留。应用自己下
 CI 不可用时的备用办法，步骤和 CI 一样：
 
 ```sh
-# macOS 上：先把四份远程服务端都编好（x64 的 Dart SDK 见 docs/ssh-remote.md 9.1）
-dart run tool/build_remote_server.dart --all --macos-x64-dart <x64 sdk>/bin/dart
+# Windows x64 / arm64 各自的机器上：Windows 版的服务端只能在 Windows 上编
+dart run tool/build_remote_server.dart --out build/remote-windows --only windows-x64
+# 在 Windows Arm 机器上改为 --only windows-arm64
+# macOS 上：再把其余四个平台的服务端编好（x64 的 Dart SDK 见 docs/ssh-remote.md 9.1），
+# 带上前面 Windows 那两份（拷进同一个目录）
+dart run tool/build_remote_server.dart --out build/remote --all \
+    --macos-x64-dart <x64 sdk>/bin/dart --from <Windows 两份所在的目录>
 # 然后打包（有证书的话先设好第 7.3 节对应的环境变量，见 tool/build_macos.dart 开头）
 dart run tool/build_macos.dart --remote-built
 # Windows x64 / arm64 各自的机器上：拷入同一份 Mac 的 build/remote/
@@ -307,7 +321,7 @@ dart run tool/release_manifest.dart \
     --notes-en release-notes/1.2.0.en.md --notes-zh release-notes/1.2.0.zh.md
 ```
 
-然后在对应标签的 GitHub Release 上传全部安装包、更新 zip、四个 `baocode-server-*.gz` 和 `build/installers/latest.json`，与 CI 的附件列表一致。`servers.json` 指向同一个营销版本的标签；不要只更新清单而漏传安装包或服务端。旧版本的服务端附件要保留。
+然后在对应标签的 GitHub Release 上传全部安装包、更新 zip、六个 `baocode-server-*.gz` 和 `build/installers/latest.json`，与 CI 的附件列表一致。`servers.json` 指向同一个营销版本的标签；不要只更新清单而漏传安装包或服务端。旧版本的服务端附件要保留。
 
 macOS 本机签名时用的环境变量：
 
@@ -338,11 +352,19 @@ CI 从 `baocode-dev/mobile` 的 main 取代码（放在本仓库旁边，`../mon
 
 APK 上传时用 `--content-type` 说明类型（`application/vnd.android.package-archive`）。
 
-发布时 APK 传到 `releases/mobile/<版本>/`，最后写 `releases/mobile/latest.json`（`version`、`pubDate`、`beta`、`downloads.android` 的 `url / size / sha256`）。桌面版的 `latest.json` 不受影响。
+发布时 APK 传到 `releases/mobile/<版本>/`，最后写 `releases/mobile/latest.json`（`version`、`pubDate`、`beta`、`downloads.android` 的 `url / size / sha256`；还有 `ios`，见下文）。桌面版的 `latest.json` 不受影响。
 
 iOS 在 App Store Connect 上的 App 是 **BaoCode**（Apple ID `6825371537`，Bundle ID `dev.baocode.mobile`，Team `77SLP2NCVR`）。证书和描述文件一年一换：到期前用 App Store Connect API（或开发者网站）新建 Apple Distribution 证书、用它重做 App Store 描述文件，换掉下面三个密钥。
 
 TestFlight 上每个 build 都要回答出口合规（加密）问题，否则停在「缺少合规证明」；在手机版的 `Info.plist` 里加 `ITSAppUsesNonExemptEncryption` 就不用每次回答。
+
+内部测试组（Internal）自动拿到每个 build；公开测试组（Public beta，就是 `/dl/ios` 跳去的公开链接）要把 build 加进组、过 Beta 审核才拿得到。`mobile-v*` 发版时 `testflight` 任务（Ubuntu，等多久都不花钱）跑 `tool/testflight.mjs`：等苹果处理完 → 用手机版仓库的 `release-notes/<版本>.zh.md`、`.en.md` 写「测试内容」→ 加进 Public beta → 提交 Beta 审核 → 等公开测试员拿到（最多等约 5.5 小时，超时就重跑这个任务再看）→ 在 `releases/mobile/latest.json` 里写 `ios`（`version`、`build`、`url` 为公开链接）。手机端据此在对话列表顶部提示 iOS 新版，点一下打开 TestFlight；`publish` 任务写 `latest.json` 时保留原来的 `ios`。本机手动提交某个 build：
+
+```bash
+KEY_ID=… ISSUER=…  # App Store Connect API Key（同 NOTARY_KEY_ID、NOTARY_ISSUER）
+ASC_KEY="$(cat AuthKey_$KEY_ID.p8)" ASC_KEY_ID=$KEY_ID ASC_ISSUER=$ISSUER \
+  node tool/testflight.mjs --version 0.1.7 --build 31 --notes-zh notes.zh.md --notes-en notes.en.md
+```
 
 **`release` 环境里要有的**（7.2 那些之外）：
 

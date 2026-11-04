@@ -70,8 +70,8 @@ void main() {
     addTearDown(() => IdeWorkbench.openInDefaultApp = openExternal);
     await pumpWorkbench(
       tester,
-      {'doc.pdf': '%PDF\x00\x01', 'a.txt': 'a'},
-      open: ['doc.pdf'],
+      {'doc.bin': '%PDF\x00\x01', 'a.txt': 'a'},
+      open: ['doc.bin'],
     );
     await tester.pumpAndSettle();
     // The primary button, before Open Anyway.
@@ -85,7 +85,7 @@ void main() {
     );
     await tester.tap(find.text('Open in Default App'));
     await tester.pumpAndSettle();
-    expect(opened, [inRoot('doc.pdf')]);
+    expect(opened, [inRoot('doc.bin')]);
 
     // The explorer's menu has it for files.
     await tester.tapAt(
@@ -103,7 +103,7 @@ void main() {
     // The menu's, over the placeholder's button.
     await tester.tap(find.text('Open in Default App').last);
     await tester.pumpAndSettle();
-    expect(opened, [inRoot('doc.pdf'), inRoot('a.txt')]);
+    expect(opened, [inRoot('doc.bin'), inRoot('a.txt')]);
     expect(
       find.text("Unable to open 'a.txt' in its default app."),
       findsOneWidget,

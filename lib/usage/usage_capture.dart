@@ -16,6 +16,11 @@ abstract final class UsageHeaders {
   static const contextCompacted = 'x-claude-code-context-compacted';
   static const toolDurations = 'x-claude-code-prev-tool-durations';
 
+  /// BaoCode's own: the conversation one of the app's small jobs (a
+  /// title) is for. Its call is kept there, as an auxiliary one, whatever
+  /// session Claude Code's process gave itself.
+  static const session = 'x-baocode-session';
+
   /// Claude Code's variable that has it send them to a gateway (what the
   /// proxy is to it).
   static const gatewayHintsVariable = 'CLAUDE_CODE_GATEWAY_HINT_HEADERS';
@@ -29,6 +34,7 @@ abstract final class UsageHeaders {
     compaction,
     contextCompacted,
     toolDurations,
+    session,
   };
 }
 
@@ -176,7 +182,9 @@ UsageRequestInfo analyzeRequest(
     final List<Object?> list => list,
     _ => const <Object?>[],
   };
-  final said = UsageClass.parse(named(UsageHeaders.requestClass));
+  final said =
+      UsageClass.parse(named(UsageHeaders.requestClass)) ??
+      (named(UsageHeaders.session) != null ? UsageClass.auxiliary : null);
   final compaction =
       named(UsageHeaders.compaction) != null ||
       (said == null &&
@@ -475,6 +483,31 @@ class _Tally {
   }
 }
 
+/// Whether [event] (one of the Messages API's stream) brings some of the
+/// answer itself: text, reasoning, a call (its name, its input). Not a
+/// block opened empty, a signature, a keep-alive: the first that does is
+/// the time to first token.
+bool bringsAnswer(Object? event) => switch (event) {
+  {'type': 'content_block_delta', 'delta': final Map<Object?, Object?> delta} =>
+    switch (delta) {
+      {'text': final String text} ||
+      {'thinking': final String text} ||
+      {'partial_json': final String text} => text.trim().isNotEmpty,
+      _ => false,
+    },
+  {
+    'type': 'content_block_start',
+    'content_block': final Map<Object?, Object?> block,
+  } =>
+    switch (block) {
+      {'type': 'tool_use' || 'server_tool_use'} => true,
+      {'text': final String text} ||
+      {'thinking': final String text} => text.trim().isNotEmpty,
+      _ => false,
+    },
+  _ => false,
+};
+
 /// Follows one request through the proxy, from asked to answered: reads
 /// the answer as it goes to Claude Code (the Messages API's events, or its
 /// message whole), whichever upstream gave it, for the tokens, the time to
@@ -524,7 +557,18 @@ class UsageMeter {
   var _input = 0, _output = 0, _cacheRead = 0, _cacheWrite = 0;
   var _reasoning = 0;
   var _responseBytes = 0;
+  String? _serviceTier;
+  String? _geo;
   final Map<String, int> _toolCalls = {};
+
+  /// The upstream's own tools run, by name: as its usage counts them, and
+  /// as its answer shows them run (the larger is kept).
+  final Map<String, int> _serverTools = {};
+  final Map<String, int> _serverToolsSeen = {};
+
+  /// An OpenAI upstream's web searches: one an item done, or those of its
+  /// response whole.
+  var _searchesDone = 0, _searchesWhole = 0;
   final StringBuffer _pending = StringBuffer();
 
   /// A message's answer as it came, not events: read whole once it ends.
@@ -539,6 +583,11 @@ class UsageMeter {
 
   /// Why it failed.
   void fail(String message) => _error ??= message;
+
+  /// Claude Code gave up on it (it closed the connection): kept as
+  /// cancelled ([UsageCall.cancelled]), with what came of it till then.
+  void cancel() => _cancelled = true;
+  bool _cancelled = false;
 
   /// Events of the answer, as sent to Claude Code: text, in pieces as
   /// they come, not always whole lines.
@@ -583,8 +632,14 @@ class UsageMeter {
     if (json['stop_reason'] case final String reason) _stopReason = reason;
     if (json['content'] case final List<Object?> blocks) {
       for (final block in blocks) {
-        if (block case {'type': 'tool_use', 'name': final String name}) {
+        if (block case {
+          'type': 'tool_use' || 'server_tool_use',
+          'name': final String name,
+        }) {
           _toolCalls[name] = (_toolCalls[name] ?? 0) + 1;
+        }
+        if (block case {'type': 'server_tool_use', 'name': final String name}) {
+          _serverToolsSeen[name] = (_serverToolsSeen[name] ?? 0) + 1;
         }
       }
     }
@@ -592,25 +647,38 @@ class UsageMeter {
   }
 
   /// A line of the upstream's own stream (one not of Anthropic's API):
-  /// what it says of the reasoning, which is not passed on.
+  /// what it says of the reasoning, the service tier it answered at and
+  /// the web searches it ran, which are not passed on.
   void upstreamLine(String line) {
-    if (!line.contains('reasoning_tokens')) return;
-    final match = RegExp(r'"reasoning_tokens"\s*:\s*(\d+)').firstMatch(line);
-    if (match != null) {
-      final tokens = int.parse(match.group(1)!);
-      if (tokens > _reasoning) _reasoning = tokens;
+    if (line.contains('reasoning_tokens')) {
+      final match = RegExp(r'"reasoning_tokens"\s*:\s*(\d+)').firstMatch(line);
+      if (match != null) {
+        final tokens = int.parse(match.group(1)!);
+        if (tokens > _reasoning) _reasoning = tokens;
+      }
+    }
+    if (line.contains('"service_tier"')) {
+      final match = RegExp(r'"service_tier"\s*:\s*"([A-Za-z_-]+)"')
+          .firstMatch(line);
+      if (match != null) _serviceTier = match.group(1);
+    }
+    if (line.contains('web_search_call')) {
+      if (line.contains('"response.output_item.done"')) {
+        _searchesDone++;
+      } else if (!line.contains('"response.output_item.added"')) {
+        final whole = RegExp(r'"type"\s*:\s*"web_search_call"')
+            .allMatches(line)
+            .length;
+        if (whole > _searchesWhole) _searchesWhole = whole;
+      }
     }
   }
 
   void _line(String line) {
     if (!line.startsWith('data:')) return;
     _sawEvent = true;
-    // A piece of the answer: the first is the time to first token; the
-    // rest only count their bytes.
-    if (line.contains('"content_block_delta"')) {
-      _firstToken ??= _watch.elapsed;
-      return;
-    }
+    // A piece of the answer once the first is in: only its bytes count.
+    if (_firstToken != null && line.contains('"content_block_delta"')) return;
     final Object? event;
     try {
       event = jsonDecode(line.substring(5).trim());
@@ -618,6 +686,7 @@ class UsageMeter {
       return;
     }
     if (event is! Map) return;
+    if (bringsAnswer(event)) _firstToken ??= _watch.elapsed;
     switch (event['type']) {
       case 'message_start':
         if (event['message'] case final Map<Object?, Object?> message) {
@@ -627,12 +696,14 @@ class UsageMeter {
           }
         }
       case 'content_block_start':
-        _firstToken ??= _watch.elapsed;
         if (event['content_block'] case {
-          'type': 'tool_use' || 'server_tool_use',
+          'type': final String type && ('tool_use' || 'server_tool_use'),
           'name': final String name,
         }) {
           _toolCalls[name] = (_toolCalls[name] ?? 0) + 1;
+          if (type == 'server_tool_use') {
+            _serverToolsSeen[name] = (_serverToolsSeen[name] ?? 0) + 1;
+          }
         }
       case 'message_delta':
         _usage(event['usage']);
@@ -659,6 +730,28 @@ class UsageMeter {
     if (at('cache_creation_input_tokens') case final n? when n > 0) {
       _cacheWrite = n;
     }
+    if (usage['service_tier'] case final String tier when tier.isNotEmpty) {
+      _serviceTier = tier;
+    }
+    if (usage['inference_geo'] case final String geo when geo.isNotEmpty) {
+      _geo = geo;
+    }
+    _serverTools.addAll(usageServerTools(usage));
+  }
+
+  /// The upstream's tools run, the larger of each count kept.
+  Map<String, int> get _serverToolsRun {
+    final run = {..._serverToolsSeen};
+    void atLeast(String name, int count) {
+      if (count > (run[name] ?? 0)) run[name] = count;
+    }
+
+    for (final MapEntry(:key, :value) in _serverTools.entries) {
+      atLeast(key, value);
+    }
+    atLeast('web_search', math.max(_searchesDone, _searchesWhole));
+    run.removeWhere((_, count) => count <= 0);
+    return Map.unmodifiable(run);
   }
 
   /// What it came to, answered with [status]; null once given.
@@ -680,13 +773,25 @@ class UsageMeter {
       _whole.clear();
     }
     _watch.stop();
+    return _call(_cancelled ? UsageCall.cancelledStatus : status);
+  }
+
+  /// What it is so far, while under way ([UsageLedger.underway]): its
+  /// status 0.
+  UsageCall get progress => _call(0);
+
+  UsageCall _call(int status) {
     return UsageCall(
       at: _started,
       duration: _watch.elapsed,
       headers: _headers,
       firstToken: _firstToken,
       status: status,
-      error: status >= 400 ? (_error ?? 'HTTP $status') : _error,
+      error: status == UsageCall.cancelledStatus
+          ? null
+          : status >= 400
+          ? (_error ?? 'HTTP $status')
+          : _error,
       provider: provider,
       providerName: providerName,
       protocol: protocol,
@@ -694,6 +799,9 @@ class UsageMeter {
       upstreamModel: _upstreamModel == model ? null : _upstreamModel,
       effort: effort,
       fast: fast,
+      serviceTier: _serviceTier,
+      geo: _geo,
+      serverTools: _serverToolsRun,
       stream: stream,
       session: session,
       requestClass: info.requestClass,
@@ -722,6 +830,15 @@ class UsageMeter {
     );
   }
 }
+
+/// Anthropic's `usage.server_tool_use` (`web_search_requests`…): the
+/// upstream's tools run, by name (`web_search`).
+Map<String, int> usageServerTools(Map<Object?, Object?> usage) => {
+  if (usage['server_tool_use'] case final Map<Object?, Object?> tools)
+    for (final MapEntry(:key, :value) in tools.entries)
+      if (key is String && value is num && value > 0)
+        key.replaceFirst(RegExp(r'_requests$'), ''): value.toInt(),
+};
 
 class _StringSink implements Sink<String> {
   _StringSink(this._add);

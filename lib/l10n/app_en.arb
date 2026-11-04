@@ -787,17 +787,7 @@
   "cmdSidePanelCloseTab": "Close Side Panel Tab",
   "sidePanelFiles": "Files",
   "sidePanelTerminal": "Terminal",
-  "sidePanelBrowser": "Browser",
-  "@sidePanelBrowser": {"description": "The side panel's browser page, there once the browser plugin is installed."},
-  "browserNotConnected": "No browser is connected. Add BaoCode's extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.",
-  "browserNoSharedTab": "No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.",
   "browserOtherApp": "Another BaoCode is connected to the browser.",
-  "browserSharedTabs": "Shared Tabs",
-  "browserReload": "Reload",
-  "browserShowInBrowser": "Show in Browser",
-  "browserDetached": "The browser stopped letting BaoCode see this tab.",
-  "browserReconnect": "Reconnect",
-  "browserShowInPanel": "Show in Side Panel",
   "browserWatchTitle": "Watching you in the browser",
   "@browserWatchTitle": {"description": "The card in the conversation while an agent watches the user do something in their browser (browser_watch), recording it."},
   "browserWatchHint": "Do it in the BaoCode tab of your browser. When you're done, click Done here or the BaoCode button in the browser's toolbar.",
@@ -843,8 +833,11 @@
     "description": "Tooltip of the title bar button that shows the side panel."
   },
   "sidePanelHide": "Hide side panel",
-  "sidePanelMoveLeft": "Move to the Left of the Conversation",
-  "sidePanelMoveRight": "Move to the Right of the Conversation",
+  "chatLayout": "Layout",
+  "chatLayoutSidebarChatPanel": "Sidebar · Chat · Panel",
+  "chatLayoutSidebarPanelChat": "Sidebar · Panel · Chat",
+  "chatLayoutPanelChatSidebar": "Panel · Chat · Sidebar",
+  "chatLayoutChatPanelSidebar": "Chat · Panel · Sidebar",
   "@sidePanelHide": {
     "description": "Tooltip of the button that hides the side panel."
   },
@@ -1217,6 +1210,14 @@
   "btwCommandDetail": "Ask in a conversation of its own, beside this one",
   "@btwCommandDetail": {
     "description": "The /btw command in the composer's command list: what follows is asked in a new conversation copied from this one, listed under it."
+  },
+  "forkCommandDetail": "Fork this conversation and open the copy",
+  "@forkCommandDetail": {
+    "description": "The /fork command in the composer's command list: the conversation is copied into a new one (as the sidebar's Fork), which opens; what follows the command is sent there."
+  },
+  "forkUnavailable": "This conversation can't be forked: it needs a message first, and its agent has to support forking.",
+  "@forkUnavailable": {
+    "description": "Shown when /fork is sent in a conversation that cannot be copied (nothing sent yet, or its kernel cannot fork)."
   },
   "sidebarFoldAsides": "Hide /btw Conversations",
   "@sidebarFoldAsides": {
@@ -2601,7 +2602,7 @@
   "@generalSettingsClaudeCore": {
     "description": "Settings → General → Claude Code row: what runs Claude Code sessions, BaoCode's built-in core (written in Dart) or the Claude Code CLI."
   },
-  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.",
+  "generalSettingsClaudeCoreDescription": "Claude Code CLI: Anthropic's own program, with this machine's sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.",
   "generalSettingsClaudeCoreBuiltin": "Built-in",
   "@generalSettingsClaudeCoreBuiltin": {
     "description": "Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app."
@@ -4540,7 +4541,7 @@
       }
     }
   },
-  "claudePathMissing": "None found yet: Claude Code is downloaded as the first conversation starts.",
+  "claudePathMissing": "None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.",
   "generalSettingsIdeWindows": "Fast Ide Windows",
   "generalSettingsIdeWindowsDescription": "Where the Fast Ide opens: in the main window in place of the chat, one folder at a time, or in windows of its own, one per folder (New Window, ⇧⌘N / Ctrl+Shift+N, opens an empty one). Applies at once. (window.ideWindows)",
   "generalSettingsIdeWindowsSeparate": "Separate windows",
@@ -5970,6 +5971,15 @@
       }
     }
   },
+  "remoteStatusSystem": "System: {platform}",
+  "@remoteStatusSystem": {
+    "placeholders": {
+      "platform": {
+        "type": "String",
+        "example": "Windows x64"
+      }
+    }
+  },
   "remoteStatusTooltipLost": "The connection to {host} is lost: click to reconnect now",
   "@remoteStatusTooltipLost": {
     "placeholders": {
@@ -6602,6 +6612,18 @@
   "mobilePairCancel": "Cancel",
   "mobilePairNewCode": "New Code",
   "mobilePairCopyLink": "Copy Link",
+  "mobilePairQrHint": "Click to copy the link, to paste on the phone",
+  "mobileGetApp": "Get the Phone App",
+  "mobileGetAppDescription": "Scan with the phone's camera: the same downloads as on baocode.dev.",
+  "mobileGetAndroidDetail": "The APK; it keeps itself up to date",
+  "mobileGetIos": "iPhone and iPad",
+  "mobileGetIosDetail": "The beta, on TestFlight",
+  "mobileGetOpen": "Click to open {url}",
+  "@mobileGetOpen": {
+    "placeholders": {
+      "url": {"type": "String"}
+    }
+  },
   "mobilePairCopied": "Copied",
   "mobilePairExpires": "Good for {minutes} min, once. A phone that cannot scan it can paste the link instead.",
   "@mobilePairExpires": {
@@ -6672,6 +6694,15 @@
   "mobileRelayModeAutoDescription": "BaoCode's relays, the nearest that answers.",
   "mobileRelayModePinned": "Pick One",
   "mobileRelayModePinnedDescription": "Only the one picked: one of BaoCode's, or a custom address.",
+  "mobileRelayModeDirect": "Direct Only",
+  "mobileRelayModeDirectDescription": "No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.",
+  "mobileDirectPort": "Direct Port",
+  "mobileDirectPortDescription": "The UDP port phones connect to. Forward it to this computer at the router, and allow it in the firewall.",
+  "mobileDirectPortInvalid": "A port from 1024 to 65535.",
+  "mobileDirectAddress": "Direct Address",
+  "mobileDirectAddressDescription": "It goes in the pairing code and in every connection after.",
+  "mobileDirectAddressNone": "No public address yet: check again once this computer is online, or forward the port to it if it is behind a router.",
+  "mobileStatusDirect": "On, direct only",
   "mobilePathLan": "Same network",
   "mobilePathDirect": "Direct",
   "mobilePathRelay": "Through the relay",
@@ -7110,13 +7141,14 @@
     "description": "Tooltip and menu title of the branch picker under the chat input of a multi-folder workspace."
   },
   "settingsSectionAccounts": "Git Accounts",
-  "settingsAccountsKeywords": "GitHub GitLab sign in login token issue pull request merge request Gitea HTTP",
-  "accountsDescription": "Sign in to GitHub, GitLab or Gitea to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
+  "settingsAccountsKeywords": "GitHub GitLab Gitee Gitea sign in login token issue pull request merge request HTTP",
+  "accountsDescription": "Sign in to GitHub, GitLab, Gitee or Gitea to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.",
   "accountsSignedIn": "Signed in",
   "accountsAdd": "Add an account",
-  "accountsKeptLocally": "Tokens are kept in this computer's keychain and are sent only to the GitHub, GitLab or Gitea they are for. Nothing is posted without your confirmation.",
+  "accountsKeptLocally": "Tokens are kept in this computer's keychain and are sent only to the GitHub, GitLab, Gitee or Gitea they are for. Nothing is posted without your confirmation.",
   "accountsGitHubHosts": "github.com, or your company's GitHub Enterprise",
-  "accountsGitLabHosts": "gitlab.com, or a self-managed GitLab",
+  "accountsGitLabHosts": "gitlab.com, or a self-managed GitLab (http:// or https://, with its port)",
+  "accountsGiteeHosts": "gitee.com, with a personal access token",
   "accountsSignInBrowser": "Sign in with Browser",
   "accountsSignInToken": "Use a Token…",
   "accountsViaBrowser": "signed in with browser",
@@ -7158,10 +7190,11 @@
     }
   },
   "accountsSignIn": "Sign In",
-  "accountsHost": "Host",
+  "accountsHost": "Server",
   "accountsToken": "Token",
   "accountsTokenGitHubScopes": "A classic token with the repo and read:user scopes, or a fine-grained token with read and write access to issues and pull requests.",
   "accountsTokenGitLabScopes": "A personal access token with the api scope.",
+  "accountsTokenGiteeScopes": "A personal access token with the user_info, projects, pull_requests, issues and notes scopes.",
   "accountsTokenCreate": "Create a Token on {host}",
   "@accountsTokenCreate": {
     "placeholders": {
@@ -7171,6 +7204,29 @@
     }
   },
   "accountsTokenRefused": "The token was not accepted. Check that it is complete and has not expired.",
+  "accountsCertificateTitle": "Untrusted Certificate",
+  "@accountsCertificateTitle": {
+    "description": "Title of the dialog asking whether to trust a forge server's certificate."
+  },
+  "accountsCertificateDetail": "The certificate of {host} cannot be verified ({issuer}).\n\nSHA-256 fingerprint:\n{fingerprint}\n\nTrusting it lets BaoCode reach this server, and only the certificate with this fingerprint is accepted. You are asked again if the certificate changes.",
+  "@accountsCertificateDetail": {
+    "description": "What a self-signed or privately issued forge certificate is, before the user confirms it.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      },
+      "issuer": {
+        "type": "String"
+      },
+      "fingerprint": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsCertificateTrust": "Trust and Continue",
+  "@accountsCertificateTrust": {
+    "description": "Button that trusts the certificate shown, and only that one."
+  },
   "accountsBrowserTitle": "Sign in to {forge}",
   "@accountsBrowserTitle": {
     "placeholders": {
@@ -7295,7 +7351,7 @@
   },
   "stashImportPaste": "Paste an issue or pull request link",
   "stashImportAdd": "Add",
-  "stashImportNotALink": "Not a GitHub or GitLab issue or pull request link.",
+  "stashImportNotALink": "Not a GitHub, GitLab or Gitee issue or pull request link.",
   "stashImportSignIn": "Sign in to {forge} in Settings → Accounts to list its issues.",
   "@stashImportSignIn": {
     "placeholders": {
@@ -7310,7 +7366,7 @@
   "stashImportAll": "All open",
   "stashImportSearch": "Search",
   "stashImportLoading": "Loading…",
-  "stashImportNoRepos": "No project has a GitHub or GitLab remote. Paste an issue link above.",
+  "stashImportNoRepos": "No project has a GitHub, GitLab or Gitee remote. Paste an issue link above.",
   "stashImportNone": "No open issues here.",
   "stashImportKnown": "in Stash #{id}",
   "@stashImportKnown": {
@@ -7344,7 +7400,7 @@
   "stashWelcomeAgentTitle": "Hand it to an agent",
   "stashWelcomeAgent": "Click Implement in BaoCode, or mention it in a conversation; the conversation and the stash stay linked.",
   "stashWelcomeTrackTitle": "See how it goes",
-  "stashWelcomeTrack": "Cards show their conversations live, and the GitHub and GitLab issues and pull requests they link to stay in sync.",
+  "stashWelcomeTrack": "Cards show their conversations live, and the GitHub, GitLab and Gitee issues and pull requests they link to stay in sync.",
   "stashWelcomeStart": "Get Started",
   "stashWelcomeNoteBody": "Text, screenshots and links all go in, and each one gets a number of its own, like an issue.",
   "stashWelcomeHotkeyTitle": "Set a shortcut to note things down",
@@ -7444,9 +7500,6 @@
   "modelWelcomeStart": "Start Chatting",
   "healthNoModel": "Pick a model to start: add an upstream and its models are ready to use.",
   "modelSetUp": "Set Up a Model",
-  "claudeCoreHint": "This chat runs on BaoCode's built-in core. We recommend the Claude Code core for the fullest experience; it's downloaded for you if needed.",
-  "claudeCoreHintSwitch": "Switch to Claude Code",
-  "claudeCoreHintLater": "Not Now",
   "remoteAddServer": "Add SSH Server...",
   "remoteEditServer": "Edit",
   "settingsSectionSsh": "SSH Servers",
@@ -7605,7 +7658,7 @@
   "aboutFeedbackDetail": "Open an issue on GitHub, or see those others opened",
   "aboutOpen": "Open",
   "stashSettingsIssueSync": "Issues as stashes",
-  "stashSettingsIssueSyncDescription": "A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.",
+  "stashSettingsIssueSyncDescription": "A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.",
     "stashIssueSyncMine": "Only those assigned to or opened by me",
   "stashIssueSyncOff": "Off: imported or published ones only",
   "stashIssueLocal": "Local only",
@@ -8304,6 +8357,8 @@
   "gitStashNone": "No stashes",
   "gitStashTab": "Stash",
   "gitCommitTab": "Commit",
+  "gitCommitPanelFold": "Fold",
+  "gitCommitPanelUnfold": "Unfold",
   "gitStashSelected": "Stash Selected Files…",
   "gitCommitIgnored": "Ignored Files",
   "gitCommitShowIgnored": "Show Ignored Files",
@@ -8429,7 +8484,6 @@
   "settingsSectionUsage": "Usage",
   "sidePanelUsage": "Usage",
   "ustatKeywords": "usage statistics tokens cache calls cost dashboard upstream model",
-  "ustatDescription": "Every call to a model in BaoCode's conversations: Claude Code's own (a Claude plan or Anthropic's API), read from what it prints, and your custom upstreams', as BaoCode's model proxy passed them on. Tokens, the cache, time, by conversation, subagent and tool. Kept on this computer only.",
   "ustatAll": "All",
   "ustatAgent": "Agent",
   "ustatKind": "Kind",
@@ -8495,11 +8549,9 @@
   "ustatMetricCalls": "Calls",
   "ustatMetricLatency": "Latency",
   "ustatMetricSpeed": "Speed",
-  "ustatByClass": "By kind of request",
   "ustatByUpstream": "By upstream",
   "ustatByModel": "By model",
   "ustatByConversation": "By conversation",
-  "ustatByAgent": "Main agent and subagents",
   "ustatByTurn": "By turn",
   "ustatByTurnDetail": "Each of your messages and all the requests that answered it",
   "ustatTurnDetail": "{duration} · context up to {peak}",
@@ -8545,6 +8597,12 @@
   "ustatFieldTask": "Task",
   "ustatFieldAccount": "Account",
   "ustatFieldUpstreamLatency": "Upstream answered",
+  "ustatCallAsking": "Requesting",
+  "@ustatCallAsking": {"description": "A call under way, nothing of its answer yet"},
+  "ustatCallAnswering": "Answering",
+  "@ustatCallAnswering": {"description": "A call under way, its answer coming"},
+  "ustatCallCancelled": "Cancelled",
+  "@ustatCallCancelled": {"description": "A call Claude Code gave up on before it was answered in full (it timed out, or was interrupted)"},
   "ustatFieldFirstToken": "First token",
   "ustatFieldDuration": "Duration",
   "ustatFieldSpeed": "Speed",
@@ -8634,41 +8692,36 @@
   "ustatToolInputs": "inputs {tokens}",
   "@ustatToolInputs": {"placeholders": {"tokens": {"type": "String"}}},
   "ustatSwitchedHint": "Saved to Settings → Customize. The agent's next requests go without what was turned off.",
+  "ustatShowAuxiliary": "Show auxiliary requests",
+  "ustatShowAuxiliaryDescription": "Count Claude Code's requests beside the conversation (suggesting the next prompt, naming the conversation, summing up a web page) in the charts and totals. They are kept either way.",
   "ustatTrace": "Debug capture",
-  "ustatTraceDescription": "Also keep every request to a custom upstream whole: as Claude Code sent it, as it went to the upstream, the upstream's raw answer and what went back. Keys are masked. Takes a lot of space: turn it off when done.",
-  "ustatTraceStart": "Debug capture",
-  "ustatTraceStartHint": "Keep the raw requests and answers of the calls from now on",
-  "ustatTraceStop": "Stop capturing",
-  "ustatTraceOn": "Capturing · {count}",
-  "@ustatTraceOn": {"placeholders": {"count": {"type": "int"}}},
-  "ustatTraceKept": "Raw request and answer kept",
+  "ustatTraceDescription": "Also keep every request to a custom upstream whole: as Claude Code sent it, as it went to the upstream, the upstream's raw answer and what went back; of Claude Code's own models, only their answers. Keys are masked. Takes a lot of space: turn it off when done.",
   "ustatTraceTitle": "Raw exchange",
   "ustatTraceLoading": "Reading…",
   "ustatTraceGone": "The raw exchange was cleared.",
   "ustatTraceNone": "Nothing went this way (it was answered before).",
-  "ustatTraceRequest": "Claude Code → proxy",
-  "ustatTraceSent": "Proxy → upstream",
-  "ustatTraceReceived": "Upstream → proxy",
-  "ustatTraceAnswer": "Proxy → Claude Code",
+  "ustatTraceRequestBody": "Request body",
+  "ustatTraceRawResponse": "Raw response",
+  "ustatTraceToUpstream": "Sent upstream",
+  "ustatTraceResponseHeaders": "Response headers · {count}",
+  "@ustatTraceResponseHeaders": {"placeholders": {"count": {"type": "int"}}},
+  "ustatTraceAnswerOnly": "As Claude Code printed it; the request to Anthropic is not seen",
   "ustatTraceTry": "Try {n}",
   "@ustatTraceTry": {"placeholders": {"n": {"type": "int"}}},
   "ustatTraceCopyAll": "Copy all",
   "ustatTraceCopyBody": "Copy",
-  "ustatTraceHeaders": "Headers · {count}",
+  "ustatTraceHeaders": "Request headers · {count}",
   "@ustatTraceHeaders": {"placeholders": {"count": {"type": "int"}}},
-  "ustatTraceBody": "Body",
   "ustatTraceRaw": "As sent",
   "ustatTraceFormatted": "Formatted",
   "ustatTraceEmpty": "Empty",
   "ustatTraceMore": "Show more ({size} left)",
   "@ustatTraceMore": {"placeholders": {"size": {"type": "String"}}},
   "ustatTraceTruncated": "cut at 24M characters",
-  "ustatTracePassedOn": "passed on as the upstream answered",
   "ustatSpaceTraces": "; raw exchanges {size} ({count})",
   "@ustatSpaceTraces": {"placeholders": {"size": {"type": "String"}, "count": {"type": "int"}}},
   "ustatClearTraces": "Clear the raw exchanges only",
   "ustatClearTracesDetail": "The calls stay; their raw requests and answers are deleted from this computer.",
-  "ustatMakeupUnfold": "By tool, MCP server, skill and file",
   "ustatColumnTotal": "Total",
   "ustatColumnMix": "Breakdown",
   "ustatDeferred": "deferred, {size}",
@@ -8684,7 +8737,7 @@
   "@ustatCostUnpriced": {"placeholders": {"count": {"type": "int"}}},
   "ustatCostNoPrices": "No prices set",
   "ustatPrices": "Model prices",
-  "ustatPricesDetail": "A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.",
+  "ustatPricesDetail": "A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included, unless a price is set from a date on.",
   "ustatPricesAgentHint": "BaoCode can keep these for you: ask it in a chat to look up the current prices of these models and update them. It checks the upstream's own pricing page and writes them here.",
   "ustatPriceCurrency": "Currency",
   "ustatPriceAnyUpstream": "any upstream",
@@ -8719,5 +8772,100 @@
   "ustatCostIn": "In {currency} only; the other currencies are in the totals",
   "@ustatCostIn": {"placeholders": {"currency": {"type": "String"}}},
   "ustatPriceClaudeDefault": "Claude Code's own models without a price of yours are priced at Anthropic's API prices: the grey figures.",
-  "ustatContextUnpickHint": "Click again to unpick: back to the context as it is now"
+  "ustatPriceRuleTiers": "{count} tiers by prompt length",
+  "@ustatPriceRuleTiers": {"placeholders": {"count": {"type": "int"}}},
+  "ustatPriceRuleSchedule": "peak and off-peak hours",
+  "ustatPriceRuleFast": "fast mode ×{factor}",
+  "@ustatPriceRuleFast": {"placeholders": {"factor": {"type": "String"}}},
+  "ustatPriceRuleServiceTiers": "by service tier",
+  "ustatPriceRuleGeo": "by region",
+  "ustatPriceRulePerCall": "{amount} a call",
+  "@ustatPriceRulePerCall": {"placeholders": {"amount": {"type": "String"}}},
+  "ustatPriceRuleTools": "tools priced a use",
+  "ustatPriceRuleVersions": "{count} prices by date",
+  "@ustatPriceRuleVersions": {"placeholders": {"count": {"type": "int"}}},
+  "ustatPriceRuleRate": "upstream rate ×{factor}",
+  "@ustatPriceRuleRate": {"placeholders": {"factor": {"type": "String"}}},
+  "ustatPriceRuleTime": "time of week ×{factor}",
+  "@ustatPriceRuleTime": {"placeholders": {"factor": {"type": "String"}}},
+  "ustatPriceRuleFees": "fees {amount}",
+  "@ustatPriceRuleFees": {"placeholders": {"amount": {"type": "String"}}},
+  "ustatFees": "Fees",
+  "ustatPricedBy": "Priced by",
+  "ustatUpstreamRates": "Upstream rates",
+  "ustatUpstreamRatesDetail": "The models of these upstreams without a price of their own: the same model's price elsewhere, times the rate.",
+  "ustatUpstreamRateClear": "Clear the rate",
+  "ustatContextUnpickHint": "Click again to unpick: back to the context as it is now",
+  "localRunTitle": "Run on this computer",
+  "localRunReason": "The agent on {host} wants to run this command on your computer ({system}), not on {host}.",
+  "@localRunReason": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      },
+      "system": {
+        "type": "String"
+      }
+    }
+  },
+  "localRunAlways": "Always allow for {host}",
+  "@localRunAlways": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteLocalAccess": "Allow Remote Agents to Act on This Computer",
+  "remoteLocalAccessDetail": "Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.",
+  "sidePanelPorts": "Ports",
+  "portsEmpty": "No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.",
+  "@portsEmpty": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsAdd": "Forward a Port",
+  "portsCopy": "Copy Address",
+  "portsOpen": "Open in Browser",
+  "portsStop": "Stop Forwarding",
+  "portsHostToHere": "{host} → this computer",
+  "@portsHostToHere": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsHereToHost": "This computer → {host}",
+  "@portsHereToHost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "portsAuto": "Auto",
+  "portsPort": "Port",
+  "portsListen": "Listen on (optional)",
+  "portsForward": "Forward",
+  "portsCopied": "Copied {address}",
+  "@portsCopied": {
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "branchBarFolder": "{path}\nClick to copy its path",
+  "@branchBarFolder": {
+    "description": "Hover of the project folder shown under the chat in place of a Git branch (no repository): its path, then that a click copies it.",
+    "placeholders": {"path": {"type": "String"}}
+  },
+  "branchBarPathCopied": "Path copied",
+  "@branchBarPathCopied": {
+    "description": "Hover of the project folder under the chat once clicked: its path was copied."
+  }
 }

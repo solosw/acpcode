@@ -6,6 +6,9 @@
 #
 # A version may be uploaded again (the tag moved to a fixed commit): the
 # GitHub Release for that tag is replaced.
+#
+# This fork's channel is the GitHub Release alone (solosw/baocode): one
+# standard edition, no R2 upload, no test-* sharing, no server-* publishing.
 name: Release
 
 on:
@@ -15,6 +18,8 @@ on:
 
 permissions:
   contents: read
+  # To see when the remote server's artifact is there (wait-for-artifact).
+  actions: read
 
 # One release at a time; one that started is never cancelled halfway
 # through its upload.
@@ -25,6 +30,9 @@ concurrency:
 env:
   FLUTTER_VERSION: 3.47.5
 
+# flutter-action caches nothing here: a tag's run restores only main's
+# caches, so each one missed and saved its own Flutter (2 GB, minutes on
+# Windows) for no other run. bao_iroh's library is main's (bao_iroh.yml).
 jobs:
   check:
     name: Check the version
@@ -85,19 +93,67 @@ jobs:
               print(f'::warning::{this} is published already: publishing it again')
           EOF
 
+  # Only Windows builds for Windows, each architecture on its own; the Mac
+  # below takes these builds, as VERSION names all of them.
+  remote-windows:
+    name: Build the remote server for Windows (${{ matrix.arch }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # One architecture failing leaves the other building, to be re-run alone.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        if: matrix.arch == 'x64'
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+      # Flutter's Windows SDK archive carries an x64 Dart; cloned at the
+      # release's tag, it downloads the Arm one for this machine.
+      - name: Clone Flutter
+        if: matrix.arch == 'arm64'
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch "$env:FLUTTER_VERSION" https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          "$env:RUNNER_TEMP\flutter\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$env:RUNNER_TEMP\flutter\bin\flutter.bat" --version
+          # The engine's packages (sky_engine), for pub.
+          & "$env:RUNNER_TEMP\flutter\bin\flutter.bat" precache --windows
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Build
+        run: dart run tool/build_remote_server.dart --out build/remote-windows --only windows-${{ matrix.arch }}
+      - name: Run it here
+        shell: pwsh
+        run: ./tool/test_remote_server_windows.ps1 build/remote-windows/baocode-server-windows-${{ matrix.arch }} ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v6
+        with:
+          name: remote-windows-${{ matrix.arch }}
+          if-no-files-found: error
+          path: build/remote-windows/baocode-server-windows-${{ matrix.arch }}
+
   remote:
     name: Build the remote server
-    needs: check
+    needs: [check, remote-windows]
     # A Mac, as only one builds for macOS: the Linux builds are
-    # cross-compiled, the macOS x64 one by an x64 Dart SDK under Rosetta.
+    # cross-compiled, the macOS x64 one by an x64 Dart SDK under Rosetta;
+    # the Windows ones are taken from Windows (remote-windows).
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
       - name: Get the x64 Dart SDK of Flutter's version
         run: |
           softwareupdate --install-rosetta --agree-to-license > /dev/null 2>&1 || true
@@ -108,15 +164,26 @@ jobs:
             "https://storage.googleapis.com/dart-archive/channels/$channel/release/$dart/sdk/dartsdk-macos-x64-release.zip"
           unzip -q "$RUNNER_TEMP/dart-x64.zip" -d "$RUNNER_TEMP/dart-x64"
           "$RUNNER_TEMP/dart-x64/dart-sdk/bin/dart" --version
-      # Once, for both apps: they carry its servers.json, and download the
-      # build a host needs from this GitHub Release (docs/ssh-remote.md, 9.3).
-      - name: Build for Linux and macOS, x64 and arm64
+      # `dart run tool/…` runs bao_iroh's build hook, which would build iroh
+      # for this Mac where main's build of it is not in the cache; a macOS
+      # runner has rustup, as it had before (no setup-rust here).
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: remote-windows-*
+          merge-multiple: true
+          path: build/remote-windows
+      # Once, for the four apps: they carry its servers.json, and download
+      # the build a host needs from this GitHub Release (docs/ssh-remote.md,
+      # 9.3).
+      - name: Build for Linux and macOS, x64 and arm64, with Windows'
         run: |
           dart run tool/build_remote_server.dart --out build/remote --all \
-            --macos-x64-dart "$RUNNER_TEMP/dart-x64/dart-sdk/bin/dart"
+            --macos-x64-dart "$RUNNER_TEMP/dart-x64/dart-sdk/bin/dart" \
+            --from build/remote-windows
       - name: Run the macOS builds here
         run: tool/test_remote_server_macos.sh build/remote
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: remote
           if-no-files-found: error
@@ -124,7 +191,7 @@ jobs:
             build/remote/VERSION
             build/remote/servers.json
             build/remote/*.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: remote-linux
           if-no-files-found: error
@@ -138,8 +205,8 @@ jobs:
     needs: remote
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: remote-linux
           path: build/remote
@@ -154,7 +221,9 @@ jobs:
 
   macos:
     name: Build for macOS
-    needs: [check, remote]
+    # Not after the remote server: its artifact is waited for once the app
+    # is built (wait-for-artifact), the two built side by side.
+    needs: check
     runs-on: macos-15
     # The Developer ID certificate and the notary key are the release
     # environment's secrets, for tags only. Without them (a build only, or
@@ -171,7 +240,6 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
       - name: Put the Developer ID certificate in a keychain
         if: env.MACOS_CERTIFICATE != ''
         run: |
@@ -191,20 +259,27 @@ jobs:
         run: |
           echo "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
           echo "BAOCODE_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v7
+      - name: Install create-dmg
+        run: brew install create-dmg
+      # bao_iroh's Rust (the phones' link), built by its build hook where
+      # main's build of it is not in the cache (Rust set up for it then).
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Build
+        run: dart run tool/build_macos.dart --build-only
+      - uses: ./.github/actions/wait-for-artifact
         with:
           name: remote
           path: build/remote
-      - name: Install create-dmg
-        run: brew install create-dmg
-      # bao_iroh's Rust (the phones' link), built by its build hook.
-      - uses: ./.github/actions/setup-rust
-      - name: Build, sign and notarise
+          job: Build the remote server
+      - name: Sign, notarise and package
         env:
           BAOCODE_MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           BAOCODE_NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           BAOCODE_NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
-        run: dart run tool/build_macos.dart --remote-built
+        run: dart run tool/build_macos.dart --skip-build
       - name: Launch each app, as an update installs it
         run: |
           # A valid signature is not enough: dyld can still refuse to load
@@ -252,7 +327,9 @@ jobs:
   # runs on alone.
   windows:
     name: Build for Windows (${{ matrix.arch }})
-    needs: [check, remote]
+    # Not after the remote server: its artifact is waited for once the app
+    # is built (wait-for-artifact), the two built side by side.
+    needs: check
     runs-on: ${{ matrix.runner }}
     strategy:
       # One architecture failing leaves the other building, to be re-run alone.
@@ -274,7 +351,6 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
       # Flutter's Windows SDK archive carries an x64 Dart; cloned at the
       # release's tag, it downloads the Arm one for this machine.
       - name: Clone Flutter
@@ -299,14 +375,21 @@ jobs:
           if ((Get-FileHash $is -Algorithm SHA256).Hash -ne '9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732') { throw 'innosetup-6.7.3.exe: wrong SHA-256' }
           $setup = Start-Process $is -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/ALLUSERS' -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "Inno Setup's installer exited with $($setup.ExitCode)" }
-      - uses: actions/download-artifact@v7
+      # bao_iroh's Rust (the phones' link), built by its build hook where
+      # main's build of it is not in the cache (Rust set up for it then).
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Build
+        run: dart run tool/build_windows.dart --build-only --arch ${{ matrix.arch }}
+      - uses: ./.github/actions/wait-for-artifact
         with:
           name: remote
           path: build/remote
-      # bao_iroh's Rust (the phones' link), built by its build hook.
-      - uses: ./.github/actions/setup-rust
-      - name: Build
-        run: dart run tool/build_windows.dart --remote-built --arch ${{ matrix.arch }}
+          job: Build the remote server
+      - name: Package
+        run: dart run tool/build_windows.dart --skip-build --remote-built --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v6
         with:
           name: windows-${{ matrix.arch }}
@@ -323,12 +406,14 @@ jobs:
 
   linux:
     name: Build for Linux (${{ matrix.arch }}, ${{ matrix.edition }})
-    needs: [check, remote]
+    # Not after the remote server: its artifact is waited for once the app
+    # is built (wait-for-artifact), the two built side by side.
+    needs: check
     # The oldest Ubuntu built on: its glibc and GTK are what the package
     # runs on from there up.
     runs-on: ${{ matrix.runner }}
     strategy:
-      # One edition failing leaves the other building, to be re-run alone.
+      # One architecture failing leaves the other building, to be re-run alone.
       fail-fast: false
       matrix:
         arch: [x64, arm64]
@@ -338,11 +423,6 @@ jobs:
             runner: ubuntu-22.04
           - arch: arm64
             runner: ubuntu-22.04-arm
-    env:
-      SUFFIX: ${{ matrix.edition == 'channel' && '-channel' || '' }}
-      # The channel build's login window is WebKitGTK's
-      # (linux/runner/CMakeLists.txt).
-      BAOCODE_CHANNEL: ${{ matrix.edition == 'channel' && 'true' || '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
@@ -350,7 +430,6 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
       # Flutter publishes no SDK archive for Linux on arm64, so there it is
       # cloned at the release's tag; the engine it downloads has arm64 builds.
       - name: Clone Flutter
@@ -365,15 +444,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
             liblzma-dev libstdc++-12-dev xvfb dbus-x11
-          if [ "$BAOCODE_CHANNEL" = true ]; then
-            sudo apt-get install -y libwebkit2gtk-4.1-dev
-          fi
-      - uses: actions/download-artifact@v7
-        with:
-          name: remote
-          path: build/remote
-      # bao_iroh's Rust (the phones' link), built by its build hook.
-      - uses: ./.github/actions/setup-rust
+      # bao_iroh's Rust (the phones' link), built by its build hook where
+      # main's build of it is not in the cache (Rust set up for it then).
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
       # The Dart code's symbols are saved beside it, for a jank sample's
       # libapp.so+0x… frames (tool/symbolize_jank_sample.dart). Only saved:
       # libapp.so stays as it was.
@@ -381,11 +457,15 @@ jobs:
         run: |
           mkdir -p build/symbols
           flutter build linux --release \
-            "--extra-gen-snapshot-options=--save-debugging-info=$PWD/build/symbols/app.linux-${{ matrix.arch }}.symbols" \
-            ${{ matrix.edition == 'channel' && '--dart-define=BAOCODE_CHANNEL=true' || '' }}
+            "--extra-gen-snapshot-options=--save-debugging-info=$PWD/build/symbols/app.linux-${{ matrix.arch }}.symbols"
+      - uses: ./.github/actions/wait-for-artifact
+        with:
+          name: remote
+          path: build/remote
+          job: Build the remote server
       - name: Package the .deb and the tarball
         run: |
-          sh tool/package_linux_deb.sh ${{ matrix.edition == 'channel' && '--channel' || '' }}
+          sh tool/package_linux_deb.sh
           dpkg-deb --info build/installers/BaoCode-*.deb
           # The phones' link (bao_iroh's Rust) is in it.
           dpkg-deb --contents build/installers/BaoCode-*.deb | grep -q 'lib/libbao_iroh.so$'
@@ -462,7 +542,9 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      # For `dart run tool/release_manifest.dart`: bao_iroh's build hook
+      # runs for it too.
+      - uses: ./.github/actions/bao-iroh-prebuilt
       - uses: actions/download-artifact@v7
         with:
           path: dist
@@ -476,7 +558,8 @@ jobs:
             dist/windows-arm64/BaoCode-$MARKETING-setup-arm64.exe out/
           cp dist/linux-*/*.deb dist/linux-*/*.tar.gz out/
           # The remote server builds the app downloads the first time a
-          # host of that platform connects.
+          # host of that platform connects (all six: servers.json names
+          # them, and only Linux was built into any GitHub release before).
           cp dist/remote/*.gz out/
           find out -type f -printf '%f\n' | sort
       - name: Write latest.json
@@ -487,6 +570,8 @@ jobs:
             file="release-notes/$MARKETING.$language.md"
             if [ -f "$file" ]; then
               notes+=(--notes-$language "$file")
+            else
+              echo "::warning::No $file: the update notification and the changelog say nothing of $MARKETING"
             fi
           done
           dart run tool/release_manifest.dart \
@@ -524,4 +609,6 @@ jobs:
             out/baocode-server-linux-x64.gz \
             out/baocode-server-linux-arm64.gz \
             out/baocode-server-darwin-x64.gz \
-            out/baocode-server-darwin-arm64.gz
+            out/baocode-server-darwin-arm64.gz \
+            out/baocode-server-windows-x64.gz \
+            out/baocode-server-windows-arm64.gz

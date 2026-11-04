@@ -676,7 +676,7 @@ class _OptionRow extends StatelessWidget {
             color: selected
                 ? colors['list.activeSelectionBackground']
                 : highlighted
-                ? AppColors.hover
+                ? AppColors.bubbleHover
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(

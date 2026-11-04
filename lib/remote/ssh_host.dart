@@ -64,8 +64,18 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   @override
   String get name => host;
 
+  /// The host's own: Windows' on a Windows host (as its hello says, once
+  /// connected), POSIX otherwise. Where there is a path, how it is spelled
+  /// says as much before then ([RemoteLocation.pathsFor]).
   @override
-  p.Context get paths => p.posix;
+  p.Context get paths => hello?.platform.os == 'win' ? p.windows : p.posix;
+
+  /// As its hello says, once connected.
+  @override
+  String? get home => switch (hello?.home) {
+    final home? when home.isNotEmpty => home,
+    _ => null,
+  };
 
   @override
   String pathOf(String location) => RemoteLocation.pathOf(location);
@@ -87,7 +97,7 @@ class SshHost extends ChangeNotifier implements ProjectHost {
             remoteGitService(this, folder).isRepositoryTop(),
         submodulesOf: (folder) =>
             remoteGitService(this, folder).submodulePaths(),
-        paths: paths,
+        paths: RemoteLocation.pathsFor(root),
       );
 
   @override

@@ -15,6 +15,7 @@ import '../../models/model_icons.dart';
 import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
+import '../../remote/port_forwards.dart';
 import '../../remote/remote_location.dart';
 import '../../settings/user_settings.dart';
 import '../../usage/claude_usage_meter.dart';
@@ -452,6 +453,10 @@ class ClaudeCodeKernel
   int _contextWindow = 200000;
   bool _contextReported = false;
 
+  /// What filled the context as last counted (`get_context_usage`): the
+  /// Claude plan's calls' makeup, which no proxy sees.
+  ContextDetail? _contextDetail;
+
   /// The models' own windows, by the model the CLI resolved them to, as
   /// reported while they were in use.
   static final Map<String, int> _modelWindows = {};
@@ -610,6 +615,7 @@ class ClaudeCodeKernel
           instructions: workspace?.instructions,
           ownPrompt: workspace?.ownPrompt ?? false,
           tools: workspace?.tools,
+          userServers: workspace?.userServers ?? false,
           allowed: workspace?.allowedTools ?? const [],
           models: switch (custom) {
             (final provider, _) => _requestedModels(provider),
@@ -624,7 +630,13 @@ class ClaudeCodeKernel
       _transport = transport;
       _usage = custom == null
           ? ClaudeUsageMeter(
-              record: (call) => UsageLedger.current.record(call),
+              record: (call, {trace}) =>
+                  UsageLedger.current.record(call, trace: trace),
+              tracing: () => UsageLedger.current.trace,
+              underway: (key, progress) => progress == null
+                  ? UsageLedger.current.end(key)
+                  : UsageLedger.current.begin(key, progress),
+              makeup: () => _contextDetail,
               session: () => _sessionId,
               providerName: 'Claude Code',
               quota: () => _quota,
@@ -1087,8 +1099,11 @@ class ClaudeCodeKernel
         costUsd: usage?.costUsd,
       );
     }
-    for (final id in _permissions.keys) {
+    for (final MapEntry(key: id, value: permission) in _permissions.entries) {
       emit(InteractionResolved(nextSeq, id));
+      if (permission.sdk case final sdk? when !sdk.isCompleted) {
+        sdk.complete(null);
+      }
     }
     _permissions.clear();
     if (!interrupted && worked != null) {
@@ -1541,6 +1556,16 @@ class ClaudeCodeKernel
   @override
   void answer(String requestId, InteractionAnswer answer) {
     final permission = _permissions.remove(requestId);
+    if (permission?.sdk case final sdk?) {
+      emit(InteractionResolved(nextSeq, requestId));
+      if (!sdk.isCompleted) {
+        sdk.complete(switch (answer) {
+          ApprovalAnswer(:final decision) => decision,
+          QuestionAnswer() => null,
+        });
+      }
+      return;
+    }
     final control = _control;
     if (permission == null || control == null) return;
     emit(InteractionResolved(nextSeq, requestId));
@@ -1606,6 +1631,25 @@ class ClaudeCodeKernel
       _control!.respond(requestId, {
         'behavior': 'deny',
         'message': ClaudeTranslator.planPresented,
+      });
+      return;
+    }
+    // Where no one is there to answer a question either (a bot's,
+    // KernelWorkspace.approvesAll: the user reads its messages alone, on
+    // their phone), it would wait for ever: asked in its words instead.
+    if (tool == 'AskUserQuestion' && (_workspace?.approvesAll ?? false)) {
+      _control!.respond(requestId, {
+        'behavior': 'deny',
+        'message': _askInWords,
+      });
+      return;
+    }
+    // The app's tools that ask the user themselves, in any mode (see
+    // ClaudeSdkTool.asksItself): not asked twice.
+    if (ClaudeSdkTools.called(tool)?.asksItself ?? false) {
+      _control!.respond(requestId, {
+        'behavior': 'allow',
+        'updatedInput': input,
       });
       return;
     }
@@ -1977,9 +2021,39 @@ class ClaudeCodeKernel
         cwd: _cwd,
         sessionId: _sessionId,
         cancelled: _sdkCallsCancelled.future,
+        ask: _sdkAsk,
       ),
     );
     _control?.respond(id, {'mcp_response': response});
+  }
+
+  int _sdkAsks = 0;
+
+  /// One of the app's own tools asks the user: on the conversation, as the
+  /// CLI's requests are; but answered to the tool. Given up as the turn
+  /// ends; null where no one is there to ask.
+  Future<ApprovalDecision?> _sdkAsk(ApprovalRequest request) {
+    // No one there (a bot's), or Don't ask: not allowed.
+    if ((_workspace?.approvesAll ?? false) || _approval == 'dontAsk') {
+      return Future.value();
+    }
+    final id = 'baocode-${++_sdkAsks}';
+    final answered = Completer<ApprovalDecision?>();
+    _permissions[id] = _Permission(const {}, const [], const [], sdk: answered);
+    emit(
+      InteractionRequested(
+        nextSeq,
+        ApprovalRequest(
+          id: id,
+          title: request.title,
+          toolName: request.toolName,
+          reason: request.reason,
+          preview: request.preview,
+          alwaysAllowLabel: request.alwaysAllowLabel,
+        ),
+      ),
+    );
+    return answered.future;
   }
 
   /// An MCP server asks the user for input: its form as questions, or a
@@ -2197,6 +2271,8 @@ class ClaudeCodeKernel
     if (account['subscriptionType'] case final String plan
         when plan.trim().isNotEmpty) {
       final name = plan.trim();
+      // Told as `max`, or already as `Claude Max`.
+      if (name.toLowerCase().startsWith('claude')) return name;
       return 'Claude ${name[0].toUpperCase()}${name.substring(1)}';
     }
     return account['apiKeySource'] != null ? 'Anthropic API' : null;
@@ -2613,7 +2689,7 @@ class ClaudeCodeKernel
                     },
                   ),
             ],
-            detail: ContextDetail.parse(usage),
+            detail: _contextDetail = ContextDetail.parse(usage),
           ),
         ),
       );
@@ -2686,6 +2762,22 @@ class ClaudeCodeKernel
 
   /// The SSH host the agent runs on; null for this machine.
   String? get _remoteHost => RemoteLocation.hostOf(_cwd);
+
+  /// What the agent's commands on an SSH host print: a server's address
+  /// forwarded here as it says it (see PortForwards.notice).
+  @override
+  void emit(KernelEvent event) {
+    super.emit(event);
+    if (event
+        case ItemUpserted(
+          item: ToolCallItem(kind: ToolKind.command, :final output?),
+        )
+        when output.isNotEmpty) {
+      if (_remoteHost case final host? when !RemoteLocation.isWsl(host)) {
+        PortForwards.instance.notice(host, output);
+      }
+    }
+  }
 
   /// Whether [text] says Claude Code is not logged in.
   static bool _notLoggedIn(String text) {
@@ -3397,6 +3489,12 @@ class ClaudeCodeKernel
       '<system-reminder>The user has left Ask mode: you may now edit files '
       'and run commands as the task needs.</system-reminder>';
 
+  /// The answer to a question where no one can answer it.
+  static const _askInWords =
+      'The user cannot see or answer this tool here: they only read your '
+      'messages. Ask them in your reply instead, briefly, and wait for '
+      'their answer.';
+
   /// The answer to what would be asked in Don't ask.
   static const _notAsked =
       'The user is not asked in this mode, and this is not pre-approved.';
@@ -3644,7 +3742,12 @@ class _Permission {
     this.suggestions,
     this.questions, {
     this.elicitation,
+    this.sdk,
   });
+
+  /// For one of the app's own tools asking (ClaudeSdkCall.ask): answered
+  /// here, not to the CLI.
+  final Completer<ApprovalDecision?>? sdk;
 
   /// For an MCP server's elicitation: its form's fields, or the link it
   /// asks to open.

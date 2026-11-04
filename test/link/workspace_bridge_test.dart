@@ -1,8 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:bao_link/bao_link.dart';
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
-import 'package:baocode/chat/chat_session.dart' show ComposerMessage;
+import 'package:baocode/chat/chat_session.dart' show ComposerMessage, UserPlace;
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/bots/bot_folders.dart';
 import 'package:baocode/bots/bots.dart';
@@ -271,6 +272,16 @@ void main() {
         throwsA(isA<LinkRemoteException>()),
       );
     });
+  });
+
+  test('a message from the phone tells the agent so, unseen', () async {
+    await bridge.handle(LinkMethods.send, {'session': id, 'text': 'go'});
+    await settle();
+    final content = (cli.users.last['message']! as Map)['content']! as List;
+    expect(
+      [for (final block in content) (block as Map)['text']],
+      [UserPlace.phone.note, 'go'],
+    );
   });
 
   test('streamed text goes as what was added, and adds up the same', () async {
@@ -552,6 +563,57 @@ void main() {
     // None for one with an emoji.
     expect(
       withBots.handle(LinkMethods.botAvatar, {'bot': 'assistant'}),
+      throwsA(
+        isA<LinkRemoteException>().having(
+          (e) => e.code,
+          'code',
+          LinkErrors.notFound,
+        ),
+      ),
+    );
+  });
+
+  test('a bot\'s files open from its chat: by their full path', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (_, desktop) = await peers();
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'PC', kind: 'pc', system: 'Win'),
+      bots: bots,
+    );
+    addTearDown(withBots.dispose);
+    final folder = Directory.systemTemp.createTempSync('bot_files');
+    addTearDown(() => folder.deleteSync(recursive: true));
+    final pdf = File('${folder.path}/简历.pdf')
+      ..writeAsBytesSync([37, 80, 68, 70, 0, 1, 2]);
+    final notes = File('${folder.path}/notes.md')..writeAsStringSync('# Hi');
+    // As its reply links them, though the bot is in no project.
+    expect(
+      await withBots.handle(LinkMethods.read, {
+        'bot': 'assistant',
+        'path': notes.path,
+      }),
+      containsPair('text', '# Hi'),
+    );
+    expect(
+      await withBots.handle(LinkMethods.read, {
+        'bot': 'assistant',
+        'path': pdf.path,
+      }),
+      {'binary': true},
+    );
+    final download = await withBots.handle(LinkMethods.download, {
+      'bot': 'assistant',
+      'path': pdf.path,
+    }) as Map;
+    expect(base64.decode(download['data'] as String), pdf.readAsBytesSync());
+    expect(
+      withBots.handle(LinkMethods.read, {'bot': 'nobody', 'path': pdf.path}),
       throwsA(
         isA<LinkRemoteException>().having(
           (e) => e.code,

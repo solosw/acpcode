@@ -1,4 +1,9 @@
+import 'dart:convert';
+
+import '../kernel/kernel_types.dart';
+import 'usage_capture.dart';
 import 'usage_record.dart';
+import 'usage_trace.dart';
 
 /// Claude Code's own calls (as it is logged in: a Claude plan, or
 /// Anthropic's API), which go to Anthropic without the model proxy: each
@@ -15,6 +20,13 @@ import 'usage_record.dart';
 /// printed: what else its totals have past those seen (input with it) is
 /// kept as one auxiliary call.
 ///
+/// The main agent's calls are told what filled their context by [makeup]
+/// (the CLI's count at the turn's end), the conversation's share of it
+/// made as large as the call's input: its request is not seen.
+///
+/// While [tracing], each call's answer is kept with it as the CLI printed
+/// it (its events, else its message): its request is not seen.
+///
 /// One a process: the CLI's totals start over with it.
 class ClaudeUsageMeter {
   ClaudeUsageMeter({
@@ -23,10 +35,24 @@ class ClaudeUsageMeter {
     this.provider = 'claude-code',
     this.providerName,
     this.quota,
+    this.tracing,
+    this.makeup,
+    this.underway,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
-  final void Function(UsageCall call) record;
+  final void Function(UsageCall call, {UsageTrace? trace}) record;
+
+  /// A call is under way (what it is so far, as [progress] tells), or no
+  /// longer is (null): the main agent's asking, and each call streaming.
+  final void Function(Object key, UsageCall Function()? progress)? underway;
+
+  /// Whether calls are kept whole (UsageLedger.trace): their answers.
+  final bool Function()? tracing;
+
+  /// What filled the main agent's context, as the CLI last counted it
+  /// (`get_context_usage`).
+  final ContextDetail? Function()? makeup;
 
   /// The conversation's id as it is now (the CLI tells it at start).
   final String? Function() session;
@@ -64,7 +90,10 @@ class ClaudeUsageMeter {
   final _Tokens _seen = _Tokens();
 
   /// The main agent is to ask: a prompt sent.
-  void requested() => _requestedAt = _clock();
+  void requested() {
+    _requestedAt = _clock();
+    _syncUnderway();
+  }
 
   void receive(Map<String, Object?> message) {
     final parent = message['parent_tool_use_id'] as String?;
@@ -80,17 +109,95 @@ class ClaudeUsageMeter {
         // before is done.
         _closeLoose(parent);
         if (parent == null) _requestedAt = _clock();
-      // The turn is over: what is open is done (cut off, if streaming).
+      // The turn is over: what is open is done (cut off, if streaming),
+      // and nothing more is asked.
       case 'result':
         _closeAll();
+        _requestedAt = null;
         _reconcile(_map(message['modelUsage']));
     }
+    _syncUnderway();
   }
 
   /// Keeps what is still open: the process ends.
   void close() {
     _closeAll();
     _keepHeld();
+    _requestedAt = null;
+    _syncUnderway();
+  }
+
+  /// The calls told [underway], by their keys.
+  final Set<Object> _told = {};
+
+  /// The main agent's asking, before its answer begins: its key.
+  late final Object _asking = (this, '');
+
+  /// Tells [underway] what is under way now, as against what it was told.
+  void _syncUnderway() {
+    final tell = underway;
+    if (tell == null) return;
+    final now = <Object>{
+      if (_requestedAt != null && _streaming(null) == null) _asking,
+      for (final call in _open.values)
+        if (call.streamed) (this, call.id),
+    };
+    if (now.length == _told.length && _told.containsAll(now)) return;
+    for (final key in _told.difference(now)) {
+      tell(key, null);
+    }
+    for (final key in now.difference(_told)) {
+      tell(key, switch (key) {
+        (_, final String id) when id.isNotEmpty => () => _progress(_open[id]),
+        _ => _askingProgress,
+      });
+    }
+    _told
+      ..clear()
+      ..addAll(now);
+  }
+
+  /// The main agent's request asked, nothing of its answer yet.
+  UsageCall _askingProgress() {
+    final now = _clock();
+    final at = _requestedAt ?? now;
+    return UsageCall(
+      at: at,
+      duration: now.difference(at),
+      status: 0,
+      provider: provider,
+      providerName: providerName,
+      protocol: 'anthropic',
+      model: _clean(_model ?? ''),
+      session: session(),
+    );
+  }
+
+  /// [call] streaming, what it is so far.
+  UsageCall _progress(_Call? call) {
+    if (call == null) return _askingProgress();
+    final tokens = call.usage;
+    final agent = call.parent == null ? null : _agents[call.parent];
+    return UsageCall(
+      at: call.at,
+      duration: _clock().difference(call.at),
+      headers: call.headers,
+      firstToken: call.firstToken,
+      status: 0,
+      provider: provider,
+      providerName: providerName,
+      protocol: 'anthropic',
+      model: _clean(call.model ?? ''),
+      session: session(),
+      requestClass: call.parent == null ? UsageClass.main : UsageClass.subagent,
+      agentId: call.parent,
+      agentType: agent?.type,
+      task: agent?.task,
+      input: tokens.input,
+      output: tokens.output,
+      cacheRead: tokens.cacheRead,
+      cacheWrite: tokens.cacheWrite,
+    );
   }
 
   void _closeAll() {
@@ -105,7 +212,7 @@ class ClaudeUsageMeter {
     _held.clear();
     for (final (i, (:call, :compacted, :quota)) in held.indexed) {
       final share = output ~/ held.length + (i < output % held.length ? 1 : 0);
-      record(_build(call, compacted: compacted, quota: quota, more: share));
+      _keep(call, compacted: compacted, quota: quota, more: share);
     }
   }
 
@@ -156,28 +263,40 @@ class ClaudeUsageMeter {
           ..streamed = true
           ..model = message['model'] as String? ?? _model
           ..headers = asked == null ? null : now.difference(asked)
-          ..usage.take(_map(message['usage']));
+          ..events = tracing?.call() ?? false ? StringBuffer() : null
+          ..usage.take(_map(message['usage']))
+          ..event(event);
       case 'content_block_start':
-        final call = _streaming(parent);
+        final call = _streaming(parent)?..event(event);
         final block = _map(event['content_block']);
         if (call != null && block['type'] == 'tool_use') {
           call.tool(block['name'] as String?, block['id'] as String?);
         }
+        _firstToken(call, event);
       case 'content_block_delta':
-        final call = _streaming(parent);
-        if (call != null && call.timed) {
-          call.firstToken ??= _clock().difference(call.at);
-        }
+        _firstToken(_streaming(parent)?..event(event), event);
       case 'message_delta':
-        final call = _streaming(parent);
+        final call = _streaming(parent)?..event(event);
         if (call == null) return;
         call.usage.take(_map(event['usage']));
         if (_map(event['delta'])['stop_reason'] case final String reason) {
           call.stopReason = reason;
         }
+      case 'content_block_stop':
+        _streaming(parent)?.event(event);
       case 'message_stop':
-        if (_streaming(parent) case final call?) _close(call.id);
+        if (_streaming(parent) case final call?) {
+          call.event(event);
+          _close(call.id);
+        }
     }
+  }
+
+  /// [call]'s time to first token, where [event] is the first of its
+  /// answer itself (not a block opened empty, a signature).
+  void _firstToken(_Call? call, Map<String, Object?> event) {
+    if (call == null || !call.timed || call.firstToken != null) return;
+    if (bringsAnswer(event)) call.firstToken = _clock().difference(call.at);
   }
 
   /// The call [parent]'s agent is streaming.
@@ -218,8 +337,11 @@ class ClaudeUsageMeter {
       // Its agent's last one is done: this is the next.
       _closeLoose(parent);
       call = _open[id] = _Call(id, parent, at: _clock(), timed: false)
-        ..model = body['model'] as String? ?? _model;
+        ..model = body['model'] as String? ?? _model
+        ..events = tracing?.call() ?? false ? StringBuffer() : null;
     }
+    // Seen only whole: its messages (a block each) as they came.
+    if (!call.streamed) call.events?.writeln(jsonEncode(body));
     call.usage.take(usage);
     if (body['stop_reason'] case final String reason) call.stopReason = reason;
     for (final block in blocks) {
@@ -244,10 +366,38 @@ class ClaudeUsageMeter {
     final compacted = call.parent == null && _compacted;
     if (call.parent == null) _compacted = false;
     if (call.streamed) {
-      record(_build(call, compacted: compacted, quota: quota?.call()));
+      _keep(call, compacted: compacted, quota: quota?.call());
     } else {
       _held.add((call: call, compacted: compacted, quota: quota?.call()));
     }
+  }
+
+  /// Keeps [call], with its answer where it was followed.
+  void _keep(
+    _Call call, {
+    required bool compacted,
+    Map<String, double>? quota,
+    int more = 0,
+  }) {
+    final events = call.events;
+    final trace = events == null || events.isEmpty
+        ? null
+        : UsageTrace.answerOnly(
+            UsageTrace.newId(call.at),
+            at: call.at,
+            duration: call.timed ? _clock().difference(call.at) : Duration.zero,
+            body: events.toString(),
+          );
+    record(
+      _build(
+        call,
+        compacted: compacted,
+        quota: quota,
+        more: more,
+        traceId: trace?.id,
+      ),
+      trace: trace,
+    );
   }
 
   /// [call] as kept, [more] output on it.
@@ -256,6 +406,7 @@ class ClaudeUsageMeter {
     required bool compacted,
     Map<String, double>? quota,
     int more = 0,
+    String? traceId,
   }) {
     final tokens = call.usage;
     final agent = call.parent == null ? null : _agents[call.parent];
@@ -270,8 +421,18 @@ class ClaudeUsageMeter {
       protocol: 'anthropic',
       model: _clean(call.model ?? ''),
       fast: tokens.fast,
+      serviceTier: tokens.serviceTier,
+      geo: tokens.geo,
+      serverTools: tokens.serverTools,
       session: session(),
       requestClass: call.parent == null ? UsageClass.main : UsageClass.subagent,
+      context: switch (call.parent == null ? makeup?.call() : null) {
+        final detail? => usageContextOf(
+          detail,
+          prompt: tokens.input + tokens.cacheRead + tokens.cacheWrite,
+        ),
+        null => null,
+      },
       agentId: call.parent,
       agentType: agent?.type,
       task: agent?.task,
@@ -284,6 +445,71 @@ class ClaudeUsageMeter {
       stopReason: call.stopReason,
       toolCalls: call.tools,
       quota: quota ?? const {},
+      traceId: traceId,
+    );
+  }
+
+  /// [detail] (the CLI's count) as a request's context of [prompt] tokens:
+  /// what stays the same as counted, the conversation's (the messages, the
+  /// tools' results) grown or shrunk to the rest.
+  static UsageContext usageContextOf(
+    ContextDetail detail, {
+    required int prompt,
+  }) {
+    int sum(Iterable<ContextItem> items) =>
+        items.fold(0, (total, item) => total + item.tokens);
+    final systemTools = [
+      for (final tool in [...detail.systemTools, ...detail.deferredTools])
+        if (tool.loaded) tool,
+    ];
+    final mcpTools = [
+      for (final tool in detail.mcpTools)
+        if (tool.loaded) tool,
+    ];
+    final system = sum(detail.systemPrompt);
+    final tools = sum(systemTools) + sum(detail.agents);
+    final mcp = sum(mcpTools);
+    final memory = sum(detail.memoryFiles);
+    final skills = sum(detail.skills);
+    final talk = detail.messages;
+    final rest = prompt - system - tools - mcp - memory - skills;
+    final scale = talk == 0 || rest <= 0 ? 0.0 : rest / talk;
+    int scaled(int tokens) => (tokens * scale).round();
+    return UsageContext(
+      system: system,
+      tools: tools,
+      mcp: mcp,
+      memory: memory,
+      skills: skills,
+      user: scaled(detail.userMessages + detail.attachmentTokens),
+      assistant: scaled(detail.assistantMessages),
+      toolUse: scaled(detail.toolCalls),
+      toolResult: scaled(detail.toolResults),
+      detail: UsageContextDetail(
+        shape: UsageShape(
+          tools: {
+            for (final tool in [...systemTools, ...detail.agents])
+              tool.name: tool.tokens,
+            for (final tool in mcpTools)
+              tool.group == null
+                      ? tool.name
+                      : 'mcp__${tool.group}__${tool.name}':
+                  tool.tokens,
+          },
+          skills: {for (final skill in detail.skills) skill.name: skill.tokens},
+          memory: {
+            for (final file in detail.memoryFiles) file.name: file.tokens,
+          },
+        ),
+        results: {
+          for (final use in detail.toolUses)
+            if (use.results > 0) use.name: scaled(use.results),
+        },
+        uses: {
+          for (final use in detail.toolUses)
+            if (use.tokens > 0) use.name: scaled(use.tokens),
+        },
+      ),
     );
   }
 
@@ -393,6 +619,13 @@ class _Call {
   String? stopReason;
   final _Tokens usage = _Tokens();
   final Map<String, int> tools = {};
+
+  /// Its answer as printed, while tracing: its events as an event stream.
+  StringBuffer? events;
+
+  void event(Map<String, Object?> event) => events
+    ?..write('event: ${event['type']}\n')
+    ..write('data: ${jsonEncode(event)}\n\n');
   final Set<String> _toolIds = {};
 
   void tool(String? name, String? id) {
@@ -411,6 +644,11 @@ class _Tokens {
   /// Of [cacheWrite], those kept an hour.
   int cacheWriteLong = 0;
   bool fast = false;
+  String? serviceTier;
+  String? geo;
+
+  /// Anthropic's tools run (`web_search`…), by name.
+  Map<String, int> serverTools = const {};
 
   int get total => input + output + cacheRead + cacheWrite;
 
@@ -440,6 +678,20 @@ class _Tokens {
       if (long != null && long > cacheWriteLong) cacheWriteLong = long;
     }
     if (usage['speed'] == 'fast') fast = true;
+    if (usage['service_tier'] case final String tier when tier.isNotEmpty) {
+      serviceTier = tier;
+    }
+    if (usage['inference_geo'] case final String where when where.isNotEmpty) {
+      geo = where;
+    }
+    final tools = usageServerTools(usage);
+    if (tools.isNotEmpty) {
+      serverTools = {
+        ...serverTools,
+        for (final MapEntry(:key, :value) in tools.entries)
+          if (value > (serverTools[key] ?? 0)) key: value,
+      };
+    }
   }
 
   void add(_Tokens other) {

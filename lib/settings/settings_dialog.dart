@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../base/mouse_navigation.dart';
 import '../base/smooth_scroll.dart';
 import '../channel/channel_setup.dart' show ChannelSetup;
 import '../ide/ide_color_theme_picker.dart' show ideSelectColorThemeCommandId;
@@ -21,6 +22,7 @@ import '../ide/ide_modern_ui.dart' show IdeModernUI;
 import '../sidebar/sidebar.dart' show SidebarIconButton;
 import '../theme/workbench_theme.dart' show themeColors;
 import 'pages/settings_widgets.dart' show SettingsColors;
+import '../theme/svg_icons.dart';
 
 /// The settings dialog's pages.
 enum SettingsSection {
@@ -245,7 +247,7 @@ class SettingsDialogState extends State<SettingsDialog> {
     SettingsSection.models =>
       ChannelSetup.channelBuild ? Codicons.person : Codicons.sparkle,
     SettingsSection.agents => Codicons.hubot,
-    SettingsSection.usage => Codicons.graph,
+    SettingsSection.usage => SvgIcons.usage,
     SettingsSection.network => Codicons.radioTower,
     SettingsSection.ssh => Codicons.remote,
     SettingsSection.mobile => Codicons.deviceMobile,
@@ -397,9 +399,17 @@ class SettingsDialogState extends State<SettingsDialog> {
             }
             final dialog = Padding(
               padding: EdgeInsets.only(top: top),
-              child: Material(
-                color: AppColors.code,
-                child: narrow ? _buildNarrow() : _buildWide(),
+              // The mouse's back button: as its Back, where a page in it
+              // (a provider's) does not go back first.
+              child: MouseNavigation(
+                onBack: () {
+                  _close();
+                  return true;
+                },
+                child: Material(
+                  color: AppColors.code,
+                  child: narrow ? _buildNarrow() : _buildWide(),
+                ),
               ),
             );
             // On Windows the list's toggle is in the header, where the
@@ -819,7 +829,7 @@ class _NavItemState extends State<_NavItem> {
             ),
             child: Row(
               children: [
-                Icon(
+                AppIcon(
                   widget.icon,
                   size: 15,
                   color: selected

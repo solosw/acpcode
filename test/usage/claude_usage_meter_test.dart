@@ -1,7 +1,9 @@
+import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/usage/claude_usage_meter.dart';
 import 'package:baocode/usage/usage_prices.dart';
 import 'package:baocode/usage/usage_quota.dart';
 import 'package:baocode/usage/usage_record.dart';
+import 'package:baocode/usage/usage_trace.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -32,7 +34,7 @@ void main() {
     at(0);
     kept = [];
     meter = ClaudeUsageMeter(
-      record: kept.add,
+      record: (call, {trace}) => kept.add(call),
       session: () => 's1',
       providerName: 'Claude Max',
       quota: () => {'five_hour': 0.25, 'seven_day': 0.4},
@@ -66,10 +68,31 @@ void main() {
         },
       }),
     );
-    at(1500);
+    // A block opened empty, its signature: not yet the answer.
+    at(1200);
     meter
-      ..receive(event({'type': 'content_block_start', 'index': 0}))
-      ..receive(event({'type': 'content_block_delta', 'index': 0}));
+      ..receive(
+        event({
+          'type': 'content_block_start',
+          'index': 0,
+          'content_block': {'type': 'thinking', 'thinking': ''},
+        }),
+      )
+      ..receive(
+        event({
+          'type': 'content_block_delta',
+          'index': 0,
+          'delta': {'type': 'signature_delta', 'signature': 'sig'},
+        }),
+      );
+    at(1500);
+    meter.receive(
+      event({
+        'type': 'content_block_delta',
+        'index': 0,
+        'delta': {'type': 'text_delta', 'text': 'Reading'},
+      }),
+    );
     at(2000);
     final read = {'type': 'tool_use', 'id': 'toolu_1', 'name': 'Read'};
     meter
@@ -211,6 +234,70 @@ void main() {
     expect(kept.last.input, 50);
   });
 
+  test('the main agent\'s request shown while under way: asked, then '
+      'streaming; none once it is kept or the turn is over', () {
+    final shown = <Object, UsageCall Function()>{};
+    meter = ClaudeUsageMeter(
+      record: (call, {trace}) => kept.add(call),
+      session: () => 's1',
+      underway: (key, progress) =>
+          progress == null ? shown.remove(key) : shown[key] = progress,
+      clock: () => now,
+    );
+    meter.receive({'type': 'system', 'subtype': 'init', 'model': 'opus'});
+    expect(shown, isEmpty);
+    meter.requested();
+    at(2000);
+    var progress = shown.values.single();
+    expect(
+      (progress.at, progress.duration),
+      (start, const Duration(seconds: 2)),
+    );
+    expect(progress.status, 0);
+    expect(progress.session, 's1');
+    expect(progress.firstToken, isNull);
+    meter.receive(
+      event({
+        'type': 'message_start',
+        'message': {
+          'id': 'msg_1',
+          'model': 'claude-opus-5-5',
+          'usage': {'input_tokens': 10, 'output_tokens': 1},
+        },
+      }),
+    );
+    at(3000);
+    meter.receive(
+      event({
+        'type': 'content_block_delta',
+        'index': 0,
+        'delta': {'type': 'text_delta', 'text': 'Hi'},
+      }),
+    );
+    progress = shown.values.single();
+    // The same call, from its asking.
+    expect(progress.at, start);
+    expect(progress.model, 'claude-opus-5-5');
+    expect(progress.input, 10);
+    expect(progress.firstToken, const Duration(seconds: 3));
+    at(4000);
+    meter.receive(
+      event({
+        'type': 'message_delta',
+        'delta': {'stop_reason': 'tool_use'},
+        'usage': {'output_tokens': 20},
+      }),
+    );
+    meter.receive(event({'type': 'message_stop'}));
+    expect(kept, hasLength(1));
+    expect(shown, isEmpty);
+    // Its tools' results: the next is asked, till the turn is over.
+    meter.receive({'type': 'user', 'parent_tool_use_id': null});
+    expect(shown, hasLength(1));
+    meter.receive({'type': 'result', 'modelUsage': <String, Object?>{}});
+    expect(shown, isEmpty);
+  });
+
   test('a request tried again kept as failed', () {
     meter.receive({
       'type': 'system',
@@ -295,5 +382,133 @@ void main() {
     expect(quota.tokensPerPercent, closeTo(2000000 / 3, 1e-6));
     expect(quota.costPerPercent!.byCurrency['USD'], closeTo(4 / 3, 1e-9));
     expect(UsageQuota.of([call(0, 0.2, 0.1)]).tokensPerPercent, isNull);
+  });
+
+  test('while tracing, a call keeps its answer as printed, not its '
+      'request', () {
+    final traces = <UsageTrace>[];
+    meter = ClaudeUsageMeter(
+      record: (call, {trace}) {
+        kept.add(call);
+        if (trace != null) traces.add(trace);
+      },
+      session: () => 's1',
+      tracing: () => true,
+      clock: () => now,
+    );
+    meter
+      ..receive({'type': 'system', 'subtype': 'status', 'status': 'requesting'})
+      ..receive(
+        event({
+          'type': 'message_start',
+          'message': {
+            'id': 'msg_1',
+            'usage': {'input_tokens': 10},
+          },
+        }),
+      )
+      ..receive(
+        event({
+          'type': 'content_block_delta',
+          'index': 0,
+          'delta': {'type': 'text_delta', 'text': '好的'},
+        }),
+      )
+      ..receive(event({'type': 'message_stop'}))
+      // Seen only whole: its message.
+      ..receive(
+        assistant('msg_2', {
+          'input_tokens': 5,
+          'output_tokens': 7,
+        }, parent: 't1'),
+      )
+      ..receive({'type': 'result'});
+
+    expect(kept, hasLength(2));
+    expect(traces, hasLength(2));
+    expect(kept.map((call) => call.traceId), traces.map((trace) => trace.id));
+    final streamed = UsageTrace.fromJson(traces.first.toJson())!;
+    expect(streamed.answerOnly, isTrue);
+    expect(streamed.request, isNull);
+    expect(
+      streamed.received.single.body,
+      allOf(
+        startsWith('event: message_start\ndata: {'),
+        contains('"text":"好的"'),
+        endsWith('event: message_stop\ndata: {"type":"message_stop"}\n\n'),
+      ),
+    );
+    expect(traces.last.received.single.body, contains('"id":"msg_2"'));
+  });
+
+  test('without tracing, no answer kept', () {
+    meter
+      ..receive(
+        event({
+          'type': 'message_start',
+          'message': {
+            'id': 'msg_1',
+            'usage': {'input_tokens': 10},
+          },
+        }),
+      )
+      ..receive(event({'type': 'message_stop'}));
+    expect(kept.single.traceId, isNull);
+  });
+
+  test('the main agent\'s calls take what filled the context as the CLI '
+      'counted it, the conversation\'s share grown to the call', () {
+    const detail = ContextDetail(
+      systemPrompt: [ContextItem('core', 3000)],
+      systemTools: [ContextItem('Bash', 1000)],
+      deferredTools: [ContextItem('WebFetch', 500, loaded: false)],
+      mcpTools: [ContextItem('click', 400, group: 'baocode')],
+      memoryFiles: [ContextItem('/a/CLAUDE.md', 200)],
+      skills: [ContextItem('loop', 100)],
+      toolUses: [ContextItem('Bash', 100, results: 900)],
+      userMessages: 500,
+      assistantMessages: 400,
+      toolCalls: 100,
+      toolResults: 1000,
+    );
+    meter = ClaudeUsageMeter(
+      record: (call, {trace}) => kept.add(call),
+      session: () => 's1',
+      makeup: () => detail,
+      clock: () => now,
+    );
+    meter
+      ..receive(
+        event({
+          'type': 'message_start',
+          'message': {
+            'id': 'msg_1',
+            // 4,700 the same, 4,000 the conversation's: twice as counted.
+            'usage': {'input_tokens': 700, 'cache_read_input_tokens': 8000},
+          },
+        }),
+      )
+      ..receive(event({'type': 'message_stop'}))
+      ..receive(assistant('msg_2', {'input_tokens': 50}, parent: 't1'))
+      ..receive({'type': 'result'});
+
+    final context = kept.first.context!;
+    expect(
+      (context.system, context.tools, context.mcp, context.memory),
+      (3000, 1000, 400, 200),
+    );
+    expect(context.skills, 100);
+    expect(
+      (context.user, context.assistant, context.toolUse, context.toolResult),
+      (1000, 800, 200, 2000),
+    );
+    expect(context.total, 8700);
+    expect(context.detail!.shape!.tools, {
+      'Bash': 1000,
+      'mcp__baocode__click': 400,
+    });
+    expect(context.detail!.results, {'Bash': 1800});
+    // A subagent's context is its own, not counted.
+    expect(kept.last.context, isNull);
   });
 }

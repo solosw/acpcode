@@ -1413,8 +1413,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
+  /// The folder the app keeps its own things in (the bots'), whose every
+  /// folder is its own: never listed, even one whose bot is gone.
+  String? appFolderRoot;
+
   /// Whether [path] is a folder the app keeps for itself: never listed.
-  bool isAppFolder(String path) => agentSetup?.call(path) != null;
+  bool isAppFolder(String path) {
+    if (agentSetup?.call(path) != null) return true;
+    final root = appFolderRoot;
+    return root != null && (path == root || p.isWithin(root, path));
+  }
 
   /// [settings] with those of the app's folder [cwd] over them.
   Map<String, String> _setUp(String? cwd, Map<String, String> settings) =>
@@ -3050,9 +3058,43 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void select(AgentThread thread) {
     // A bot's: the phone's, never shown here.
     if (isAppFolder(thread.project.path)) return;
+    if (_selected case final before? when !identical(before, thread)) {
+      if (!identical(_agentsBack.lastOrNull, before)) _agentsBack.add(before);
+      if (_agentsBack.length > _agentsKept) _agentsBack.removeAt(0);
+      _agentsForward.clear();
+    }
     _focus(thread);
     _followInSidebar(thread);
     notifyListeners();
+  }
+
+  /// The agents selected before the one in front, the latest last, and
+  /// those gone back from: where the mouse's back and forward buttons go
+  /// (#516), as a browser's history.
+  final List<AgentThread> _agentsBack = [];
+  final List<AgentThread> _agentsForward = [];
+  static const _agentsKept = 50;
+
+  /// Selects the agent before, or (not [back]) the one gone back from; not
+  /// those archived or deleted since. Whether there was one.
+  bool navigate({required bool back}) {
+    final from = back ? _agentsBack : _agentsForward;
+    final to = back ? _agentsForward : _agentsBack;
+    while (from.isNotEmpty) {
+      final thread = from.removeLast();
+      if (identical(thread, _selected) ||
+          thread.archived ||
+          !_threads.contains(thread) ||
+          !_projects.contains(thread.project)) {
+        continue;
+      }
+      if (_selected case final here?) to.add(here);
+      _focus(thread);
+      _followInSidebar(thread);
+      notifyListeners();
+      return true;
+    }
+    return false;
   }
 
   void _focus(AgentThread thread) {
@@ -3318,9 +3360,34 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Copies [thread]'s conversation into a new agent of its project (see
   /// [ChatSession.fork]): listed, with [thread]'s settings, not shown. Null
-  /// when it could not be (its conversation says why).
-  Future<AgentThread?> fork(AgentThread thread) =>
-      _fork(thread, '${thread.localizedTitle(l10n())} (fork)');
+  /// when it could not be (its conversation says why). [message], when not
+  /// empty, is sent there once what it copied is read (`/fork …`).
+  Future<AgentThread?> fork(
+    AgentThread thread, {
+    ComposerMessage? message,
+  }) async {
+    final forked = await _fork(
+      thread,
+      '${thread.localizedTitle(l10n())} (fork)',
+    );
+    if (forked != null && message != null && !message.isEmpty) {
+      unawaited(_sendOnceRead(forked, message));
+    }
+    return forked;
+  }
+
+  /// Sends [message] in [thread] after what it copied, read as it opens:
+  /// else it would come first.
+  Future<void> _sendOnceRead(
+    AgentThread thread,
+    ComposerMessage message,
+  ) async {
+    final session = thread.session;
+    if (session.loadingHistory) await _historyRead(session);
+    if (_disposed || !_threads.contains(thread)) return;
+    session.send(message);
+    notifyListeners();
+  }
 
   /// [fork], the copy titled [title].
   Future<AgentThread?> _fork(AgentThread thread, String title) async {
@@ -3630,17 +3697,44 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       return;
     }
     if (titler == null || !session.canRename) return;
+    final model = session.selected(KernelChoiceKind.model);
     unawaited(
-      titler!(
-        text,
-        model: session.selected(KernelChoiceKind.model),
-        location: thread.project.path,
-      ).then((title) {
-        if (title == null || thread._named) return;
-        if (_disposed || !_threads.contains(thread)) return;
-        _retitle(thread, title);
-      }),
+      _idOf(thread)
+          .then(
+            (id) => titler!(
+              text,
+              model: model,
+              location: thread.project.path,
+              session: id,
+            ),
+          )
+          .then((title) {
+            if (title == null || thread._named) return;
+            if (_disposed || !_threads.contains(thread)) return;
+            _retitle(thread, title);
+          }),
     );
+  }
+
+  /// [thread]'s id, once its agent has told it (a new one's, as it
+  /// starts), or null a while on: what its title's call is kept under.
+  Future<String?> _idOf(AgentThread thread) {
+    if (thread.id case final id?) return Future.value(id);
+    if (!thread.isOpen) return Future.value();
+    final session = thread.session;
+    final told = Completer<String?>();
+    void listener() {
+      if (thread.id case final id? when !told.isCompleted) told.complete(id);
+    }
+
+    session.addListener(listener);
+    final timeout = Timer(const Duration(seconds: 5), () {
+      if (!told.isCompleted) told.complete();
+    });
+    return told.future.whenComplete(() {
+      timeout.cancel();
+      session.removeListener(listener);
+    });
   }
 
   void rename(AgentThread thread, String title) {
@@ -3670,6 +3764,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       text,
       model: session.selected(KernelChoiceKind.model),
       location: thread.project.path,
+      session: thread.id,
     );
   }
 

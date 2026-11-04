@@ -4,7 +4,6 @@ import '../../l10n/l10n.dart';
 import '../../theme/codicons.dart';
 import '../usage_prices.dart';
 import '../usage_query.dart';
-import '../usage_record.dart';
 import 'usage_charts.dart';
 import 'usage_filters.dart';
 import 'usage_style.dart';
@@ -18,7 +17,7 @@ List<(double, Color)> tokenSegments(UsageTotals totals) => [
 ];
 
 /// What a total's tokens of each kind cost in [currency], in the order and
-/// colors of [tokenSegments].
+/// colors of [tokenSegments]; then its fees, as [costSeries] names them.
 List<(double, Color)> costSegments(UsageTotals totals, String currency) {
   final parts = totals.cost.parts[currency] ?? UsageCostParts();
   return [
@@ -26,6 +25,7 @@ List<(double, Color)> costSegments(UsageTotals totals, String currency) {
     (parts.input, UsagePalette.input),
     (parts.cacheWrite, UsagePalette.cacheWrite),
     (parts.output, UsagePalette.output),
+    (parts.fees, UsagePalette.fees),
   ];
 }
 
@@ -47,6 +47,13 @@ List<UsageSeries> tokenSeries(BuildContext context) {
     (label: l10n.ustatTokenOutput, color: UsagePalette.output),
   ];
 }
+
+/// What a cost is of, as a legend names them: [tokenSeries], then the
+/// fees.
+List<UsageSeries> costSeries(BuildContext context) => [
+  ...tokenSeries(context),
+  (label: context.l10n.ustatFees, color: UsagePalette.fees),
+];
 
 /// The numbers a view leads with: tokens, calls, the cache, time, speed
 /// and failures, each its sparkline over [summary]'s buckets.
@@ -204,7 +211,10 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
     final Widget? legend;
     switch (metric) {
       case UsageMetric.cost:
-        final series = tokenSeries(context);
+        // The fees in the legend only where there are any.
+        final fees =
+            (widget.summary.totals.cost.parts[currency]?.fees ?? 0) > 0;
+        final series = fees ? costSeries(context) : tokenSeries(context);
         legend = UsageLegend(series: series);
         chart = UsageColumnChart(
           height: widget.height,
@@ -222,7 +232,7 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
                   for (final (value, _) in costSegments(
                     bucket.totals,
                     currency,
-                  ))
+                  ).take(series.length))
                     value,
                 ],
               ),
@@ -577,60 +587,6 @@ class _UsageToolsSectionState extends State<UsageToolsSection> {
                 _ToolSort.time => '×${tool.calls}',
               },
             ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The kinds of request, side by side: the main agent's, the subagents',
-/// compactions, the rest; picked, they filter.
-class UsageClassSection extends StatelessWidget {
-  const UsageClassSection({
-    super.key,
-    required this.summary,
-    this.selected = const {},
-    this.onToggle,
-  });
-
-  final UsageSummary summary;
-  final Set<UsageClass> selected;
-  final ValueChanged<UsageClass>? onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final entries = summary.byClass.entries.toList()
-      ..sort((a, b) => b.value.total.compareTo(a.value.total));
-    return UsageCard(
-      title: l10n.ustatByClass,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          UsageStackBar(
-            columns: 2,
-            // Its costs after its tokens: wider.
-            minColumnWidth: summary.totals.cost.isEmpty ? 140 : 230,
-            selected: {
-              for (final (i, entry) in entries.indexed)
-                if (selected.contains(entry.key)) i,
-            },
-            onTap: onToggle == null || entries.length < 2
-                ? null
-                : (i) => onToggle!(entries[i].key),
-            parts: [
-              for (final MapEntry(:key, :value) in entries)
-                (
-                  label: UsageFormat.ofClass(context, key),
-                  value: value.total.toDouble(),
-                  color: UsagePalette.ofClass(key),
-                  text: [
-                    UsageFormat.tokens(value.total),
-                    ?value.cost.text,
-                  ].join(' · '),
-                ),
-            ],
-          ),
         ],
       ),
     );
