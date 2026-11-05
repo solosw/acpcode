@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
+import '../../browser/browser_bridge.dart';
 import '../../ide/file_service.dart';
 import '../../ide/git/git_branch_tree.dart' show IdeGitFavoriteBranches;
 import '../../ide/git/git_repository.dart';
@@ -65,12 +66,13 @@ class SidePanelTab {
 /// at the right: the project's files, the agent's changes, its background
 /// commands; and the plan the agent wrote, alone, while there is one.
 /// The usage page: what the conversation took of its upstream (see
-/// lib/usage/).
+/// lib/usage/). The browser's page is there once a browser has connected.
 enum SidePanelSection {
   files,
   changes,
   terminal,
   usage,
+  browser,
   plan,
 
   /// An SSH project's ports forwarded (see PortsView).
@@ -128,9 +130,11 @@ class SidePanelTabs {
   SidePanelTab? plan;
 
   /// The page that shows: [section], but the changes page for the plan's
-  /// without a plan.
+  /// without a plan, or the browser's while it is not enabled or used.
   SidePanelSection get shown => switch (section) {
     SidePanelSection.plan when plan == null => SidePanelSection.changes,
+    SidePanelSection.browser when !BrowserBridge.instance.used =>
+      SidePanelSection.changes,
     _ => section,
   };
 
@@ -156,6 +160,7 @@ class SidePanelTabs {
     SidePanelSection.changes => activeDiff,
     SidePanelSection.terminal ||
     SidePanelSection.usage ||
+    SidePanelSection.browser ||
     SidePanelSection.ports => null,
     SidePanelSection.plan => plan,
   };
@@ -819,6 +824,7 @@ class AgentSidePanel extends ChangeNotifier {
       // Its tabs are the terminals themselves, killed by their own Close.
       case SidePanelSection.terminal ||
           SidePanelSection.usage ||
+          SidePanelSection.browser ||
           SidePanelSection.ports:
         break;
     }

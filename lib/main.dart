@@ -85,6 +85,8 @@ import 'platform/memory_budget.dart';
 import 'platform/native_md_clipboard.dart';
 import 'platform/app_platform.dart';
 import 'platform/data_dir.dart';
+import 'platform/default_task_dir.dart'
+    if (dart.library.io) 'platform/default_task_dir_io.dart';
 import 'platform/error_log.dart';
 import 'platform/event_log.dart';
 import 'platform/open_requests.dart';
@@ -237,6 +239,7 @@ Future<void> main(List<String> arguments) async {
     unawaited(ResumeAfterReset.current.load());
   }
   final workspace = Workspace(
+    defaultTaskDirectory: prepareDefaultTaskDirectory(),
     preferences: PreferenceStore.file(),
     // Beside state.json: written as the user types.
     drafts: kIsWeb
@@ -842,7 +845,10 @@ class BaoCodeApp extends StatefulWidget {
 class _BaoCodeAppState extends State<BaoCodeApp> {
   late final Workspace _workspace =
       widget.workspace ??
-      (Workspace(preferences: PreferenceStore.file())..load());
+      (Workspace(
+        preferences: PreferenceStore.file(),
+        defaultTaskDirectory: prepareDefaultTaskDirectory(),
+      )..load());
 
   late final AppLocale _locale = widget.appLocale ?? AppLocale();
 

@@ -2273,6 +2273,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get newChatOpenRemoteDetail => '通过 SSH 打开主机上的文件夹';
 
   @override
+  String get defaultTasksTitle => '日常任务';
+
+  @override
+  String get defaultTasksDetail => '无需打开项目，产出文件保存在 BaoCode 的默认任务目录中。';
+
+  @override
   String get newChatWorkingFolder => '在哪个文件夹中工作';
 
   @override
@@ -10111,6 +10117,32 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get browserSettingsOpen => '浏览器设置';
+
+  @override
+  String get sidePanelBrowser => '浏览器';
+
+  @override
+  String get browserNotConnected =>
+      '没有连接浏览器。在 Chrome（或 Edge、Brave、Arc）中添加 BaoCode 扩展后，agent 就能使用你共享给它的标签页。';
+
+  @override
+  String get browserNoSharedTab =>
+      '还没有共享的标签页。让 agent 打开网页，或在浏览器工具栏点 BaoCode 按钮共享当前标签页。';
+
+  @override
+  String get browserSharedTabs => '共享的标签页';
+
+  @override
+  String get browserReload => '重新加载';
+
+  @override
+  String get browserShowInBrowser => '在浏览器中显示';
+
+  @override
+  String get browserDetached => '浏览器已停止让 BaoCode 查看这个标签页。';
+
+  @override
+  String get browserReconnect => '重新连接';
 
   @override
   String get browserHistoryTitle => '调试记录';

@@ -2352,6 +2352,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newChatOpenRemoteDetail => 'A folder on a host over SSH';
 
   @override
+  String get defaultTasksTitle => 'Everyday Tasks';
+
+  @override
+  String get defaultTasksDetail =>
+      'No project needed. Files are kept in BaoCode’s default task folder.';
+
+  @override
   String get newChatWorkingFolder => 'Folder to work in';
 
   @override
@@ -10673,6 +10680,33 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get browserSettingsOpen => 'Browser Settings';
+
+  @override
+  String get sidePanelBrowser => 'Browser';
+
+  @override
+  String get browserNotConnected =>
+      'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.';
+
+  @override
+  String get browserNoSharedTab =>
+      'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.';
+
+  @override
+  String get browserSharedTabs => 'Shared Tabs';
+
+  @override
+  String get browserReload => 'Reload';
+
+  @override
+  String get browserShowInBrowser => 'Show in Browser';
+
+  @override
+  String get browserDetached =>
+      'The browser stopped letting BaoCode see this tab.';
+
+  @override
+  String get browserReconnect => 'Reconnect';
 
   @override
   String get browserHistoryTitle => 'Debugging history';

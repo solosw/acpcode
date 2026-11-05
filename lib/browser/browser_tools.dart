@@ -35,6 +35,23 @@ part 'browser_watch.dart';
 abstract final class BrowserTools {
   static bool _registered = false;
 
+  /// The tab an agent last used: the side panel's page shows it.
+  static final lastTab = ValueNotifier<BrowserTab?>(null);
+
+  static final _shown = StreamController<BrowserTab>.broadcast();
+
+  /// The tabs explicitly asked to show in the side panel.
+  static Stream<BrowserTab> get shown => _shown.stream;
+
+  /// Shows [tabId] over the tab the user picked in the side panel.
+  static void show(int tabId) {
+    final browsers = BrowserBridge.instance.browsers;
+    if (browsers.isEmpty) return;
+    final tab = BrowserTab(browsers.first, tabId);
+    lastTab.value = tab;
+    _shown.add(tab);
+  }
+
   /// Starts the bridge to the user's browsers; gives the agents the tools
   /// while one has connected and the user lets them ([BrowserBridge.used]).
   static Future<void> start() async {
@@ -106,6 +123,7 @@ abstract final class BrowserTools {
               tab,
               () => tool.run(input, call),
             );
+            if (tool.name != 'browser_close') lastTab.value = tab;
             return answer;
           },
         ),
@@ -246,6 +264,7 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
         final tab =
             await browser.request('tabs.create', {'url': 'about:blank'}) as Map;
         final tabId = tab['tabId'] as int;
+        lastTab.value = BrowserTab(browser, tabId);
         await _watch(tabId);
         final url = await _reachable(call.cwd, input['url'] as String?);
         await _loading(

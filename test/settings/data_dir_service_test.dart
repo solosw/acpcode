@@ -39,6 +39,7 @@ void main() {
       ('icons/index.json', '[]'),
       ('pastes/0a1b2c.txt', 'a long log'),
       ('workspaces/w1/web.code-workspace', '{"folders": []}'),
+      ('tasks/research/notes.md', 'everyday task output'),
       ('logs/errors.log', '--- BaoCode 1.0.1 ---\n'),
       ('extensions/extensions.json', '[]'),
       ('acp-agents/example/install-1/agent', '#!/bin/sh'),
@@ -212,6 +213,9 @@ void main() {
       'state',
       'state/state.json',
       'state/storage.json',
+      'tasks',
+      'tasks/research',
+      'tasks/research/notes.md',
       'workspaces',
       'workspaces/w1',
       'workspaces/w1/web.code-workspace',
@@ -225,8 +229,12 @@ void main() {
       Link(p.join(target, 'servers', 'tool-link')).targetSync(),
       p.join(target, 'servers', 'tool', 'bin', 'tool'),
     );
-    expect(progress.first, (0, 19));
-    expect(progress.last, (19, 19));
+    expect(progress.first, (0, 20));
+    expect(progress.last, (20, 20));
+    expect(
+      File(p.join(target, 'tasks/research/notes.md')).readAsStringSync(),
+      'everyday task output',
+    );
     // The old folder is as it was: the web view's files included.
     expect(File(p.join(current, 'Cookies')).existsSync(), isTrue);
     expect(File(p.join(current, 'state', 'state.json')).existsSync(), isTrue);
@@ -288,7 +296,7 @@ void main() {
       File(p.join(target, 'icons', 'index.json')).readAsStringSync(),
       '[{"id": "a"}]',
     );
-    expect(progress.last, (19, 19));
+    expect(progress.last, (20, 20));
     expect(jsonDecode(pointer().readAsStringSync())['dataDir'], target);
   });
 

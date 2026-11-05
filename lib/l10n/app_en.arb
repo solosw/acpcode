@@ -1115,6 +1115,9 @@
     "description": "The heading of the projects on SSH hosts in the menu of where a new chat works."
   },
   "newChatOpenRemoteDetail": "A folder on a host over SSH",
+  "defaultTasksTitle": "Everyday Tasks",
+  "@defaultTasksTitle": {"description": "The app-managed working folder for everyday tasks not tied to a project."},
+  "defaultTasksDetail": "No project needed. Files are kept in BaoCode’s default task folder.",
   "newChatWorkingFolder": "Folder to work in",
   "@newChatWorkingFolder": {
     "description": "Heads the menu, over a new chat's input, of the folders it may work in."
@@ -7444,6 +7447,15 @@
   "browserSettingsUnpackedDescription": "Unzip it into a folder you'll keep. In chrome://extensions, turn on Developer mode at the top right, click Load unpacked and choose the folder. It doesn't update automatically.",
   "browserSettingsUnpackedDownload": "Download Zip",
   "browserSettingsOpen": "Browser Settings",
+  "sidePanelBrowser": "Browser",
+  "@sidePanelBrowser": {"description": "The side panel browser page, available once a browser has connected."},
+  "browserNotConnected": "No browser is connected. Add BaoCode's extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.",
+  "browserNoSharedTab": "No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.",
+  "browserSharedTabs": "Shared Tabs",
+  "browserReload": "Reload",
+  "browserShowInBrowser": "Show in Browser",
+  "browserDetached": "The browser stopped letting BaoCode see this tab.",
+  "browserReconnect": "Reconnect",
   "browserHistoryTitle": "Debugging history",
   "browserHistoryDescription": "What the tabs shared with BaoCode do is kept as it happens, no recording needed: the pages, the requests, console errors and warnings. Agents look back at it when you ask (“it failed when I saved”). Kept on this computer; cookies and tokens are not.",
   "browserHistoryDetailed": "Detailed history",

@@ -1,5 +1,5 @@
 // Over a new chat's input: where it is to work. A menu of the projects
-// (none, the Desktop, first; multi-folder workspaces under their own
+// (the app-managed everyday tasks first; multi-folder workspaces under their own
 // heading, with Create Workspace…; SSH hosts under theirs, each with a
 // folder there to pick and its projects at its side, and Open Remote
 // Project…) and a button to pick a folder in the system's file manager.
@@ -12,8 +12,6 @@ import '../icons/project_icon_view.dart';
 import '../kernel/kernel_types.dart';
 import '../l10n/l10n.dart';
 import '../remote/remote_location.dart';
-import '../platform/desktop_dir.dart'
-    if (dart.library.io) '../platform/desktop_dir_io.dart';
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
@@ -56,10 +54,6 @@ class NewChatFolderBar extends StatelessWidget {
   /// most recent first: the rest are reached by picking their folder.
   static const _listed = 8;
 
-  /// The folder of a chat in no project; replaceable under test.
-  @visibleForTesting
-  static String? Function() desktop = () => desktopDirectory;
-
   /// Picks a folder; replaceable under test.
   @visibleForTesting
   static Future<String?> Function() pickDirectory =
@@ -74,14 +68,14 @@ class NewChatFolderBar extends StatelessWidget {
 
   /// Asks for a new workspace (the folder the agent was to work in, in it
   /// to begin with), and has the agent work there.
-  Future<void> _createWorkspace(BuildContext context, String? desktop) async {
+  Future<void> _createWorkspace(BuildContext context) async {
     final current = thread.project;
     final made = await showWorkspaceDialog(
       context,
       workspace: workspace,
       folders: [
         if (current.host == null &&
-            current.path != desktop &&
+            !workspace.isDefaultTaskProject(current) &&
             workspace.workspaceOf(current) == null)
           current.path,
       ],
@@ -92,15 +86,15 @@ class NewChatFolderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final desktop = NewChatFolderBar.desktop();
+    final defaultDirectory = workspace.defaultTaskDirectory;
     final current = thread.project;
-    final noFolder = desktop == null
+    final noFolder = defaultDirectory == null
         ? null
         : KernelOption(
-            desktop,
-            l10n.newChatNoFolder,
-            Codicons.deviceDesktop,
-            l10n.newChatNoFolderDetail,
+            defaultDirectory,
+            l10n.defaultTasksTitle,
+            Codicons.home,
+            '${l10n.defaultTasksDetail}\n$defaultDirectory',
           );
     final remoteGroup = KernelOptionGroup('remote', l10n.newChatRemoteGroup);
     final workspaceGroup = KernelOptionGroup(
@@ -153,7 +147,7 @@ class NewChatFolderBar extends StatelessWidget {
     );
     final projects = [
       for (final project in workspace.sidebarProjects)
-        if (project.path != desktop) project,
+        if (!workspace.isDefaultTaskProject(project)) project,
     ];
     bool isWorkspace(Project project) => workspace.workspaceOf(project) != null;
     final local = [
@@ -170,7 +164,7 @@ class NewChatFolderBar extends StatelessWidget {
         if (listed.length < _listed) listed.add(project);
       }
     }
-    if (current.path != desktop &&
+    if (!workspace.isDefaultTaskProject(current) &&
         !workspace.isHidden(current) &&
         !local.contains(current) &&
         !workspaces.contains(current) &&
@@ -230,7 +224,9 @@ class NewChatFolderBar extends StatelessWidget {
           group: remoteGroup,
         ),
     ];
-    final selected = current.path == desktop ? noFolder! : option(current);
+    final selected = workspace.isDefaultTaskProject(current)
+        ? noFolder!
+        : option(current);
     final fileManager = l10n.fileManager;
     return Row(
       children: [
@@ -248,10 +244,7 @@ class NewChatFolderBar extends StatelessWidget {
                   _moveTo,
                   host: id.substring(NewChatFolderBar._pickOnId.length),
                 ),
-              NewChatFolderBar._createWorkspaceId => _createWorkspace(
-                context,
-                desktop,
-              ),
+              NewChatFolderBar._createWorkspaceId => _createWorkspace(context),
               final path => _moveTo(path),
             },
           ),

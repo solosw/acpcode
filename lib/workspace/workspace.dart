@@ -274,6 +274,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     this.titler,
     AppLocalizations Function()? l10n,
     this.workspaceDirectories = const ProjectWorkspaceDirectories(),
+    this.defaultTaskDirectory,
     ResumeAfterReset? resumes,
   }) : _projects = [...projects],
        resumes = resumes ?? ResumeAfterReset.current,
@@ -314,6 +315,20 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The strings of the app's language, for the titles given here: they
   /// are kept with the session, so are in the language of when given.
   final AppLocalizations Function() l10n;
+
+  /// An app-managed, persistent folder for tasks without a project.
+  /// Prepared by the desktop app before this workspace is loaded.
+  final String? defaultTaskDirectory;
+
+  bool isDefaultTaskProject(Project project) =>
+      defaultTaskDirectory != null && project.path == defaultTaskDirectory;
+
+  /// Makes the everyday tasks available again, even if hidden from the list.
+  Project openDefaultTaskProject() {
+    final path = defaultTaskDirectory;
+    if (path == null) throw StateError('No default task directory');
+    return _openProject(path);
+  }
 
   List<Project> get projects => List.unmodifiable(_projects);
   final List<Project> _projects;
@@ -386,6 +401,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (complete && !_folders.any(RemoteLocation.isRemote)) {
       _forgetGone(listed);
     }
+    // Last, so adding the built-in folder never displaces an existing project.
+    if (defaultTaskDirectory case final path?) _project(path);
     _loading = false;
     if (!_loaded.isCompleted) _loaded.complete();
     for (final folder in {?_ideFolder, ..._windowFolders}) {
@@ -544,7 +561,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final workspace? => Project(workspace.name, path),
     null => switch (_projectNames[path]) {
       final name? => Project(name, path),
-      null => Project.at(path),
+      null =>
+        path == defaultTaskDirectory
+            ? Project(l10n().defaultTasksTitle, path)
+            : Project.at(path),
     },
   };
 
@@ -1889,7 +1909,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Whether [project] can be had in another folder ([relocateProject]):
   /// a folder of this machine, not a workspace.
   bool canRelocate(Project project) =>
-      project.host == null && !_workspaces.containsKey(project.path);
+      project.host == null &&
+      !isDefaultTaskProject(project) &&
+      !_workspaces.containsKey(project.path);
 
   /// Has [project] be the folder [path] instead (its folder moved, say):
   /// the sessions its kernels keep for it move there (see [MovesSessions]),

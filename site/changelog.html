@@ -116,7 +116,20 @@
 
   <section class="release" id="v1.8.0">
     <h2 class="plain"><a href="#v1.8.0">1.8.0</a></h2>
-    <p>This release rebuilds how the computer and the phone connect, and adds usage tracking and /btw side questions; diffs and split panes get a large round of work too. On the phone, this needs 0.1.5, and each phone pairs again once.</p>
+    <p>Everyday tasks without opening a project, the browser side panel restored, and the latest upstream improvements.</p>
+    <p>Everyday tasks</p>
+    <ul>
+    <li>Start a conversation without choosing a project folder. BaoCode creates a persistent tasks directory in its data folder for files produced by everyday tasks.</li>
+    <li>Open Everyday Tasks from the sidebar or select it above a new conversation. Existing projects and conversations continue to restore as before.</li>
+    <li>Task files survive restarts and move with BaoCode's data directory.</li>
+    </ul>
+    <p>Browser</p>
+    <ul>
+    <li>Restore the browser page and shortcut in the new side-panel layout, with live page mirroring, shared-tab selection, reload, and keyboard and mouse input.</li>
+    <li>Keep the browser entry with a connection hint while disconnected, and hide it when the browser integration is disabled.</li>
+    </ul>
+    <p>Upstream improvements
+    This release also rebuilds how the computer and the phone connect, and adds usage tracking and /btw side questions; diffs and split panes get a large round of work too. On the phone, this needs 0.1.5, and each phone pairs again once.</p>
     <p>Phones</p>
     <ul>
     <li>The computer and the phone connect a new way: directly on the same network, through a direct connection made across networks otherwise, through a relay only when neither works, end-to-end encrypted. A computer whose IP changes is still reached.</li>

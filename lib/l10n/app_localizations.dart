@@ -4292,6 +4292,18 @@ abstract class AppLocalizations {
   /// **'A folder on a host over SSH'**
   String get newChatOpenRemoteDetail;
 
+  /// The app-managed working folder for everyday tasks not tied to a project.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyday Tasks'**
+  String get defaultTasksTitle;
+
+  /// No description provided for @defaultTasksDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'No project needed. Files are kept in BaoCode’s default task folder.'**
+  String get defaultTasksDetail;
+
   /// Heads the menu, over a new chat's input, of the folders it may work in.
   ///
   /// In en, this message translates to:
@@ -17514,6 +17526,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Browser Settings'**
   String get browserSettingsOpen;
+
+  /// The side panel browser page, available once a browser has connected.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser'**
+  String get sidePanelBrowser;
+
+  /// No description provided for @browserNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.'**
+  String get browserNotConnected;
+
+  /// No description provided for @browserNoSharedTab.
+  ///
+  /// In en, this message translates to:
+  /// **'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.'**
+  String get browserNoSharedTab;
+
+  /// No description provided for @browserSharedTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared Tabs'**
+  String get browserSharedTabs;
+
+  /// No description provided for @browserReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
+  String get browserReload;
+
+  /// No description provided for @browserShowInBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Browser'**
+  String get browserShowInBrowser;
+
+  /// No description provided for @browserDetached.
+  ///
+  /// In en, this message translates to:
+  /// **'The browser stopped letting BaoCode see this tab.'**
+  String get browserDetached;
+
+  /// No description provided for @browserReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
+  String get browserReconnect;
 
   /// No description provided for @browserHistoryTitle.
   ///

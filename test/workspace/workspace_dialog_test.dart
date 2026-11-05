@@ -17,7 +17,7 @@ import 'package:baocode/workspace/workspace_dialog.dart';
 import 'project_workspace_test.dart' show FakeWorkspaceDirectories;
 
 const _window = MethodChannel('baocode/window');
-const _desktop = '/Users/me/Desktop';
+const _tasks = '/data/baocode/tasks';
 
 final _mac = TargetPlatformVariant.only(TargetPlatform.macOS);
 
@@ -36,13 +36,10 @@ Future<Workspace> _pumpNew(WidgetTester tester) async {
       null,
     ),
   );
-  final desktop = NewChatFolderBar.desktop;
   final pick = WorkspaceDialog.pickDirectory;
   final canPick = WorkspaceDialog.canPickDirectory;
-  NewChatFolderBar.desktop = () => _desktop;
   WorkspaceDialog.canPickDirectory = () => true;
   addTearDown(() {
-    NewChatFolderBar.desktop = desktop;
     WorkspaceDialog.pickDirectory = pick;
     WorkspaceDialog.canPickDirectory = canPick;
   });
@@ -54,6 +51,7 @@ Future<Workspace> _pumpNew(WidgetTester tester) async {
     ],
     kernels: [MockKernels.claudeCode],
     workspaceDirectories: FakeWorkspaceDirectories(),
+    defaultTaskDirectory: _tasks,
   );
   await tester.pumpWidget(BaoCodeApp(workspace: workspace));
   workspace.create(project: workspace.projects.first);

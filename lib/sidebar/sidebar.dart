@@ -1039,7 +1039,9 @@ class _SidebarState extends State<Sidebar>
                 final host? when _workspace.sidebarProjectsOn(host).isEmpty =>
                   () => widget.onOpenFolderOn?.call(host),
                 null when _workspace.sidebarProjectsHere.isEmpty =>
-                  widget.onOpenFolder ?? () {},
+                  _workspace.defaultTaskDirectory != null
+                      ? () => _create(_workspace.openDefaultTaskProject())
+                      : widget.onOpenFolder ?? () {},
                 _ => _create,
               },
             ),
@@ -1055,6 +1057,12 @@ class _SidebarState extends State<Sidebar>
               icon: Codicons.folderOpened,
               label: context.l10n.sidebarOpenProject,
               onTap: open,
+            ),
+          if (_workspace.defaultTaskDirectory != null)
+            _NavRow(
+              icon: Codicons.home,
+              label: context.l10n.defaultTasksTitle,
+              onTap: () => _create(_workspace.openDefaultTaskProject()),
             ),
           if (widget.onSearch case final search?)
             _NavRow(

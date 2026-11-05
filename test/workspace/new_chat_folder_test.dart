@@ -1,5 +1,5 @@
 // Over a new chat's input, the folder it is to work in: a project, none
-// (the Desktop), or one picked in Finder; it goes once a message is sent.
+// (the default task directory), or one picked in Finder; it goes once a message is sent.
 
 import 'dart:async';
 
@@ -12,16 +12,17 @@ import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/main.dart';
 import 'package:baocode/remote/open_remote.dart';
+import 'package:baocode/sidebar/sidebar.dart';
 import 'package:baocode/workspace/new_chat_folder_bar.dart';
 import 'package:baocode/workspace/workspace.dart';
 
 const _window = MethodChannel('baocode/window');
-const _desktop = '/Users/me/Desktop';
+const _tasks = '/data/baocode/tasks';
 
 final _mac = TargetPlatformVariant.only(TargetPlatform.macOS);
 
 /// The app on the mock workspace, a new agent open in its first project.
-Future<Workspace> _pumpNew(WidgetTester tester) async {
+Future<Workspace> _pumpNew(WidgetTester tester, {bool empty = false}) async {
   tester.view.physicalSize = const Size(1400, 900);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -35,16 +36,24 @@ Future<Workspace> _pumpNew(WidgetTester tester) async {
       null,
     ),
   );
-  final desktop = NewChatFolderBar.desktop;
   final pick = NewChatFolderBar.pickDirectory;
-  NewChatFolderBar.desktop = () => _desktop;
   addTearDown(() {
-    NewChatFolderBar.desktop = desktop;
     NewChatFolderBar.pickDirectory = pick;
   });
-  final workspace = Workspace.mock();
+  final workspace = Workspace(
+    projects: empty
+        ? const []
+        : const [
+            Project('baocode', '~/code/baocode'),
+            Project('cursor-docs', '~/code/cursor-docs'),
+            Project('api-gateway', '~/work/api-gateway'),
+          ],
+    kernels: [MockKernels.claudeCode],
+    defaultTaskDirectory: _tasks,
+  );
+  if (empty) await tester.runAsync(workspace.load);
   await tester.pumpWidget(BaoCodeApp(workspace: workspace));
-  workspace.create();
+  if (!empty) workspace.create();
   await tester.pump();
   return workspace;
 }
@@ -84,6 +93,19 @@ void main() {
     expect(bar, greaterThan(900 / 4));
   }, variant: _mac);
 
+  testWidgets('an empty workspace opens directly into everyday tasks', (
+    tester,
+  ) async {
+    final workspace = await _pumpNew(tester, empty: true);
+    expect(_bar, findsOneWidget);
+    expect(workspace.selected.session.kernelContext.cwd, _tasks);
+    expect(find.text('Open a project folder'), findsNothing);
+    expect(
+      find.descendant(of: _bar, matching: find.text('Everyday Tasks')),
+      findsOneWidget,
+    );
+  }, variant: _mac);
+
   testWidgets('a hidden project is not offered for a new chat', (tester) async {
     final workspace = await _pumpNew(tester);
     final hidden = workspace.projects.firstWhere(
@@ -97,25 +119,51 @@ void main() {
     expect(find.text('cursor-docs'), findsNothing);
   }, variant: _mac);
 
-  testWidgets('no folder has it work in the Desktop, in its place', (
+  testWidgets('everyday tasks use the default directory, in its place', (
     tester,
   ) async {
     final workspace = await _pumpNew(tester);
     final was = workspace.selected;
     await tester.tap(find.descendant(of: _bar, matching: find.text('baocode')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('No folder'));
+    await tester.tap(find.text('Everyday Tasks').last);
     await tester.pumpAndSettle();
 
     final moved = workspace.selected;
-    expect(moved.project.path, _desktop);
-    expect(moved.session.kernelContext.cwd, _desktop);
+    expect(moved.project.path, _tasks);
+    expect(moved.session.kernelContext.cwd, _tasks);
     // The untouched one is gone, not left behind in the sidebar.
     expect(workspace.threads, isNot(contains(was)));
     expect(
-      find.descendant(of: _bar, matching: find.text('No folder')),
+      find.descendant(of: _bar, matching: find.text('Everyday Tasks')),
       findsOneWidget,
     );
+  }, variant: _mac);
+
+  testWidgets('the sidebar starts everyday tasks without a folder picker', (
+    tester,
+  ) async {
+    final workspace = await _pumpNew(tester);
+    await workspace.openFolder('ssh://dev/home/me/app');
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(Sidebar),
+            matching: find.text('Everyday Tasks'),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(workspace.selected.project.path, _tasks);
+    expect(workspace.selected.session.kernelContext.cwd, _tasks);
+    expect(workspace.sidebarHost, isNull);
+    expect(_bar, findsOneWidget);
+    await tester.tap(
+      find.descendant(of: _bar, matching: find.text('Everyday Tasks')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining(_tasks), findsOneWidget);
   }, variant: _mac);
 
   testWidgets('a folder picked in Finder becomes its project', (tester) async {
@@ -172,23 +220,23 @@ void main() {
       addTearDown(workspace.dispose);
       final was = workspace.create();
 
-      final moved = workspace.moveNew(was, _desktop);
+      final moved = workspace.moveNew(was, _tasks);
       expect(workspace.selected, same(moved));
-      expect(moved.project.path, _desktop);
+      expect(moved.project.path, _tasks);
       expect(workspace.threads, [moved]);
 
       catalog.found.complete([
         SessionRecord(
           id: 'kept',
-          title: 'Earlier on the Desktop',
+          title: 'Earlier everyday task',
           updatedAt: DateTime(2026, 9, 30),
-          cwd: _desktop,
+          cwd: _tasks,
         ),
       ]);
       await pumpEventQueue();
       expect(workspace.threads.map((thread) => thread.title), [
         'New Chat',
-        'Earlier on the Desktop',
+        'Earlier everyday task',
       ]);
       expect(workspace.selected, same(moved));
     },
@@ -211,7 +259,10 @@ void main() {
     final remote = tester.getTopLeft(find.text('Remote')).dy;
     // This machine's first, without a heading; a row for each host under
     // Remote, not one for each project.
-    expect(tester.getTopLeft(find.text('No folder')).dy, lessThan(remote));
+    expect(
+      tester.getTopLeft(find.text('Everyday Tasks').last).dy,
+      lessThan(remote),
+    );
     expect(tester.getTopLeft(find.text('2 projects')).dy, greaterThan(remote));
     expect(find.text('1 project'), findsOneWidget);
     expect(find.text('/home/me/app'), findsNothing);

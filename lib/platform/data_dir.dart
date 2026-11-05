@@ -31,6 +31,7 @@ enum DataDirectorySource {
 /// <path>/state/{state.json,storage.json,*-processes.json}
 /// <path>/servers/  <path>/language-packs/
 /// <path>/checkpoints/             what files were before agents changed them
+/// <path>/tasks/                   everyday tasks not tied to a project
 /// <path>/workspaces/              the folders of multi-folder workspaces
 /// <path>/cache/                   what can be made again, to start faster
 /// <path>/pastes/                  pastes too long to send, which agents read
@@ -108,6 +109,9 @@ class DataDirectory {
   /// project_workspace.dart).
   String get workspacesDir => p.join(path, 'workspaces');
 
+  /// The persistent working folder for tasks not tied to a project.
+  String get tasksDir => p.join(path, 'tasks');
+
   /// The pictures uploaded as project icons, and `index.json` listing them
   /// (see icon_library.dart).
   String get iconsDir => p.join(path, 'icons');
@@ -151,6 +155,7 @@ class DataDirectory {
     'pastes',
     'icons',
     'workspaces',
+    'tasks',
     'logs',
     'extensions',
     'acp-agents',
