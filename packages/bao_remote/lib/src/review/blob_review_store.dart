@@ -108,6 +108,27 @@ class BlobReviewStore implements ReviewStore, ReviewSnapshots {
 
   /// What is at [path]: a link's target, or a file's bytes.
   Future<({Uint8List bytes, String mode})?> _readAt(String path) async {
+    FileSystemException? failure;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      try {
+        final found = await _readOnce(path);
+        // A replacement can briefly disappear. Once a read failed, do not
+        // mistake that gap for a deletion that Undo could act on.
+        if (found != null || failure == null) return found;
+      } on FileSystemException catch (error) {
+        failure = error;
+      }
+    }
+    throw ReviewUnavailable(
+      '$path could not be read: ${failure!.message}',
+      retryable: true,
+    );
+  }
+
+  Future<({Uint8List bytes, String mode})?> _readOnce(String path) async {
     switch (FileSystemEntity.typeSync(path, followLinks: false)) {
       case FileSystemEntityType.notFound || FileSystemEntityType.directory:
         return null;
@@ -121,6 +142,9 @@ class BlobReviewStore implements ReviewStore, ReviewSnapshots {
           throw ReviewUnavailable('$path is too large to keep.');
         }
         final bytes = await file.readAsBytes();
+        if (bytes.length > maxFileBytes) {
+          throw ReviewUnavailable('$path is too large to keep.');
+        }
         final executable = !Platform.isWindows && stat.mode & 0x49 != 0;
         return (bytes: bytes, mode: executable ? '100755' : '100644');
     }

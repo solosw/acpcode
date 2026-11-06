@@ -142,6 +142,10 @@ class ChangeReview extends ChangeNotifier {
   /// known), by absolute path: listed, to be kept.
   final Map<String, FileChange> _unseen = {};
 
+  /// Live reads that failed: unlike an unknown edit event, the missing interval
+  /// cannot be filled in safely by a later workspace snapshot.
+  final Set<String> _unreadable = {};
+
   List<FileChange> _changes = const [];
 
   /// The pending changes, one per file, with absolute paths.
@@ -192,6 +196,30 @@ class ChangeReview extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
+  /// Only live file reads are isolated here. Missing historical blobs, failed
+  /// merges and store writes still stop the review rather than guess a base.
+  Future<({ReviewBlob? blob})?> _readFile(
+    String path, {
+    bool keep = false,
+  }) async {
+    try {
+      return (blob: await (keep ? _store.take(path) : _store.current(path)));
+    } on ReviewUnavailable {
+      // No longer safe to undo this file. Keep the rest of the conversation
+      // working, and never promote it again until the user keeps its change.
+      final entry = _entries.remove(path);
+      final firstFailure = _unreadable.add(path);
+      if (entry == null && !firstFailure) return null;
+      _unseen.putIfAbsent(
+        path,
+        () => FileChange(path: path, added: 0, removed: 0, tracked: false),
+      );
+      await _refresh();
+      await _persist();
+      return null;
+    }
+  }
+
   final Map<String, String> _snapshots = {};
   final Map<String, Set<String>> _omitted = {};
   final Map<String, ReviewBlob?> _settledSnapshots = {};
@@ -208,8 +236,11 @@ class ChangeReview extends ChangeNotifier {
       ];
     }
     for (final path in _entries.keys.toList()) {
-      final entry = _entries[path]!;
-      final now = await _store.current(path);
+      final entry = _entries[path];
+      if (entry == null) continue;
+      final found = await _readFile(path);
+      if (found == null) continue;
+      final now = found.blob;
       if (!_same(now, entry.after) && entry.writing == 0) {
         await _rebase(entry, path);
       }
@@ -261,6 +292,7 @@ class ChangeReview extends ChangeNotifier {
         for (final change in snapshot.changes) {
           final path = _key(change.path);
           final after = change.after;
+          if (_unreadable.contains(path)) continue;
           final before = _settledSnapshots.containsKey(path)
               ? _settledSnapshots.remove(path)
               : change.before;
@@ -312,6 +344,7 @@ class ChangeReview extends ChangeNotifier {
   Future<void> before(String path) {
     final key = _key(path);
     return _enqueue(() async {
+      if (_unreadable.contains(key)) return;
       final entry = _entries[key];
       if (entry == null) {
         try {
@@ -325,7 +358,9 @@ class ChangeReview extends ChangeNotifier {
       final busy = entry.writing > 0;
       entry.writing++;
       if (busy) return;
-      final now = await _store.current(key);
+      final found = await _readFile(key);
+      if (found == null) return;
+      final now = found.blob;
       entry.current = now;
       if (!_same(now, entry.after)) await _rebase(entry, key);
     });
@@ -335,7 +370,8 @@ class ChangeReview extends ChangeNotifier {
   /// agent, the user) put into what it is held against: the agent's change
   /// stays its own.
   Future<void> _rebase(_Entry entry, String key) async {
-    await _rebaseOnto(entry, await _store.take(key));
+    final found = await _readFile(key, keep: true);
+    if (found != null) await _rebaseOnto(entry, found.blob);
   }
 
   Future<void> _rebaseOnto(_Entry entry, ReviewBlob? now) async {
@@ -377,7 +413,9 @@ class ChangeReview extends ChangeNotifier {
 
   /// [entry]'s file as it is now is what the agent left.
   Future<void> _taken(_Entry entry, String key) async {
-    final now = await _store.take(key);
+    final found = await _readFile(key, keep: true);
+    if (found == null) return;
+    final now = found.blob;
     entry
       ..after = now
       ..current = now
@@ -392,7 +430,8 @@ class ChangeReview extends ChangeNotifier {
     final snapshot = _reportedAfter;
     unawaited(
       _enqueue(() async {
-        if (snapshot != null && !snapshot.known) {
+        if (_unreadable.contains(key) ||
+            (snapshot != null && !snapshot.known)) {
           _entries.remove(key);
           _unseen[key] = FileChange(
             path: key,
@@ -467,9 +506,11 @@ class ChangeReview extends ChangeNotifier {
       );
       return;
     }
-    final now = snapshot == null
-        ? await _store.take(key)
-        : await _snapshotBlob(snapshot);
+    final found = snapshot == null
+        ? await _readFile(key, keep: true)
+        : (blob: await _snapshotBlob(snapshot));
+    if (found == null) return;
+    final now = found.blob;
     _entries[key] = _Entry(known.base)
       ..after = now
       ..current = now;
@@ -486,16 +527,20 @@ class ChangeReview extends ChangeNotifier {
       case OriginalText(text: null):
         return (base: null);
       case OriginalText(:final text?):
-        final now = await _store.current(path);
+        final found = await _readFile(path);
+        if (found == null) return null;
+        final now = found.blob;
         final mode = switch (now?.mode) {
           final mode? when mode != '120000' => mode,
           _ => '100644',
         };
         return (base: await _store.store(utf8.encode(text), mode: mode));
       case OriginalByPatch() || OriginalByEdits():
-        final after = snapshot == null
-            ? await _store.take(path)
-            : await _snapshotBlob(snapshot);
+        final found = snapshot == null
+            ? await _readFile(path, keep: true)
+            : (blob: await _snapshotBlob(snapshot));
+        if (found == null) return null;
+        final after = found.blob;
         if (after == null || after.isLink) return null;
         final now = utf8.decode(await _store.read(after), allowMalformed: true);
         final text = switch (original) {
@@ -512,13 +557,17 @@ class ChangeReview extends ChangeNotifier {
   /// the agent's, and edits it began and did not tell the end of (denied,
   /// stopped) are over.
   Future<void> look() => _enqueue(() async {
-    for (final MapEntry(key: path, value: entry) in _entries.entries) {
+    for (final path in _entries.keys.toList()) {
+      final entry = _entries[path];
+      if (entry == null) continue;
       if (entry.writing > 0) {
         entry.writing = 0;
         await _taken(entry, path);
         continue;
       }
-      final now = await _store.current(path);
+      final found = await _readFile(path);
+      if (found == null) continue;
+      final now = found.blob;
       if (_same(now, entry.current)) continue;
       entry
         ..current = now
@@ -527,7 +576,11 @@ class ChangeReview extends ChangeNotifier {
     // Those it cannot undo that are gone since (a script the agent wrote
     // and deleted): nothing is left of them to keep.
     for (final path in [..._unseen.keys]) {
-      if (await _store.current(path) == null) _unseen.remove(path);
+      final found = await _readFile(path);
+      if (found != null && found.blob == null) {
+        _unseen.remove(path);
+        _unreadable.remove(path);
+      }
     }
     await _refresh();
     await _persist();
@@ -588,6 +641,7 @@ class ChangeReview extends ChangeNotifier {
     return _enqueue(() async {
       for (final path in kept) {
         _unseen.remove(path);
+        _unreadable.remove(path);
         _entries.remove(path);
       }
       await _refresh();
@@ -597,6 +651,7 @@ class ChangeReview extends ChangeNotifier {
 
   Future<void> keepAll() => _enqueue(() async {
     _unseen.clear();
+    _unreadable.clear();
     _entries.removeWhere((_, entry) => entry.writing == 0);
     await _refresh();
     await _persist();
@@ -709,7 +764,8 @@ class ChangeReview extends ChangeNotifier {
     return _enqueue(() async {
       for (final key in keys) {
         if (_entries[key] case final entry?) await _taken(entry, key);
-        _settledSnapshots[key] = await _store.take(key);
+        final found = await _readFile(key, keep: true);
+        if (found != null) _settledSnapshots[key] = found.blob;
       }
       await _refresh();
       await _persist();
@@ -756,6 +812,7 @@ class ChangeReview extends ChangeNotifier {
                   'path': change.path,
                   'added': change.added,
                   'removed': change.removed,
+                  if (_unreadable.contains(change.path)) 'unreadable': true,
                 },
             ],
           });
@@ -802,6 +859,7 @@ class ChangeReview extends ChangeNotifier {
               removed: removed,
               tracked: false,
             );
+            if (change case {'unreadable': true}) _unreadable.add(path);
           }
         }
       }
@@ -811,6 +869,7 @@ class ChangeReview extends ChangeNotifier {
       // Begun anew.
       _entries.clear();
       _unseen.clear();
+      _unreadable.clear();
     }
   }
 
@@ -840,10 +899,12 @@ class ChangeReview extends ChangeNotifier {
     final session = _session;
     _session = null;
     _persisted = null;
-    if (session == null) return Future.value();
-    return _queue = _queue.then(
-      (_) => _store.forget(session).catchError((Object _) {}),
-    );
+    return _queue = _queue.then((_) async {
+      _unreadable.clear();
+      if (session != null) {
+        await _store.forget(session).catchError((Object _) {});
+      }
+    });
   }
 
   @override

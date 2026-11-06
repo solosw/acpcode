@@ -2,8 +2,10 @@
 library;
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bao_remote/local.dart' show BlobReviewStore;
+import 'package:bao_remote/src/review/git_review_store.dart';
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -176,6 +178,95 @@ void main() {
           expect(review.failure, isNull);
         },
       );
+
+      if (!remote) {
+        test(
+          'a timed-out observation preserves earlier changes and later turns',
+          () async {
+            write('first.txt', 'before\n');
+            write('later.txt', 'original\n');
+            await review.begin();
+            write('first.txt', 'first edit\n');
+            await review.observe();
+            final run = GitReviewStore.run;
+            addTearDown(() => GitReviewStore.run = run);
+            GitReviewStore.run =
+                (
+                  executable,
+                  arguments, {
+                  required workingDirectory,
+                  environment = const {},
+                  input,
+                  required timeout,
+                }) async =>
+                    (exitCode: -1, stdout: Uint8List(0), stderr: 'timed out');
+            write('later.txt', 'second edit\n');
+            await review.observe();
+            expect(review.failure, isNull);
+            expect(review.changes.map((change) => change.path), [
+              at('first.txt'),
+            ]);
+            GitReviewStore.run = run;
+            await review.observe();
+            await review.look();
+            expect(review.changes.map((change) => change.path).toSet(), {
+              at('first.txt'),
+              at('later.txt'),
+            });
+            await review.begin();
+            write('later.txt', 'third edit\n');
+            await review.observe();
+            await review.undoAll();
+            expect(read('first.txt'), 'before\n');
+            expect(read('later.txt'), 'original\n');
+            expect(review.failure, isNull);
+          },
+        );
+
+        test(
+          'snapshot limits recover without claiming writes in the gap',
+          () async {
+            final maxBytes = GitReviewStore.maxBytes;
+            final delay = GitReviewStore.oversizedRetryDelay;
+            addTearDown(() {
+              GitReviewStore.maxBytes = maxBytes;
+              GitReviewStore.oversizedRetryDelay = delay;
+            });
+            write('file.txt', 'before\n');
+            await review.begin();
+            write('file.txt', 'first edit\n');
+            await review.observe();
+            write('generated.txt', 'generated output exceeds test limit\n');
+            GitReviewStore.maxBytes = 1;
+            await review.observe();
+            expect(review.failure, isNull);
+            expect(review.changes.map((change) => change.path), [
+              at('file.txt'),
+            ]);
+            write('gap.txt', 'user content in the gap\n');
+            File(at('generated.txt')).deleteSync();
+            GitReviewStore.maxBytes = maxBytes;
+            GitReviewStore.oversizedRetryDelay = Duration.zero;
+            await review.observe();
+            expect(review.changes.map((change) => change.path), [
+              at('file.txt'),
+            ]);
+            write('file.txt', 'later edit\n');
+            write('new.txt', 'new agent output\n');
+            await review.observe();
+            await review.look();
+            expect(review.failure, isNull);
+            expect(review.changes.map((change) => change.path).toSet(), {
+              at('file.txt'),
+              at('new.txt'),
+            });
+            await review.undoAll();
+            expect(read('file.txt'), 'before\n');
+            expect(File(at('new.txt')).existsSync(), isFalse);
+            expect(read('gap.txt'), 'user content in the gap\n');
+          },
+        );
+      }
 
       test('one conversation snapshots each workspace folder', () async {
         final other = Directory(p.join(temp.path, 'other'))..createSync();

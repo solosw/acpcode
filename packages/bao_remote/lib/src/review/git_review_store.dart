@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 
 import '../platform/process_isolate.dart';
@@ -138,6 +139,11 @@ class GitReviewStore {
 
   /// Past this many bytes of new or changed files at once, too.
   static int maxBytes = 1024 * 1024 * 1024;
+
+  /// A temporarily oversized project is checked again after this delay.
+  /// Builds can generate too much output once without disabling review forever.
+  @visibleForTesting
+  static Duration oversizedRetryDelay = const Duration(minutes: 1);
 
   /// Folders left out even where no `.gitignore` says so: what tools
   /// download, build or cache, not what an agent edits.
@@ -386,6 +392,10 @@ class GitReviewStore {
   static int get runs => _runs;
   static int _runs = 0;
 
+  /// Replaceable by tests to reproduce process failures without waiting a minute.
+  @visibleForTesting
+  static var run = runProcess;
+
   /// Runs `git` on the repository and the project, with the index at
   /// [index] (by default its own); fails unless the exit code is in [ok]
   /// (null: any). With [repo], on that repository inside the project (see
@@ -403,7 +413,7 @@ class GitReviewStore {
     _runs++;
     final ProcessRun ran;
     try {
-      ran = await runProcess(
+      ran = await run(
         'git',
         [
           '--git-dir=$gitDir',
@@ -513,7 +523,9 @@ class GitReviewStore {
       Platform.isWindows ? code == 4 : code == 23 || code == 24;
 
   static ReviewUnavailable? _resourceFailure(Object error) {
-    final exhausted = switch (error) {
+    final temporary = switch (error) {
+      TimeoutException() => true,
+      GitReviewError(exitCode: -1) => true,
       ProcessException(:final errorCode) => _descriptorExhausted(errorCode),
       FileSystemException(:final osError) => _descriptorExhausted(
         osError?.errorCode,
@@ -524,7 +536,7 @@ class GitReviewStore {
             stderr.contains('ENFILE'),
       _ => false,
     };
-    return exhausted
+    return temporary
         ? ReviewUnavailable(
             'Review temporarily unavailable: $error',
             retryable: true,
@@ -542,9 +554,9 @@ class GitReviewStore {
     }
   }
 
-  /// The repositories of projects found too large to snapshot in this
-  /// process: not listed again.
-  static final Set<String> _oversized = {};
+  /// When each temporarily oversized project last exceeded the limit.
+  /// Shared by its conversations, so polling cannot keep rescanning it.
+  static final Map<String, DateTime> _oversized = {};
 
   // --- Snapshots -------------------------------------------------------------
 
@@ -565,10 +577,13 @@ class GitReviewStore {
   /// in place of the gitlink: the snapshot has its files as any others.
   Future<String?> snapshot({Iterable<String>? paths}) => _locked(
     () => _resources(() async {
-      if (_oversized.contains(gitDir)) return null;
-      if (_tooWide(root)) {
-        _oversized.add(gitDir);
-        return null;
+      if (_tooWide(root)) return null;
+      final oversizedAt = _oversized[gitDir];
+      if (oversizedAt != null) {
+        if (DateTime.now().isBefore(oversizedAt.add(oversizedRetryDelay))) {
+          return null;
+        }
+        _oversized.remove(gitDir);
       }
       try {
         final tree = await _snapshot(paths);
@@ -580,7 +595,7 @@ class GitReviewStore {
         }
         return tree;
       } on _TooLarge {
-        _oversized.add(gitDir);
+        _oversized[gitDir] = DateTime.now();
         // A partial index would make a later snapshot take the rest for
         // deleted.
         await _deleteIndexes();

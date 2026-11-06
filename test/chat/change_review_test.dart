@@ -1,13 +1,49 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:baocode/chat/review/review_store.dart';
 
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store_io.dart';
+import 'package:baocode/kernel/kernel_event.dart' show FileEdited, FileSnapshot;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+
+class _ReplacingFile extends Fake implements File {
+  _ReplacingFile(this.file, this.replace, {this.failures = 1});
+
+  final int failures;
+  final File file;
+  final void Function() replace;
+  var reads = 0;
+
+  @override
+  Future<FileStat> stat() => file.stat();
+
+  @override
+  Future<Uint8List> readAsBytes() async {
+    if (reads++ < failures) {
+      if (reads == 1) replace();
+      throw FileSystemException('File replaced during read', file.path);
+    }
+    return file.readAsBytes();
+  }
+}
+
+final class _ReadOverrides extends IOOverrides {
+  _ReadOverrides(this.file);
+
+  final _ReplacingFile file;
+
+  @override
+  File createFile(String path) =>
+      path == file.file.path ? file : super.createFile(path);
+}
 
 /// A project in a temporary folder, what its files were kept in another:
 /// the agent's edits told as the kernel tells them.
@@ -61,6 +97,283 @@ void main() {
   });
 
   tearDown(() => temp.delete(recursive: true));
+
+  for (final operation in [
+    'before',
+    'after',
+    'begin',
+    'look',
+    'report',
+    'settle',
+  ]) {
+    test(
+      'an oversized file during $operation does not stop other changes',
+      () async {
+        final limit = BlobReviewStore.maxFileBytes;
+        BlobReviewStore.maxFileBytes = 16;
+        addTearDown(() => BlobReviewStore.maxFileBytes = limit);
+        final review = open(session: 'large-$operation');
+        await edit(review, 'a.txt', 'agent\n');
+        if (operation == 'after') await review.before(path('a.txt'));
+        final large = 'x' * 32;
+        write('a.txt', large);
+        switch (operation) {
+          case 'before':
+            await review.before(path('a.txt'));
+            await review.after(path('a.txt'));
+          case 'after':
+            await review.after(path('a.txt'));
+          case 'begin':
+            await review.begin();
+          case 'look':
+            await review.look();
+          case 'settle':
+            await review.settle([path('a.txt')]);
+          case 'report':
+            review.report(
+              FileChange(path: path('a.txt'), added: 1, removed: 1),
+            );
+            await review.look();
+        }
+        expect(review.failure, isNull);
+        expect(changesOf(review)['a.txt']!.tracked, isFalse);
+        expect(review.original(path('a.txt')), isNull);
+        expect(review.baseOf(path('a.txt')), isNull);
+        await edit(review, 'lib/b.txt', 'bee\n');
+        expect(changesOf(review)['lib/b.txt']!.tracked, isTrue);
+        await review.undoAll();
+        expect(read('a.txt'), large);
+        expect(read('lib/b.txt'), 'b\n');
+        await review.begin();
+        await edit(review, 'lib/b.txt', 'next\n');
+        expect(review.failure, isNull);
+        expect(changesOf(review)['lib/b.txt']!.tracked, isTrue);
+        await review.undoAll();
+        expect(read('lib/b.txt'), 'b\n');
+
+        // Smaller again does not make unknown writes safe to undo.
+        await edit(review, 'a.txt', 'small\n');
+        await review.observe();
+        expect(changesOf(review)['a.txt']!.tracked, isFalse);
+        await review.undoAll();
+        expect(read('a.txt'), 'small\n');
+        final resumed = await ChangeReview.resume(
+          BlobReviewStore.open(checkpoints),
+          'large-$operation',
+          root: root,
+        );
+        addTearDown(resumed.dispose);
+        expect(changesOf(resumed)['a.txt']!.tracked, isFalse);
+        await resumed.begin();
+        write('a.txt', 'external\n');
+        await resumed.observe();
+        expect(changesOf(resumed)['a.txt']!.tracked, isFalse);
+        await resumed.undoAll();
+        expect(read('a.txt'), 'external\n');
+        await resumed.keep([path('a.txt')]);
+        await edit(resumed, 'a.txt', 'later\n');
+        expect(changesOf(resumed)['a.txt']!.tracked, isTrue);
+        await resumed.undoAll();
+        expect(read('a.txt'), 'external\n');
+      },
+    );
+  }
+
+  test('a workspace snapshot fills an unknown after event', () async {
+    final review = open();
+    const initial = 'before\n';
+    write('a.txt', initial);
+    await review.begin();
+    write('a.txt', 'agent\n');
+    review.reportEdit(
+      const FileEdited(
+        1,
+        FileChange(path: 'a.txt', added: 1, removed: 1),
+        after: FileSnapshot.unknown(),
+      ),
+    );
+    await review.look();
+    expect(changesOf(review)['a.txt']!.tracked, isFalse);
+    await review.observe();
+    expect(review.failure, isNull);
+    expect(changesOf(review)['a.txt']!.tracked, isTrue);
+    expect(await review.original(path('a.txt'))!(), initial);
+    await review.undoAll();
+    expect(read('a.txt'), initial);
+  });
+
+  test('legacy unknown changes without read-failure flags stay recoverable', () async {
+    final store = BlobReviewStore.open(checkpoints);
+    await store.save(
+      'legacy',
+      '{"version":4,"entries":{},"unseen":[{"path":${jsonEncode(path('a.txt'))},"added":1,"removed":1}]}',
+      blobs: const [],
+    );
+    final resumed = await ChangeReview.resume(store, 'legacy', root: root);
+    addTearDown(resumed.dispose);
+    expect(changesOf(resumed)['a.txt']!.tracked, isFalse);
+    final original = read('a.txt');
+    await resumed.begin();
+    write('a.txt', 'next agent\n');
+    await resumed.observe();
+    expect(resumed.failure, isNull);
+    expect(changesOf(resumed)['a.txt']!.tracked, isTrue);
+    expect(await resumed.original(path('a.txt'))!(), original);
+    await resumed.undoAll();
+    expect(read('a.txt'), original);
+  });
+
+  for (final cleanup in ['keepAll', 'deleted']) {
+    test('a $cleanup file clears its read-failure marker', () async {
+      final limit = BlobReviewStore.maxFileBytes;
+      BlobReviewStore.maxFileBytes = 16;
+      addTearDown(() => BlobReviewStore.maxFileBytes = limit);
+      final review = open(session: cleanup);
+      await edit(review, 'a.txt', 'agent\n');
+      write('a.txt', 'x' * 32);
+      await review.look();
+      expect(changesOf(review)['a.txt']!.tracked, isFalse);
+      if (cleanup == 'keepAll') {
+        await review.keepAll();
+      } else {
+        File(path('a.txt')).deleteSync();
+        await review.look();
+      }
+      expect(review.changes, isEmpty);
+      write('a.txt', 'base\n');
+      await review.begin();
+      await edit(review, 'a.txt', 'later\n');
+      expect(changesOf(review)['a.txt']!.tracked, isTrue);
+      await review.undoAll();
+      expect(read('a.txt'), 'base\n');
+      expect(review.failure, isNull);
+    });
+  }
+
+  test('discard removes persisted read-failure markers', () async {
+    final limit = BlobReviewStore.maxFileBytes;
+    BlobReviewStore.maxFileBytes = 16;
+    addTearDown(() => BlobReviewStore.maxFileBytes = limit);
+    final review = open(session: 'discarded');
+    await edit(review, 'a.txt', 'agent\n');
+    write('a.txt', 'x' * 32);
+    await review.look();
+    expect(changesOf(review)['a.txt']!.tracked, isFalse);
+    await review.discard();
+    final store = BlobReviewStore.open(checkpoints);
+    expect(await store.load('discarded'), isNull);
+    write('a.txt', 'base\n');
+    final resumed = await ChangeReview.resume(store, 'discarded', root: root);
+    addTearDown(resumed.dispose);
+    await edit(resumed, 'a.txt', 'later\n');
+    expect(changesOf(resumed)['a.txt']!.tracked, isTrue);
+    await resumed.undoAll();
+    expect(read('a.txt'), 'base\n');
+  });
+
+  test('an oversized untracked report does not stop the review', () async {
+    final limit = BlobReviewStore.maxFileBytes;
+    BlobReviewStore.maxFileBytes = 16;
+    addTearDown(() => BlobReviewStore.maxFileBytes = limit);
+    final review = open();
+    write('large.txt', 'x' * 32);
+    review.report(FileChange(path: path('large.txt'), added: 1, removed: 0));
+    await review.look();
+    expect(review.failure, isNull);
+    expect(changesOf(review)['large.txt']!.tracked, isFalse);
+    await edit(review, 'lib/b.txt', 'bee\n');
+    await review.undoAll();
+    expect(read('lib/b.txt'), 'b\n');
+    expect(read('large.txt'), 'x' * 32);
+  });
+
+  test(
+    'an unreadable live file is isolated without guessing a deletion',
+    () async {
+      final review = open(session: 'unreadable');
+      await edit(review, 'a.txt', 'agent\n');
+      final file = File(path('a.txt'));
+      final failing = _ReplacingFile(file, () {}, failures: 100);
+      await IOOverrides.runWithIOOverrides(
+        review.look,
+        _ReadOverrides(failing),
+      );
+      expect(review.failure, isNull);
+      expect(changesOf(review)['a.txt']!.tracked, isFalse);
+      expect(review.original(path('a.txt')), isNull);
+      await edit(review, 'lib/b.txt', 'bee\n');
+      await review.undoAll();
+      expect(read('a.txt'), 'agent\n');
+      expect(read('lib/b.txt'), 'b\n');
+    },
+  );
+
+  test('an oversized reported original degrades only that file', () async {
+    final limit = BlobReviewStore.maxFileBytes;
+    BlobReviewStore.maxFileBytes = 16;
+    addTearDown(() => BlobReviewStore.maxFileBytes = limit);
+    final review = open();
+    write('large.txt', 'x' * 32);
+    review.report(
+      FileChange(path: path('large.txt'), added: 1, removed: 1),
+      original: const OriginalText('old\n'),
+    );
+    await review.look();
+    expect(review.failure, isNull);
+    expect(changesOf(review)['large.txt']!.tracked, isFalse);
+    await edit(review, 'lib/b.txt', 'bee\n');
+    await review.undoAll();
+    expect(read('large.txt'), 'x' * 32);
+    expect(read('lib/b.txt'), 'b\n');
+  });
+
+  test('a missing historical blob still stops unsafe review', () async {
+    final review = open();
+    await edit(review, 'a.txt', 'agent\n');
+    final oid = review.baseOf(path('a.txt'))!;
+    File(p.join(checkpoints, 'blobs', oid.substring(0, 2), oid.substring(2)))
+        .deleteSync();
+    write('a.txt', 'user\n');
+    await review.before(path('a.txt'));
+    expect(review.failure, isNotNull);
+    await review.undoAll();
+    expect(read('a.txt'), 'user\n');
+  });
+
+  test('a replaced file is read again instead of ending review', () async {
+    final store = BlobReviewStore.open(checkpoints);
+    final file = File(path('a.txt'));
+    final replacing = _ReplacingFile(
+      file,
+      () => file.writeAsStringSync('replacement\n'),
+    );
+    final found = await IOOverrides.runZoned(
+      () => store.current(file.path),
+      createFile: (_) => replacing,
+    );
+    expect(replacing.reads, 2);
+    expect(found, await store.current(file.path));
+    expect(found, isNotNull);
+  });
+
+  test('a file lost during reading is not guessed to be a deletion', () async {
+    final store = BlobReviewStore.open(checkpoints);
+    final file = File(path('a.txt'));
+    final replacing = _ReplacingFile(file, file.deleteSync);
+    await expectLater(
+      IOOverrides.runZoned(
+        () => store.current(file.path),
+        createFile: (_) => replacing,
+      ),
+      throwsA(
+        isA<ReviewUnavailable>().having(
+          (error) => error.retryable,
+          'retryable',
+          isTrue,
+        ),
+      ),
+    );
+  });
 
   test('lists what the agent edited, not what changed otherwise', () async {
     final review = open();
