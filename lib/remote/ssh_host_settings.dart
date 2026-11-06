@@ -87,9 +87,7 @@ class SshSavedHost {
 /// are kept by [secrets], never in the file. `~/.ssh/config` is still read
 /// for hosts that are not listed here.
 class SshHostSettings extends ChangeNotifier {
-  SshHostSettings({UserSettings? settings, SecretStore? secrets})
-    : _settings = settings,
-      _secrets = secrets;
+  SshHostSettings({this._settings, this._secrets});
 
   static const settingKey = 'remote.ssh.hosts';
 

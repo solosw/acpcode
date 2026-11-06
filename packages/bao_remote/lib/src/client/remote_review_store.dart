@@ -8,11 +8,7 @@ import '../rpc/rpc_peer.dart';
 /// [ReviewStore] of the remote host: its checkpoints there (in the
 /// server's data folder), every call a request.
 class RemoteReviewStore implements ReviewStore, ReviewSnapshots {
-  RemoteReviewStore(
-    this._peer,
-    this._id, {
-    Future<RemoteReviewStore> Function()? reopen,
-  }) : _reopen = reopen;
+  RemoteReviewStore(this._peer, this._id, {this._reopen});
 
   RpcPeer _peer;
   int _id;
@@ -60,10 +56,7 @@ class RemoteReviewStore implements ReviewStore, ReviewSnapshots {
   @override
   Future<ReviewSnapshot?> snapshot(String root, {String? previous}) async =>
       ReviewSnapshot.fromJson(
-        await _call('snapshot', {
-          'root': root,
-          if (previous != null) 'previous': previous,
-        }),
+        await _call('snapshot', {'root': root, 'previous': ?previous}),
       );
 
   @override
