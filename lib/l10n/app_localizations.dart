@@ -4070,6 +4070,18 @@ abstract class AppLocalizations {
   /// **'By status'**
   String get sidebarByStatus;
 
+  /// Sidebar menu: projects ordered by their latest agent, the most recent first.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent activity'**
+  String get sidebarProjectSortRecent;
+
+  /// Sidebar menu: projects in the order the user dragged them.
+  ///
+  /// In en, this message translates to:
+  /// **'Manual'**
+  String get sidebarProjectSortManual;
+
   /// Compact relative time in the agents list.
   ///
   /// In en, this message translates to:
@@ -4874,6 +4886,18 @@ abstract class AppLocalizations {
   /// **'Subagent {description}, {status}'**
   String chatSubagentSemantics(String description, String status);
 
+  /// No description provided for @chatAgentMessageSent.
+  ///
+  /// In en, this message translates to:
+  /// **'sent'**
+  String get chatAgentMessageSent;
+
+  /// No description provided for @chatAgentMessageSemantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Message from subagent {agent}'**
+  String chatAgentMessageSemantics(String agent);
+
   /// No description provided for @chatOpensItsConversation.
   ///
   /// In en, this message translates to:
@@ -4885,6 +4909,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Load earlier messages'**
   String get chatLoadEarlier;
+
+  /// Over a kept conversation, once its session was talked in elsewhere (e.g. in a terminal) since it was read: reads it anew.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload (continued elsewhere)'**
+  String get chatReload;
 
   /// No description provided for @chatStop.
   ///
@@ -5461,6 +5491,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Worked for {duration}'**
   String turnWorked(String duration);
+
+  /// A turn the user stopped, its work folded, e.g. "Stopped after 4m 32s".
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped after {duration}'**
+  String turnStopped(String duration);
 
   /// Over a round of planning's card in the conversation.
   ///
@@ -7472,10 +7508,22 @@ abstract class AppLocalizations {
   /// **'high contrast themes'**
   String get themeHighContrastThemes;
 
+  /// No description provided for @themeAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get themeAuto;
+
+  /// No description provided for @themeFollowSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow system'**
+  String get themeFollowSystem;
+
   /// No description provided for @themeSelectPlaceholder.
   ///
   /// In en, this message translates to:
-  /// **'Select Color Theme (detect system color mode disabled)'**
+  /// **'Select Color Theme'**
   String get themeSelectPlaceholder;
 
   /// A time within half a minute of now.
@@ -9386,6 +9434,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'({count} selected)'**
   String wbSelectedCount(int count);
+
+  /// No description provided for @wbSelectedLines.
+  ///
+  /// In en, this message translates to:
+  /// **'({lines} lines, {count} selected)'**
+  String wbSelectedLines(int lines, int count);
 
   /// No description provided for @wbGoToLineColumn.
   ///
@@ -11535,6 +11589,54 @@ abstract class AppLocalizations {
   /// **'Add Upstream'**
   String get modelsAddProvider;
 
+  /// No description provided for @modelsMagpieJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect magpie'**
+  String get modelsMagpieJoin;
+
+  /// No description provided for @modelsMagpieBadge.
+  ///
+  /// In en, this message translates to:
+  /// **'Follows magpie'**
+  String get modelsMagpieBadge;
+
+  /// No description provided for @modelsMagpieGateway.
+  ///
+  /// In en, this message translates to:
+  /// **'magpie Gateway'**
+  String get modelsMagpieGateway;
+
+  /// No description provided for @modelsMagpieGatewayDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Models, accounts and routing are set up in magpie, and this list follows it. New routing groups, image models and the models magpie gives Claude Code are turned on as they come; tick any other below.'**
+  String get modelsMagpieGatewayDescription;
+
+  /// No description provided for @modelsMagpieRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get modelsMagpieRunning;
+
+  /// No description provided for @modelsMagpieNotRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'magpie isn\'t running'**
+  String get modelsMagpieNotRunning;
+
+  /// No description provided for @modelsMagpieNotRunningDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Open magpie, or run magpie serve. Sessions on its models fail until it runs.'**
+  String get modelsMagpieNotRunningDetail;
+
+  /// No description provided for @modelsMagpieSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Models'**
+  String get modelsMagpieSync;
+
   /// No description provided for @modelsNewProviderName.
   ///
   /// In en, this message translates to:
@@ -11589,6 +11691,78 @@ abstract class AppLocalizations {
   /// **'Opens ChatGPT\'s sign-in page in the browser.'**
   String get modelsAddAccountDescription;
 
+  /// No description provided for @modelsAccountsImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get modelsAccountsImport;
+
+  /// No description provided for @modelsAccountsImportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Import Accounts'**
+  String get modelsAccountsImportTitle;
+
+  /// No description provided for @modelsAccountsImportFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose File…'**
+  String get modelsAccountsImportFile;
+
+  /// No description provided for @modelsAccountsImportDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter account credentials as JSON or choose a JSON file.'**
+  String get modelsAccountsImportDescription;
+
+  /// No description provided for @modelsAccountsPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter JSON…'**
+  String get modelsAccountsPaste;
+
+  /// No description provided for @modelsAccountsPastePlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Type or paste your JSON credentials here.'**
+  String get modelsAccountsPastePlaceholder;
+
+  /// No description provided for @modelsAccountsImportConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Import these ChatGPT credentials?'**
+  String get modelsAccountsImportConfirm;
+
+  /// No description provided for @modelsAccountsImportConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.'**
+  String get modelsAccountsImportConfirmDetail;
+
+  /// No description provided for @modelsAccountsImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The credentials could not be read or imported.'**
+  String get modelsAccountsImportFailed;
+
+  /// No description provided for @modelsAccountsImportSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts imported: {count}'**
+  String modelsAccountsImportSummary(int count);
+
+  /// No description provided for @modelsAccountsImportKept.
+  ///
+  /// In en, this message translates to:
+  /// **'Already here, kept as signed in: {count}'**
+  String modelsAccountsImportKept(int count);
+
+  /// No description provided for @modelsAccountsImportItemFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Entry {index}: {error}'**
+  String modelsAccountsImportItemFailed(int index, String error);
+
   /// No description provided for @modelsAccountSigningIn.
   ///
   /// In en, this message translates to:
@@ -11616,8 +11790,14 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRefreshQuota.
   ///
   /// In en, this message translates to:
-  /// **'Refresh Quota'**
+  /// **'Refresh All Quotas'**
   String get modelsRefreshQuota;
+
+  /// No description provided for @modelsAccountRefreshQuota.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh quota for {name}'**
+  String modelsAccountRefreshQuota(String name);
 
   /// No description provided for @modelsAccountRemove.
   ///
@@ -12234,7 +12414,7 @@ abstract class AppLocalizations {
   /// No description provided for @modelsRoleSubagentDescription.
   ///
   /// In en, this message translates to:
-  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).'**
+  /// **'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, the built-in Explore and Plan and those defined as inherit too, over the one its definition or the agent\'s call names.'**
   String get modelsRoleSubagentDescription;
 
   /// Under a role that picks another upstream's model, once that upstream or model is gone.
@@ -17479,6 +17659,18 @@ abstract class AppLocalizations {
   /// **'The extension is newer than this BaoCode. Update BaoCode.'**
   String get browserSettingsAppOld;
 
+  /// No description provided for @browserSettingsNoFileAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'File access is off'**
+  String get browserSettingsNoFileAccess;
+
+  /// No description provided for @browserSettingsNoFileAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Agents can\'t open local HTML files or upload files. In chrome://extensions, click Details on BaoCode and turn on Allow access to file URLs.'**
+  String get browserSettingsNoFileAccessDescription;
+
   /// No description provided for @browserSettingsInstall.
   ///
   /// In en, this message translates to:
@@ -19812,6 +20004,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unified Viewer'**
   String get diffUnified;
+
+  /// No description provided for @gitDetailsLayout.
+  ///
+  /// In en, this message translates to:
+  /// **'Details Position'**
+  String get gitDetailsLayout;
+
+  /// No description provided for @gitDetailsLayoutAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Right When Wide Enough'**
+  String get gitDetailsLayoutAuto;
+
+  /// No description provided for @gitDetailsLayoutBeside.
+  ///
+  /// In en, this message translates to:
+  /// **'Right'**
+  String get gitDetailsLayoutBeside;
+
+  /// No description provided for @gitDetailsLayoutBelow.
+  ///
+  /// In en, this message translates to:
+  /// **'Bottom'**
+  String get gitDetailsLayoutBelow;
 
   /// No description provided for @diffIgnoreWhitespace.
   ///
@@ -22291,6 +22507,12 @@ abstract class AppLocalizations {
   /// **'Nothing kept yet'**
   String get ustatSpaceEmpty;
 
+  /// No description provided for @ustatLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading the calls…'**
+  String get ustatLoading;
+
   /// No description provided for @ustatClearEllipsis.
   ///
   /// In en, this message translates to:
@@ -23056,8 +23278,20 @@ abstract class AppLocalizations {
   /// No description provided for @remoteLocalAccessDetail.
   ///
   /// In en, this message translates to:
-  /// **'Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.'**
+  /// **'Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.'**
   String get remoteLocalAccessDetail;
+
+  /// No description provided for @remoteLocalAccessNoAsking.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs commands without asking'**
+  String get remoteLocalAccessNoAsking;
+
+  /// No description provided for @remoteLocalAccessAskAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Each Time'**
+  String get remoteLocalAccessAskAgain;
 
   /// No description provided for @sidePanelPorts.
   ///

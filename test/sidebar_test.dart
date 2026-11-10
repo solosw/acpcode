@@ -314,17 +314,31 @@ void main() {
     await tester.pump();
     expect(background.status, ThreadStatus.running);
 
+    Finder told(String label) => find.descendant(
+      of: find.byType(Sidebar),
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == label,
+      ),
+    );
+    // Folded away at work, its project's header spins as its row would.
+    await tester.tap(inSidebar(find.text('api-gateway')));
+    await tester.pump();
+    expect(told('Running 1'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: told('Running 1'),
+        matching: find.byType(PixelLoader),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(inSidebar(find.text('api-gateway')));
+    await tester.pump();
+
     await runUntilQuestion(tester, background.session);
     expect(background.status, ThreadStatus.needsInput);
 
     // Folded away, its project's header shows its dot, after the name.
-    Finder dot() => find.descendant(
-      of: find.byType(Sidebar),
-      matching: find.byWidgetPredicate(
-        (widget) =>
-            widget is Semantics && widget.properties.label == 'Needs input',
-      ),
-    );
+    Finder dot() => told('Needs input 1');
     expect(dot(), findsNothing);
     await tester.tap(inSidebar(find.text('api-gateway')));
     await tester.pump();
@@ -1439,6 +1453,28 @@ void main() {
     );
   });
 
+  testWidgets('an agent at work shows past the five most recent', (
+    tester,
+  ) async {
+    final workspace = await pumpKept(
+      tester,
+      KeptCatalog([for (var i = 1; i <= 7; i++) kept('a$i', '/tmp/a', i)]),
+    );
+    expect(inSidebar(find.text('Chat a7')), findsNothing);
+    final working = keptThread(workspace, 'a7');
+    working.session.send(const ComposerMessage(text: 'go'));
+    await tester.pump();
+    expect(working.shownStatus, ThreadStatus.running);
+    // Long at work, the others touched since: the oldest.
+    working.updatedAt = DateTime(2000);
+    workspace.rename(keptThread(workspace, 'a1'), 'Chat a1');
+    await tester.pump();
+    expect(inSidebar(find.text('Chat a7')), findsOneWidget);
+    expect(inSidebar(find.text('Chat a6')), findsNothing);
+    working.session.stop();
+    await tester.pump(const Duration(seconds: 5));
+  });
+
   testWidgets('the only project has a plain header that does not fold', (
     tester,
   ) async {
@@ -1706,6 +1742,56 @@ void main() {
     await pickFromMenu(tester, 'b', 'Unpin');
     expect(order(), ['a', 'b', 'c']);
     expect(pin, findsOneWidget);
+  });
+
+  testWidgets('projects follow their latest agent until dragged; the '
+      'grouping menu switches back', (tester) async {
+    final store = MemoryPreferenceStore();
+    final catalog = KeptCatalog([
+      kept('a1', '/tmp/a', 30),
+      kept('b1', '/tmp/b', 10),
+      kept('c1', '/tmp/c', 20),
+    ]);
+    var workspace = await pumpKept(tester, catalog, preferences: store);
+    List<String> order() => [
+      for (final project in workspace.sidebarProjectsHere) project.name,
+    ];
+    Future<void> pick(String item) async {
+      await tester.tap(inSidebar(find.text('By project')));
+      await tester.pump();
+      await tester.tap(find.text(item));
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    expect(workspace.projectSort, ProjectSort.recent);
+    expect(order(), ['b', 'c', 'a']);
+
+    // Dragged on top: in the user's order from then on.
+    await mouseDrag(
+      tester,
+      tester.getCenter(inSidebar(find.text('a'))),
+      () => tester.getTopLeft(inSidebar(find.text('b'))) + const Offset(20, 2),
+    );
+    expect(workspace.projectSort, ProjectSort.manual);
+    expect(order(), ['a', 'b', 'c']);
+
+    await pick('Recent activity');
+    expect(order(), ['b', 'c', 'a']);
+    // The order dragged is kept for when it is back.
+    await pick('Manual');
+    expect(order(), ['a', 'b', 'c']);
+
+    // The next run.
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpKept(tester, catalog, preferences: store);
+    expect(workspace.projectSort, ProjectSort.manual);
+    expect(order(), ['a', 'b', 'c']);
+
+    // Grouped by date, there is no project order to pick.
+    await pick('Date');
+    await tester.tap(inSidebar(find.text('By date')));
+    await tester.pump();
+    expect(find.text('Manual'), findsNothing);
   });
 
   testWidgets('agents and projects keep the order they are dragged to', (

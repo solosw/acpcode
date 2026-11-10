@@ -292,7 +292,12 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     final l10n = context.l10n;
     return [
       if (row.work case StepFold(:final worked?) && final fold)
-        WorkFoldLine.text(worked, turnEdits(_itemsIn(fold)), l10n: l10n),
+        WorkFoldLine.text(
+          worked,
+          turnEdits(_itemsIn(fold)),
+          l10n: l10n,
+          stopped: fold.stopped,
+        ),
       if (row.steps case final fold?)
         StepsFoldLine.text(StepTally(_itemsIn(fold)), l10n: l10n),
       if (row.item)
@@ -322,11 +327,11 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   /// The editor opening: its placeholder grows from the message's height
   /// to the editor's, and the editor shows as much of itself as it does.
-  late final AnimationController _editorReveal = AnimationController(
-    vsync: this,
-    duration: _motionDuration,
-    value: 1,
-  );
+  late final AnimationController _editorReveal =
+      AnimationController(vsync: this, duration: _motionDuration, value: 1)
+        ..addStatusListener((status) {
+          if (status.isCompleted) _ensureEditorVisible();
+        });
 
   /// The message's height, where the placeholder grows from.
   double _editorFromHeight = 0;
@@ -1709,6 +1714,33 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (height == _editorHeight || _editingIndex == null) return;
     setState(() => _editorHeight = height);
     _editorMoved.value++;
+    if (_editorReveal.isCompleted) _ensureEditorVisible();
+  }
+
+  /// Once the placeholder has its full height, reveal only what extends
+  /// below the history. The editor is painted above the list, so its own
+  /// scrollable cannot bring it into view there.
+  void _ensureEditorVisible() {
+    final index = _editingIndex;
+    if (index == null) return;
+    final key = _editComposerKey;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _editingIndex != index ||
+          _editComposerKey != key ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final placeholder = _editorPlaceholderKey.currentContext
+          ?.findRenderObject();
+      if (placeholder == null || !placeholder.attached) return;
+      unawaited(
+        _scrollController.position.ensureVisible(
+          placeholder,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        ),
+      );
+    });
   }
 
   /// Room above the editor stuck to the top of the list: as above the
@@ -1795,13 +1827,20 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         ?_topTurnMessage(),
         if (_sticks)
           for (final item in _laidOutItems())
-            if (_feed.itemAt(_indexOf(item)) is UserMessageItem) _indexOf(item),
+            if (_sticksAt(_indexOf(item))) _indexOf(item),
       };
       if (setEquals(indices, _stickyIndices)) return;
       _stickyKeys.removeWhere((index, _) => !indices.contains(index));
       setState(() => _stickyIndices = indices);
     });
   }
+
+  /// Whether the item at [index] is a message the user sent, which sticks
+  /// at the top: not a subagent's.
+  bool _sticksAt(int index) => switch (_feed.itemAt(index)) {
+    UserMessageItem(fromAgent: null) => true,
+    _ => false,
+  };
 
   /// The user message of the turn at the top of the view: the last one
   /// scrolled past the top. (It keeps the top while the next one, below,
@@ -1815,14 +1854,14 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     for (final item in _laidOutItems()) {
       final index = _indexOf(item);
       first ??= index;
-      if (_feed.itemAt(index) is! UserMessageItem) continue;
+      if (!_sticksAt(index)) continue;
       if (_messageTop(index, list)! >= _stickyInset) break;
       passed = index;
     }
     if (passed != null || first == null) return passed;
     // Scrolled past long ago: above the laid-out items.
     for (var index = first - 1; index >= 0; index--) {
-      if (_feed.itemAt(index) is UserMessageItem) return index;
+      if (_sticksAt(index)) return index;
     }
     return null;
   }
@@ -1852,7 +1891,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     if (sticky == null || !sticky.hasSize || list == null) return null;
     for (final item in _laidOutItems()) {
       final next = _indexOf(item);
-      if (next <= index || _feed.itemAt(next) is! UserMessageItem) {
+      if (next <= index || !_sticksAt(next)) {
         continue;
       }
       final nextTop = _messageTop(next, list)!;
@@ -2273,7 +2312,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         item: item,
         expanded: _isExpanded(index),
         onToggle: () => _toggle(index),
-        onEdit: item is UserMessageItem ? () => _startEditing(index) : null,
+        onEdit: item is UserMessageItem && item.fromAgent == null
+            ? () => _startEditing(index)
+            : null,
         onMoveToBackground: _feed.moveToBackgroundAt(index),
         onStop: _feed.stopAt(index),
         onOpen: switch ((item, widget.onOpenAgent)) {
@@ -2312,6 +2353,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                   if (row.work case StepFold(:final worked?) && final fold) ...[
                     WorkFoldLine(
                       worked: worked,
+                      stopped: fold.stopped,
                       edits: turnEdits(_itemsIn(fold)),
                       images: foldImages(_itemsIn(fold)),
                       expanded: _isFoldOpen(fold),

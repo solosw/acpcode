@@ -347,18 +347,21 @@ class PieceTreeBase {
     // original implementation's append-only change-buffer path.
     if (text.length > averageBufferSize) {
       final pieces = <Piece>[];
-      while (text.isNotEmpty) {
-        var end = text.length < averageBufferSize
+      // Cut by offset: taking the rest anew after each chunk copies it
+      // whole, a large text once per chunk.
+      var start = 0;
+      while (start < text.length) {
+        var end = text.length - start < averageBufferSize
             ? text.length
-            : averageBufferSize;
+            : start + averageBufferSize;
         if (end < text.length) {
           final last = text.codeUnitAt(end - 1);
           if (last == 13 || (last >= 0xd800 && last <= 0xdbff)) end--;
         }
-        final chunk = text.substring(0, end);
+        final chunk = text.substring(start, end);
         _buffers.add(StringBuffer(chunk, createLineStartsFast(chunk)));
         pieces.add(_makePiece(_buffers.length - 1, 0, chunk.length));
-        text = text.substring(end);
+        start = end;
       }
       return pieces;
     }
@@ -458,8 +461,10 @@ class PieceTreeBase {
     }
     final next = prev.next();
     if (identical(next, sentinel) ||
-        !getPieceContent(prev.piece!).endsWith('\r') ||
-        !getPieceContent(next.piece!).startsWith('\n')) {
+        prev.piece!.length == 0 ||
+        next.piece!.length == 0 ||
+        _pieceCodeUnit(prev.piece!, prev.piece!.length - 1) != 0x0D ||
+        _pieceCodeUnit(next.piece!, 0) != 0x0A) {
       return;
     }
     final before = prev.piece!;
@@ -657,13 +662,25 @@ class PieceTreeBase {
     return Position(1, 1);
   }
 
-  String getPieceContent(Piece piece) {
+  String getPieceContent(Piece piece) => _pieceText(piece, 0, piece.length);
+
+  /// [piece]'s text from [from] to [to], read from its buffer: not the
+  /// whole piece copied first. A piece of an edited file is part of its
+  /// buffer, and copying it for each line read made a search through it
+  /// take the lines times the file's size (2MSCSKQ2: the find widget open,
+  /// each key froze the window).
+  String _pieceText(Piece piece, int from, int to) {
     final start = _offsetInBuffer(piece.bufferIndex, piece.start);
     return _buffers[piece.bufferIndex].buffer.substring(
-      start,
-      start + piece.length,
+      start + from,
+      start + to,
     );
   }
+
+  /// The code unit at [index] of [piece].
+  int _pieceCodeUnit(Piece piece, int index) => _buffers[piece.bufferIndex]
+      .buffer
+      .codeUnitAt(_offsetInBuffer(piece.bufferIndex, piece.start) + index);
 
   bool iterate(TreeNode node, bool Function(TreeNode) callback) {
     if (identical(node, sentinel)) return callback(sentinel);
@@ -694,7 +711,7 @@ class PieceTreeBase {
       final piece = node.piece!;
       final len = (piece.length - inside).clamp(0, remaining);
       if (len > 0) {
-        result.write(getPieceContent(piece).substring(inside, inside + len));
+        result.write(_pieceText(piece, inside, inside + len));
       }
       remaining -= len;
       inside = 0;
@@ -728,8 +745,10 @@ class PieceTreeBase {
     if (_lastVisitedLineNumber == lineNumber) return _lastVisitedLineValue;
     _lastVisitedLineNumber = lineNumber;
     return _lastVisitedLineValue = getLineRawContent(lineNumber)
-        .replaceFirst(RegExp(r'\r\n$|\r$|\n$'), '');
+        .replaceFirst(_lineBreakAtEnd, '');
   }
+
+  static final _lineBreakAtEnd = RegExp(r'\r\n$|\r$|\n$');
 
   List<String> getLinesContent() =>
       List<String>.generate(_lineCnt, (i) => getLineContent(i + 1));
@@ -763,8 +782,12 @@ class PieceTreeBase {
         ? at.node.next()
         : at.node;
     if (identical(node, sentinel)) return '';
-    return getPieceContent(node.piece!)
-        .substring(identical(node, at.node) ? at.remainder : 0);
+    final piece = node.piece!;
+    return _pieceText(
+      piece,
+      identical(node, at.node) ? at.remainder : 0,
+      piece.length,
+    );
   }
 
   PieceTreeSnapshot createSnapshot(String bom) {

@@ -141,6 +141,7 @@ class ClaudeCodeKernel
       emit: emit,
       nextSeq: () => nextSeq,
       goalSaid: _syncGoal,
+      ownModel: _ownModel,
     );
     _providers.addListener(_providersChanged);
     ExtensionSwitches.changes?.addListener(_applySwitches);
@@ -252,19 +253,10 @@ class ClaudeCodeKernel
   String? _earlier;
   Future<void>? _earlierLoad;
 
-  /// Whether what was read begins within a turn (a long one is cut so):
-  /// the turn the page before it ends with goes on past it, so is not
-  /// timed.
-  bool _readInTurn = false;
-
-  /// Whether [page] begins within a turn: with a message of the agent's,
-  /// not the user's prompt.
-  static bool _beginsInTurn(ClaudeHistoryPage page) {
-    for (final line in page.entries) {
-      if (line['type'] != 'attachment') return line['type'] == 'assistant';
-    }
-    return false;
-  }
+  /// How what was read begins, where that is within a turn (a long one is
+  /// cut so; see [ClaudeTranslator.head]): the turn the page before it ends
+  /// with goes on past it, and is timed to where it ends.
+  ({DateTime? until, bool stopped})? _readHead;
 
   /// Writes wait on this: for the process to be ready, and for a rewind to
   /// land before the message that follows it.
@@ -390,6 +382,11 @@ class ClaudeCodeKernel
   /// [_applyWindow]).
   String _launchedProvider = '';
   String? _reportedModel;
+
+  /// Whether the CLI sends a queued message now on its own (an interrupt
+  /// with `send_now`), sparing the tasks in the background, as its init
+  /// says (`interrupt_send_now_v1`).
+  bool _sendsNow = false;
 
   /// When the usage limit the last turn hit resets (see
   /// [ReportsUsageLimit]): the account's own plan's, or every ChatGPT
@@ -1106,7 +1103,9 @@ class ClaudeCodeKernel
       }
     }
     _permissions.clear();
-    if (!interrupted && worked != null) {
+    // Stopped too: its work folds all the same (the session file tells it
+    // was stopped).
+    if (worked != null) {
       if ((_turnStats, _sessionId) case (final stats?, final session?)) {
         stats.write(session, turn, (worked: worked, usage: usage));
       }
@@ -1188,6 +1187,25 @@ class ClaudeCodeKernel
         !_held.containsKey(turnId) &&
         others.every(_held.containsKey)) {
       cancel();
+      return;
+    }
+    // Given the CLI, none before it there: the CLI makes way for it itself,
+    // the tasks in the background left at work. Taking it back to send it
+    // again could fail (the CLI keeping it), and then nothing was sent.
+    final given = _queued.where((id) => !_held.containsKey(id));
+    if (_sendsNow && given.firstOrNull == turnId) {
+      unawaited(
+        _control!
+            .request('interrupt', {'send_now': true, 'message_uuid': turnId})
+            .then<void>(
+              (_) {},
+              onError: (Object _) {
+                if (_queued.contains(turnId)) {
+                  _resendQueued([turnId, ...others], now: turnId);
+                }
+              },
+            ),
+      );
       return;
     }
     // The CLI takes up all it queued as one turn, in the order sent: the
@@ -1836,6 +1854,9 @@ class ClaudeCodeKernel
       case 'system' when message['subtype'] == 'init':
         _sessionId = message['session_id'] as String? ?? _sessionId;
         _reportedModel = message['model'] as String?;
+        _sendsNow = (message['capabilities'] as List? ?? const []).contains(
+          'interrupt_send_now_v1',
+        );
         if (message.containsKey('effort')) {
           _appliedEffort = message['effort'] as String?;
         }
@@ -2594,9 +2615,9 @@ class ClaudeCodeKernel
   );
 
   /// Counts the request to the model [message] answers, if it is the
-  /// conversation's: once, as a message comes a content block at a time,
-  /// each with its request's usage. A subagent's is left out, as its
-  /// transcript is apart. Whether it was not counted yet.
+  /// conversation's: once, as a message comes a content block at a time.
+  /// Later lines update the fields they give. A subagent's is left out, as
+  /// its transcript is apart. Whether it was added or its usage changed.
   bool _countRequest(Map<String, Object?> message) {
     if (message['parent_tool_use_id'] != null ||
         message['isSidechain'] == true) {
@@ -2612,11 +2633,12 @@ class ClaudeCodeKernel
     };
     if (id == null || usage == null) return false;
     final model = (body as Map)['model'] as String?;
-    int count(String key) => claudeInt(usage[key]) ?? 0;
+    final previous = _requests[id];
+    int count(String key, int was) => claudeInt(usage[key]) ?? was;
     final tokens = CacheTokens(
-      read: count('cache_read_input_tokens'),
-      written: count('cache_creation_input_tokens'),
-      uncached: count('input_tokens'),
+      read: count('cache_read_input_tokens', previous?.read ?? 0),
+      written: count('cache_creation_input_tokens', previous?.written ?? 0),
+      uncached: count('input_tokens', previous?.uncached ?? 0),
     );
     // None at all: one of the CLI's own (an API error), not the model's.
     if (tokens.total == 0) return false;
@@ -2626,9 +2648,11 @@ class ClaudeCodeKernel
         usage.containsKey('cache_creation_input_tokens')) {
       _cachingModels.add(model);
     }
-    if (_requests.containsKey(id)) return false;
     _requests[id] = tokens;
-    return true;
+    return previous == null ||
+        previous.read != tokens.read ||
+        previous.written != tokens.written ||
+        previous.uncached != tokens.uncached;
   }
 
   /// The conversation was compacted, maybe mid-turn: the context shown
@@ -2826,7 +2850,6 @@ class ClaudeCodeKernel
       final page = await read(session, turns: _firstTurns);
       final kept = await keptTurns;
       _earlier = page.earlier;
-      _readInTurn = _beginsInTurn(page);
       _translator
         ..replaying = true
         ..keptTurns = kept;
@@ -2835,6 +2858,7 @@ class ClaudeCodeKernel
         if (line['type'] == 'assistant') counted |= _countRequest(line);
         _translator.translate(line);
       }
+      _readHead = _translator.head;
       _translator.endReplay();
       if (counted) _reportStats();
     } on Object catch (error) {
@@ -2879,7 +2903,11 @@ class ClaudeCodeKernel
       var seq = 0;
       final items = Transcript();
       final translator =
-          ClaudeTranslator(emit: items.apply, nextSeq: () => ++seq)
+          ClaudeTranslator(
+              emit: items.apply,
+              nextSeq: () => ++seq,
+              ownModel: _ownModel,
+            )
             ..replaying = true
             ..keptTurns = kept;
       var counted = false;
@@ -2887,10 +2915,10 @@ class ClaudeCodeKernel
         if (line['type'] == 'assistant') counted |= _countRequest(line);
         translator.translate(line);
       }
-      if (!_readInTurn) translator.endPage();
+      translator.endPage(after: _readHead);
       if (counted) _reportStats();
       _earlier = page.earlier;
-      _readInTurn = _beginsInTurn(page);
+      _readHead = translator.head;
       emit(HistoryPrepended(nextSeq, [...items.liveItems]));
     } on Object catch (error) {
       if (_disposed) return;
@@ -3056,6 +3084,21 @@ class ClaudeCodeKernel
   };
 
   String get _providerKey => _providerKeyOf(_model);
+
+  /// [model], a bare id an upstream answered with, as the [modelRef] of
+  /// the upstream the conversation is on where that one has it: requests
+  /// of a bare id go there (the proxy sends only `@<id>/` ones elsewhere).
+  String _ownModel(String model) {
+    if (parseModelRef(model) != null) return model;
+    final id = _onProvider.split('|').first;
+    return switch (_providers.provider(id)) {
+      final provider? when provider.model(model) != null => modelRef(
+        provider.id,
+        model,
+      ),
+      _ => model,
+    };
+  }
 
   /// What the conversation is on now: the process's provider while one
   /// runs, whatever is picked since (a model of one removed, say), else
@@ -3291,7 +3334,7 @@ class ClaudeCodeKernel
           for (final info in provider.enabledModels)
             KernelOption(
               modelRef(provider.id, info.id),
-              info.displayName,
+              provider.labelOf(info),
               Icons.hub_outlined,
               [
                 info.id,

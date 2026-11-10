@@ -21,6 +21,12 @@ const _clickProperties = {
     'enum': ['left', 'right', 'middle'],
   },
   'clickCount': {'type': 'integer', 'description': '2 for a double click.'},
+  'modifiers': _modifiersProperty,
+};
+
+const _modifiersProperty = {
+  'type': 'string',
+  'description': 'Keys held meanwhile, as "Shift" or "Alt+Shift".',
 };
 
 const _typeProperties = {
@@ -145,7 +151,9 @@ final _actionTools = [
         'Types text into a shared tab: into an element (by ref, or text, '
         'role, near: clicked first, as the user would, and what is in it '
         'replaced unless clear is false) or where the focus is; then '
-        'presses Enter if submit. Says what changed.',
+        'presses Enter if submit. A color, date or slider input is set to '
+        'the text (a color as #rrggbb or CSS says it), its chooser not '
+        'opened: no click reaches the browser\'s own. Says what changed.',
     inputSchema: {
       'type': 'object',
       'properties': {
@@ -214,12 +222,19 @@ final _actionTools = [
         'stops at the first that fails, saying why. Then says what changed '
         'overall. Steps: {action: "click", ref | text, role, near, nth | x, '
         'y}; {action: "type", text, ref | into (the field\'s words), role, '
-        'near, clear, submit}; {action: "press", key}; {action: "scroll", '
+        'near, clear, submit; sets a color, date or slider input too}; '
+        '{action: "press", key}; {action: "scroll", '
         'deltaY | ref | text}; {action: "wait", text (until the page says '
         'it) | ms}; {action: "navigate", url | back | forward | reload: '
         'true}; {action: "upload", files (paths), ref | text | selector: a '
-        'file input, or what opens the file chooser}. Elements may be aimed '
-        'by selector (CSS) too. Or file: a .json of steps kept to do again '
+        'file input, or what opens the file chooser}; {action: "drag", ref '
+        '| text | x, y: where it starts, to: {ref | text | x, y} or path: '
+        '[[x, y], …] (to draw, to move a slider or a card); pressure (0–1: '
+        'a pen, for brushes that heed it), or [x, y, pressure] points}; '
+        '{action: "hover", ref | text | x, y}. Click and drag take '
+        'modifiers, keys held meanwhile ("Shift", "Alt+Shift"). For many '
+        'strokes, write the steps to a file. Elements may be aimed by '
+        'selector (CSS) too. Or file: a .json of steps kept to do again '
         '(a recording\'s, from browser_watch), its paths beside it.',
     inputSchema: {
       'type': 'object',
@@ -240,6 +255,8 @@ final _actionTools = [
                   'wait',
                   'navigate',
                   'upload',
+                  'drag',
+                  'hover',
                 ],
               },
             },
@@ -300,6 +317,8 @@ Future<Object> _acting(
   final before = await _stateOf(browser, tabId);
   final many = steps.length > 1;
   final said = <String>[];
+  // The run of drags going on: its first step, and its line in said.
+  (int, int)? strokes;
   String? failed;
   for (final (i, step) in steps.indexed) {
     final at = DateTime.now();
@@ -316,8 +335,27 @@ Future<Object> _acting(
         );
         break;
       }
-      said.add(many ? '${i + 1}. $did' : did);
-      if (step['action'] != 'wait') {
+      // A run of strokes (a drawing's) said as one.
+      if (step['action'] == 'drag' &&
+          i > 0 &&
+          steps[i - 1]['action'] == 'drag') {
+        strokes ??= (i - 1, said.length - 1);
+      } else {
+        strokes = null;
+      }
+      if (strokes case (final first, final line) when i - first >= 2) {
+        said
+          ..length = line
+          ..add('${first + 1}–${i + 1}. Dragged ${i - first + 1} strokes.');
+      } else {
+        said.add(many ? '${i + 1}. $did' : did);
+      }
+      // Strokes one after another (a drawing's) are not waited between.
+      final stroke =
+          step['action'] == 'drag' &&
+          i + 1 < steps.length &&
+          steps[i + 1]['action'] == 'drag';
+      if (step['action'] != 'wait' && !stroke) {
         await _settle(browser, tabId, at, url: before?.url);
       }
     } on Object catch (error) {
@@ -356,6 +394,8 @@ Future<String> _step(
   'wait' => _wait(browser, tabId, step),
   'navigate' => _navigate(browser, tabId, step),
   'upload' => _upload(browser, tabId, step),
+  'drag' => _drag(browser, tabId, step),
+  'hover' => _hover(browser, tabId, step),
   final action => throw BrowserError('No action ${jsonEncode(action)}.'),
 };
 
@@ -370,6 +410,9 @@ Future<String> _upload(
   if (files.isEmpty) throw const BrowserError('Say the files: files.');
   for (final file in files) {
     if (!File(file).existsSync()) throw BrowserError('No file $file.');
+  }
+  if (browser.fileAccess == false) {
+    throw const BrowserError(BrowserConnection.fileAccessHelp);
   }
   final target = _targetOf(step);
   if (target == null) {
@@ -434,37 +477,48 @@ Future<String> _upload(
   }
 }
 
+/// The point [step] aims at, its element's or its x and y, and what it is
+/// called. An element covered is an error, unless [covered] lets it be (a
+/// drag's end, under what is dragged).
+Future<(double, double, String)> _aim(
+  BrowserConnection browser,
+  int tabId,
+  Map<String, Object?> step, {
+  bool covered = false,
+}) async {
+  if (_targetOf(step) case final target?) {
+    final element = await _find(browser, tabId, target);
+    final point = await _bao(browser, tabId, 'point(${element['ref']})') as Map;
+    if (point['covered'] case final Map over when !covered) {
+      final close = (over['close'] as List? ?? const []).cast<Map>();
+      throw BrowserError(
+        '${_elementName(element)} is covered by ${jsonEncode(over['name'])}'
+        '${close.isEmpty ? '.' : ': to close it, ${close.map((c) => _elementName(c.cast())).join(' or ')}.'}',
+      );
+    }
+    if (point['error'] case final String error) throw BrowserError(error);
+    return (
+      (point['x'] as num).toDouble(),
+      (point['y'] as num).toDouble(),
+      _elementName(element),
+    );
+  }
+  if ((step['x'], step['y']) case (final num x, final num y)) {
+    return (x.toDouble(), y.toDouble(), '(${x.round()}, ${y.round()})');
+  }
+  throw const BrowserError('Aim it: ref, text (role, near), or x and y.');
+}
+
 Future<String> _click(
   BrowserConnection browser,
   int tabId,
   Map<String, Object?> step,
 ) async {
-  final double x;
-  final double y;
-  final String what;
-  if (_targetOf(step) case final target?) {
-    final element = await _find(browser, tabId, target);
-    final point = await _bao(browser, tabId, 'point(${element['ref']})') as Map;
-    if (point['covered'] case final Map covered) {
-      final close = (covered['close'] as List? ?? const []).cast<Map>();
-      throw BrowserError(
-        '${_elementName(element)} is covered by ${jsonEncode(covered['name'])}'
-        '${close.isEmpty ? '.' : ': to close it, ${close.map((c) => _elementName(c.cast())).join(' or ')}.'}',
-      );
-    }
-    if (point['error'] case final String error) throw BrowserError(error);
-    x = (point['x'] as num).toDouble();
-    y = (point['y'] as num).toDouble();
-    what = _elementName(element);
-  } else if ((step['x'], step['y']) case (final num px, final num py)) {
-    x = px.toDouble();
-    y = py.toDouble();
-    what = 'at (${x.round()}, ${y.round()})';
-  } else {
-    throw const BrowserError('Aim it: ref, text (role, near), or x and y.');
-  }
+  final (x, y, name) = await _aim(browser, tabId, step);
+  final what = _targetOf(step) == null ? 'at $name' : name;
   final button = step['button'] as String? ?? 'left';
   final count = step['clickCount'] as int? ?? 1;
+  final keys = _Held(browser, tabId, step['modifiers'] as String?);
   Future<void> mouse(String type, [int clicks = 0]) =>
       browser.cdp(tabId, 'Input.dispatchMouseEvent', {
         'type': type,
@@ -472,13 +526,215 @@ Future<String> _click(
         'y': y,
         'button': type == 'mouseMoved' ? 'none' : button,
         'clickCount': clicks,
+        'modifiers': keys.mask,
       });
-  await mouse('mouseMoved');
-  for (var i = 1; i <= count; i++) {
-    await mouse('mousePressed', i);
-    await mouse('mouseReleased', i);
+  await keys.down();
+  try {
+    await mouse('mouseMoved');
+    for (var i = 1; i <= count; i++) {
+      await mouse('mousePressed', i);
+      await mouse('mouseReleased', i);
+    }
+  } finally {
+    await keys.up();
   }
-  return 'Clicked $what.';
+  return 'Clicked $what${keys.said}.';
+}
+
+/// The mouse moved over [step]'s element or point, no button down: what
+/// opens on hovering (a menu, a tooltip) opens.
+Future<String> _hover(
+  BrowserConnection browser,
+  int tabId,
+  Map<String, Object?> step,
+) async {
+  final (x, y, name) = await _aim(browser, tabId, step);
+  await browser.cdp(tabId, 'Input.dispatchMouseEvent', {
+    'type': 'mouseMoved',
+    'x': x,
+    'y': y,
+    'button': 'none',
+  });
+  return 'Hovered over ${_targetOf(step) == null ? 'the point ' : ''}$name.';
+}
+
+/// Modifier keys held through a click or a drag: pressed before, let go
+/// after, and in each mouse event's mask (what pages read of it).
+class _Held {
+  _Held(this.browser, this.tabId, String? combo)
+    : keys = [
+        for (final name in (combo ?? '').split('+'))
+          if (name.trim().isNotEmpty)
+            switch (name.trim().toLowerCase()) {
+              'alt' || 'option' => ('Alt', 'AltLeft', 18, 1),
+              'control' || 'ctrl' => ('Control', 'ControlLeft', 17, 2),
+              'meta' || 'cmd' || 'command' => ('Meta', 'MetaLeft', 91, 4),
+              'shift' => ('Shift', 'ShiftLeft', 16, 8),
+              _ => throw BrowserError('Unknown modifier ${name.trim()}.'),
+            },
+      ];
+
+  final BrowserConnection browser;
+  final int tabId;
+
+  /// Each key's name, code, key code and bit of the mask.
+  final List<(String, String, int, int)> keys;
+
+  int get mask => keys.fold(0, (mask, k) => mask | k.$4);
+
+  String get said =>
+      keys.isEmpty ? '' : ', holding ${keys.map((k) => k.$1).join('+')}';
+
+  Future<void> down() async {
+    var mask = 0;
+    for (final (key, code, keyCode, bit) in keys) {
+      mask |= bit;
+      await _key('rawKeyDown', key, code, keyCode, mask);
+    }
+  }
+
+  /// Let go, the last first; a tab gone meanwhile is no matter.
+  Future<void> up() async {
+    var mask = this.mask;
+    for (final (key, code, keyCode, bit) in keys.reversed) {
+      mask &= ~bit;
+      await _key('keyUp', key, code, keyCode, mask).catchError((Object _) {});
+    }
+  }
+
+  Future<void> _key(
+    String type,
+    String key,
+    String code,
+    int keyCode,
+    int mask,
+  ) => browser.cdp(tabId, 'Input.dispatchKeyEvent', {
+    'type': type,
+    'key': key,
+    'code': code,
+    'windowsVirtualKeyCode': keyCode,
+    'modifiers': mask,
+  });
+}
+
+/// Drags from [step]'s element or point to `to`'s (aimed the same way), or
+/// along `path` ([x, y] points): the left button held all the way, through
+/// the points between, as a hand moves; to draw on a canvas, to move a
+/// slider or a card. What the page lets drag and drop (draggable) is
+/// dropped where it ends.
+Future<String> _drag(
+  BrowserConnection browser,
+  int tabId,
+  Map<String, Object?> step,
+) async {
+  final (x, y, from) = await _aim(browser, tabId, step);
+  // A pen's, pressed so hard: brushes that heed it draw thick or thin.
+  final pressure = (step['pressure'] as num?)?.toDouble().clamp(0.0, 1.0);
+  final points = <(double, double, double?)>[];
+  var to = '';
+  if (step['to'] case final Map end) {
+    final (ex, ey, name) = await _aim(
+      browser,
+      tabId,
+      end.cast(),
+      covered: true,
+    );
+    points.add((ex, ey, pressure));
+    to = ' to $name';
+  } else if (step['path'] case final List path when path.isNotEmpty) {
+    for (final point in path) {
+      if (point case [final num px, final num py, ...final rest]
+          when rest.length <= 1) {
+        final force = rest.isEmpty
+            ? pressure
+            : (rest.first as num?)?.toDouble();
+        points.add((px.toDouble(), py.toDouble(), force?.clamp(0.0, 1.0)));
+      } else {
+        throw const BrowserError(
+          'A path is [x, y] or [x, y, pressure] points.',
+        );
+      }
+    }
+    final (ex, ey, _) = points.last;
+    to = ' along ${points.length} points to (${ex.round()}, ${ey.round()})';
+  } else {
+    throw const BrowserError(
+      'Say where to: to (ref, text, or x and y), or path ([x, y] points).',
+    );
+  }
+  // The page's own drag and drop, caught as it starts: done then with its
+  // data, as the browser would.
+  Map? dragged;
+  final subscription = BrowserBridge.instance.events.listen((event) {
+    if (event.event == 'cdp' &&
+        identical(event.connection, browser) &&
+        event.tabId == tabId &&
+        event.message['method'] == 'Input.dragIntercepted') {
+      dragged = (event.message['params'] as Map?)?['data'] as Map?;
+    }
+  });
+  // With a pressure, a pen's events: pointerType "pen", their pressure the
+  // force.
+  final pen = points.any((p) => p.$3 != null);
+  final keys = _Held(browser, tabId, step['modifiers'] as String?);
+  Future<void> mouse(
+    String type,
+    double x,
+    double y, {
+    bool held = true,
+    double? force,
+  }) => browser.cdp(tabId, 'Input.dispatchMouseEvent', {
+    'type': type,
+    'x': x,
+    'y': y,
+    'button': held ? 'left' : 'none',
+    'buttons': held && type != 'mouseReleased' ? 1 : 0,
+    'clickCount': type == 'mouseMoved' ? 0 : 1,
+    'modifiers': keys.mask,
+    if (pen) 'pointerType': 'pen',
+    if (pen && held && type != 'mouseReleased') 'force': force ?? 0.5,
+  });
+  var (px, py, pf) = (x, y, points.first.$3);
+  try {
+    await browser.cdp(tabId, 'Input.setInterceptDrags', {'enabled': true});
+    await keys.down();
+    await mouse('mouseMoved', x, y, held: false);
+    await mouse('mousePressed', x, y, force: pf);
+    moving:
+    for (final (nx, ny, nf) in points) {
+      final distance = sqrt((nx - px) * (nx - px) + (ny - py) * (ny - py));
+      final moves = (distance / 8).ceil().clamp(1, 30);
+      final (sx, sy, sf) = (px, py, pf);
+      for (var i = 1; i <= moves; i++) {
+        final t = i / moves;
+        (px, py) = (sx + (nx - sx) * t, sy + (ny - sy) * t);
+        pf = sf == null || nf == null ? nf ?? sf : sf + (nf - sf) * t;
+        await mouse('mouseMoved', px, py, force: pf);
+        if (dragged != null) break moving;
+      }
+    }
+    if (dragged case final data?) {
+      final (ex, ey, _) = points.last;
+      for (final type in ['dragEnter', 'dragOver', 'drop']) {
+        await browser.cdp(tabId, 'Input.dispatchDragEvent', {
+          'type': type,
+          'x': ex,
+          'y': ey,
+          'data': data,
+        });
+      }
+      (px, py) = (ex, ey);
+    }
+    await mouse('mouseReleased', px, py);
+  } finally {
+    await keys.up();
+    await subscription.cancel();
+    await browser
+        .cdp(tabId, 'Input.setInterceptDrags', {'enabled': false})
+        .catchError((Object _) => <String, Object?>{});
+  }
+  return '${dragged == null ? 'Dragged' : 'Dragged and dropped'} '
+      '${_targetOf(step) == null ? 'from ' : ''}$from$to${keys.said}.';
 }
 
 Future<String> _type(
@@ -492,6 +748,16 @@ Future<String> _type(
   var into = '';
   if (target != null) {
     final element = await _find(browser, tabId, target);
+    // A color, a date: the browser's own chooser, left shut, the value
+    // given as choosing it would.
+    final ref = element['ref'];
+    if (await _bao(browser, tabId, 'choose($ref, ${jsonEncode(text)})')
+        case final Map chosen) {
+      if (chosen['error'] case final String error) {
+        throw BrowserError('${_elementName(element)}: $error');
+      }
+      return 'Set ${_elementName(element)} to ${chosen['value']}.';
+    }
     // Clicked, as the user would: a box may become a field only then.
     await _click(browser, tabId, {'ref': element['ref']});
     var focused = await _bao(browser, tabId, 'focused()') as Map?;

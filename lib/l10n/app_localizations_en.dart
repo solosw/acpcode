@@ -2198,6 +2198,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarByStatus => 'By status';
 
   @override
+  String get sidebarProjectSortRecent => 'Recent activity';
+
+  @override
+  String get sidebarProjectSortManual => 'Manual';
+
+  @override
   String get sidebarTimeNow => 'now';
 
   @override
@@ -2715,10 +2721,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get chatAgentMessageSent => 'sent';
+
+  @override
+  String chatAgentMessageSemantics(String agent) {
+    return 'Message from subagent $agent';
+  }
+
+  @override
   String get chatOpensItsConversation => 'Opens its conversation';
 
   @override
   String get chatLoadEarlier => 'Load earlier messages';
+
+  @override
+  String get chatReload => 'Reload (continued elsewhere)';
 
   @override
   String get chatStop => 'Stop';
@@ -3099,6 +3116,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String turnWorked(String duration) {
     return 'Worked for $duration';
+  }
+
+  @override
+  String turnStopped(String duration) {
+    return 'Stopped after $duration';
   }
 
   @override
@@ -4373,8 +4395,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get themeHighContrastThemes => 'high contrast themes';
 
   @override
-  String get themeSelectPlaceholder =>
-      'Select Color Theme (detect system color mode disabled)';
+  String get themeAuto => 'Auto';
+
+  @override
+  String get themeFollowSystem => 'Follow system';
+
+  @override
+  String get themeSelectPlaceholder => 'Select Color Theme';
 
   @override
   String get dateNow => 'now';
@@ -5725,6 +5752,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String wbSelectedLines(int lines, int count) {
+    return '($lines lines, $count selected)';
+  }
+
+  @override
   String get wbGoToLineColumn => 'Go to Line/Column';
 
   @override
@@ -7040,6 +7072,32 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelsAddProvider => 'Add Upstream';
 
   @override
+  String get modelsMagpieJoin => 'Connect magpie';
+
+  @override
+  String get modelsMagpieBadge => 'Follows magpie';
+
+  @override
+  String get modelsMagpieGateway => 'magpie Gateway';
+
+  @override
+  String get modelsMagpieGatewayDescription =>
+      'Models, accounts and routing are set up in magpie, and this list follows it. New routing groups, image models and the models magpie gives Claude Code are turned on as they come; tick any other below.';
+
+  @override
+  String get modelsMagpieRunning => 'Running';
+
+  @override
+  String get modelsMagpieNotRunning => 'magpie isn\'t running';
+
+  @override
+  String get modelsMagpieNotRunningDetail =>
+      'Open magpie, or run magpie serve. Sessions on its models fail until it runs.';
+
+  @override
+  String get modelsMagpieSync => 'Sync Models';
+
+  @override
   String get modelsNewProviderName => 'New Upstream';
 
   @override
@@ -7087,6 +7145,52 @@ class AppLocalizationsEn extends AppLocalizations {
       'Opens ChatGPT\'s sign-in page in the browser.';
 
   @override
+  String get modelsAccountsImport => 'Import';
+
+  @override
+  String get modelsAccountsImportTitle => 'Import Accounts';
+
+  @override
+  String get modelsAccountsImportFile => 'Choose File…';
+
+  @override
+  String get modelsAccountsImportDescription =>
+      'Enter account credentials as JSON or choose a JSON file.';
+
+  @override
+  String get modelsAccountsPaste => 'Enter JSON…';
+
+  @override
+  String get modelsAccountsPastePlaceholder =>
+      'Type or paste your JSON credentials here.';
+
+  @override
+  String get modelsAccountsImportConfirm => 'Import these ChatGPT credentials?';
+
+  @override
+  String get modelsAccountsImportConfirmDetail =>
+      'BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.';
+
+  @override
+  String get modelsAccountsImportFailed =>
+      'The credentials could not be read or imported.';
+
+  @override
+  String modelsAccountsImportSummary(int count) {
+    return 'Accounts imported: $count';
+  }
+
+  @override
+  String modelsAccountsImportKept(int count) {
+    return 'Already here, kept as signed in: $count';
+  }
+
+  @override
+  String modelsAccountsImportItemFailed(int index, String error) {
+    return 'Entry $index: $error';
+  }
+
+  @override
   String get modelsAccountSigningIn => 'Waiting for sign-in…';
 
   @override
@@ -7102,7 +7206,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get modelsRefreshQuota => 'Refresh Quota';
+  String get modelsRefreshQuota => 'Refresh All Quotas';
+
+  @override
+  String modelsAccountRefreshQuota(String name) {
+    return 'Refresh quota for $name';
+  }
 
   @override
   String get modelsAccountRemove => 'Remove account';
@@ -7487,7 +7596,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, over the one its definition or the agent\'s call names (but inherit).';
+      'CLAUDE_CODE_SUBAGENT_MODEL: the model every subagent runs on, the built-in Explore and Plan and those defined as inherit too, over the one its definition or the agent\'s call names.';
 
   @override
   String get modelsRoleMissing =>
@@ -10656,6 +10765,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'The extension is newer than this BaoCode. Update BaoCode.';
 
   @override
+  String get browserSettingsNoFileAccess => 'File access is off';
+
+  @override
+  String get browserSettingsNoFileAccessDescription =>
+      'Agents can\'t open local HTML files or upload files. In chrome://extensions, click Details on BaoCode and turn on Allow access to file URLs.';
+
+  @override
   String get browserSettingsInstall => 'Get the Extension';
 
   @override
@@ -12092,6 +12208,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get diffUnified => 'Unified Viewer';
+
+  @override
+  String get gitDetailsLayout => 'Details Position';
+
+  @override
+  String get gitDetailsLayoutAuto => 'Right When Wide Enough';
+
+  @override
+  String get gitDetailsLayoutBeside => 'Right';
+
+  @override
+  String get gitDetailsLayoutBelow => 'Bottom';
 
   @override
   String get diffIgnoreWhitespace => 'Ignore Whitespace at Line Ends';
@@ -13581,6 +13709,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get ustatSpaceEmpty => 'Nothing kept yet';
 
   @override
+  String get ustatLoading => 'Reading the calls…';
+
+  @override
   String get ustatClearEllipsis => 'Clear…';
 
   @override
@@ -14112,7 +14243,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get remoteLocalAccessDetail =>
-      'Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.';
+      'Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.';
+
+  @override
+  String get remoteLocalAccessNoAsking => 'Runs commands without asking';
+
+  @override
+  String get remoteLocalAccessAskAgain => 'Ask Each Time';
 
   @override
   String get sidePanelPorts => 'Ports';

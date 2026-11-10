@@ -35,6 +35,7 @@ import '../ide_code_diff.dart';
 import '../ide_diff_options.dart';
 import '../ide_dialog.dart';
 import '../ide_hover.dart';
+import '../ide_image_preview.dart';
 import '../ide_input.dart';
 import '../ide_list.dart';
 import '../ide_menu.dart';
@@ -83,12 +84,20 @@ class IdeGitDiffFile {
     this.write,
     this.checks,
     this.agent,
+    this.originalBytes,
+    this.modifiedBytes,
   });
 
   final String path;
   final IdeGitStatus? status;
   final Future<String> Function() original;
   final Future<String> Function() modified;
+
+  /// An image's sides as bytes, null for a side there is none of: the
+  /// image shown rather than its text compared. Its text's alone when
+  /// either is null.
+  final Future<Uint8List?> Function()? originalBytes;
+  final Future<Uint8List?> Function()? modifiedBytes;
   final String originalLabel;
   final String modifiedLabel;
 
@@ -435,6 +444,21 @@ Future<List<IdeGitDiffFile>> ideGitWorkingTreeDiff(
             : files.read(change.path).catchError((Object _) => ''),
         originalLabel: label,
         modifiedLabel: workingTree,
+        originalBytes: ideImageSide(
+          change.path,
+          change.status == 'A'
+              ? null
+              : () => git.service.showBytes(
+                  revision,
+                  change.originalPath ?? change.path,
+                ),
+        ),
+        modifiedBytes: ideImageSide(
+          change.path,
+          change.status == 'D'
+              ? null
+              : () => readBytesThrough(files, change.path),
+        ),
       ),
   ];
 }
@@ -461,6 +485,21 @@ Future<List<IdeGitDiffFile>> ideGitRevisionsDiff(
             change.status == 'D' ? Future.value('') : show(to.$1, change.path),
         originalLabel: from.$2,
         modifiedLabel: to.$2,
+        originalBytes: ideImageSide(
+          change.path,
+          change.status == 'A'
+              ? null
+              : () => git.service.showBytes(
+                  from.$1,
+                  change.originalPath ?? change.path,
+                ),
+        ),
+        modifiedBytes: ideImageSide(
+          change.path,
+          change.status == 'D'
+              ? null
+              : () => git.service.showBytes(to.$1, change.path),
+        ),
       ),
   ];
 }
@@ -497,18 +536,34 @@ IdeGitDiffFile ideCommitDiffFile(
     originalLabel: parent == null ? '' : _short(parent),
     modifiedLabel: commit.shortId,
     commitId: commit.id,
+    originalBytes: ideImageSide(
+      change.path,
+      parent == null || change.status == 'A'
+          ? null
+          : () => git.service.showBytes(
+              parent,
+              change.originalPath ?? change.path,
+            ),
+    ),
+    modifiedBytes: ideImageSide(
+      change.path,
+      change.status == 'D'
+          ? null
+          : () => git.service.showBytes(commit.id, change.path),
+    ),
   );
 }
 
 /// A local change as the log shows it: its sides as Source Control's diff
 /// editor compares them (see git_change_editor.dart), its file read with
-/// [files].
+/// [read] (an image's with [readBytes]).
 IdeGitDiffFile ideLocalDiffFile(
   IdeGitRepository git,
   IdeGitState state,
   IdeGitResource resource,
   Future<String> Function(String path) read,
   AppLocalizations l10n, {
+  Future<Uint8List> Function(String path)? readBytes,
   VoidCallback? onOpenInEditor,
   Future<void> Function(String path, String text, {String? expectedText})?
   write,
@@ -537,6 +592,16 @@ IdeGitDiffFile ideLocalDiffFile(
     IdeGitSide(:final ref, :final path) =>
       () => git.service.show(ref!, path).catchError((Object _) => ''),
   };
+  Future<Uint8List?> Function()? bytes(IdeGitSide? side) =>
+      ideImageSide(resource.path, switch (side) {
+        null => null,
+        IdeGitSide(isFile: true, :final path) =>
+          () => (readBytes ?? readFileBytes)(path),
+        IdeGitSide(:final ref, :final path) => () => git.service.showBytes(
+          ref!,
+          path,
+        ),
+      });
   String label(IdeGitSide? side) => switch (side?.ref) {
     null when side == null => '',
     null => l10n.gitChangeWorkingTree,
@@ -557,6 +622,8 @@ IdeGitDiffFile ideLocalDiffFile(
         : side(right),
     originalLabel: label(editor.left),
     modifiedLabel: label(editor.right),
+    originalBytes: bytes(editor.left),
+    modifiedBytes: bytes(editor.right),
     onOpenInEditor: onOpenInEditor,
     // The file itself on the right: edited in the diff, as in the editor.
     write: switch ((right, write)) {
@@ -579,6 +646,16 @@ IdeGitDiffFile ideLocalDiffFile(
 }
 
 String _short(String id) => id.length > 7 ? id.substring(0, 7) : id;
+
+/// A side of [path]'s for [IdeGitDiffFile.originalBytes] or
+/// [IdeGitDiffFile.modifiedBytes]: [read], none where null; not one where
+/// [path] is no image.
+Future<Uint8List?> Function()? ideImageSide(
+  String path,
+  Future<Uint8List> Function()? read,
+) => ideIsImagePath(path)
+    ? () async => read == null ? null : await read()
+    : null;
 
 /// Over the details where they are under the table: whether the local
 /// changes' are folded to their tabs' row, [IdeGitCommitPanel.foldedHeight]
@@ -686,8 +763,12 @@ class IdeGitLogView extends StatefulWidget {
   final Color? background;
   final Color? border;
 
-  /// Below this width, the details go under the table.
-  static const wideWidth = 760.0;
+  /// Below this width, the details go under the table, unless picked to
+  /// go beside it (see [IdeGitDetailsLayout]).
+  static const wideWidth = 560.0;
+
+  /// The least the table keeps beside the details.
+  static const minLogWidth = 280.0;
 
   static const rowHeight = 26.0;
 
@@ -812,6 +893,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
               listenable: Listenable.merge([
                 git,
                 _log,
+                IdeDiffOptions.instance,
                 for (final (_, repo) in widget.host.repositories) repo,
               ]),
               builder: (context, _) {
@@ -920,7 +1002,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
     IdeGitState state,
   ) => LayoutBuilder(
     builder: (context, constraints) {
-      final wide = constraints.maxWidth >= IdeGitLogView.wideWidth;
+      final wide = _beside(constraints.maxWidth);
       final tree = wide && _branchTreeFits(constraints.maxWidth)
           ? math.min(_log.branchTreeWidth, constraints.maxWidth * .3)
           : null;
@@ -968,7 +1050,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
       if (wide) {
         final width = math.min(
           _log.detailsWidth,
-          constraints.maxWidth - 360 - (tree ?? 0),
+          _detailsRoom(constraints.maxWidth, tree),
         );
         return Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1036,7 +1118,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
       Expanded(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final wide = constraints.maxWidth >= IdeGitLogView.wideWidth;
+            final wide = _beside(constraints.maxWidth);
             final main = _main(git, state);
             final details = _details(git, state);
             if (wide) {
@@ -1045,7 +1127,7 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
                   : null;
               final width = math.min(
                 _log.detailsWidth,
-                constraints.maxWidth - 360 - (tree ?? 0),
+                _detailsRoom(constraints.maxWidth, tree),
               );
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1110,6 +1192,26 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
 
   /// Whether the branch tree shows beside the log [width] wide: where it
   /// is wanted and leaves the log room.
+  /// Whether the details go beside the table: as picked, else where the
+  /// page is [IdeGitLogView.wideWidth] wide.
+  bool _beside(double width) => switch (IdeDiffOptions.instance.detailsLayout) {
+    IdeGitDetailsLayout.beside => true,
+    IdeGitDetailsLayout.below => false,
+    IdeGitDetailsLayout.auto => width >= IdeGitLogView.wideWidth,
+  };
+
+  /// The most the details take beside the table on a page [width] wide:
+  /// all but [IdeGitLogView.minLogWidth] (and the branch tree), never under
+  /// their least; picked to go beside on a narrower page, not past most of
+  /// it.
+  double _detailsRoom(double width, double? tree) => math.min(
+    math.max(
+      IdeGitLogController.minDetails,
+      width - IdeGitLogView.minLogWidth - (tree ?? 0),
+    ),
+    width * .6,
+  );
+
   bool _branchTreeFits(double width) =>
       _log.branchTreeShown && width >= _branchTreeWidth;
 
@@ -1599,6 +1701,24 @@ class IdeGitLogViewState extends State<IdeGitLogView> {
             IdeMenuAction(
               l10n.scmFetchFromAllRemotes,
               onSelected: () => unawaited(_run(() => git.fetch())),
+            ),
+          ],
+          [
+            IdeMenuAction(
+              l10n.gitDetailsLayout,
+              submenu: [
+                for (final (layout, label) in [
+                  (IdeGitDetailsLayout.auto, l10n.gitDetailsLayoutAuto),
+                  (IdeGitDetailsLayout.beside, l10n.gitDetailsLayoutBeside),
+                  (IdeGitDetailsLayout.below, l10n.gitDetailsLayoutBelow),
+                ])
+                  IdeMenuAction(
+                    label,
+                    checked: IdeDiffOptions.instance.detailsLayout == layout,
+                    onSelected: () =>
+                        IdeDiffOptions.instance.detailsLayout = layout,
+                  ),
+              ],
             ),
           ],
         ]),
@@ -4030,8 +4150,12 @@ class _DiffAreaState extends State<_DiffArea> {
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                // Narrow: the counts and the sides' labels go first.
+                // Narrow: the counts and the sides' labels go first; then,
+                // beside the details, the steps through the differences
+                // (F7 and Shift+F7 still step) and which file of how many,
+                // for the file's name to keep room.
                 final wide = constraints.maxWidth >= 620;
+                final narrow = constraints.maxWidth < 380;
                 return Row(
                   children: [
                     // Go to Changed File, from its name.
@@ -4118,18 +4242,20 @@ class _DiffAreaState extends State<_DiffArea> {
                           ),
                         ),
                       ),
-                    IdeActionButton(
-                      icon: Codicons.arrowUp,
-                      tooltip: '${l10n.diffPreviousDifference} (⇧F7)',
-                      onPressed: () => _stepChange(-1),
-                    ),
-                    IdeActionButton(
-                      icon: Codicons.arrowDown,
-                      tooltip: '${l10n.diffNextDifference} (F7)',
-                      onPressed: () => _stepChange(1),
-                    ),
-                    _ToolbarSeparator(color: border),
-                    if (diff.files.length > 1)
+                    if (!narrow) ...[
+                      IdeActionButton(
+                        icon: Codicons.arrowUp,
+                        tooltip: '${l10n.diffPreviousDifference} (⇧F7)',
+                        onPressed: () => _stepChange(-1),
+                      ),
+                      IdeActionButton(
+                        icon: Codicons.arrowDown,
+                        tooltip: '${l10n.diffNextDifference} (F7)',
+                        onPressed: () => _stepChange(1),
+                      ),
+                      _ToolbarSeparator(color: border),
+                    ],
+                    if (diff.files.length > 1 && !narrow)
                       Padding(
                         padding: const EdgeInsets.only(right: 2),
                         child: Text(
@@ -4182,6 +4308,7 @@ class _DiffAreaState extends State<_DiffArea> {
                 start: diff.start,
                 code: _codeOf(file),
                 position: _position,
+                border: widget.border,
                 onAsk: switch (widget.onAsk) {
                   final ask? => (change, line) => ask(
                     context.l10n.gitAskAiHunkPrompt(
@@ -4209,11 +4336,15 @@ class _DiffBody extends StatefulWidget {
     required this.start,
     required this.code,
     required this.position,
+    required this.border,
     this.onAsk,
   });
 
   final IdeGitDiffFile file;
   final void Function(String change, int line)? onAsk;
+
+  /// Between an image's sides.
+  final Color border;
   final IdeDiffStart start;
   final GlobalKey<IdeCodeDiffState> code;
   final ValueNotifier<({int current, int count})> position;
@@ -4223,6 +4354,10 @@ class _DiffBody extends StatefulWidget {
 }
 
 class _DiffBodyState extends State<_DiffBody> {
+  /// An image's sides: read as bytes, shown rather than compared as text.
+  late final bool _image =
+      widget.file.originalBytes != null && widget.file.modifiedBytes != null;
+
   late final Future<(String, String)> _texts = () async {
     final texts = await Future.wait([
       widget.file.original(),
@@ -4231,6 +4366,13 @@ class _DiffBodyState extends State<_DiffBody> {
     return (texts[0], texts[1]);
   }();
 
+  /// Each side's bytes, null where there is none of it, or why it could
+  /// not be read.
+  late final Future<List<Object?>> _images = Future.wait([
+    for (final read in [widget.file.originalBytes!, widget.file.modifiedBytes!])
+      read().then<Object?>((bytes) => bytes, onError: (Object error) => error),
+  ]);
+
   /// Not shown while it reads: the diff holds it then (see IdeCodeDiff).
   VoidCallback? _release;
 
@@ -4238,7 +4380,7 @@ class _DiffBodyState extends State<_DiffBody> {
   void initState() {
     super.initState();
     _release = ShownWhenReady.hold(context);
-    _texts.whenComplete(_released).ignore();
+    (_image ? _images : _texts).whenComplete(_released).ignore();
   }
 
   void _released() {
@@ -4253,25 +4395,82 @@ class _DiffBodyState extends State<_DiffBody> {
   }
 
   @override
-  Widget build(BuildContext context) => FutureBuilder<(String, String)>(
-    future: _texts,
-    builder: (context, texts) {
-      if (texts.hasError) return _Placeholder('${texts.error}');
-      final data = texts.data;
-      if (data == null) {
-        return const Center(child: _Spinner(size: 16));
-      }
-      return IdeCodeDiff(
-        key: widget.code,
-        path: widget.file.path,
-        original: data.$1,
-        modified: data.$2,
-        start: widget.start,
-        onEdit: widget.file.write,
-        position: widget.position,
-        checks: widget.file.checks,
-        agent: widget.file.agent,
-        onAsk: widget.onAsk,
+  Widget build(BuildContext context) {
+    if (_image) return _imageSides();
+    return FutureBuilder<(String, String)>(
+      future: _texts,
+      builder: (context, texts) {
+        if (texts.hasError) return _Placeholder('${texts.error}');
+        final data = texts.data;
+        if (data == null) {
+          return const Center(child: _Spinner(size: 16));
+        }
+        return IdeCodeDiff(
+          key: widget.code,
+          path: widget.file.path,
+          original: data.$1,
+          modified: data.$2,
+          start: widget.start,
+          onEdit: widget.file.write,
+          position: widget.position,
+          checks: widget.file.checks,
+          agent: widget.file.agent,
+          onAsk: widget.onAsk,
+        );
+      },
+    );
+  }
+
+  /// The image before and after, side by side; the one side alone where
+  /// it was added or deleted.
+  Widget _imageSides() => FutureBuilder<List<Object?>>(
+    future: _images,
+    builder: (context, images) {
+      final sides = images.data;
+      if (sides == null) return const Center(child: _Spinner(size: 16));
+      final file = widget.file;
+      final shown = [
+        for (final (i, side) in sides.indexed)
+          if (side != null)
+            (side, i == 0 ? file.originalLabel : file.modifiedLabel),
+      ];
+      if (shown.isEmpty) return const SizedBox.expand();
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (i, (side, label)) in shown.indexed) ...[
+            if (i > 0) Container(width: 1, color: widget.border),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (shown.length > 1 && label.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: IdeListColors.description,
+                        ),
+                      ),
+                    ),
+                  Expanded(
+                    child: IdeImagePreview(
+                      path: file.path,
+                      read: (_) async => switch (side) {
+                        final Uint8List bytes => bytes,
+                        final error => throw error,
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
       );
     },
   );

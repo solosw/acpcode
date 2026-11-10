@@ -33,6 +33,7 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/link/chat_codec.dart' show ChatCodec;
 import 'package:baocode/usage/usage_ledger.dart';
 import 'package:baocode/usage/usage_prices.dart';
 
@@ -962,6 +963,141 @@ void main() {
       expect(events.whereType<FileEdited>(), isEmpty);
     });
 
+    test("a subagent's message shows as its, by what it was given to do", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      );
+      translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-agent',
+            'role': 'assistant',
+            'content': [
+              {
+                'type': 'tool_use',
+                'id': 'agent-1',
+                'name': 'Agent',
+                'input': {
+                  'description': 'Count entries',
+                  'prompt': 'count them',
+                  'run_in_background': true,
+                },
+              },
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {
+                'type': 'tool_result',
+                'tool_use_id': 'agent-1',
+                'content': 'launched',
+              },
+            ],
+          },
+          'tool_use_result': {
+            'status': 'async_launched',
+            'agentId': 'amup9hacc',
+          },
+        });
+      void say(String uuid, String text) => translator.translate({
+        'type': 'user',
+        'parent_tool_use_id': null,
+        'uuid': uuid,
+        'message': {'role': 'user', 'content': text},
+      });
+      say(
+        'm1',
+        '<agent-message from="amup9hacc">\nB is done.\n</agent-message>',
+      );
+      say('m2', '<agent-message from="zz9">\nHi\n</agent-message>');
+      final messages = [
+        for (var i = 0; i < transcript.length; i++)
+          if (transcript.itemAt(i) case final UserMessageItem message) message,
+      ];
+      expect(
+        [for (final m in messages) (m.fromAgent, m.text)],
+        [('Count entries', 'B is done.'), ('zz9', 'Hi')],
+      );
+      // As the phone gets it.
+      final decoded =
+          ChatCodec.decode(ChatCodec.encode(messages.first)) as UserMessageItem;
+      expect(decoded.fromAgent, 'Count entries');
+    });
+
+    test("a Windows path's file shows by its name", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      );
+      void call(
+        String id,
+        String name,
+        Map<String, Object?> input, {
+        Object? result,
+      }) => translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-$id',
+            'role': 'assistant',
+            'content': [
+              {'type': 'tool_use', 'id': id, 'name': name, 'input': input},
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': id, 'content': 'ok'},
+            ],
+          },
+          'tool_use_result': ?result,
+        });
+
+      call('r1', 'Read', {'file_path': r'C:\p\lib\a.dart'});
+      call('l1', 'LS', {'path': r'C:\p\lib'});
+      call(
+        'e1',
+        'Edit',
+        {'file_path': r'C:\p\lib\b.dart', 'old_string': 'x', 'new_string': 'y'},
+        result: {
+          'filePath': r'C:\p\lib\b.dart',
+          'structuredPatch': [
+            {
+              'oldStart': 1,
+              'oldLines': 1,
+              'newStart': 1,
+              'newLines': 1,
+              'lines': ['-x', '+y'],
+            },
+          ],
+        },
+      );
+      expect(shown(transcript), [
+        'tool: read a.dart',
+        'tool: listDir lib',
+        'diff: b.dart +2',
+      ]);
+      final diff = transcript.itemAt(2) as CodeDiffItem;
+      expect(diff.directory, r'C:\p\lib');
+    });
+
     test('each round of planning is one card; a plan sent back gives way '
         'to the next', () {
       final transcript = Transcript();
@@ -1296,7 +1432,14 @@ void main() {
         transcript.indexOf(id)!,
       ) as UserMessageItem).worked;
       expect(worked('p1'), const Duration(seconds: 45));
-      expect(worked('p2'), isNull, reason: 'stopped');
+      // Stopped: to where it was, and said so.
+      expect(worked('p2'), const Duration(seconds: 3));
+      expect(
+        (transcript.itemAt(
+          transcript.indexOf('p2')!,
+        ) as UserMessageItem).stopped,
+        isTrue,
+      );
       expect(worked('p3'), const Duration(seconds: 3));
       // When each was sent, as kept: for a chat app's times.
       expect(
@@ -1321,6 +1464,134 @@ void main() {
       }
       expect(shown(twice), shown(once));
     });
+
+    group('a stream Claude Code gave up on and asked again', () {
+      late Transcript transcript;
+      late ClaudeTranslator translator;
+      setUp(() {
+        transcript = Transcript();
+        var seq = 0;
+        translator = ClaudeTranslator(
+          emit: transcript.apply,
+          nextSeq: () => ++seq,
+        );
+      });
+      void event(
+        Map<String, Object?> event, {
+        Map<String, Object?>? abandoned,
+      }) => translator.translate({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': event,
+        'abandoned_blocks': ?abandoned,
+      });
+      void streamText(String messageId, int index, String text) {
+        event({
+          'type': 'content_block_start',
+          'index': index,
+          'content_block': {'type': 'text', 'text': ''},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': index,
+          'delta': {'type': 'text_delta', 'text': text},
+        });
+        event({'type': 'content_block_stop', 'index': index});
+      }
+
+      Map<String, Object?> whole(
+        String uuid,
+        String messageId,
+        List<Map<String, Object?>> content,
+      ) => {
+        'type': 'assistant',
+        'uuid': uuid,
+        'parent_tool_use_id': null,
+        'message': {'id': messageId, 'role': 'assistant', 'content': content},
+      };
+
+      test('what streamed with no whole message goes; the answer asked '
+          'again shows once', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, 'The answer');
+        event({
+          'type': 'content_block_start',
+          'index': 1,
+          'content_block': {'type': 'tool_use', 'id': 'call-1', 'name': 'Read'},
+        });
+        expect(shown(transcript), ['text: The answer', 'tool: read ']);
+        event(
+          {'type': 'message_stop'},
+          abandoned: {'api_message_id': 'msg-1', 'from_block_index': 0},
+        );
+        expect(shown(transcript), isEmpty);
+        // Asked again without streaming: its whole messages, another id.
+        translator.translate(
+          whole('u-2', 'msg-2', [
+            {'type': 'text', 'text': 'The answer'},
+          ]),
+        );
+        expect(shown(transcript), ['text: The answer']);
+      });
+
+      test('a block a whole message brought stays', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, 'Kept');
+        translator.translate(
+          whole('u-1', 'msg-1', [
+            {'type': 'text', 'text': 'Kept'},
+          ]),
+        );
+        streamText('msg-1', 1, 'Cut');
+        event(
+          {'type': 'message_stop'},
+          abandoned: {'api_message_id': 'msg-1', 'from_block_index': 0},
+        );
+        expect(shown(transcript), ['text: Kept']);
+      });
+
+      test('a whole message taken back goes', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, 'The answer');
+        final first = whole('u-1', 'msg-1', [
+          {'type': 'text', 'text': 'The answer'},
+        ]);
+        translator.translate(first);
+        expect(shown(transcript), ['text: The answer']);
+        translator.translate({
+          'type': 'tombstone',
+          'message': first,
+          'uuid': 'u-t',
+          'session_id': 's',
+        });
+        expect(shown(transcript), isEmpty);
+        translator.translate(
+          whole('u-2', 'msg-2', [
+            {'type': 'text', 'text': 'The answer'},
+          ]),
+        );
+        expect(shown(transcript), ['text: The answer']);
+      });
+
+      test('a message_stop of its own takes nothing', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, 'The answer');
+        event({'type': 'message_stop'});
+        expect(shown(transcript), ['text: The answer']);
+      });
+    });
   });
 
   group('Claude Code kernel', () {
@@ -1343,12 +1614,12 @@ void main() {
     });
 
     test('a turn done is kept by its session and prompt, for its footer '
-        'later; one stopped is not', () async {
+        'later; one stopped too, its work to fold', () async {
       final kept = _KeptTurns();
       ClaudeCodeKernel.turnStats = kept;
       addTearDown(() => ClaudeCodeKernel.turnStats = null);
       final cli = FakeCli();
-      final (:kernel, transcript: _, events: _) = claude(cli);
+      final (:kernel, :transcript, events: _) = claude(cli);
       kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
       await pumpEventQueue();
       cli.push({'type': 'system', 'subtype': 'init', 'session_id': 's1'});
@@ -1368,7 +1639,11 @@ void main() {
       await pumpEventQueue();
       kernel.cancel();
       await pumpEventQueue();
-      expect(kept.sessions['s1']!.keys, ['u1']);
+      expect(kept.sessions['s1']!.keys, ['u1', 'u2']);
+      final stopped =
+          transcript.itemAt(transcript.indexOf('u2')!) as UserMessageItem;
+      expect(stopped.stopped, isTrue);
+      expect(stopped.worked, isNotNull);
       kernel.dispose();
     });
 
@@ -2623,6 +2898,50 @@ void main() {
       kernel.dispose();
     });
 
+    test('with a task in the background, a CLI that sends a queued message '
+        'now itself is asked to, the message left where it is', () async {
+      final cli = FakeCli(
+        answers: {
+          'interrupt': {'still_queued': <String>[], 'send_now': 'delivering'},
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'first'));
+      await pumpEventQueue();
+      cli
+        ..push({
+          'type': 'system',
+          'subtype': 'init',
+          'session_id': 's1',
+          'capabilities': ['interrupt_send_now_v1'],
+        })
+        ..push({
+          'type': 'system',
+          'subtype': 'task_started',
+          'task_id': 'a1',
+          'task_type': 'local_bash',
+          'description': 'Serve',
+          'is_backgrounded': true,
+        });
+      kernel.send(const KernelTurn(id: 'u2', text: 'second'));
+      await pumpEventQueue();
+      final sent = cli.users.length;
+
+      kernel.sendQueuedNow('u2');
+      await pumpEventQueue();
+      expect(cli.requests('interrupt'), [
+        {'subtype': 'interrupt', 'send_now': true, 'message_uuid': 'u2'},
+      ]);
+      expect(cli.requests('cancel_async_message'), isEmpty);
+      expect(cli.users, hasLength(sent));
+      expect(transcript.activeTurn, 'u1');
+      expect(
+        [for (final (_, item) in transcript.queued) item.text],
+        ['second'],
+      );
+      kernel.dispose();
+    });
+
     test('a turn stopped as soon as sent stays stopped; the CLI\'s notes of '
         'the interruption do not show', () async {
       final cli = FakeCli();
@@ -3515,6 +3834,67 @@ void main() {
         kernel.dispose();
       });
 
+      test('a turn cut between pages is timed to where it ends, on the later '
+          'page; as kept, where it was', () async {
+        Map<String, Object?> at(Map<String, Object?> line, int seconds) => {
+          ...line,
+          'timestamp': DateTime.utc(
+            2026,
+            1,
+            1,
+            10,
+            0,
+            seconds,
+          ).toIso8601String(),
+        };
+        Map<String, Object?> said(String id) => {
+          'type': 'assistant',
+          'uuid': id,
+          'message': {
+            'id': 'm-$id',
+            'role': 'assistant',
+            'content': [
+              {'type': 'text', 'text': id},
+            ],
+          },
+        };
+        ClaudeHistoryPage page(String? before) => before == null
+            ? ClaudeHistoryPage([
+                at(said('a2'), 30),
+                at(said('a3'), 50),
+              ], earlier: 'a2')
+            : ClaudeHistoryPage([at(prompt('u1'), 0), at(said('a1'), 10)]);
+        UserMessageItem u1(Transcript transcript) =>
+            transcript.itemAt(transcript.indexOf('u1')!) as UserMessageItem;
+
+        var kernel = open((session, {required turns, before}) async {
+          return page(before);
+        });
+        var transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        await pumpEventQueue();
+        await kernel.loadEarlier();
+        await pumpEventQueue();
+        expect(u1(transcript).worked, const Duration(seconds: 50));
+        kernel.dispose();
+
+        ClaudeCodeKernel.turnStats = _KeptTurns()
+          ..sessions['s'] = {
+            'u1': (worked: const Duration(seconds: 7), usage: null),
+          };
+        addTearDown(() => ClaudeCodeKernel.turnStats = null);
+        kernel = open((session, {required turns, before}) async {
+          return page(before);
+        });
+        transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        await pumpEventQueue();
+        await kernel.loadEarlier();
+        await pumpEventQueue();
+        expect(u1(transcript).worked, const Duration(seconds: 7));
+        kernel.dispose();
+      });
+
       test('asked again while it is read, it is the same reading', () async {
         final read = Completer<ClaudeHistoryPage>();
         var reads = 0;
@@ -3583,6 +3963,7 @@ void main() {
         String model = 'claude-opus-5-5',
         Object? parent,
         bool sidechain = false,
+        bool withCache = true,
       }) => {
         'type': 'assistant',
         'parent_tool_use_id': ?parent,
@@ -3595,9 +3976,9 @@ void main() {
           'usage': {
             'input_tokens': uncached,
             // As the proxy gives a provider's: only what was cached.
-            if (read > 0 || !model.startsWith('p/'))
+            if (withCache && (read > 0 || !model.startsWith('p/')))
               'cache_read_input_tokens': read,
-            if (written > 0 || !model.startsWith('p/'))
+            if (withCache && (written > 0 || !model.startsWith('p/')))
               'cache_creation_input_tokens': written,
           },
         },
@@ -3616,7 +3997,9 @@ void main() {
         ),
         start: (_) async => cli,
         readHistory: (_) async => [
-          // A message comes a content block a line, each with its usage.
+          // A message comes a content block a line, its usage completed by
+          // the last one; identical lines still count once.
+          assistant('m1', 0, 0, uncached: 20002),
           assistant('m1', 0, 20000),
           assistant('m1', 0, 20000),
           assistant('sub', 900, 900, sidechain: true),
@@ -3625,6 +4008,10 @@ void main() {
         ],
       );
       final transcript = Transcript();
+      var statsReports = 0;
+      kernel.events.listen((event) {
+        if (event is StatsReported) statsReports++;
+      });
       kernel.events.listen(transcript.apply);
       await pumpEventQueue();
       var cache = transcript.stats!.cache!;
@@ -3635,8 +4022,10 @@ void main() {
       kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
       await pumpEventQueue();
       cli
+        ..push(assistant('m3', 0, 0, uncached: 30502))
         ..push(assistant('m3', 30000, 500))
-        ..push(assistant('m3', 30000, 500))
+        // A partial line after the complete one leaves the cache intact.
+        ..push(assistant('m3', 0, 0, withCache: false))
         ..push(assistant('agent', 5000, 5000, parent: 'toolu_1'))
         // An API error's: no usage of the model's.
         ..push(assistant('err', 0, 0, uncached: 0));
@@ -3646,6 +4035,12 @@ void main() {
       expect(cache.last.hitRate, closeTo(30000 / 30502, 1e-9));
       expect(cache.conversation.read, 30000);
       expect(cache.conversation.written, 50500);
+
+      // An identical line does not report the same stats again.
+      final beforeDuplicate = statsReports;
+      cli.push(assistant('m3', 30000, 500));
+      await pumpEventQueue();
+      expect(statsReports, beforeDuplicate);
 
       // A provider's model that never says what was cached: not shown,
       // rather than all uncached.

@@ -29,6 +29,77 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v1.9.2">
+    <h2 class="plain"><a href="#v1.9.2">1.9.2</a></h2>
+    <p>This release fixes a batch of chat, model and SSH problems, brings SSH remote to Linux hosts on RISC-V, and lets models go through magpie's gateway.</p>
+    <p>New</p>
+    <ul>
+    <li>SSH remote works with Linux hosts on RISC-V.</li>
+    <li>With magpie installed, Settings → Models offers Connect magpie: an upstream that follows magpie's local gateway, nothing filled in by hand.</li>
+    <li>The changed files list in the activity strip can be dragged taller by its edge.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>A log with ANSI colour codes opens as text, not as a binary file.</li>
+    <li>New conversations on OpenCode's DeepSeek no longer fail with a 400.</li>
+    <li>When an upstream's stream breaks off and Claude Code asks again, the reply no longer shows twice.</li>
+    <li>After a restart, every tab open in a chat pane comes back, not only the one shown.</li>
+    <li>Commands in .claude/commands are yours to run; the model runs one only where its file allows it.</li>
+    <li>An unreadable file in .claude/rules is skipped instead of keeping all the project's rules from loading.</li>
+    <li>An expanded command output card scrolls inside itself under the wheel, with a scrollbar you can drag.</li>
+    <li>SSH folders open from recent projects and from the system's open requests.</li>
+    </ul>
+  </section>
+
+  <section class="release" id="v1.9.1">
+    <h2 class="plain"><a href="#v1.9.1">1.9.1</a></h2>
+    <p>This release fills in the details: themes can follow the system, models can be imported from ChatGPT credentials, the sidebar's projects can be ordered, the browser tools act more like a person, and a batch of Windows and input problems are fixed.</p>
+    <p>New</p>
+    <ul>
+    <li>Themes gain Auto: the app follows the system's light and dark, changing smoothly.</li>
+    <li>ChatGPT credentials can be imported from JSON, and a model account's quota can be refreshed on its own.</li>
+    <li>Sidebar projects can be ordered by recent activity, or dragged into your own order.</li>
+    <li>browser_act can drag, use pen pressure, hold modifiers and hover; color, date and slider inputs take values too.</li>
+    <li>The browser extension can reach local files, and says why when it may not.</li>
+    <li>A subagent's message shows as its own card, not as the user's bubble.</li>
+    <li>A stopped turn's work folds too, and a turn read across two pages folds as it did live.</li>
+    <li>Past 560 wide, the side panel shows a commit's details beside the log, or as picked.</li>
+    <li>Text shown in the side panel wraps as the editors do, toggled in its bar.</li>
+    <li>The status bar shows how many lines a selection takes, beside its characters.</li>
+    <li>An image's changes in Git show the image itself rather than empty text.</li>
+    <li>Agents on SSH hosts act on this computer by default.</li>
+    <li>A plan put to you is told of with a sound, and waits on you once the turn is over.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>The IDE workbench is rebuilt around services, registries and contributions, for what comes next.</li>
+    <li>A login shell no longer starts from a cached environment.</li>
+    <li>Reading a piece's lines no longer copies the whole piece.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Windows no longer crashes at shutdown; the tray's Quit chosen again quits, and the way out no longer crashes.</li>
+    <li>On macOS, pasting in a text field no longer waits on the app that copied.</li>
+    <li>With NumLock on, the numpad's 1 and 7 type digits.</li>
+    <li>The Markdown preview's scrollbar shows an arrow, not the I-beam.</li>
+    <li>Send now works on a queued message while tasks run in the background.</li>
+    <li>An upstream's models going by one name are told apart, and a subagent's model reads as its own upstream's.</li>
+    <li>Opening the usage page shows the calls being read.</li>
+    <li>Theme preferences survive a failed save.</li>
+    <li>A table's text selects as the text around it does.</li>
+    <li>Branches containing a commit are listed.</li>
+    <li>Tool calls on Windows show short file names.</li>
+    <li>A terminal keeps its shell's selection.</li>
+    <li>Removed SSH hosts are not connected to at startup.</li>
+    <li>An account's quota refreshing turns as all of them do.</li>
+    <li>Question options light up at once on hover.</li>
+    <li>A folded group's header spins while any of its agents is at work, and agents at work or waiting are not lost under Show more.</li>
+    <li>With only one pane in a chat window, the Close Pane keys (⌘W) close the window instead of doing nothing.</li>
+    <li>Notifications from closed windows no longer appear.</li>
+    <li>An inline message editor stays in view when opened and as it grows.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.9.0">
     <h2 class="plain"><a href="#v1.9.0">1.9.0</a></h2>
     <p>This release rebuilds the agents' window with cards, and the sidebar, conversations and side panel can be arranged in four layouts. A Windows computer can now be an SSH host. /fork is new, and an agent's questions stay in the conversation with your answers.</p>

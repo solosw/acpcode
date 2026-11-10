@@ -19,10 +19,20 @@ import 'turn_stats.dart';
 /// and block, tool use id, message uuid), so translating a message twice,
 /// e.g. streamed and then whole, lands on the same items.
 class ClaudeTranslator {
-  ClaudeTranslator({required this.emit, required this.nextSeq, this.goalSaid});
+  ClaudeTranslator({
+    required this.emit,
+    required this.nextSeq,
+    this.goalSaid,
+    this.ownModel,
+  });
 
   final void Function(KernelEvent event) emit;
   final int Function() nextSeq;
+
+  /// A subagent's model, as its upstream answered it (a bare id), as the
+  /// session's upstream's [modelRef] where that upstream has it: another
+  /// upstream of a model of that id is not the one it ran on.
+  final String Function(String model)? ownModel;
 
   /// Claude Code said something of the goal, live: how it stands is to be
   /// asked afresh (see claude_goal.dart).
@@ -37,6 +47,10 @@ class ClaudeTranslator {
 
   /// The turn changes belong to (the user message uuid that began it).
   String? turnId;
+
+  String _ownModel(String model) => ownModel?.call(model) ?? model;
+
+  String? _ownModelOf(String? model) => model == null ? null : _ownModel(model);
 
   /// What the agent is busy with out of sight (see [ActivityReported]).
   KernelActivity? _activity;
@@ -66,6 +80,13 @@ class ClaudeTranslator {
   // Streamed blocks of the current message.
   String? _messageId;
   final Map<int, String> _streamed = {};
+
+  /// Every block the current message streamed, by its index, ended or not:
+  /// those Claude Code abandons (its stream cut short, asked again) go.
+  final Map<int, String> _messageBlocks = {};
+
+  /// Calls whose start streamed, that no whole message has brought yet.
+  final Set<String> _streamedCalls = {};
 
   /// Since when the model has been at the next block: its message's start,
   /// else the last block's end.
@@ -321,7 +342,14 @@ class ClaudeTranslator {
     final parent = message['parent_tool_use_id'] as String?;
     switch (message['type']) {
       case 'stream_event' when parent == null:
-        _streamEvent(_map(message['event']));
+        _streamEvent(
+          _map(message['event']),
+          abandoned: _map(message['abandoned_blocks']),
+        );
+      // A message shown that Claude Code took back (its stream failed, and
+      // it asked again): what it showed goes.
+      case 'tombstone' when parent == null:
+        _tombstone(_map(message['message']));
       case 'assistant':
         _assistant(message, parent);
         _replayedAt(message);
@@ -349,12 +377,40 @@ class ClaudeTranslator {
   /// When the replayed turn last showed anything.
   DateTime? _replayedUntil;
 
-  /// The user stopped the replayed turn: it is not timed.
+  /// The user stopped the replayed turn: timed all the same, to where it
+  /// stopped, and marked so (see [UserMessageItem.stopped]).
   bool _replayedStopped = false;
 
+  /// What is replayed is still of a turn whose prompt is on an earlier page:
+  /// no prompt yet, nor the agent taking up a notice of its own.
+  bool _headOpen = true;
+  DateTime? _headUntil;
+  bool _headStopped = false;
+
+  /// Of a page that begins within a turn (see [_headOpen]): when what it
+  /// shows of that turn last showed anything, and whether the user stopped
+  /// it; for the page before, which has its prompt, to time it by (see
+  /// [endPage]).
+  ({DateTime? until, bool stopped}) get head =>
+      (until: _headUntil, stopped: _headStopped);
+
   /// A page of the kept session is replayed, not all of it: times its last
-  /// turn, nothing else.
-  void endPage() => _timeReplayed();
+  /// turn, nothing else. Where the page after it begins within that turn,
+  /// its [head] says how the turn went on: it is timed to where that ends.
+  void endPage({({DateTime? until, bool stopped})? after}) {
+    if (after != null) {
+      if (_headOpen) {
+        // All of this page within the turn: the head goes on to the next.
+        _headUntil = after.until ?? _headUntil;
+        _headStopped |= after.stopped;
+      }
+      if (after.until case final until?) _replayedUntil = until;
+      if (after.stopped) _replayedStopped = true;
+    }
+    final open = _headOpen;
+    _timeReplayed();
+    _headOpen = open;
+  }
 
   /// The kept session is all replayed: times its last turn, and has its
   /// goal as it stood (one met or given up on, nothing to show any more).
@@ -370,11 +426,14 @@ class ClaudeTranslator {
       (replaying ? null : DateTime.now());
 
   void _replayedAt(Map<String, Object?> message) {
-    if (!replaying || _replayed == null) return;
-    if (message['uuid'] == _replayed!.id) return;
-    if (DateTime.tryParse('${message['timestamp']}') case final at?) {
-      _replayedUntil = at;
+    if (!replaying) return;
+    final at = DateTime.tryParse('${message['timestamp']}');
+    if (_replayed == null) {
+      if (_headOpen && at != null) _headUntil = at;
+      return;
     }
+    if (message['uuid'] == _replayed!.id) return;
+    if (at != null) _replayedUntil = at;
   }
 
   /// Replaying [id], a prompt: times the turn before it.
@@ -395,20 +454,24 @@ class ClaudeTranslator {
     final turn = _replayed;
     final until = _replayedUntil;
     final stopped = _replayedStopped;
+    _headOpen = false;
     _replayed = null;
     _replayedUntil = null;
     _replayedStopped = false;
-    if (turn == null || stopped) return;
+    if (turn == null) return;
     // As its footer showed it when it ended, where that was kept.
     if (keptTurns[turn.id] case (:final worked, :final usage)) {
-      _put(turn.id, turn.item.copyWith(worked: worked, usage: usage));
+      _put(
+        turn.id,
+        turn.item.copyWith(worked: worked, usage: usage, stopped: stopped),
+      );
       return;
     }
     final at = turn.at;
     if (until == null || at == null) return;
     final worked = until.difference(at);
     if (worked > Duration.zero) {
-      _put(turn.id, turn.item.copyWith(worked: worked));
+      _put(turn.id, turn.item.copyWith(worked: worked, stopped: stopped));
     }
   }
 
@@ -469,12 +532,16 @@ class ClaudeTranslator {
 
   // --- Streaming ---------------------------------------------------------------
 
-  void _streamEvent(Map<String, Object?> event) {
+  void _streamEvent(
+    Map<String, Object?> event, {
+    Map<String, Object?> abandoned = const {},
+  }) {
     switch (event['type']) {
       case 'message_start':
         final message = _map(event['message']);
         _messageId = message['id'] as String?;
         _streamed.clear();
+        _messageBlocks.clear();
         _blockSince = DateTime.now();
         _messageUsage = {..._map(message['usage'])};
         _messageCounted = false;
@@ -494,6 +561,9 @@ class ClaudeTranslator {
           _messageThinking = tokens;
         }
       case 'message_stop':
+        if (claudeInt(abandoned['from_block_index']) case final from?) {
+          _abandon(abandoned['api_message_id'] as String?, from);
+        }
         _endMessage();
       case 'content_block_start':
         final index = claudeInt(event['index']) ?? 0;
@@ -503,6 +573,7 @@ class ClaudeTranslator {
           case 'thinking' || 'redacted_thinking':
             _messageThought = true;
             _streamed[index] = id;
+            _messageBlocks[index] = id;
             (_unclaimed['$_messageId:thinking'] ??= []).add(id);
             _thoughts[id] = StringBuffer();
             // A proxy may hold a whole thought back until it is done.
@@ -519,6 +590,7 @@ class ClaudeTranslator {
           case 'text':
             if (!replaying) _meter.startBlock();
             _streamed[index] = id;
+            _messageBlocks[index] = id;
             (_unclaimed['$_messageId:text'] ??= []).add(id);
             _textLength[id] = 0;
             _put(id, const AssistantTextItem(''), streaming: true);
@@ -527,7 +599,9 @@ class ClaudeTranslator {
             if (!replaying) _meter.startBlock();
             final toolId = block['id'] as String;
             final name = block['name'] as String;
+            _messageBlocks[index] = toolId;
             if (!_tools.containsKey(toolId)) {
+              _streamedCalls.add(toolId);
               _toolUse(toolId, name, const {}, null);
             }
           default:
@@ -682,10 +756,13 @@ class ClaudeTranslator {
     final synthetic = body['model'] == '<synthetic>';
     // A subagent's: the model it runs on, as the upstream answered.
     if (_agents[parent] case final agent? when !synthetic) {
-      if (_string(body['model']) case final model?
-          when model.isNotEmpty && model != agent.item.model) {
-        agent.item = agent.item.copyWith(model: model);
-        _putAgent(parent!);
+      if (_string(body['model']) case final answered?
+          when answered.isNotEmpty) {
+        final model = _ownModel(answered);
+        if (model != agent.item.model) {
+          agent.item = agent.item.copyWith(model: model);
+          _putAgent(parent!);
+        }
       }
     }
     for (final (index, raw) in _list(body['content']).indexed) {
@@ -720,6 +797,7 @@ class ClaudeTranslator {
             );
           }
         case 'tool_use':
+          _streamedCalls.remove(block['id']);
           _toolUse(
             block['id'] as String,
             block['name'] as String,
@@ -728,6 +806,64 @@ class ClaudeTranslator {
           );
       }
     }
+  }
+
+  /// The blocks of [messageId] (the current message) from [from] on, which
+  /// Claude Code gave up on: shown as they streamed, no whole message will
+  /// bring them. They go, unless one did bring them; what it asks next may
+  /// say them again.
+  void _abandon(String? messageId, int from) {
+    if (messageId != null && messageId != _messageId) return;
+    for (final MapEntry(key: index, value: id) in [..._messageBlocks.entries]) {
+      if (index < from) continue;
+      _messageBlocks.remove(index);
+      _streamed.remove(index);
+      final unclaimed =
+          (_unclaimed['$_messageId:text']?.remove(id) ?? false) ||
+          (_unclaimed['$_messageId:thinking']?.remove(id) ?? false);
+      if (unclaimed) {
+        _thoughts.remove(id);
+        _thinkingStarted.remove(id);
+        _thinkingTokens.remove(id);
+        _textLength.remove(id);
+        emit(ItemRemoved(nextSeq(), id));
+      } else if (_streamedCalls.remove(id)) {
+        _dropCall(id);
+      }
+    }
+  }
+
+  /// The whole message [message] (as Claude Code keeps it) taken back:
+  /// what it brought goes.
+  void _tombstone(Map<String, Object?> message) {
+    final uuid = message['uuid'] as String?;
+    if (uuid == null) return;
+    final body = _map(message['message']);
+    for (final (index, raw) in _list(body['content']).indexed) {
+      final block = _map(raw);
+      if (block['type'] == 'tool_use') {
+        if (block['id'] case final String id when _tools.containsKey(id)) {
+          _streamedCalls.remove(id);
+          _dropCall(id);
+        }
+        continue;
+      }
+      final id = _blockIds.remove('$uuid:$index');
+      if (id == null) continue;
+      _thoughts.remove(id);
+      _thinkingStarted.remove(id);
+      _thinkingTokens.remove(id);
+      _textLength.remove(id);
+      emit(ItemRemoved(nextSeq(), id));
+    }
+  }
+
+  /// The call [id], never made: its card goes.
+  void _dropCall(String id) {
+    _tools.remove(id);
+    _agents.remove(id);
+    _unanswered.remove(id);
+    emit(ItemRemoved(nextSeq(), id));
   }
 
   void _user(Map<String, Object?> message, String? parent) {
@@ -860,7 +996,23 @@ class ClaudeTranslator {
     }
     // The CLI's note to the model that the user stopped it: not shown.
     if (trimmed.startsWith('[Request interrupted by user')) {
-      if (replaying) _replayedStopped = true;
+      if (replaying) {
+        _replayedStopped = true;
+        if (_replayed == null && _headOpen) _headStopped = true;
+      }
+      return;
+    }
+    // A subagent's message to the agent (SendMessage), not the user's: by
+    // what it was given to do.
+    if (_agentMessage.firstMatch(trimmed) case final match?) {
+      final from = match[1]!;
+      final item = UserMessageItem(
+        text: match[2]!.trim(),
+        sentAt: _sentAt(message),
+        fromAgent: _agents[_agentCalls[from]]?.item.description ?? from,
+      );
+      _put(id, item);
+      if (replaying) _replayPrompt(id, item, message);
       return;
     }
     final item = UserMessageItem(
@@ -951,7 +1103,8 @@ class ClaudeTranslator {
     String tense(String done, String doing) =>
         outcome == _Outcome.running ? doing : done;
     String? path(String key) => _string(input[key]);
-    String base(String? path) => path == null ? '' : path.split('/').last;
+    String base(String? path) =>
+        path == null ? '' : path.split(RegExp(r'[/\\]')).last;
     final name = tool.name;
     // The app's own, shown as it says.
     if (ClaudeSdkTools.called(name) case ClaudeSdkTool(
@@ -1219,7 +1372,7 @@ class ClaudeTranslator {
             prompt: _string(structured?['prompt']),
             // What the CLI resolved, if its messages did not say.
             model: agent.item.model == null
-                ? _string(structured?['resolvedModel'])
+                ? _ownModelOf(_string(structured?['resolvedModel']))
                 : null,
             background: true,
           );
@@ -1239,7 +1392,7 @@ class ClaudeTranslator {
             _ => null,
           },
           model: agent.item.model == null
-              ? _string(structured?['resolvedModel'])
+              ? _ownModelOf(_string(structured?['resolvedModel']))
               : null,
         );
         _putAgent(id);
@@ -1466,7 +1619,7 @@ class ClaudeTranslator {
       }
     }
     if (lines.isEmpty) return false;
-    final slash = path.lastIndexOf('/');
+    final slash = path.lastIndexOf(RegExp(r'[/\\]'));
     _put(
       id,
       CodeDiffItem(
@@ -1922,6 +2075,12 @@ class ClaudeTranslator {
     if (!replaying) goalSaid?.call();
     return true;
   }
+
+  /// A subagent's message as the agent is given it: its id, and what it
+  /// says.
+  static final _agentMessage = RegExp(
+    r'^<agent-message from="([^"]*)">([\s\S]*)</agent-message>$',
+  );
 
   static String? _tag(String text, String tag) {
     final start = text.indexOf('<$tag>');

@@ -6,6 +6,8 @@ Une interface de bureau conviviale pour [Claude Code](https://github.com/anthrop
 
 [Site web](https://baocode.dev) · [Télécharger](https://baocode.dev/download) · [Historique des versions](https://baocode.dev/changelog)
 
+![Ce que les utilisateurs disent de BaoCode](docs/readme/reviews.png)
+
 ![Fenêtre principale de BaoCode : agents regroupés par projet, deux conversations côte à côte et sélecteur de modèle](site/shots/main.png)
 
 > Présentation française du README anglais. En cas de différence, consultez la version [English](README.md). Les sites et documents liés ne sont pas nécessairement traduits en français.
@@ -42,7 +44,7 @@ BaoCode est une application native qui dessine directement son interface sur le 
 
 ## Prérequis
 
-- macOS 12 ou ultérieur (un téléchargement pour Apple silicon, un pour Intel), ou Windows 10 ou ultérieur (x64).
+- macOS 12 ou ultérieur (un téléchargement pour Apple silicon, un pour Intel), Windows 10 ou ultérieur (x64), ou Linux : Ubuntu 20.04 ou ultérieur et les autres distributions basées sur Debian (un .deb pour x64, un pour arm64).
 - [Claude Code](https://github.com/anthropics/claude-code) installé.
 
 ## Compilation depuis les sources

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' show sqrt;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -250,11 +251,16 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
       description:
           "Opens a URL in a new tab of the user's browser, in the BaoCode "
           'tab group, and waits for it to load. Returns the tab id and what '
-          'is on screen: the elements to act on (refs) and the words.',
+          'is on screen: the elements to act on (refs) and the words. '
+          'Close the tabs you open (browser_close) once done with them, '
+          'unless the user is to look at what is in them.',
       inputSchema: {
         'type': 'object',
         'properties': {
-          'url': {'type': 'string', 'description': 'The URL to open.'},
+          'url': {
+            'type': 'string',
+            'description': 'The URL to open, or a local file\'s path.',
+          },
         },
         'required': ['url'],
       },
@@ -266,13 +272,19 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
         final tabId = tab['tabId'] as int;
         lastTab.value = BrowserTab(browser, tabId);
         await _watch(tabId);
-        final url = await _reachable(call.cwd, input['url'] as String?);
+        final url = await _reachable(
+          browser,
+          call.cwd,
+          input['url'] as String?,
+        );
         await _loading(
           browser,
           tabId,
           () => browser.cdp(tabId, 'Page.navigate', {'url': url}),
         );
-        return _arrived(browser, tabId);
+        return '${await _arrived(browser, tabId)}\n'
+            'Close it (browser_close) once done, unless the user is to look '
+            'at it.';
       },
     ),
     ClaudeSdkTool(
@@ -299,7 +311,7 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
         await _go(
           browser,
           tabId,
-          await _reachable(call.cwd, input['url'] as String?),
+          await _reachable(browser, call.cwd, input['url'] as String?),
           input['action'] as String?,
         );
         return _arrived(browser, tabId);
@@ -330,7 +342,8 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
     ),
     ClaudeSdkTool(
       name: 'browser_close',
-      description: 'Closes a shared tab.',
+      description:
+          'Closes a shared tab: the ones you opened, once done with them.',
       inputSchema: {
         'type': 'object',
         'properties': {'tabId': _tabId},
@@ -487,10 +500,21 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
 
   /// [url] as this machine's browser reaches it, for an agent working in
   /// [cwd]: on an SSH host, its loopback's port forwarded here first, and
-  /// the URL on the port here (see PortForwards.localUrl).
-  static Future<String?> _reachable(String cwd, String? url) async {
+  /// the URL on the port here (see PortForwards.localUrl). A file here, by
+  /// its path too, is its file:// URL, if the extension may reach it.
+  static Future<String?> _reachable(
+    BrowserConnection browser,
+    String cwd,
+    String? url,
+  ) async {
     final host = RemoteLocation.hostOf(cwd);
+    if (url != null && host == null && p.isAbsolute(url)) {
+      url = Uri.file(url).toString();
+    }
     final uri = url == null ? null : Uri.tryParse(url);
+    if (uri != null && uri.isScheme('file') && browser.fileAccess == false) {
+      throw const BrowserError(BrowserConnection.fileAccessHelp);
+    }
     if (host == null || RemoteLocation.isWsl(host) || uri == null) return url;
     try {
       return '${await PortForwards.instance.localUrl(host, uri)}';
@@ -699,8 +723,16 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
           if (type == 'keyDown' && (modifiers & 4) != 0)
             'commands': ?_commands[key.toLowerCase()],
         });
-    await key0(text == null ? 'rawKeyDown' : 'keyDown');
-    await key0('keyUp');
+    // The modifiers pressed themselves too, around it: pages that follow
+    // them by their own keys (Photopea) see a plain key otherwise.
+    final held = _Held(browser, tabId, parts.join('+'));
+    await held.down();
+    try {
+      await key0(text == null ? 'rawKeyDown' : 'keyDown');
+      await key0('keyUp');
+    } finally {
+      await held.up();
+    }
   }
 
   /// Meta's editing keys, as macOS's commands: the page has them so alone.

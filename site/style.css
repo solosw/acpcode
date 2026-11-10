@@ -33,6 +33,67 @@ a:hover { text-decoration-color: var(--ink); }
 .top a[aria-current="page"] { color: var(--ink); }
 /* English and Chinese: each page links to itself in the other language. */
 .top .lang { padding-left: 16px; border-left: 1px solid var(--rule); }
+/* Too narrow for one line (a phone): the brand and the language on the
+   first, the links under the brand, none broken. */
+@media (max-width: 520px) {
+  .top { display: grid; grid-template-columns: auto auto auto 1fr; gap: 10px 22px; padding: 18px 20px 6px; }
+  .top a { white-space: nowrap; }
+  .top .brand { grid-row: 1; grid-column: 1 / 4; justify-self: start; }
+  .top .lang { grid-row: 1; grid-column: 4; justify-self: end; padding-left: 0; border-left: 0; }
+}
+
+/* What users say (reviews/: their avatars), under the bar: three reels of
+   cards wider than the page, two on a phone (site.js deals them), running
+   left for ever but the second right (each doubled, so the loop has no seam),
+   held while the mouse is on them. Their ends fade out. */
+.reviews { display: grid; gap: 12px; max-width: 1180px; margin: 10px auto 0; overflow: hidden; padding: 10px 0 16px;
+  --fade: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  -webkit-mask-image: var(--fade); mask-image: var(--fade); }
+.reel { display: flex; gap: 14px; width: max-content; margin: 0; padding: 0; list-style: none; animation: reel var(--reel-time, 80s) linear infinite; }
+.reel.back { animation-direction: reverse; }
+.reviews:hover .reel { animation-play-state: paused; }
+@keyframes reel { to { transform: translateX(calc(-50% - 7px)); } }
+.reel li { flex: none; display: flex; flex-direction: column; gap: 8px; width: max-content; min-width: 190px; max-width: 340px; margin: 0; padding: 13px 16px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); box-shadow: 0 1px 2px rgba(0, 0, 0, .03), 0 10px 24px -18px rgba(0, 0, 0, .25); }
+.reel .who { display: flex; align-items: center; gap: 8px; font: 600 13px/1.4 var(--sans); color: var(--ink); white-space: nowrap; }
+.reel .who a { text-decoration: none; }
+.reel .who a:hover { text-decoration: underline; text-decoration-color: var(--faint); }
+.reel .who small { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; font-size: 12px; color: var(--faint); }
+.reel .who small svg.ic { width: 12px; height: 12px; }
+.reel img, .reel .avatar { flex: none; width: 24px; height: 24px; border-radius: 50%; }
+.reel img { border: 1px solid var(--rule); }
+.reel .avatar { display: grid; place-items: center; background: #F8EAD2; color: #7A4E14; font-size: 12px; }
+.reel .avatar svg.ic { width: 14px; height: 14px; }
+.reel blockquote { margin: 0; font: 15px/1.55 var(--serif); color: var(--body); }
+/* None over three lines, so a long one does not stretch its reel; one
+   that would be on a phone's narrower cards is wider there (.long). */
+.reel blockquote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+/* On a phone: smaller cards. */
+@media (max-width: 640px) {
+  .reviews { display: grid; gap: 10px; margin-top: 18px; padding: 6px 0 14px;
+    --fade: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent); }
+  .reel { gap: 10px; }
+  @keyframes reel { to { transform: translateX(calc(-50% - 5px)); } }
+  .reel li { gap: 5px; min-width: 130px; max-width: 205px; padding: 8px 11px 9px; border-radius: 8px; }
+  .reel li.long { max-width: 320px; }
+  /* English takes more room for the same words. */
+  html:lang(en) .reel li { max-width: 250px; }
+  html:lang(en) .reel li.long { max-width: 340px; }
+  .reel .who { gap: 6px; font-size: 12px; }
+  .reel img, .reel .avatar { width: 20px; height: 20px; }
+  .reel .avatar { font-size: 11px; }
+  .reel .who small { font-size: 11px; }
+  .reel blockquote { font-size: 13px; line-height: 1.5; }
+}
+/* Under the reel: the way to add to it. */
+.say-line { margin: 0 auto 28px; padding: 0 24px; text-align: center; font: 13.5px/1.5 var(--sans); color: var(--muted); }
+.say-line button { padding: 0; border: 0; background: none; font: inherit; color: var(--ink); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 3px; cursor: pointer; }
+.say-line button:hover { text-decoration-color: var(--ink); }
+@media (max-width: 640px) { .say-line { margin-bottom: 0; } }
+/* Still: the cards side by side, scrolled by hand. */
+@media (prefers-reduced-motion: reduce) {
+  .reviews { overflow-x: auto; }
+  .reel { animation: none; }
+}
 
 /* Text in the middle column; the contents in the left margin, clear of the
    wider figures, when there is room. */
@@ -117,11 +178,10 @@ mark.todo { padding: 0 .2em; border-radius: 3px; background: #FFF1B8; color: #6B
 /* Figures run wider than the text; their captions keep to the text's measure. */
 figure { margin: 40px calc(50% - min(var(--wide), 100vw - 48px) / 2); counter-increment: fig; }
 figure .img { position: relative; overflow: hidden; border: 1px solid var(--rule); border-radius: 10px; background: var(--tint); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 16px 40px -20px rgba(0, 0, 0, .22); }
-figure img { display: block; width: 100%; height: auto; }
-figure .img.missing { aspect-ratio: 16 / 10; }
+/* Each window is drawn in HTML (mocks/), to its own width and scaled to the
+   figure's; a picture, not to be clicked into. */
+figure iframe { display: block; width: 100%; border: 0; pointer-events: none; }
 figure .img + .img { margin-top: 24px; }
-figure .img.missing img { visibility: hidden; }
-figure .img.missing::after { content: attr(data-src); position: absolute; inset: 0; display: grid; place-items: center; font: 13px var(--mono); color: var(--faint); }
 figcaption { max-width: var(--text); margin: 14px auto 0; font: 14px/1.55 var(--sans); color: var(--muted); }
 figcaption::before { content: "Figure " counter(fig) ". "; color: var(--ink); font-weight: 600; }
 :lang(zh) figcaption::before { content: "图 " counter(fig) "　"; }
@@ -217,6 +277,21 @@ dialog.star h2 { margin: 0 0 10px; font-size: 22px; }
 dialog.star p { margin: 0 0 22px; font: 15px/1.6 var(--sans); color: var(--muted); }
 dialog.star .get { display: flex; flex-wrap: wrap; gap: 8px; }
 dialog.star button.button { background: var(--paper); cursor: pointer; }
+dialog.star button.button.primary { background: var(--ink); }
+dialog.star button.button:disabled { opacity: .6; cursor: default; }
+/* Saying a word (site.js): a few words, and where to find them if they like. */
+dialog.say { width: 460px; }
+dialog.say .field { display: block; margin: 0 0 14px; font: 13.5px/1.5 var(--sans); color: var(--ink); }
+dialog.say .field span { display: block; margin-bottom: 6px; }
+dialog.say .field em { margin-left: 8px; font-style: normal; color: var(--faint); }
+dialog.say :is(textarea, input) { display: block; width: 100%; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); resize: vertical; }
+dialog.say :is(textarea, input):focus { outline: none; border-color: var(--faint); box-shadow: 0 0 0 3px rgba(226, 179, 115, .25); }
+dialog.say :is(textarea, input)::placeholder { color: var(--faint); }
+dialog.say p.hint { margin: -2px 0 20px; font-size: 13px; color: var(--faint); }
+dialog.say .say-status { margin: 12px 0 0; font-size: 13.5px; color: #A1462C; }
+dialog.say .say-status:empty { display: none; }
+dialog.say .done, dialog.say.sent form { display: none; }
+dialog.say.sent .done { display: block; }
 
 /* The one-click import of an upstream (import.js): what it is, then the
    button that hands it to the app. */

@@ -9,6 +9,8 @@ This is the **solosw/baocode fork** of [baocode-dev/baocode](https://github.com/
 
 [Download this fork](https://github.com/solosw/baocode/releases/latest) · [Release notes](release-notes/) · [Upstream website](https://baocode.dev)
 
+![What users say about BaoCode](docs/readme/reviews.png)
+
 ![BaoCode's main window: agents grouped by project, two conversations side by side, and the model picker](site/shots/main.png)
 
 ## How this fork differs from upstream
@@ -63,7 +65,7 @@ VS Code and Cursor are built on Electron: each window is a web page, and every c
 
 ## Requirements
 
-- macOS 12 or later (Apple silicon or Intel, one download each), or Windows 10 or later (x64).
+- macOS 12 or later (Apple silicon or Intel, one download each), Windows 10 or later (x64), or Linux: Ubuntu 20.04 or later and other Debian-based distributions (x64 or arm64, a .deb each).
 - An installed [Claude Code](https://github.com/anthropics/claude-code) for the Claude Code integration, or an ACP-compatible agent configured in **Settings → Agents** for ACP conversations.
 - Agent executables must be installed on the host where the project runs. Selecting an ACP agent does not replace the separate auxiliary-model configuration.
 
@@ -115,3 +117,5 @@ own licenses, found next to them in the source tree.
 
 BaoCode is an independent project, not affiliated with or endorsed by
 Anthropic.
+
+<img width="300" height="356" alt="image" src="https://github.com/user-attachments/assets/d8288f00-a7f6-41fd-8cbb-f99acfe59418" />

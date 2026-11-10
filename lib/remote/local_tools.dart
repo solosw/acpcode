@@ -21,7 +21,8 @@ import 'ssh_host.dart';
 /// forwarding ports either way (`port_forward`), over the host's
 /// connection. Only an agent of an SSH project is offered them, and only
 /// while the user lets that host act on this machine
-/// ([RemoteHostSettings.localAccess], off until turned on).
+/// ([RemoteHostSettings.localAccess], on until turned off in Settings →
+/// SSH Servers). Turned off, its agents are told where to turn it on.
 abstract final class LocalTools {
   static const run = 'local_run';
   static const push = 'local_push';
@@ -54,6 +55,13 @@ abstract final class LocalTools {
       ? 'Windows'
       : 'Linux';
 
+  /// A file of this machine, as the instructions' example of a link.
+  static String get _exampleHere => Platform.isWindows
+      ? r'C:/Users/me/Downloads/report.pdf'
+      : Platform.isMacOS
+      ? '/Users/me/Downloads/report.pdf'
+      : '/home/me/Downloads/report.pdf';
+
   static String _hostSystem(String host) =>
       switch (SshHosts.instance[host].hello?.platform.os) {
         'win' => 'Windows',
@@ -76,11 +84,19 @@ abstract final class LocalTools {
   }
 
   /// What an agent working in [cwd] is told of the tools, where it is
-  /// offered them.
+  /// offered them; where its host's user turned them off, where to turn
+  /// them on.
   static String? instructions(String cwd) {
-    final host = hostOffered(cwd);
-    if (host == null) return null;
+    final host = RemoteLocation.hostOf(cwd);
+    if (host == null || RemoteLocation.isWsl(host)) return null;
     final name = RemoteLocation.hostName(host);
+    if (!_settings.localAccess(host)) {
+      return 'You work on $name over SSH; the user sits at their own '
+          'computer ($thisSystem), not on $name. They have turned off '
+          'agents on $name acting on their computer: asked to run '
+          'something or copy files there, tell them they can turn it on '
+          'in BaoCode\'s Settings → SSH Servers.';
+    }
     return 'You work on $name (${_hostSystem(host)}) over SSH: your files, '
         'commands and tools are all there. The user sits at their own '
         'computer ($thisSystem), not on $name. To act on their computer '
@@ -93,7 +109,12 @@ abstract final class LocalTools {
         'reached from $name. A server you start on $name that prints its '
         'http://localhost:<port> address is forwarded to their computer on '
         'its own. Where ADB_SERVER_SOCKET is set on $name, adb there uses '
-        'the phones plugged into their computer.';
+        'the phones plugged into their computer. Linking to files: one on '
+        '$name by its absolute path there; one on their computer (one '
+        '$pull copied there, or $run showed) as local:'
+        '<its absolute path there>, e.g. '
+        '[report.pdf](local:$_exampleHere), never '
+        'by its path alone: that would be a file of $name\'s.';
   }
 
   static bool _offered(String cwd) => hostOffered(cwd) != null;

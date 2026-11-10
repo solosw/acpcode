@@ -6,6 +6,8 @@ Una interfaz de escritorio fácil de usar para [Claude Code](https://github.com/
 
 [Sitio web](https://baocode.dev) · [Descargar](https://baocode.dev/download) · [Historial de cambios](https://baocode.dev/changelog)
 
+![Lo que dicen los usuarios de BaoCode](docs/readme/reviews.png)
+
 ![Ventana principal de BaoCode: agentes agrupados por proyecto, dos conversaciones en paralelo y selector de modelo](site/shots/main.png)
 
 > Presentación en español del README en inglés. Si hay diferencias, consulta [English](README.md). Los sitios y documentos enlazados no necesariamente están traducidos al español.
@@ -42,7 +44,7 @@ BaoCode es una aplicación nativa que dibuja directamente su interfaz en la GPU.
 
 ## Requisitos
 
-- macOS 12 o posterior (una descarga para Apple silicon y otra para Intel), o Windows 10 o posterior (x64).
+- macOS 12 o posterior (una descarga para Apple silicon y otra para Intel), Windows 10 o posterior (x64), o Linux: Ubuntu 20.04 o posterior y otras distribuciones basadas en Debian (un .deb para x64 y otro para arm64).
 - [Claude Code](https://github.com/anthropics/claude-code) instalado.
 
 ## Compilar desde el código fuente

@@ -36,8 +36,10 @@ import 'chat/composer/file_drop.dart';
 import 'chat/composer/file_mentions.dart';
 import 'chat/open_editor.dart';
 import 'chat/panels/interaction_panel.dart';
+import 'chat/side_panel/file_link.dart' show FileLineRange;
 import 'chat/side_panel/file_open.dart';
 import 'chat/side_panel/file_preview.dart' show FilePreview;
+import 'chat/side_panel/shown_files.dart' show ShownFiles;
 import 'chat/side_panel/side_panel_controller.dart';
 import 'chat/side_panel/side_panel_view.dart';
 import 'chat/side_panel/web_page_opener.dart';
@@ -57,9 +59,12 @@ import 'ide/file_views.dart';
 import 'ide/file_service.dart'
     show
         IdeFileService,
+        IdeFileTooLargeException,
         byteSizeThrough,
         IdeHostFiles,
         ideIsImagePath,
+        fileByteSize,
+        localizedFileError,
         readBytesThrough,
         readFileBytes;
 import 'ide/ide_agent_edits.dart';
@@ -163,7 +168,6 @@ import 'workspace/workspace_dialog.dart';
 import 'ide/host_paths.dart';
 import 'remote/local_tools.dart';
 import 'remote/port_forwards.dart';
-import 'remote/remote_host_settings.dart';
 
 /// The window: the agents sidebar on the left, the selected agent's chat
 /// on the right, and up to three more beside it, dragged there from the
@@ -2001,6 +2005,14 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         focus?.context?.findAncestorStateOfType<EditableTextState>() != null,
       'terminalFocus' || 'terminalFocusInAny' => _terminals?.focused ?? false,
       ChatContextKeys.sidePanelFocus => _sidePanel.hasFocus,
+      ChatContextKeys.singlePane => switch (_workspace.current) {
+        // Close Pane's own guard, turned around: where it has nothing to
+        // close — the one pane is all the window shows, or this is an
+        // agent's window, its agent out of the panes — the keys close the
+        // window instead.
+        final thread? => !_workspace.canClosePane(thread),
+        null => true,
+      },
       'terminalProcessSupported' => _terminals != null,
       'terminalIsOpen' || 'terminalHasBeenCreated' =>
         _terminals?.current?.instances.isNotEmpty ?? false,
@@ -3452,6 +3464,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ideNavigation: ide ? _ideSpace(_ideFolder).navigation : null,
       pinned: _pinned,
       onTogglePin: _setPinned,
+      reloadChat: switch (agent ?? _workspace.current) {
+        final thread? when !ide && _reloadable(thread) => _reloadButton(thread),
+        _ => null,
+      },
       terminalShown: _terminals?.shown ?? false,
       onToggleTerminal: ide || _terminals?.root == null
           ? null
@@ -3779,18 +3795,6 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           icon: const Icon(Codicons.file),
           onSelected: () => _openRemoteFile(),
         ),
-        // Its agents' tools for this machine (local_tools.dart).
-        if (!RemoteLocation.isWsl(host)) ...[
-          const IdeMenuSeparator(),
-          IdeMenuAction(
-            l10n.remoteLocalAccess,
-            checked: RemoteHostSettings.instance.localAccess(host),
-            onSelected: () => RemoteHostSettings.instance.setLocalAccess(
-              host,
-              !RemoteHostSettings.instance.localAccess(host),
-            ),
-          ),
-        ],
         const IdeMenuSeparator(),
         IdeMenuAction(
           l10n.sidebarAddSshHost,
@@ -4410,7 +4414,53 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       roots: () =>
           _workspace.workspaceAt(thread.project.path)?.folders ?? const [],
       home: () => ProjectHost.of(thread.project.path).home,
+      existsHere: _existsHere,
+      openOnHost: (host, path, range) =>
+          unawaited(_openOnHost(thread, embedded, host, path, range)),
     );
+  }
+
+  /// Whether a file of this machine's is at [path].
+  static Future<bool> _existsHere(String path) =>
+      fileByteSize(path).then((_) => true, onError: (_) => false);
+
+  /// What [_openOnHost] reads of a file at most.
+  static const _onHostMax = 8 << 20;
+
+  /// Shows the file at [path] on SSH [host] (a chat's `ssh://` link to a
+  /// host other than its project's), read-only, as a copy of it here: the
+  /// chat's files are its project's host's. A failure is a notification.
+  Future<void> _openOnHost(
+    AgentThread thread,
+    bool embedded,
+    String host,
+    String path,
+    FileLineRange? range,
+  ) async {
+    final l10n = context.l10n;
+    try {
+      final client = await SshHosts.instance[host].ready;
+      final (:bytes, :size) = await client.readRange(path, 0, _onHostMax);
+      if (size > _onHostMax) throw IdeFileTooLargeException(path, size);
+      final name = RemoteLocation.pathsFor(path).basename(path);
+      final shown = ShownFiles.bytes(bytes, name: name);
+      if (shown == null || !mounted) return;
+      _fileLinks(thread, embedded: embedded).open(
+        FileOpenRequest(
+          shown,
+          range: range,
+          local: true,
+          readOnly: true,
+          preview: true,
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      _notifications.notify(
+        IdeSeverity.error,
+        '${RemoteLocation.hostName(host)}: ${localizedFileError(l10n, error)}',
+      );
+    }
   }
 
   /// [request] for a file's changes as the file itself where [session]'s
@@ -4909,6 +4959,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final atStart = !embedded && _sidePanel.atLeft;
     final own = [
       if (cardTools) ...[
+        // Only once it was talked in elsewhere: nothing new to read before.
+        if (_reloadable(thread))
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: _reloadButton(thread),
+          ),
         // The panel is under each conversation (see [_withTerminal]), so
         // the button in a pane is that pane's project's.
         if (showsTerminals && terminals != null)
@@ -5079,6 +5135,30 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     command: 'workbench.action.toggleSidebarVisibility',
     onTap: _toggle,
   );
+
+  /// Whether [thread]'s kept session was talked in elsewhere since it was
+  /// read here, and can be read anew now (see [Workspace.reload]).
+  bool _reloadable(AgentThread thread) =>
+      thread.goneOnElsewhere && _workspace.canReload(thread);
+
+  Widget _reloadButton(AgentThread thread) => SidebarIconButton(
+    icon: Codicons.refresh,
+    tooltip: context.l10n.chatReload,
+    onTap: () => _reload(thread),
+    size: 22,
+  );
+
+  /// Reads [thread]'s kept session anew, its chat and side panel as they
+  /// were.
+  void _reload(AgentThread thread) {
+    final was = thread.session;
+    _workspace.reload(thread);
+    if (identical(thread.session, was)) return;
+    _sidePanel.carryOver(was, thread.session);
+    // A chat of the conversation before is not shown again: built anew.
+    _chatKeys[thread] = GlobalKey();
+    _ideChatWidgets.remove(thread);
+  }
 
   // --- Asides (/btw) -------------------------------------------------------
 

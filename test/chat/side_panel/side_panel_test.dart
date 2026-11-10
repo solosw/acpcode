@@ -29,13 +29,16 @@ import 'package:baocode/chat/widgets/markdown_view.dart';
 import 'package:baocode/chat/widgets/tool_call_row.dart';
 import 'package:baocode/ide/file_service.dart';
 import 'package:baocode/ide/git/ide_git_commit_panel.dart';
+import 'package:baocode/ide/ide_diff_options.dart';
 import 'package:baocode/ide/git/commit_message.dart';
 import 'package:baocode/ide/git/git_model.dart';
 import 'package:baocode/ide/git/git_repository.dart';
 import 'package:baocode/ide/git/ide_git_log_view.dart';
 import 'package:baocode/ide/ide_code_diff.dart';
+import 'package:baocode/ide/editor_word_wrap.dart';
 import 'package:baocode/ide/ide_code_editor.dart';
 import 'package:baocode/ide/ide_explorer.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/ide_list.dart';
 import 'package:baocode/ide/ide_menu.dart';
 import 'package:baocode/ide/terminal/terminal_instance.dart';
@@ -700,6 +703,47 @@ void main() {
     }
 
     await check(const FileOpenRequest('/p/a.dart', diff: true));
+  });
+
+  testWidgets('text only shown wraps as the editors do, toggled in its bar', (
+    tester,
+  ) async {
+    addTearDown(() => EditorWordWrap.on.value = false);
+    final long = List.filled(60, 'word').join(' ');
+    final files = _Files({'/p/paste.txt': 'one\n$long\nthree'});
+    await tester.pumpWidget(
+      _app(
+        FilePreview(
+          request: const FileOpenRequest('/p/paste.txt', readOnly: true),
+          files: files,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sideways = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal,
+    );
+    expect(sideways, findsOneWidget);
+    final oneLine = tester.getSize(find.text('one')).height;
+    expect(tester.getSize(find.text(long)).height, closeTo(oneLine, 0.1));
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is IdeActionButton && widget.icon == Codicons.wordWrap,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(EditorWordWrap.on.value, isTrue);
+    expect(sideways, findsNothing);
+    // The long line on rows of its own, the next under them.
+    expect(tester.getSize(find.text(long)).height, greaterThan(oneLine * 2));
+    expect(
+      tester.getTopLeft(find.text('three')).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text(long)).dy),
+    );
   });
 
   testWidgets('short preview lines do not create horizontal overflow', (
@@ -1710,6 +1754,9 @@ void main() {
 
   testWidgets('under the log, the changes fold to their tabs\' row, and '
       'unfold from it', (tester) async {
+    // Under it as picked: the panel is wide enough to have them beside.
+    IdeDiffOptions.instance.detailsLayout = IdeGitDetailsLayout.below;
+    addTearDown(IdeDiffOptions.instance.reset);
     final fake = FakeGit('/p')
       ..status = '## main\x00 M lib/main.dart\x00'
       ..log = '';

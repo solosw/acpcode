@@ -1,8 +1,56 @@
-part of 'ide_workbench.dart';
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/widgets.dart';
+
+import '../../l10n/l10n.dart';
+import '../ide_dialog.dart';
+import '../ide_menu.dart';
+import '../ide_workspace.dart';
+import '../workbench/contributions.dart';
+import '../workbench/storage.dart';
+import 'terminal_view.dart';
 
 typedef _QuickRunConfiguration = ({String name, String command, String cwd});
 
-extension _IdeQuickRun on IdeWorkbenchState {
+class QuickRunService extends ChangeNotifier
+    implements WorkbenchStorageParticipant {
+  QuickRunService({
+    required this.host,
+    required this.storage,
+    required this.terminalView,
+    required this.workspace,
+  });
+
+  final WorkbenchHost host;
+  final WorkbenchStorage storage;
+  final TerminalViewService terminalView;
+  final IdeWorkspace Function() workspace;
+  final List<_QuickRunConfiguration> _quickRunConfigurations = [];
+  int _quickRunSelected = 0;
+  bool _configuringQuickRun = false;
+
+  @override
+  void restoreState(Map<String, Object?> kept) {
+    _quickRunConfigurations.clear();
+    _quickRunSelected = 0;
+    _restoreQuickRun(kept['quickRun']);
+  }
+
+  @override
+  void saveState(Map<String, Object?> into) {
+    if (_quickRunConfigurations.isNotEmpty) into['quickRun'] = _quickRunJson;
+  }
+
+  String? get selectedDescription => switch (_selectedQuickRun) {
+    final config? => '${config.name}\n${config.command}',
+    null => null,
+  };
+  void _refresh(VoidCallback update) {
+    update();
+    notifyListeners();
+  }
+
   _QuickRunConfiguration? get _selectedQuickRun =>
       _quickRunConfigurations.isEmpty
       ? null
@@ -45,15 +93,15 @@ extension _IdeQuickRun on IdeWorkbenchState {
   };
 
   /// A fresh shell for each invocation: never type into an existing job.
-  void _runQuickCommand() {
-    final terminals = _terminals;
-    if (terminals == null || !widget.workspace.hasFolder) return;
+  void run() {
+    final terminals = terminalView.terminals;
+    if (terminals == null || !this.workspace().hasFolder) return;
     final config = _selectedQuickRun;
     if (config == null) {
       unawaited(_configureQuickRun());
       return;
     }
-    final workspace = widget.workspace;
+    final workspace = this.workspace();
     final root = workspace.roots.firstOrNull ?? workspace.root;
     final cwd = config.cwd.isEmpty
         ? root
@@ -61,10 +109,12 @@ extension _IdeQuickRun on IdeWorkbenchState {
     terminals.create(cwd: cwd)
       ..rename(config.name)
       ..sendText(config.command, shouldExecute: true);
-    _showTerminal();
+    terminalView.show();
   }
 
-  void _showQuickRunMenu(Rect anchor) {
+  void showMenu(Rect anchor) {
+    final context = host.context;
+    if (context == null) return;
     final l10n = context.l10n;
     unawaited(
       showIdeMenu(
@@ -77,7 +127,7 @@ extension _IdeQuickRun on IdeWorkbenchState {
               checked: i == _quickRunSelected,
               onSelected: () {
                 _refresh(() => _quickRunSelected = i);
-                _keepView();
+                storage.changed();
               },
             ),
           if (_quickRunConfigurations.isNotEmpty) const IdeMenuSeparator(),
@@ -106,13 +156,15 @@ extension _IdeQuickRun on IdeWorkbenchState {
         math.min(_quickRunSelected, _quickRunConfigurations.length - 1),
       );
     });
-    _keepView();
+    storage.changed();
   }
 
   Future<void> _configureQuickRun({bool edit = false}) async {
     if (_configuringQuickRun) return;
     _configuringQuickRun = true;
     try {
+      final context = host.context;
+      if (context == null) return;
       final l10n = context.l10n;
       final config = edit ? _selectedQuickRun : null;
       final result = await showIdeInputDialog(
@@ -136,10 +188,10 @@ extension _IdeQuickRun on IdeWorkbenchState {
           ),
         ],
       );
-      if (!mounted || result == null) return;
+      if (!context.mounted || result == null) return;
       final command = result.values[1].trim();
       if (command.isEmpty) {
-        _report(l10n.quickRunCommandRequired);
+        host.report(l10n.quickRunCommandRequired);
         return;
       }
       final name = result.values[0].trim();
@@ -156,8 +208,8 @@ extension _IdeQuickRun on IdeWorkbenchState {
           _quickRunSelected = _quickRunConfigurations.length - 1;
         }
       });
-      _keepView();
-      if (result.button == 0) _runQuickCommand();
+      storage.changed();
+      if (result.button == 0) run();
     } finally {
       _configuringQuickRun = false;
     }

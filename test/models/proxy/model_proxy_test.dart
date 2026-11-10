@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/proxy/model_proxy.dart';
+import 'package:baocode/models/upstream.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// An upstream on this machine: answers each request with [reply], and
@@ -930,6 +931,47 @@ void main() {
       expect(counted.status, 200);
       expect(anthropic.requests.last.path, '/v1/messages/count_tokens');
       expect((jsonDecode(counted.text) as Map)['input_tokens'], greaterThan(0));
+    });
+
+    test('OpenCode is told no session, nor an empty list of tools', () async {
+      final opencode = ModelProxy(
+        provider: (id) => ModelProvider(
+          id: 'oc',
+          name: 'OpenCode',
+          baseUrl: 'http://opencode.ai/inference/anthropic',
+          auth: ProviderAuth.apiKey,
+        ),
+        key: (id) async => 'sk-$id',
+        findProxy: (_) => 'PROXY ${Uri.parse(anthropic.base).authority}',
+        token: 'tok',
+      );
+      addTearDown(opencode.close);
+      anthropic.reply = (_) => (200, const ['event: message_stop', '']);
+      const headers = {
+        'x-api-key': 'tok',
+        sessionHeaderName: 's1',
+        'x-session-id': 's1',
+      };
+      final body = {
+        'model': 'deepseek-v4.1-flash',
+        'messages': [],
+        'tools': [],
+      };
+      await post(
+        Uri.parse('${(await opencode.endpoint('oc')).baseUrl}/v1/messages'),
+        body,
+        headers: headers,
+      );
+      await post(await on('an'), body, headers: headers);
+      final [toOpencode, toClaude] = anthropic.requests;
+      expect(toOpencode.path, '/inference/anthropic/v1/messages');
+      for (final name in openCodeUntold) {
+        expect(toOpencode.headers.containsKey(name), isFalse, reason: name);
+      }
+      expect((toOpencode.body! as Map).containsKey('tools'), isFalse);
+      expect(toClaude.headers[sessionHeaderName], 's1');
+      expect(toClaude.headers['x-session-id'], 's1');
+      expect((toClaude.body! as Map)['tools'], isEmpty);
     });
 
     test('Anthropic\'s API at an address of its own: the endpoint\'s query '

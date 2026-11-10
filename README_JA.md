@@ -6,6 +6,8 @@
 
 [公式サイト](https://baocode.dev) · [ダウンロード](https://baocode.dev/download) · [変更履歴](https://baocode.dev/changelog)
 
+![BaoCode ユーザーの声](docs/readme/reviews.png)
+
 ![BaoCode のメイン画面：プロジェクト別のエージェント、並列表示された二つの会話、モデル選択](site/shots/main.png)
 
 > 英語 README の日本語版です。内容に相違がある場合は [English](README.md) を参照してください。リンク先のサイトや文書が日本語に対応しているとは限りません。
@@ -42,7 +44,7 @@ BaoCode は GPU に直接 UI を描画するネイティブアプリです。以
 
 ## 必要環境
 
-- macOS 12 以降（Apple silicon と Intel 向けにそれぞれ配布）、または Windows 10 以降（x64）。
+- macOS 12 以降（Apple silicon と Intel 向けにそれぞれ配布）、Windows 10 以降（x64）、または Linux：Ubuntu 20.04 以降とその他の Debian 系ディストリビューション（x64 と arm64 向けにそれぞれ .deb）。
 - [Claude Code](https://github.com/anthropics/claude-code) がインストールされていること。
 
 ## ソースからのビルド

@@ -2140,6 +2140,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarByStatus => '按状态';
 
   @override
+  String get sidebarProjectSortRecent => '最近活动';
+
+  @override
+  String get sidebarProjectSortManual => '手动';
+
+  @override
   String get sidebarTimeNow => '刚刚';
 
   @override
@@ -2611,10 +2617,21 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get chatAgentMessageSent => '发来消息';
+
+  @override
+  String chatAgentMessageSemantics(String agent) {
+    return '来自子智能体 $agent 的消息';
+  }
+
+  @override
   String get chatOpensItsConversation => '打开其对话';
 
   @override
   String get chatLoadEarlier => '加载更早的消息';
+
+  @override
+  String get chatReload => '重新加载（在别处有新消息）';
 
   @override
   String get chatStop => '停止';
@@ -2985,6 +3002,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String turnWorked(String duration) {
     return '已处理 $duration';
+  }
+
+  @override
+  String turnStopped(String duration) {
+    return '处理 $duration 后停止';
   }
 
   @override
@@ -4196,7 +4218,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get themeHighContrastThemes => '高对比度主题';
 
   @override
-  String get themeSelectPlaceholder => '选择颜色主题(检测系统颜色模式已禁用)';
+  String get themeAuto => '自动';
+
+  @override
+  String get themeFollowSystem => '跟随系统';
+
+  @override
+  String get themeSelectPlaceholder => '选择颜色主题';
 
   @override
   String get dateNow => '现在';
@@ -5357,6 +5385,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String wbSelectedCount(int count) {
     return '(已选择 $count)';
+  }
+
+  @override
+  String wbSelectedLines(int lines, int count) {
+    return '(已选择 $lines 行，$count 个字符)';
   }
 
   @override
@@ -6616,6 +6649,32 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsAddProvider => '添加上游';
 
   @override
+  String get modelsMagpieJoin => '接入 magpie';
+
+  @override
+  String get modelsMagpieBadge => '跟随 magpie';
+
+  @override
+  String get modelsMagpieGateway => 'magpie 网关';
+
+  @override
+  String get modelsMagpieGatewayDescription =>
+      '模型、账号和路由都在 magpie 里管理，这里的列表跟着它自动更新。新出现的路由组、图片模型，以及 magpie 给 Claude Code 选的模型会自动启用，其他的在下面勾选。';
+
+  @override
+  String get modelsMagpieRunning => '运行中';
+
+  @override
+  String get modelsMagpieNotRunning => 'magpie 未运行';
+
+  @override
+  String get modelsMagpieNotRunningDetail =>
+      '打开 magpie，或运行 magpie serve。它没运行时，用它的模型的会话会失败。';
+
+  @override
+  String get modelsMagpieSync => '同步模型';
+
+  @override
   String get modelsNewProviderName => '新上游';
 
   @override
@@ -6648,6 +6707,49 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsAddAccountDescription => '在浏览器中打开 ChatGPT 登录页。';
 
   @override
+  String get modelsAccountsImport => '导入';
+
+  @override
+  String get modelsAccountsImportTitle => '导入账号';
+
+  @override
+  String get modelsAccountsImportFile => '选择文件…';
+
+  @override
+  String get modelsAccountsImportDescription => '输入或选择 JSON 格式的账号凭据。';
+
+  @override
+  String get modelsAccountsPaste => '输入 JSON…';
+
+  @override
+  String get modelsAccountsPastePlaceholder => '在此输入或粘贴 JSON 凭据。';
+
+  @override
+  String get modelsAccountsImportConfirm => '导入这些 ChatGPT 凭据？';
+
+  @override
+  String get modelsAccountsImportConfirmDetail =>
+      'BaoCode 会安全保存凭据，不修改原文件，导入时也不会主动刷新令牌。但后续续期可能轮换刷新令牌，导致原工具需要重新登录。请只导入你有权使用的凭据。';
+
+  @override
+  String get modelsAccountsImportFailed => '无法读取或导入凭据。';
+
+  @override
+  String modelsAccountsImportSummary(int count) {
+    return '已导入账号：$count';
+  }
+
+  @override
+  String modelsAccountsImportKept(int count) {
+    return '已存在，保留现有登录：$count';
+  }
+
+  @override
+  String modelsAccountsImportItemFailed(int index, String error) {
+    return '第 $index 项：$error';
+  }
+
+  @override
   String get modelsAccountSigningIn => '等待登录…';
 
   @override
@@ -6662,7 +6764,12 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get modelsRefreshQuota => '刷新额度';
+  String get modelsRefreshQuota => '刷新全部额度';
+
+  @override
+  String modelsAccountRefreshQuota(String name) {
+    return '刷新 $name 的额度';
+  }
 
   @override
   String get modelsAccountRemove => '移除账号';
@@ -7035,7 +7142,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsRoleSubagentDescription =>
-      'CLAUDE_CODE_SUBAGENT_MODEL：所有子 Agent 使用的模型，优先于子 Agent 定义或调用时指定的模型（定义为 inherit 的除外）。';
+      'CLAUDE_CODE_SUBAGENT_MODEL：所有子 Agent 使用的模型，包括内置的 Explore、Plan 和定义为 inherit 的，优先于子 Agent 定义或调用时指定的模型。';
 
   @override
   String get modelsRoleMissing => '这个模型已不在它的上游里，用到它的请求会失败。';
@@ -10093,6 +10200,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserSettingsAppOld => '扩展比当前的 BaoCode 新，请更新 BaoCode。';
 
   @override
+  String get browserSettingsNoFileAccess => '没有开文件访问权限';
+
+  @override
+  String get browserSettingsNoFileAccessDescription =>
+      '打不开本地 HTML，也传不了文件。在 chrome://extensions 里点 BaoCode 的「详细信息」，打开「允许访问文件网址」。';
+
+  @override
   String get browserSettingsInstall => '安装扩展';
 
   @override
@@ -11442,6 +11556,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get diffUnified => '单栏查看';
+
+  @override
+  String get gitDetailsLayout => '详情位置';
+
+  @override
+  String get gitDetailsLayoutAuto => '够宽时在右侧';
+
+  @override
+  String get gitDetailsLayoutBeside => '右侧';
+
+  @override
+  String get gitDetailsLayoutBelow => '下方';
 
   @override
   String get diffIgnoreWhitespace => '忽略行首尾空白';
@@ -12866,6 +12992,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ustatSpaceEmpty => '暂无数据';
 
   @override
+  String get ustatLoading => '正在读取调用记录…';
+
+  @override
   String get ustatClearEllipsis => '清理…';
 
   @override
@@ -13340,7 +13469,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get remoteLocalAccessDetail =>
-      '它的 agent 可以在本机执行命令（每次都会问你）、在两边之间传文件、转发端口。';
+      '这些主机上的 agent 可以在本机执行命令（每次都会问你）、在两边之间传文件、转发端口。';
+
+  @override
+  String get remoteLocalAccessNoAsking => '命令直接执行，不再询问';
+
+  @override
+  String get remoteLocalAccessAskAgain => '改回每次询问';
 
   @override
   String get sidePanelPorts => '端口';

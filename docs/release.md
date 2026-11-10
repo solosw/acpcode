@@ -35,7 +35,7 @@ git push / git push 标签 ─────▶ ├ remote-windows Windows 上编�
                                ├ remote-linux  Linux 版在 Docker 里运行验证
                                ├ macos         arm64 / x64，签名、公证、启动验证
                                ├ windows       x64 / arm64，各自原生 runner 打包
-                               ├ linux         x64 / arm64，打包、安装和启动验证
+                               ├ linux         x64 / arm64，Ubuntu 20.04 容器中打包、安装和启动验证
                                └ publish       清单、安装包和服务端上传 GitHub Release
                                                     ▲
 已安装的 BaoCode：每 6 小时读取 releases/latest/download/latest.json ┘

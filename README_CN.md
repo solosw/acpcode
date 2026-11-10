@@ -1,5 +1,7 @@
 # BaoCode
 
+<img width="300" height="356" alt="image" src="https://github.com/user-attachments/assets/d8288f00-a7f6-41fd-8cbb-f99acfe59418" />
+
 [English](README.md) · **简体中文** · [日本語](README_JA.md) · [Français](README_FR.md) · [Español](README_ES.md)
 
 面向 [Claude Code](https://github.com/anthropics/claude-code) 和可配置的 Agent Client Protocol（ACP）智能体的桌面界面，内置快速 IDE。
@@ -7,6 +9,8 @@
 这里是 [baocode-dev/baocode](https://github.com/baocode-dev/baocode) 的 **solosw/baocode 分支**，不是上游原版发行渠道。在保留上游界面与功能的基础上，本分支增加了下文列出的集成。
 
 [下载本分支](https://github.com/solosw/baocode/releases/latest) · [版本更新记录](release-notes/) · [上游官网](https://baocode.dev)
+
+![用户对 BaoCode 的评价](docs/readme/reviews-zh.png)
 
 ![BaoCode 主窗口：按项目分组的智能体、并排显示的两个对话，以及模型选择器](site/shots/main.png)
 
@@ -62,7 +66,7 @@ BaoCode 是原生应用，直接通过 GPU 绘制界面。以下数据沿用上�
 
 ## 系统要求
 
-- macOS 12 或更新版本（Apple 芯片和 Intel 各提供一个下载版本），或 Windows 10 或更新版本（x64）。
+- macOS 12 或更新版本（Apple 芯片和 Intel 各提供一个下载版本），Windows 10 或更新版本（x64），或 Linux：Ubuntu 20.04 或更新版本及其他基于 Debian 的发行版（x64 和 arm64 各一个 .deb）。
 - 使用 Claude Code 集成时需安装 [Claude Code](https://github.com/anthropics/claude-code)；使用 ACP 对话时需在 **设置 → Agents** 中配置兼容 ACP 的智能体。
 - Agent 可执行文件须安装在项目实际运行的主机上。选择 ACP Agent 不会替换单独配置的辅助模型。
 

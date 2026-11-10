@@ -66,6 +66,34 @@ class _CountingSecretStore implements SecretStore {
 
 void main() {
   group('ModelProvider', () {
+    test('labelOf tells apart the models going by one name', () {
+      const terra = 'GPT-6.1 Terra';
+      const provider = ModelProvider(
+        id: 'magpie',
+        name: 'magpie',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: 'https://x.example',
+        models: [
+          ProviderModel(id: 'congee/gpt-6.1-terra', label: terra),
+          ProviderModel(id: 'github-copilot/gpt-6.1-terra', label: terra),
+          ProviderModel(id: 'congee/gpt-6.1-sol', label: 'GPT-6.1 Sol'),
+          ProviderModel(id: 'a', label: 'Same'),
+          ProviderModel(id: 'b', label: 'Same'),
+          ProviderModel(id: 'off', label: 'GPT-6.1 Sol', enabled: false),
+        ],
+      );
+      String label(String id) => provider.labelOf(provider.model(id)!);
+      expect(label('congee/gpt-6.1-terra'), 'GPT-6.1 Terra (congee)');
+      expect(
+        label('github-copilot/gpt-6.1-terra'),
+        'GPT-6.1 Terra (github-copilot)',
+      );
+      // One turned off is not offered beside it.
+      expect(label('congee/gpt-6.1-sol'), 'GPT-6.1 Sol');
+      expect(label('a'), 'Same (a)');
+      expect(label('b'), 'Same (b)');
+    });
+
     test('goes through JSON as it was', () {
       const provider = ModelProvider(
         id: 'p',
@@ -900,8 +928,8 @@ void main() {
       expect(customUpstreamHeaders(at('https://x.example')), isEmpty);
     });
 
-    test('OpenCode is told the conversation, the same id every request, '
-        'unless the user names it', () {
+    test('OpenCode Go is told the conversation, the same id every request, '
+        'unless the user names it; the rest of OpenCode is not', () {
       final zen = at(
         'https://opencode.ai/zen/go/v1',
         ProviderProtocol.openaiChat,
@@ -931,6 +959,14 @@ void main() {
           session: 's-1',
         ),
         {'X-OpenCode-Session': 's-1'},
+      );
+      // OpenCode but Go: none.
+      expect(
+        customUpstreamHeaders(
+          at('https://opencode.ai/inference/anthropic'),
+          session: 's-1',
+        ),
+        isEmpty,
       );
       // Another upstream: none.
       expect(
