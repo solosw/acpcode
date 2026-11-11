@@ -210,9 +210,9 @@ jobs:
         with:
           name: remote-linux
           path: build/remote
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
         with:
-          platforms: arm64
+          platforms: arm64,riscv64
       - name: Run it on Linux distributions, in Docker
         run: |
           # Artifacts keep no modes.
