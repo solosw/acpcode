@@ -40,7 +40,7 @@ class _Review extends ChangeReview {
   }
 
   @override
-  Future<void> look() async {}
+  Future<void> look({Iterable<String> writing = const []}) async {}
 }
 
 /// Deliberately neither ACP nor WatchesEdits, and never emits FileEdited.

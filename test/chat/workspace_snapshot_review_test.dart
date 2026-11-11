@@ -19,6 +19,7 @@ void main() {
       late Directory temp;
       late String root;
       late ReviewStore store;
+      late String checkpoints;
       late ChangeReview review;
       RemoteHarness? harness;
 
@@ -37,8 +38,10 @@ void main() {
         if (remote) {
           harness = await RemoteHarness.start();
           store = (await harness!.client.openReview())!;
+          checkpoints = p.join(harness!.dataDir.path, 'checkpoints');
         } else {
-          store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
+          checkpoints = p.join(temp.path, 'checkpoints');
+          store = BlobReviewStore.open(checkpoints);
         }
         review = ChangeReview(store, root: root)..session = 'snapshot-session';
       });
@@ -267,6 +270,88 @@ void main() {
           },
         );
       }
+
+      File scanObject(String tree) {
+        final repository = Directory(p.join(checkpoints, 'snapshots'))
+            .listSync()
+            .whereType<Directory>()
+            .singleWhere(
+              (folder) => File(p.join(folder.path, 'HEAD')).existsSync(),
+            );
+        final object = File(
+          p.join(
+            repository.path,
+            'objects',
+            tree.substring(0, 2),
+            tree.substring(2),
+          ),
+        );
+        expect(object.existsSync(), isTrue);
+        return object;
+      }
+
+      test('a collected old scan tree rebaselines without losing explicit edits', () async {
+        final snapshots = store as ReviewSnapshots;
+        write('explicit.txt', 'explicit before\n');
+        write('gap-deleted.txt', 'user file before gap\n');
+        write('later.txt', 'later before\n');
+        final baseline = (await snapshots.snapshot(root))!;
+        await review.begin();
+        await review.before(at('explicit.txt'));
+        write('explicit.txt', 'explicit after\n');
+        await review.after(at('explicit.txt'));
+        // Another conversation advances latest while this conversation is idle.
+        write('gap-created.txt', 'user file during gap\n');
+        File(at('gap-deleted.txt')).deleteSync();
+        final advanced = (await snapshots.snapshot(root))!;
+        expect(advanced.tree, isNot(baseline.tree));
+        scanObject(baseline.tree).deleteSync();
+
+        await review.observe();
+        expect(review.failure, isNull);
+        expect(review.changes.map((change) => change.path), [
+          at('explicit.txt'),
+        ]);
+        expect(
+          await review.original(at('explicit.txt'))!(),
+          'explicit before\n',
+        );
+        // Nothing from the unobserved interval is guessed as a creation/deletion.
+        expect(review.changes.every((change) => change.tracked), isTrue);
+        write('later.txt', 'later after\n');
+        write('new-agent.txt', 'agent creation\n');
+        await review.observe();
+        expect(review.failure, isNull);
+        expect(review.changes.map((change) => change.path).toSet(), {
+          at('explicit.txt'),
+          at('later.txt'),
+          at('new-agent.txt'),
+        });
+        await review.undoAll();
+        expect(read('explicit.txt'), 'explicit before\n');
+        expect(read('later.txt'), 'later before\n');
+        expect(File(at('new-agent.txt')).existsSync(), isFalse);
+        expect(read('gap-created.txt'), 'user file during gap\n');
+        expect(File(at('gap-deleted.txt')).existsSync(), isFalse);
+      });
+
+      test(
+        'a corrupt old scan tree is not treated as a collected baseline',
+        () async {
+          final snapshots = store as ReviewSnapshots;
+          write('file.txt', 'before\n');
+          final baseline = (await snapshots.snapshot(root))!;
+          await review.begin();
+          write('file.txt', 'after\n');
+          final advanced = (await snapshots.snapshot(root))!;
+          expect(advanced.tree, isNot(baseline.tree));
+          final object = scanObject(baseline.tree)..deleteSync();
+          object.writeAsStringSync('corrupt object');
+          await review.observe();
+          expect(review.failure, isNotNull);
+          expect(review.changes, isEmpty);
+        },
+      );
 
       test('one conversation snapshots each workspace folder', () async {
         final other = Directory(p.join(temp.path, 'other'))..createSync();

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../chat/chat_models.dart';
+import '../../ide/file_service.dart';
 import '../../remote/remote_location.dart';
 import '../agent_kernel.dart';
 import '../kernel_event.dart';
@@ -11,6 +12,7 @@ import '../kernel_types.dart';
 import '../output_meter.dart';
 import 'acp_catalog.dart';
 import 'acp_config_option.dart';
+import 'acp_files.dart';
 import 'acp_mcp.dart';
 import 'acp_transport.dart';
 import 'acp_terminal.dart';
@@ -25,7 +27,8 @@ class AcpKernel
         SelectsEffort,
         ProvidesCommands,
         ReportsContext,
-        RunsBackgroundTasks {
+        RunsBackgroundTasks,
+        WatchesPendingEdits {
   AcpKernel(
     this.descriptor,
     this._context,
@@ -111,6 +114,17 @@ class AcpKernel
   final _toolParents = <String, String>{};
   final _childSessions = <String, _AcpChildSession>{};
   final _sessionMessages = <String, _AcpSessionMessage>{};
+  IdeFileService? _files;
+  EditWatch? _editWatch;
+  Future<void> _fileOperations = Future.value();
+  int _fileRequests = 0;
+
+  @override
+  set editWatch(EditWatch? watch) => _editWatch = watch;
+
+  @override
+  bool get hasPendingEdits => _fileRequests > 0;
+
   AcpTerminalHost? _terminals;
   final _terminalSnapshots = <String, AcpTerminalSnapshot>{};
   final _terminalToolLinks = <String, List<String>>{};
@@ -168,6 +182,7 @@ class AcpKernel
     // A launch that was cancelled before it returned must close its late
     // transport too. Merely cancelling the message stream proves no exit.
     await _startTask;
+    await _fileOperations;
     await _stopping;
   }
 
@@ -218,6 +233,7 @@ class AcpKernel
         },
       );
       final cwd = _context.cwd ?? _context.resume?.cwd;
+      _files = cwd == null ? null : createAcpFileService(cwd);
       if (cwd != null && cwd.isNotEmpty) {
         final host = RemoteLocation.hostOf(cwd);
         _terminals = createAcpTerminalHost([
@@ -232,6 +248,8 @@ class AcpKernel
         'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
         'clientCapabilities': <String, Object?>{
           'subagents': <String, Object?>{},
+          if (_files != null)
+            'fs': {'readTextFile': true, 'writeTextFile': true},
           if (_terminals != null) 'terminal': true,
           // Claude ACP's compatibility extension streams child messages with
           // _meta.claudeCode.parentToolUseId instead of flattening them away.
@@ -573,6 +591,7 @@ class AcpKernel
     if (_disposed || sessionId == null) return;
     if (_turnId == null &&
         _permissionRpcIds.isEmpty &&
+        _fileRequests == 0 &&
         _terminalRequests == 0) {
       return;
     }
@@ -813,6 +832,168 @@ class AcpKernel
         _toolContent([block]) ?? '',
   ].join('\n\n');
 
+  // Keep each write's baseline, write and review notification together, even
+  // when an agent sends several filesystem requests without awaiting replies.
+  void _fileRequest(Object rpcId, String method, Map<String, Object?> params) {
+    final transport = _transport;
+    final generation = _startGeneration;
+    final files = _files;
+    final watch = _editWatch;
+    final receivedDuringReplay = _replaying || _retainedLoad;
+    final cancelEpoch = _terminalCancelEpoch;
+    final turn = _turnId;
+    bool current() =>
+        !_disposed &&
+        generation == _startGeneration &&
+        identical(transport, _transport);
+    void canWrite() {
+      if (!current() ||
+          _cancelling ||
+          cancelEpoch != _terminalCancelEpoch ||
+          receivedDuringReplay ||
+          _replaying ||
+          _retainedLoad) {
+        throw StateError('Cannot write files during replay or cancellation');
+      }
+    }
+
+    _fileRequests++;
+    _fileOperations = _fileOperations.then((_) async {
+      try {
+        if (!current()) return;
+        if (method != 'fs/read_text_file' && method != 'fs/write_text_file') {
+          transport?.write({
+            'jsonrpc': '2.0',
+            'id': rpcId,
+            'error': {'code': -32601, 'message': 'method not found: $method'},
+          });
+          return;
+        }
+        if (files == null) throw StateError('Client files are not available');
+        final session = params['sessionId'];
+        if (session is! String ||
+            session != _sessionId && !_childSessions.containsKey(session)) {
+          throw ArgumentError('Unknown filesystem session');
+        }
+        final location = _context.cwd ?? _context.resume!.cwd;
+        final paths = RemoteLocation.pathsOf(location);
+        final rawPath = params['path'];
+        if (rawPath is! String ||
+            rawPath.contains('\u0000') ||
+            !paths.isAbsolute(rawPath)) {
+          throw ArgumentError('path must be absolute on the agent host');
+        }
+        final path = await resolveAcpFilePath(
+          location,
+          paths.normalize(rawPath),
+        );
+        final Map<String, Object?> result;
+        if (method == 'fs/read_text_file') {
+          final line = params['line'] ?? 1;
+          final limit = params['limit'];
+          if (line is! int ||
+              line < 1 ||
+              (limit != null && (limit is! int || limit < 0))) {
+            throw ArgumentError('line must be positive and limit non-negative');
+          }
+          final text = await files.read(path);
+          result = {
+            'content': line == 1 && limit == null
+                ? text
+                : (limit == null
+                          ? const LineSplitter().convert(text).skip(line - 1)
+                          : const LineSplitter()
+                                .convert(text)
+                                .skip(line - 1)
+                                .take(limit as int))
+                      .join('\n'),
+          };
+        } else {
+          final content = params['content'];
+          if (content is! String) {
+            throw ArgumentError('content must be a string');
+          }
+          canWrite();
+          await watch?.beforeEdit(path);
+          try {
+            String? original;
+            try {
+              original = await files.read(path);
+            } on IdeFileNotFoundException {
+              // The pre-edit checkpoint must precede creation too.
+            }
+            canWrite();
+            if (original == null) {
+              final parents = <String>[];
+              for (
+                var parent = paths.dirname(path);
+                !paths.equals(parent, paths.dirname(parent));
+                parent = paths.dirname(parent)
+              ) {
+                parents.add(parent);
+              }
+              for (final parent in parents.reversed) {
+                canWrite();
+                try {
+                  await files.create(parent, directory: true);
+                } on IdeFileExistsException {
+                  // An existing parent is left as it is.
+                }
+              }
+              canWrite();
+              await files.create(path);
+              await files.read(path);
+            }
+            canWrite();
+            // ACP writes use the agent's own permission flow, as terminals do.
+            await files.write(path, content, expectedText: original ?? '');
+            final after = await files.read(path);
+            if (current()) {
+              // Report while the edit watch is still open: its exact byte/mode
+              // checkpoints take precedence over protocol text snapshots.
+              emit(
+                FileEdited(
+                  nextSeq,
+                  FileChange(
+                    path: path,
+                    added: 0,
+                    removed: 0,
+                    kind: original == null
+                        ? FileChangeKind.added
+                        : FileChangeKind.modified,
+                  ),
+                  turnId: turn,
+                  original: OriginalText(original),
+                  after: FileSnapshot.text(after),
+                ),
+              );
+            }
+          } finally {
+            await watch?.afterEdit(path);
+          }
+          result = {};
+        }
+        if (current()) {
+          transport?.write({'jsonrpc': '2.0', 'id': rpcId, 'result': result});
+        }
+      } on Object catch (error) {
+        if (current()) {
+          transport?.write({
+            'jsonrpc': '2.0',
+            'id': rpcId,
+            'error': {
+              'code': error is ArgumentError ? -32602 : -32000,
+              'message': '$error',
+            },
+          });
+        }
+      } finally {
+        _fileRequests--;
+        if (!_disposed && _released) scheduleMicrotask(_releaseIfIdle);
+      }
+    });
+  }
+
   Future<void> _terminalRequest(
     Object rpcId,
     String method,
@@ -1022,6 +1203,10 @@ class AcpKernel
     String method,
     Map<String, Object?> params,
   ) {
+    if (method.startsWith('fs/')) {
+      _fileRequest(rpcId, method, params);
+      return;
+    }
     if (method.startsWith('terminal/')) {
       unawaited(_terminalRequest(rpcId, method, params));
       return;
@@ -2134,6 +2319,7 @@ class AcpKernel
   }
 
   void _disconnect() {
+    _files = null;
     final terminals = _terminals;
     _terminals = null;
     if (terminals != null) {
@@ -2234,6 +2420,7 @@ class AcpKernel
         _queuedTurns.isNotEmpty ||
         _childSessions.values.any((child) => child.active) ||
         _permissionRpcIds.isNotEmpty ||
+        _fileRequests != 0 ||
         _terminalRequests != 0 ||
         (_terminals?.hasRunning ?? false) ||
         _health.status == KernelHealthStatus.failed) {

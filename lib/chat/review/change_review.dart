@@ -555,36 +555,40 @@ class ChangeReview extends ChangeNotifier {
 
   /// Looks at its files again, as a turn ends: what changed since is not
   /// the agent's, and edits it began and did not tell the end of (denied,
-  /// stopped) are over.
-  Future<void> look() => _enqueue(() async {
-    for (final path in _entries.keys.toList()) {
-      final entry = _entries[path];
-      if (entry == null) continue;
-      if (entry.writing > 0) {
-        entry.writing = 0;
-        await _taken(entry, path);
-        continue;
-      }
-      final found = await _readFile(path);
-      if (found == null) continue;
-      final now = found.blob;
-      if (_same(now, entry.current)) continue;
-      entry
-        ..current = now
-        ..conflict = false;
-    }
-    // Those it cannot undo that are gone since (a script the agent wrote
-    // and deleted): nothing is left of them to keep.
-    for (final path in [..._unseen.keys]) {
-      final found = await _readFile(path);
-      if (found != null && found.blob == null) {
-        _unseen.remove(path);
-        _unreadable.remove(path);
-      }
-    }
-    await _refresh();
-    await _persist();
-  });
+  /// stopped) are over. Explicit edits still in progress in [writing] keep
+  /// their checkpoints until the corresponding after-edit notification.
+  Future<void> look({Iterable<String> writing = const []}) =>
+      _enqueue(() async {
+        final active = writing.map(_key).toSet();
+        for (final path in _entries.keys.toList()) {
+          final entry = _entries[path];
+          if (entry == null) continue;
+          if (entry.writing > 0) {
+            if (active.contains(path)) continue;
+            entry.writing = 0;
+            await _taken(entry, path);
+            continue;
+          }
+          final found = await _readFile(path);
+          if (found == null) continue;
+          final now = found.blob;
+          if (_same(now, entry.current)) continue;
+          entry
+            ..current = now
+            ..conflict = false;
+        }
+        // Those it cannot undo that are gone since (a script the agent wrote
+        // and deleted): nothing is left of them to keep.
+        for (final path in [..._unseen.keys]) {
+          final found = await _readFile(path);
+          if (found != null && found.blob == null) {
+            _unseen.remove(path);
+            _unreadable.remove(path);
+          }
+        }
+        await _refresh();
+        await _persist();
+      });
 
   /// Line counts worked out not long ago, by the blobs counted between:
   /// named by what is in them, they count the same again.

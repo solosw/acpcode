@@ -48,7 +48,8 @@ class _Review extends ChangeReview {
       calls.add('report ${change.path}');
 
   @override
-  Future<void> look() async => calls.add('look');
+  Future<void> look({Iterable<String> writing = const []}) async =>
+      calls.add('look');
 
   @override
   Future<void> keep(Iterable<String> paths) async =>

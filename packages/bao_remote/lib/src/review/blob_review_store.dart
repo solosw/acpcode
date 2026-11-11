@@ -75,7 +75,12 @@ class BlobReviewStore implements ReviewStore, ReviewSnapshots {
         blob == null ? null : store(await git.read(blob), mode: blob.mode);
     final changes = <ReviewTreeChange>[];
     if (previous != null) {
-      for (final change in await git.diff(previous, tree)) {
+      // An idle conversation's previous scan may have been collected after
+      // another conversation advanced the project's latest tree. Rebaseline
+      // discovery only: explicit edits keep their independent saved blobs.
+      for (final change
+          in await git.snapshotDiff(previous, tree) ??
+              const <ReviewTreeChange>[]) {
         changes.add(
           ReviewTreeChange(
             p.join(root, change.path),

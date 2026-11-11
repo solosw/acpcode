@@ -229,6 +229,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   Future<ChangeReview?>? _reviewOpening;
   ChangeReview? _review;
   final List<FileEdited> _pendingReviewEdits = [];
+  final Map<String, int> _reviewWrites = {};
   bool _reviewUnavailable = false;
   Timer? _reviewScanTimer;
   Future<void>? _reviewScanning;
@@ -335,7 +336,17 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
           _reviewScanTimer = null;
         }
         // Never coalesce away the final observation behind an in-flight poll.
-        unawaited(review.observe().then((_) => review.look()));
+        unawaited(
+          review.observe().then(
+            (_) => review.look(
+              writing: switch (_kernel) {
+                WatchesPendingEdits(hasPendingEdits: true) =>
+                  _reviewWrites.keys,
+                _ => const <String>[],
+              },
+            ),
+          ),
+        );
       case FileEdited():
         review.reportEdit(event);
       default:
@@ -1394,8 +1405,24 @@ class _ReviewWatch implements EditWatch {
   }
 
   @override
-  Future<void> beforeEdit(String path) async => (await _review())?.before(path);
+  Future<void> beforeEdit(String path) async {
+    final key = session._absolute(path);
+    session._reviewWrites[key] = (session._reviewWrites[key] ?? 0) + 1;
+    await (await _review())?.before(path);
+  }
 
   @override
-  Future<void> afterEdit(String path) async => (await _review())?.after(path);
+  Future<void> afterEdit(String path) async {
+    try {
+      await (await _review())?.after(path);
+    } finally {
+      final key = session._absolute(path);
+      final remaining = (session._reviewWrites[key] ?? 1) - 1;
+      if (remaining == 0) {
+        session._reviewWrites.remove(key);
+      } else {
+        session._reviewWrites[key] = remaining;
+      }
+    }
+  }
 }

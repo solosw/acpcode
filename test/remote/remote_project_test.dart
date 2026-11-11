@@ -526,6 +526,125 @@ void main() {
       },
     );
 
+    test(
+      'retries when the replacement connection is lost while opening review',
+      () async {
+        final path = p.join(root, 'a.txt');
+        File(path).writeAsStringSync('before\n');
+        final host = hosts['dev'];
+        final store = (await remoteReviewStore(host))!;
+        final review = ChangeReview(store, root: root)
+          ..session = 'double-reconnect';
+        addTearDown(review.dispose);
+        await review.before(path);
+        File(path).writeAsStringSync('first\n');
+        await review.after(path);
+        await connector.links.last.drop();
+        await until(
+          () =>
+              connector.links.length == 2 &&
+              host.state == SshHostState.connected,
+        );
+        final replacement = connector.links.last;
+        final opening = Completer<void>();
+        replacement.server.peer.handlers[RemoteProtocol.reviewOpen] =
+            (_, call) async {
+              opening.complete();
+              await call.cancelled;
+              return null;
+            };
+        final tracking = review.before(path);
+        await opening.future.timeout(const Duration(seconds: 10));
+        await replacement.drop();
+        await tracking.timeout(const Duration(seconds: 10));
+        expect(connector.links, hasLength(3));
+        File(path).writeAsStringSync('second\n');
+        await review.after(path);
+        expect(review.failure, isNull);
+        expect(await review.original(path)!(), 'before\n');
+        await review.undoAll();
+        expect(File(path).readAsStringSync(), 'before\n');
+      },
+    );
+
+    for (final state in ['failed', 'idle']) {
+      test(
+        'review keeps pending edits across $state and a manual SSH reconnect',
+        () async {
+          final path = p.join(root, 'a.txt');
+          File(path).writeAsStringSync('before\n');
+          final host = hosts['dev'];
+          final store = (await remoteReviewStore(host))!;
+          final review = ChangeReview(store, root: root)
+            ..session = 'manual-reconnect';
+          addTearDown(review.dispose);
+          await review.before(path);
+          File(path).writeAsStringSync('first\n');
+          await review.after(path);
+          if (state == 'failed') {
+            connector.failure = const SshConnectException(
+              SshFailure.authentication,
+              'expired login',
+            );
+            await connector.links.last.drop();
+            await until(() => host.state == SshHostState.failed);
+          } else {
+            await host.close();
+          }
+          var complete = false;
+          final tracking = review.before(path).then((_) => complete = true);
+          await pumpEventQueue(times: 30);
+          expect(complete, isFalse);
+          expect(review.failure, isNull);
+          expect(review.changes.single.path, path);
+          connector.failure = null;
+          await host.reconnect();
+          await tracking.timeout(const Duration(seconds: 10));
+          File(path).writeAsStringSync('second\n');
+          await review.after(path);
+          expect(review.failure, isNull);
+          expect(await review.original(path)!(), 'before\n');
+          await review.undoAll();
+          expect(File(path).readAsStringSync(), 'before\n');
+        },
+      );
+    }
+
+    test(
+      'a stalled scan resumes after SSH reconnects without losing its baseline',
+      () async {
+        final path = p.join(root, 'a.txt');
+        File(path).writeAsStringSync('before\n');
+        final host = hosts['dev'];
+        final store = (await remoteReviewStore(host))!;
+        final review = ChangeReview(store, root: root)
+          ..session = 'stalled-scan';
+        addTearDown(review.dispose);
+        await review.begin();
+        final entered = Completer<void>();
+        final peer = connector.links.last.server.peer;
+        final original = peer.handlers[RemoteProtocol.reviewCall]!;
+        peer.handlers[RemoteProtocol.reviewCall] = (params, call) async {
+          if ((params as Map)['method'] == 'snapshot') {
+            entered.complete();
+            await call.cancelled;
+            return null;
+          }
+          return original(params, call);
+        };
+        File(path).writeAsStringSync('after\n');
+        final scanning = review.observe();
+        await entered.future.timeout(const Duration(seconds: 10));
+        await connector.links.last.drop();
+        await scanning.timeout(const Duration(seconds: 10));
+        expect(review.failure, isNull);
+        expect(review.changes.single.path, path);
+        expect(await review.original(path)!(), 'before\n');
+        await review.undoAll();
+        expect(File(path).readAsStringSync(), 'before\n');
+      },
+    );
+
     test('retries a checkpoint interrupted by SSH reconnecting', () async {
       final path = p.join(root, 'a.txt');
       File(path).writeAsStringSync('before\n');

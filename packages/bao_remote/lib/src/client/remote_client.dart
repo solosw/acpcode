@@ -771,14 +771,23 @@ class RemoteClient {
       reopen: reconnect == null
           ? null
           : () async {
-              final client = await reconnect(this);
-              final store = await client.openReview(reconnect: reconnect);
-              if (store == null) {
-                throw const ReviewUnavailable(
-                  'The remote review is unavailable.',
-                );
+              var previous = this;
+              while (true) {
+                final client = await reconnect(previous);
+                try {
+                  final store = await client.openReview(reconnect: reconnect);
+                  if (store == null) {
+                    throw const ReviewUnavailable(
+                      'The remote review is unavailable.',
+                    );
+                  }
+                  return store;
+                } on RpcClosed {
+                  // The replacement connection can also disappear while its
+                  // store is opening. Wait for the next one, retaining bases.
+                  previous = client;
+                }
               }
-              return store;
             },
     );
   }

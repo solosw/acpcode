@@ -118,11 +118,10 @@ Future<RemoteReviewStore?> remoteReviewStore(SshHost host) async =>
               !client.peer.isClosed) {
             host.removeListener(check);
             ready.complete(client);
-          } else if (host.state == SshHostState.failed ||
-              host.state == SshHostState.idle) {
-            host.removeListener(check);
-            ready.completeError(host.error ?? const RpcClosed());
           }
+          // A failed login or an explicit disconnect can be followed by a
+          // manual reconnect. Keep this review's blobs and pending operations
+          // waiting for that connection instead of permanently abandoning it.
         }
 
         host.addListener(check);

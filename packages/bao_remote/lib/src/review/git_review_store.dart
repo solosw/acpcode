@@ -31,10 +31,11 @@ class _TooLarge implements Exception {
 }
 
 class _Output {
-  const _Output(this.exitCode, this.bytes);
+  const _Output(this.exitCode, this.bytes, this.stderr);
 
   final int exitCode;
   final Uint8List bytes;
+  final String stderr;
 
   String get text => utf8.decode(bytes, allowMalformed: true);
 
@@ -452,7 +453,7 @@ class GitReviewStore {
     if (ok != null && !ok.contains(ran.exitCode)) {
       throw GitReviewError(arguments, ran.exitCode, ran.stderr);
     }
-    return _Output(ran.exitCode, ran.stdout);
+    return _Output(ran.exitCode, ran.stdout, ran.stderr);
   });
 
   String _full(String path) => p.join(root, path);
@@ -945,6 +946,29 @@ class GitReviewStore {
   static final _rawRecord = RegExp(
     r'^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ',
   );
+
+  /// Workspace scans can outlive their old tree's GC grace period. A missing
+  /// scan baseline starts a new interval; invalid objects and Git failures
+  /// still fail rather than hiding corruption of stored history.
+  Future<List<ReviewTreeChange>?> snapshotDiff(String from, String to) async {
+    final found = await _git([
+      'cat-file',
+      '--batch-check=%(objecttype)',
+    ], input: utf8.encode('$from\n'));
+    // Batch mode can report a corrupt loose object as missing with exit code
+    // zero, but also emits an error. Only a clean missing result is GC.
+    if (found.stderr.trim().isNotEmpty) {
+      throw ReviewUnavailable(
+        'Invalid workspace snapshot: ${found.stderr.trim()}',
+      );
+    }
+    final type = found.text.trim();
+    if (type == '$from missing') return null;
+    if (type != 'tree') {
+      throw const ReviewUnavailable('Invalid workspace snapshot tree.');
+    }
+    return diff(from, to);
+  }
 
   Future<List<ReviewTreeChange>> diff(String from, String to) async {
     if (from == to) return const [];

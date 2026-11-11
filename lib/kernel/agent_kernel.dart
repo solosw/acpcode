@@ -308,6 +308,11 @@ abstract interface class WatchesEdits {
   set editWatch(EditWatch? watch);
 }
 
+/// Knows whether an explicit edit can still complete after a turn ends.
+abstract interface class WatchesPendingEdits implements WatchesEdits {
+  bool get hasPendingEdits;
+}
+
 abstract interface class RewindsConversation {
   /// Drops the conversation from the user message [itemId] (item [index],
   /// with [turns] turns after it) on, to go on from there. [lastSeen] is
