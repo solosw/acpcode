@@ -13,6 +13,8 @@ ProjectWorkspace restoreWorkspaceDirectory(
   ProjectWorkspace workspace, {
   List<String> previousPaths = const [],
 }) {
+  // Remote metadata is restored from preferences, never a local File URI.
+  if (workspace.host != null) return workspace;
   final name = '${_fileName(workspace.name)}.code-workspace';
   final target = File(p.join(workspace.path, name));
   for (final path in [workspace.path, ...previousPaths]) {
@@ -80,6 +82,7 @@ ProjectWorkspace restoreWorkspaceDirectory(
 }
 
 void writeWorkspaceDirectory(ProjectWorkspace workspace) {
+  if (workspace.host != null) return;
   try {
     final directory = Directory(workspace.path)..createSync(recursive: true);
     // Its name is the file's: one file, renamed with the workspace.

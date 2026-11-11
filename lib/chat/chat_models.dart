@@ -69,6 +69,7 @@ class TurnUsage {
     this.outputTokens,
     this.tokensPerSecond,
     this.costUsd,
+    this.estimated = false,
   });
 
   /// Tokens the model read, all its requests together, the prompt cache's
@@ -84,6 +85,9 @@ class TurnUsage {
   /// What the turn cost, in dollars.
   final double? costUsd;
 
+  /// Whether tokens and speed are estimated from the streamed content.
+  final bool estimated;
+
   /// Read and written, when either is known.
   int? get totalTokens => inputTokens == null && outputTokens == null
       ? null
@@ -94,10 +98,17 @@ class TurnUsage {
 /// writes (now while it does, else on average so far; null before it has
 /// written long enough to say).
 class TurnOutput {
-  const TurnOutput({required this.tokens, this.tokensPerSecond});
+  const TurnOutput({
+    required this.tokens,
+    this.tokensPerSecond,
+    this.estimated = false,
+  });
 
   final int tokens;
   final double? tokensPerSecond;
+
+  /// Whether tokens and speed are estimated from the streamed content.
+  final bool estimated;
 }
 
 /// A picture sent with a message.

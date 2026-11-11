@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:bao_remote/client.dart';
@@ -10,6 +11,56 @@ import 'package:path/path.dart' as p;
 import '../remote/remote_harness.dart';
 
 void main() {
+  testWidgets('Windows SSH navigation preserves drive and backslash paths', (
+    tester,
+  ) async {
+    const home = r'C:\Users\me';
+    final toServer = StreamController<String>();
+    final toClient = StreamController<String>();
+    final server = RpcPeer(toServer.stream, toClient.add);
+    final client = RemoteClient(RpcPeer(toClient.stream, toServer.add));
+    client.hello = const RemoteHello(
+      protocol: RemoteProtocol.version,
+      version: 'test',
+      platform: RemotePlatform('win', 'x64'),
+      pid: 1,
+      home: home,
+      dataDir: home,
+    );
+    final listed = <String>[];
+    server.handlers[RemoteProtocol.fsRealPath] = (params, _) =>
+        (params! as Map)['path'];
+    server.handlers[RemoteProtocol.fsList] = (params, _) {
+      final path = (params! as Map)['path'] as String;
+      listed.add(path);
+      return path == home
+          ? [
+              [p.windows.join(home, 'site'), 'site', true],
+            ]
+          : [];
+    };
+    addTearDown(() async {
+      client.peer.close();
+      server.close();
+      await toServer.close();
+      await toClient.close();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AgentRemoteFolderDialog(host: 'win', connect: () async => client),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(home), findsOneWidget);
+    await tester.tap(find.text('site'));
+    await tester.pumpAndSettle();
+    expect(find.text(p.windows.join(home, 'site')), findsOneWidget);
+    await tester.tap(find.text('..'));
+    await tester.pumpAndSettle();
+    expect(find.text(home), findsOneWidget);
+    expect(listed, [home, p.windows.join(home, 'site'), home]);
+  });
+
   testWidgets(
     'browses remote directories, navigates parent and selects current folder',
     (tester) async {

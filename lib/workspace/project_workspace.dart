@@ -1,5 +1,7 @@
 import 'package:path/path.dart' as p;
 
+import '../remote/remote_location.dart';
+
 import 'project_workspace_dir_stub.dart'
     if (dart.library.io) 'project_workspace_dir_io.dart'
     as platform;
@@ -11,7 +13,8 @@ import 'project_workspace_dir_stub.dart'
 /// It has a folder of its own in the data directory ([path]), which names
 /// it as a project's path names a folder (the sidebar, what is kept, the
 /// sessions Claude Code keeps there) and is where its agents start: their
-/// [folders] are given to them besides. Only folders of this machine.
+/// [folders] are given to them besides. Every folder is on the same host
+/// as the workspace; remote folders are SSH locations for the app's views.
 class ProjectWorkspace {
   const ProjectWorkspace({
     required this.id,
@@ -28,6 +31,19 @@ class ProjectWorkspace {
 
   /// The folders in it, in the order the user added them.
   final List<String> folders;
+
+  /// Its remote host; null for this machine.
+  String? get host => RemoteLocation.hostOf(path);
+
+  /// The directories the agent running on that host can read directly.
+  List<String> get rawFolders => folders.map(RemoteLocation.pathOf).toList();
+
+  /// A workspace cannot span machines: its agent runs on one host.
+  static void checkFolders(List<String> folders, {String? host}) {
+    if (folders.any((folder) => RemoteLocation.hostOf(folder) != host)) {
+      throw ArgumentError('Workspace folders must be on the same host');
+    }
+  }
 
   ProjectWorkspace copyWith({String? name, List<String>? folders}) =>
       ProjectWorkspace(
@@ -57,7 +73,9 @@ class ProjectWorkspace {
           ProjectWorkspace(
             id: id,
             name: name,
-            path: root == null ? path : p.join(root, id),
+            path: root == null || RemoteLocation.isRemote(path)
+                ? path
+                : p.join(root, id),
             folders: folders.whereType<String>().toList(),
           ),
         _ => null,
@@ -67,7 +85,8 @@ class ProjectWorkspace {
   /// its work is in [folders], not the empty folder it starts in.
   String get systemPrompt {
     final listed = [
-      for (final folder in folders) '- ${p.basename(folder)}: $folder',
+      for (final folder in folders)
+        '- ${RemoteLocation.nameOf(folder)}: ${RemoteLocation.pathOf(folder)}',
     ].join('\n');
     return '''
 <workspace>

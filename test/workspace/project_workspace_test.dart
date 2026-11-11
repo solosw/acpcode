@@ -1,7 +1,14 @@
 // Multi-folder workspaces: made, kept between runs, renamed and deleted;
 // and what an agent started in one is given of its folders.
 
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:bao_remote/client.dart';
+import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/ssh_host.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
@@ -150,6 +157,248 @@ void main() {
       );
       expect(folder.session.kernelContext.workspace!(), isNull);
     });
+  });
+
+  group('Remote workspaces', () {
+    for (final (host, home, paths, platform) in [
+      ('dev', '/home/me', p.posix, const RemotePlatform('linux', 'x64')),
+      ('win', r'C:\Users\me', p.windows, const RemotePlatform('win', 'x64')),
+    ]) {
+      test(
+        'creates on $host, passes raw folders and restores offline',
+        () async {
+          final toServer = StreamController<String>();
+          final toClient = StreamController<String>();
+          final server = RpcPeer(toServer.stream, toClient.add);
+          final client = RemoteClient(RpcPeer(toClient.stream, toServer.add));
+          client.hello = RemoteHello(
+            protocol: RemoteProtocol.version,
+            version: 'test',
+            platform: platform,
+            pid: 1,
+            home: home,
+            dataDir: paths.join(home, '.baocode-server', 'data'),
+          );
+          final made = <String>[];
+          final files = <String, String>{};
+          final snapshots = <String, String>{};
+          final fileOperations = <(String, String)>[];
+          final writes = <String, String>{};
+          server.handlers[RemoteProtocol.fsList] = (params, _) {
+            final args = params! as Map;
+            expect(args['root'], home);
+            return [
+              for (final path in made)
+                if (paths.dirname(path) == args['path'])
+                  [path, paths.basename(path), true],
+            ];
+          };
+          server.handlers[RemoteProtocol.fsCreate] = (params, _) {
+            final args = params! as Map;
+            expect(args['root'], home);
+            final path = args['path'] as String;
+            if (args['directory'] == true) {
+              made.add(path);
+            } else {
+              expect(made, contains(paths.dirname(path)));
+              expect(files.containsKey(path), isFalse);
+              files[path] = '';
+              fileOperations.add(('create', path));
+            }
+            return null;
+          };
+          server.handlers[RemoteProtocol.fsRead] = (params, _) {
+            final args = params! as Map;
+            expect(args['root'], home);
+            final path = args['path'] as String;
+            if (!files.containsKey(path)) throw StateError('File not found');
+            snapshots[path] = files[path]!;
+            fileOperations.add(('read', path));
+            return files[path];
+          };
+          server.handlers[RemoteProtocol.fsWrite] = (params, _) {
+            final args = params! as Map;
+            expect(args['root'], home);
+            final path = args['path'] as String;
+            if (!snapshots.containsKey(path)) {
+              throw StateError('Read the file before saving it: $path');
+            }
+            expect(files[path], snapshots[path]);
+            expect(args['expectedText'], snapshots[path]);
+            writes[path] = files[path] = args['text'] as String;
+            fileOperations.add(('write', path));
+            return null;
+          };
+          final previous = SshHosts.instance;
+          final hosts = SshHosts.instance = SshHosts(
+            connect: (target, {onProgress}) async =>
+                SshConnection.over(target, client),
+          );
+          addTearDown(() async {
+            client.peer.close();
+            server.close();
+            await hosts.closeAll();
+            SshHosts.instance = previous;
+            await toServer.close();
+            await toClient.close();
+          });
+          final store = MemoryPreferenceStore();
+          final directories = FakeWorkspaceDirectories();
+          final workspace = _workspace(
+            preferences: store,
+            directories: directories,
+          );
+          await workspace.load();
+          final folders = [
+            for (final name in ['site', 'api'])
+              RemoteLocation.of(host, paths.join(home, name)),
+          ];
+          final multi = (await workspace.createWorkspaceOn(
+            'full stack',
+            folders,
+            host: host,
+          ))!;
+          final directory = paths.join(
+            home,
+            '.baocode',
+            'workspaces',
+            multi.id,
+          );
+          expect(multi.path, RemoteLocation.of(host, directory));
+          final manifest = paths.join(directory, 'workspace.code-workspace');
+          expect(fileOperations, [
+            ('create', manifest),
+            ('read', manifest),
+            ('write', manifest),
+          ]);
+          expect(made, [
+            paths.join(home, '.baocode'),
+            paths.join(home, '.baocode', 'workspaces'),
+            directory,
+          ]);
+          expect(directories.written, isEmpty);
+          expect(multi.folders, folders);
+          expect(multi.rawFolders, [
+            paths.join(home, 'site'),
+            paths.join(home, 'api'),
+          ]);
+          expect(jsonDecode(writes.values.single), {
+            'folders': [
+              for (final folder in multi.rawFolders) {'path': folder},
+            ],
+          });
+          final thread = workspace.create(
+            project: workspace.projectAt(multi.path),
+          );
+          expect(thread.project.host, host);
+          expect(workspace.sidebarHost, host);
+          final given = thread.session.kernelContext.workspace!()!;
+          expect(given.folders, multi.rawFolders);
+          expect(
+            given.instructions,
+            contains('- site: ${paths.join(home, 'site')}'),
+          );
+          expect(given.instructions, isNot(contains('ssh://')));
+          final third = RemoteLocation.of(host, paths.join(home, 'docs'));
+          expect(
+            () => workspace.addWorkspaceFolder(multi, '/local'),
+            throwsArgumentError,
+          );
+          expect(
+            () => workspace.updateWorkspace(
+              multi,
+              folders: ['ssh://other/home/me/site'],
+            ),
+            throwsArgumentError,
+          );
+          workspace.addWorkspaceFolder(multi, third);
+          workspace.removeWorkspaceFolder(multi, folders.first);
+          workspace.updateWorkspace(multi, name: 'renamed');
+          expect(directories.written, isEmpty);
+          workspace.dispose();
+          await hosts.closeAll();
+          // Restore from preferences without reconnecting or moving the remote
+          // path into a changed local data directory.
+          final restored = _workspace(
+            preferences: store,
+            directories: FakeWorkspaceDirectories('/moved/workspaces'),
+          );
+          await restored.load();
+          addTearDown(restored.dispose);
+          final kept = restored.workspaces.single;
+          expect(kept.path, multi.path);
+          expect(kept.host, host);
+          expect(kept.name, 'renamed');
+          expect(kept.folders, [folders.last, third]);
+          expect(restored.projectAt(multi.path).name, 'renamed');
+        },
+      );
+    }
+
+    test('creation and edits reject folders on another machine', () async {
+      final workspace = _workspace();
+      await workspace.load();
+      addTearDown(workspace.dispose);
+      expect(
+        () => workspace.createWorkspace('mixed', ['ssh://dev/home/me']),
+        throwsArgumentError,
+      );
+      await expectLater(
+        workspace.createWorkspaceOn('mixed', [
+          '/local',
+          'ssh://dev/home/me',
+        ], host: 'dev'),
+        throwsArgumentError,
+      );
+      await expectLater(
+        workspace.createWorkspaceOn('mixed', [
+          'ssh://other/home/me',
+        ], host: 'dev'),
+        throwsArgumentError,
+      );
+      final local = workspace.createWorkspace('local', ['/code/site'])!;
+      expect(
+        () => workspace.addWorkspaceFolder(local, 'ssh://dev/home/me'),
+        throwsArgumentError,
+      );
+      expect(
+        () => workspace.updateWorkspace(local, folders: ['ssh://dev/home/me']),
+        throwsArgumentError,
+      );
+      expect(workspace.workspaceAt(local.path)!.folders, ['/code/site']);
+    });
+
+    test(
+      'a failed connection cannot create a local workspace instead',
+      () async {
+        final previous = SshHosts.instance;
+        final hosts = SshHosts.instance = SshHosts(
+          connect: (target, {onProgress}) async =>
+              throw const SshConnectException(
+                SshFailure.authentication,
+                'Connection refused',
+              ),
+        );
+        addTearDown(() async {
+          await hosts.closeAll();
+          SshHosts.instance = previous;
+        });
+        final workspace = _workspace();
+        await workspace.load();
+        addTearDown(workspace.dispose);
+        await workspace.openFolder('ssh://dev/home/me/site');
+        final was = workspace.selected;
+        await expectLater(
+          workspace.createWorkspaceOn('remote', [
+            'ssh://dev/home/me/site',
+          ], host: 'dev'),
+          throwsA(isA<SshConnectException>()),
+        );
+        expect(workspace.workspaces, isEmpty);
+        expect(workspace.selected, same(was));
+        expect(workspace.sidebarHost, 'dev');
+      },
+    );
   });
 
   group('Claude Code in a workspace', () {

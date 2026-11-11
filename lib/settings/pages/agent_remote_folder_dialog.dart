@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:bao_remote/client.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
 
 import '../../ide/ide_button.dart';
 import '../../l10n/l10n.dart';
+import '../../remote/remote_location.dart';
 import '../../remote/ssh_host.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
@@ -78,6 +78,7 @@ class _AgentRemoteFolderDialogState extends State<AgentRemoteFolderDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final paths = RemoteLocation.pathsFor(_directory ?? '/');
     return Dialog(
       backgroundColor: themeColors['editorWidget.background'],
       child: ConstrainedBox(
@@ -112,19 +113,18 @@ class _AgentRemoteFolderDialogState extends State<AgentRemoteFolderDialog> {
                     shrinkWrap: true,
                     children: [
                       if (_directory != null &&
-                          p.posix.dirname(_directory!) != _directory)
+                          paths.dirname(_directory!) != _directory)
                         ListTile(
                           title: const Text('..'),
                           onTap: () =>
-                              unawaited(_load(p.posix.dirname(_directory!))),
+                              unawaited(_load(paths.dirname(_directory!))),
                         ),
                       for (final folder in _folders)
                         ListTile(
                           leading: const Icon(Codicons.folder, size: 18),
                           title: Text(folder),
-                          onTap: () => unawaited(
-                            _load(p.posix.join(_directory!, folder)),
-                          ),
+                          onTap: () =>
+                              unawaited(_load(paths.join(_directory!, folder))),
                         ),
                     ],
                   ),

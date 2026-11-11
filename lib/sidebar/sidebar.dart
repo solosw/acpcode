@@ -902,6 +902,22 @@ class _SidebarState extends State<Sidebar>
     ideRevealRange(_listScroll, _rowOffsets[index], _rowOffsets[index + 1]);
   }
 
+  Future<void> _createDefaultTask() async {
+    final host = _workspace.sidebarAllHosts
+        ? _current?.project.host
+        : _workspace.sidebarHost;
+    try {
+      final project = await _workspace.openDefaultTaskProjectOn(host);
+      if (mounted) _create(project);
+    } catch (error) {
+      if (!mounted) return;
+      final (message, detail) = sshErrorText(error, context.l10n);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text([?message, ?detail].join('\n'))));
+    }
+  }
+
   void _create([Project? project]) {
     // Where the sidebar lists: the open agent's project if it is there.
     project ??= switch (_current?.project) {
@@ -1089,11 +1105,12 @@ class _SidebarState extends State<Sidebar>
               label: context.l10n.sidebarOpenProject,
               onTap: open,
             ),
-          if (_workspace.defaultTaskDirectory != null)
+          if (_workspace.defaultTaskDirectory != null ||
+              _workspace.sidebarHost != null)
             _NavRow(
               icon: Codicons.home,
               label: context.l10n.defaultTasksTitle,
-              onTap: () => _create(_workspace.openDefaultTaskProject()),
+              onTap: _createDefaultTask,
             ),
           if (widget.onSearch case final search?)
             _NavRow(

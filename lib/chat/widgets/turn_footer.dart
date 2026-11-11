@@ -117,6 +117,7 @@ class TurnFooter extends StatelessWidget {
     final speed = usage?.tokensPerSecond;
     final cost = usage?.costUsd;
     final tokens = usage?.totalTokens;
+    final prefix = usage?.estimated == true ? '≈ ' : '';
     return [
       if (worked case final worked?)
         _Stat(
@@ -127,13 +128,14 @@ class TurnFooter extends StatelessWidget {
       if (speed != null)
         _Stat(
           icon: _zapIcon,
-          text: l10n.turnSpeed(speed.toStringAsFixed(2)),
+          text: '$prefix${l10n.turnSpeed(speed.toStringAsFixed(2))}',
           hint: l10n.turnSpeedHint,
         ),
       if (cost != null) _Stat(text: formatCost(cost), hint: l10n.turnCostHint),
       if (tokens != null && tokens > 0)
         _Stat(
-          text: l10n.turnTokens(AgentStep.formatTokens(tokens, decimals: 2)),
+          text:
+              '$prefix${l10n.turnTokens(AgentStep.formatTokens(tokens, decimals: 2))}',
           hint: l10n.turnTokensHint(
             AgentStep.formatTokens(usage?.inputTokens ?? 0),
             AgentStep.formatTokens(usage?.outputTokens ?? 0),
@@ -198,6 +200,7 @@ class _LiveStatsState extends State<_LiveStats> {
     final speed = output.tokensPerSecond;
     final since = widget.since;
     final tokens = output.tokens;
+    final prefix = output.estimated ? '≈ ' : '';
     return TurnFooter._line([
       if (since != null)
         _Stat(
@@ -212,14 +215,15 @@ class _LiveStatsState extends State<_LiveStats> {
       if (speed != null)
         _Stat(
           icon: _zapIcon,
-          text: l10n.turnSpeed(speed.toStringAsFixed(2)),
+          text: '$prefix${l10n.turnSpeed(speed.toStringAsFixed(2))}',
           hint: l10n.turnSpeedLiveHint,
           live: true,
         ),
       if (tokens > 0)
         _Stat(
           icon: _arrowDownIcon,
-          text: l10n.turnTokens(AgentStep.formatTokens(tokens, decimals: 2)),
+          text:
+              '$prefix${l10n.turnTokens(AgentStep.formatTokens(tokens, decimals: 2))}',
           hint: l10n.turnOutputTokensHint,
           live: true,
         ),

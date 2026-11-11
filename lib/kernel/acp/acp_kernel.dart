@@ -8,6 +8,7 @@ import '../../remote/remote_location.dart';
 import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
+import '../output_meter.dart';
 import 'acp_catalog.dart';
 import 'acp_config_option.dart';
 import 'acp_mcp.dart';
@@ -31,7 +32,9 @@ class AcpKernel
     this._transportFactory, {
     this._catalog,
     this._loadMcpServers,
-  }) {
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now,
+       _meter = OutputMeter(clock: clock) {
     _live.add(this);
   }
 
@@ -72,6 +75,11 @@ class AcpKernel
   late String _sessionTitle = _context.resume?.title ?? '';
   String? _turnId;
   DateTime? _turnStarted;
+  final DateTime Function() _clock;
+  final OutputMeter _meter;
+  bool _metering = false;
+  DateTime? _outputReported;
+  static const _outputEvery = Duration(milliseconds: 100);
   int _nextId = 0;
   int _startGeneration = 0;
   int _turnCount = 0;
@@ -382,6 +390,9 @@ class AcpKernel
       }
       _rememberSession();
       _closeAssistantStream();
+      _meter.begin();
+      _metering = true;
+      _outputReported = null;
       emit(TurnStarted(nextSeq, turn.id));
       emit(
         ItemUpserted(
@@ -1029,6 +1040,11 @@ class AcpKernel
       _replyCancelled(rpcId);
       return;
     }
+    // Only this session's confirmation interrupts its output. A child may
+    // request permission while the parent continues streaming.
+    if (params['sessionId'] == null || params['sessionId'] == _sessionId) {
+      _closeAssistantStream();
+    }
     final toolCall =
         (params['toolCall'] as Map?)?.cast<String, Object?>() ?? const {};
     final title = toolCall['title'] as String? ?? 'Permission required';
@@ -1169,6 +1185,7 @@ class AcpKernel
 
   void _beginReplayTurn() {
     if (_replayTurnId != null) _endTurn(false);
+    _metering = false;
     _replayTurnId = 'acp_replay_${++_replaySeq}';
     _turnId = _replayTurnId;
     emit(TurnStarted(nextSeq, _replayTurnId!));
@@ -1182,9 +1199,36 @@ class AcpKernel
   }
 
   void _closeAssistantStream() {
+    if (_assistantItemId != null && _metering && !_replaying) {
+      _meter.endMessage();
+      _reportOutput(force: true);
+    }
     _assistantItemId = null;
     _assistantMessageId = null;
     _assistantIsThought = null;
+  }
+
+  /// ACP's context usage is not a turn's output token count. Until agents
+  /// expose that count, use the same text estimator as Claude's live meter.
+  void _reportOutput({bool force = false}) {
+    if (!_metering || _replaying) return;
+    final now = _clock();
+    final last = _outputReported;
+    if (!force && last != null && now.difference(last) < _outputEvery) {
+      return;
+    }
+    _outputReported = now;
+    final output = _meter.output;
+    emit(
+      OutputReported(
+        nextSeq,
+        TurnOutput(
+          tokens: output.tokens,
+          tokensPerSecond: output.tokensPerSecond,
+          estimated: true,
+        ),
+      ),
+    );
   }
 
   /// Zed/ACP: same messageId merges; either side missing messageId merges;
@@ -1295,6 +1339,7 @@ class AcpKernel
           itemId = _assistantItemId!;
           _assistantMessageId ??= messageId;
         } else {
+          _closeAssistantStream();
           // Always append in arrival order. Item ids stay unique even when
           // the protocol reuses messageId across separate assistant entries
           // (e.g. after a tool call).
@@ -1319,6 +1364,10 @@ class AcpKernel
           );
         }
         emit(TextDelta(nextSeq, itemId, oldText.length, text));
+        if (_metering && !_replaying) {
+          _meter.streamed(text, timed: !thought);
+          _reportOutput();
+        }
       case 'available_commands_update':
         _setCommands(
           update['availableCommands'] ??
@@ -2032,7 +2081,24 @@ class AcpKernel
         ? null
         : DateTime.now().difference(_turnStarted!);
     if (interrupted) _interruptAgents();
-    emit(TurnEnded(nextSeq, turn, interrupted: interrupted, worked: worked));
+    _closeAssistantStream();
+    final usage = _metering && !_replaying && _meter.output.tokens > 0
+        ? TurnUsage(
+            outputTokens: _meter.output.tokens,
+            tokensPerSecond: _meter.averageSpeed,
+            estimated: true,
+          )
+        : null;
+    emit(
+      TurnEnded(
+        nextSeq,
+        turn,
+        interrupted: interrupted,
+        worked: worked,
+        usage: usage,
+      ),
+    );
+    _metering = false;
     _turnId = null;
     _turnStarted = null;
     _cancelling = false;

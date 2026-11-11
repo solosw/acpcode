@@ -131,6 +131,7 @@ abstract final class ChatCodec {
           'out': ?usage.outputTokens,
           'speed': ?usage.tokensPerSecond,
           'cost': ?usage.costUsd,
+          if (usage.estimated) 'estimated': true,
         },
     },
     AssistantTextItem() => {'t': 'text', 'text': item.text},
@@ -234,6 +235,7 @@ abstract final class ChatCodec {
       'startedAt': ?item.startedAt?.millisecondsSinceEpoch,
       'tokens': ?item.output?.tokens,
       'speed': ?item.output?.tokensPerSecond,
+      if (item.output?.estimated == true) 'estimated': true,
     },
   };
 
@@ -269,6 +271,7 @@ abstract final class ChatCodec {
             outputTokens: (usage['out'] as num?)?.toInt(),
             tokensPerSecond: (usage['speed'] as num?)?.toDouble(),
             costUsd: (usage['cost'] as num?)?.toDouble(),
+            estimated: usage['estimated'] == true,
           ),
           _ => null,
         },
@@ -369,6 +372,7 @@ abstract final class ChatCodec {
           final num tokens => TurnOutput(
             tokens: tokens.toInt(),
             tokensPerSecond: (json['speed'] as num?)?.toDouble(),
+            estimated: json['estimated'] == true,
           ),
           _ => null,
         },

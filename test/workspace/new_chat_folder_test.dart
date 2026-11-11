@@ -2,6 +2,14 @@
 // (the default task directory), or one picked in Finder; it goes once a message is sent.
 
 import 'dart:async';
+import 'dart:io';
+
+import 'package:bao_remote/client.dart';
+import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/ssh_host.dart';
+import 'package:path/path.dart' as p;
+
+import '../remote/remote_harness.dart';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -75,6 +83,44 @@ class _SlowCatalog implements SessionCatalog {
   Future<void> delete(String id) async {}
 }
 
+/// A real remote file RPC over streams, with an isolated home directory.
+Future<String> _remoteTasks(WidgetTester tester) async {
+  final harness = (await tester.runAsync(RemoteHarness.start))!;
+  final home = harness.dataDir.resolveSymbolicLinksSync();
+  final hello = harness.client.hello!;
+  harness.client.hello = RemoteHello(
+    protocol: hello.protocol,
+    version: hello.version,
+    platform: hello.platform,
+    pid: hello.pid,
+    home: home,
+    dataDir: hello.dataDir,
+  );
+  final previous = SshHosts.instance;
+  final hosts = SshHosts.instance = SshHosts(
+    connect: (target, {onProgress}) async =>
+        SshConnection.over(target, harness.client),
+  );
+  addTearDown(() async {
+    await hosts.closeAll();
+    SshHosts.instance = previous;
+    await harness.close();
+  });
+  await tester.runAsync(() => hosts['dev'].ready);
+  return home;
+}
+
+Future<void> _waitFor(WidgetTester tester, bool Function() ready) async {
+  await tester.runAsync(() async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await tester.pump();
+      if (ready()) return;
+    }
+    fail('Remote everyday tasks did not finish');
+  });
+}
+
 void main() {
   testWidgets('a new chat waits in the middle, under where it works', (
     tester,
@@ -140,9 +186,11 @@ void main() {
     );
   }, variant: _mac);
 
-  testWidgets('the sidebar starts everyday tasks without a folder picker', (
+  testWidgets('the sidebar keeps everyday tasks on the selected host', (
     tester,
   ) async {
+    final home = await _remoteTasks(tester);
+    final tasks = p.join(home, '.baocode', 'tasks');
     final workspace = await _pumpNew(tester);
     await workspace.openFolder('ssh://dev/home/me/app');
     await tester.pumpAndSettle();
@@ -155,15 +203,120 @@ void main() {
           .first,
     );
     await tester.pumpAndSettle();
-    expect(workspace.selected.project.path, _tasks);
-    expect(workspace.selected.session.kernelContext.cwd, _tasks);
-    expect(workspace.sidebarHost, isNull);
+    await _waitFor(tester, () => workspace.selected.project.root == tasks);
+    await tester.pumpAndSettle();
+    expect(workspace.selected.project.path, RemoteLocation.of('dev', tasks));
+    expect(workspace.selected.project.name, 'Everyday Tasks');
+    expect(
+      workspace.selected.session.kernelContext.cwd,
+      RemoteLocation.of('dev', tasks),
+    );
+    expect(workspace.sidebarHost, 'dev');
+    expect(Directory(tasks).existsSync(), isTrue);
     expect(_bar, findsOneWidget);
     await tester.tap(
       find.descendant(of: _bar, matching: find.text('Everyday Tasks')),
     );
     await tester.pumpAndSettle();
-    expect(find.textContaining(_tasks), findsOneWidget);
+    expect(find.textContaining('dev: ~/.baocode/tasks'), findsOneWidget);
+  }, variant: _mac);
+
+  testWidgets('the sidebar host wins over a focused local conversation', (
+    tester,
+  ) async {
+    final home = await _remoteTasks(tester);
+    final workspace = await _pumpNew(tester);
+    expect(workspace.selected.project.host, isNull);
+    workspace.addSshHost('dev');
+    workspace.sidebarHost = 'dev';
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(Sidebar),
+            matching: find.text('Everyday Tasks'),
+          )
+          .first,
+    );
+    await _waitFor(tester, () => workspace.selected.project.host == 'dev');
+    expect(workspace.selected.project.root, p.join(home, '.baocode', 'tasks'));
+    expect(workspace.sidebarHost, 'dev');
+  }, variant: _mac);
+
+  testWidgets('the working folder menu keeps everyday tasks on its host', (
+    tester,
+  ) async {
+    final home = await _remoteTasks(tester);
+    final tasks = p.join(home, '.baocode', 'tasks');
+    final workspace = await _pumpNew(tester);
+    await workspace.openFolder('ssh://dev/home/me/app');
+    final was = workspace.selected;
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: _bar, matching: find.text('app')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Everyday Tasks').last);
+    await _waitFor(tester, () => workspace.selected.project.root == tasks);
+    await tester.pumpAndSettle();
+    expect(workspace.selected.project.host, 'dev');
+    expect(workspace.sidebarHost, 'dev');
+    expect(workspace.threads, isNot(contains(was)));
+    final output = File(p.join(tasks, 'report.md'))..writeAsStringSync('keep');
+    await tester.runAsync(() => workspace.openDefaultTaskProjectOn('dev'));
+    expect(output.readAsStringSync(), 'keep');
+    workspace.hideProject(workspace.selected.project);
+    final reopened = (await tester.runAsync(
+      () => workspace.openDefaultTaskProjectOn('dev'),
+    ))!;
+    expect(workspace.isHidden(reopened), isFalse);
+    expect(reopened.path, RemoteLocation.of('dev', tasks));
+  }, variant: _mac);
+
+  testWidgets(
+    'a failed remote task directory stays remote and shows the error',
+    (tester) async {
+      final home = await _remoteTasks(tester);
+      File(p.join(home, '.baocode')).writeAsStringSync('not a folder');
+      final workspace = await _pumpNew(tester);
+      await workspace.openFolder('ssh://dev/home/me/app');
+      final was = workspace.selected;
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.tap(
+          find
+              .descendant(
+                of: find.byType(Sidebar),
+                matching: find.text('Everyday Tasks'),
+              )
+              .first,
+        );
+      });
+      await _waitFor(
+        tester,
+        () => find.textContaining('is not a directory').evaluate().isNotEmpty,
+      );
+      await tester.pump();
+      expect(workspace.selected, same(was));
+      expect(workspace.sidebarHost, 'dev');
+      expect(find.textContaining('is not a directory'), findsOneWidget);
+    },
+    variant: _mac,
+  );
+
+  testWidgets('the local sidebar still opens the local task directory', (
+    tester,
+  ) async {
+    final workspace = await _pumpNew(tester);
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(Sidebar),
+            matching: find.text('Everyday Tasks'),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(workspace.selected.project.path, _tasks);
+    expect(workspace.sidebarHost, isNull);
   }, variant: _mac);
 
   testWidgets('a folder picked in Finder becomes its project', (tester) async {

@@ -1679,16 +1679,13 @@ class ClaudeCodeKernel
       _control!.respond(requestId, {'behavior': 'deny', 'message': _notAsked});
       return;
     }
-    // Full access is approved here (see _cliApproval), but for what the
-    // CLI's own would ask all the same: that too where no one is there to
-    // ask (a bot's, KernelWorkspace.approvesAll). In Plan it leaves to the
-    // classifier what the CLI cannot tell is read-only; with no
-    // classifier (another provider's model), that is approved here too,
-    // as it would be by the classifier.
+    // Full access approves operations here (see _cliApproval), including
+    // checks and ask rules the CLI still sends in Accept edits. Questions
+    // remain the user's to answer. In Plan the classifier still reviews
+    // commands when the provider supports it.
     if (_approval == 'bypassPermissions' &&
         (_work != 'plan' || !_classifies) &&
-        tool != 'AskUserQuestion' &&
-        ((_workspace?.approvesAll ?? false) || !_askedInFullAccess(request))) {
+        tool != 'AskUserQuestion') {
       _control!.respond(requestId, {
         'behavior': 'allow',
         'updatedInput': input,
@@ -3555,18 +3552,6 @@ class ClaudeCodeKernel
   /// about otherwise is approved in [_permission].
   String get _cliApproval =>
       _approval == 'bypassPermissions' ? 'acceptEdits' : _approval;
-
-  /// What the CLI would still ask in full access: safety checks requiring
-  /// manual approval (also inside compound commands), explicit ask rules,
-  /// and tools that require user interaction. Protected-path checks that
-  /// the classifier may approve do not require a prompt in full access.
-  static bool _askedInFullAccess(Map<String, Object?> request) =>
-      request['classifier_approvable'] == false ||
-      (request['decision_reason_type'] == 'safetyCheck' &&
-          request['classifier_approvable'] != true) ||
-      request['matched_ask_rule'] != null ||
-      request['requires_user_interaction'] == true ||
-      request['decision_reason_code'] != null;
 
   /// Plan's commands are left to the classifier with the approvals that
   /// approve for the user; asked about with the others.

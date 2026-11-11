@@ -108,6 +108,45 @@ void main() {
     expect(find.text('50.00 tok/s'), findsOneWidget);
   });
 
+  testWidgets('estimated live output marks both tokens and speed', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      const TurnFooter(
+        live: TurnOutput(tokens: 1234, tokensPerSecond: 42, estimated: true),
+      ),
+    );
+    expect(
+      tester
+          .widgetList<RollingText>(find.byType(RollingText))
+          .map((text) => text.text),
+      ['≈ 42.00 tok/s', '≈ 1.23k tokens'],
+    );
+  });
+
+  testWidgets(
+    'estimated finished usage marks tokens and speed, not time or cost',
+    (tester) async {
+      await _pump(
+        tester,
+        const TurnFooter(
+          worked: Duration(seconds: 12),
+          usage: TurnUsage(
+            outputTokens: 234,
+            tokensPerSecond: 50,
+            costUsd: 0.42,
+            estimated: true,
+          ),
+        ),
+      );
+      expect(find.text('≈ 50.00 tok/s'), findsOneWidget);
+      expect(find.text('≈ 234 tokens'), findsOneWidget);
+      expect(find.text('12s'), findsOneWidget);
+      expect(find.text(r'$0.42'), findsOneWidget);
+    },
+  );
+
   testWidgets('a finished turn\'s time comes first, its tokens last', (
     tester,
   ) async {

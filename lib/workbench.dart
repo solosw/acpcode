@@ -440,7 +440,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       backendFor: (location) => ProjectHost.of(location).terminals(backend),
       // A workspace's in its first folder (its own is only its settings).
       pathOf: (location) => switch (_workspace.workspaceAt(location)) {
-        final multi? => multi.folders.firstOrNull ?? location,
+        final multi? =>
+          multi.rawFolders.firstOrNull ?? RemoteLocation.pathOf(location),
         null => RemoteLocation.pathOf(location),
       },
     )..onLastClosed = _focusCurrentChat,
@@ -683,18 +684,27 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   void _syncWorkspaceFolders() {
     for (final MapEntry(key: folder, value: space) in _ideSpaces.entries) {
       if (_workspace.workspaceAt(folder) case final multi?) {
-        space.roots = multi.folders;
+        space.roots = multi.rawFolders;
       }
     }
     for (final multi in _workspace.workspaces) {
-      _sidePanel.setRoots(multi.path, multi.folders);
+      _sidePanel.setRoots(RemoteLocation.pathOf(multi.path), multi.rawFolders);
     }
   }
 
   /// Create Workspace...: asks for its name and folders, then opens it in
   /// the IDE ([inIde]) or has a new agent work in it.
   Future<void> _createWorkspace({bool inIde = false}) async {
-    final made = await showWorkspaceDialog(context, workspace: _workspace);
+    final host = inIde
+        ? RemoteLocation.hostOf(_ideFolder)
+        : _workspace.sidebarAllHosts
+        ? _workspace.current?.project.host
+        : _workspace.sidebarHost;
+    final made = await showWorkspaceDialog(
+      context,
+      workspace: _workspace,
+      host: host,
+    );
     if (made == null || !mounted) return;
     if (inIde) {
       _openIdeFolder(made.path);
@@ -703,9 +713,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
   }
 
-  /// Add Folder to Workspace...: one picked in the file manager.
+  /// Add Folder to Workspace...: one picked on the workspace's host.
   Future<void> _addWorkspaceFolder(String location) async {
-    final path = await WindowControls.pickDirectory();
+    final path = await pickWorkspaceFolder(
+      context,
+      host: RemoteLocation.hostOf(location),
+    );
     if (path == null || !mounted) return;
     if (_workspace.workspaceAt(location) case final multi?) {
       _workspace.addWorkspaceFolder(multi, path);
@@ -1405,7 +1418,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       project.root,
       pathContext: RemoteLocation.pathsOf(project.path),
     ),
-  )..roots = _workspace.workspaceOf(project)?.folders;
+  )..roots = _workspace.workspaceOf(project)?.rawFolders;
 
   final Map<String, FileMentions> _fileMentions = {};
 
@@ -2955,7 +2968,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             onRemoveFolder: switch (_workspace.workspaceAt(path)) {
               final multi? => (folder) => _workspace.removeWorkspaceFolder(
                 multi,
-                folder,
+                RemoteLocation.of(multi.host, folder),
               ),
               null => null,
             },
@@ -3332,8 +3345,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
               final first? => widget.languagesFor?.call(first),
               null => null,
             },
-            roots: multi.folders,
-            gitOf: (folder) => widget.gitFor?.call(folder),
+            roots: multi.rawFolders,
+            gitOf: (folder) =>
+                widget.gitFor?.call(RemoteLocation.of(host.name, folder)),
             repositoryDetection: _repositoryDetection(host),
             openWorktree: (path) =>
                 widget.gitFor?.call(RemoteLocation.of(host.name, path)),
@@ -4095,14 +4109,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       colorize: _colorizeCode,
       // The files page's search runs where the IDE's does: a workspace's
       // folders each, a remote project's there, a local one here.
-      searchEngine: (root, query) => switch (files) {
-        final IdeHostFiles host => host.searchText(root, query),
-        _ when multi != null => IdeWorkbench.searchRoots(
-          multi.folders,
-          query,
-          ideSearchText,
-        ),
-        _ => ideSearchText(root, query),
+      searchEngine: (root, query) {
+        final search = files is IdeHostFiles ? files.searchText : ideSearchText;
+        return multi == null
+            ? search(root, query)
+            : IdeWorkbench.searchRoots(multi.rawFolders, query, search);
       },
       onOpenInIde: (request) => _openRequestInIde(thread, request),
       // With its IDE's language servers.
@@ -4125,7 +4136,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ideClaudeCommitMessage(prompt, cancel: cancel, location: location),
       notifications: _notifications,
       workspaceName: multi?.name,
-      roots: multi?.folders ?? const [],
+      roots: multi?.rawFolders ?? const [],
       repositories: _shownRepositories(
         thread,
         multi == null
@@ -4146,7 +4157,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           : () => unawaited(_addWorkspaceFolder(location)),
       onRemoveFolder: multi == null
           ? null
-          : (folder) => _workspace.removeWorkspaceFolder(multi, folder),
+          : (folder) => _workspace.removeWorkspaceFolder(
+              multi,
+              RemoteLocation.of(multi.host, folder),
+            ),
       titleBarInset: titleBarInset,
       leading: leading,
       windowTitleBar: windowTitleBar,
@@ -4163,7 +4177,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (gitFor == null) return const [];
     return [
       for (final folder in multi.folders)
-        (folder, _sidePanelGits[folder] ??= gitFor(folder)),
+        (
+          RemoteLocation.pathOf(folder),
+          _sidePanelGits[folder] ??= gitFor(folder),
+        ),
     ];
   }
 

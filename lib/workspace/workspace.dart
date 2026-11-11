@@ -342,8 +342,39 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Prepared by the desktop app before this workspace is loaded.
   final String? defaultTaskDirectory;
 
-  bool isDefaultTaskProject(Project project) =>
-      defaultTaskDirectory != null && project.path == defaultTaskDirectory;
+  bool isDefaultTaskProject(Project project) {
+    if (project.host == null) {
+      return defaultTaskDirectory != null &&
+          project.path == defaultTaskDirectory;
+    }
+    final paths = RemoteLocation.pathsOf(project.path);
+    return paths.basename(project.root) == 'tasks' &&
+        paths.basename(paths.dirname(project.root)) == '.baocode';
+  }
+
+  /// Prepares everyday tasks on the chosen machine before opening them. A
+  /// failed remote connection must never turn a remote task into a local one.
+  Future<Project> openDefaultTaskProjectOn(String? host) async {
+    if (host == null) return openDefaultTaskProject();
+    final remote = SshHosts.instance[host];
+    final client = await remote.ready;
+    final home = remote.home;
+    if (home == null) throw StateError('$host: no home directory');
+    final paths = remote.paths;
+    var parent = home;
+    for (final name in ['.baocode', 'tasks']) {
+      final directory = paths.join(parent, name);
+      final entries = await client.list(home, parent);
+      final existing = entries.where((entry) => entry.name == name).firstOrNull;
+      if (existing == null) {
+        await client.create(home, directory, directory: true);
+      } else if (!existing.isDirectory) {
+        throw StateError('$directory is not a directory');
+      }
+      parent = directory;
+    }
+    return _openProject(RemoteLocation.of(host, parent));
+  }
 
   /// Makes the everyday tasks available again, even if hidden from the list.
   Project openDefaultTaskProject() {
@@ -652,7 +683,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     null => switch (_projectNames[path]) {
       final name? => Project(name, path),
       null =>
-        path == defaultTaskDirectory
+        isDefaultTaskProject(Project.at(path))
             ? Project(l10n().defaultTasksTitle, path)
             : Project.at(path),
     },
@@ -1926,7 +1957,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   KernelWorkspace? _kernelWorkspace(String? cwd) => switch (_workspaces[cwd]) {
     final workspace? => KernelWorkspace(
-      folders: workspace.folders,
+      folders: workspace.rawFolders,
       instructions: workspace.systemPrompt,
     ),
     null when cwd != null => agentSetup?.call(cwd)?.workspace(),
@@ -1937,6 +1968,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// in it work across them. Null where workspaces cannot be kept (the
   /// web).
   ProjectWorkspace? createWorkspace(String name, List<String> folders) {
+    ProjectWorkspace.checkFolders(folders);
     final root = workspaceDirectories.root;
     if (root == null) return null;
     final id = _newWorkspaceId(root);
@@ -1949,6 +1981,65 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       ],
     );
     workspaceDirectories.write(workspace);
+    _workspaces[workspace.path] = workspace;
+    _openProject(workspace.path);
+    _save();
+    notifyListeners();
+    return workspace;
+  }
+
+  /// Makes the workspace on the chosen host, with locations for its views
+  /// and an existing working directory for its remote agents.
+  Future<ProjectWorkspace?> createWorkspaceOn(
+    String name,
+    List<String> folders, {
+    String? host,
+  }) async {
+    ProjectWorkspace.checkFolders(folders, host: host);
+    if (host == null) return createWorkspace(name, folders);
+    final remote = SshHosts.instance[host];
+    final client = await remote.ready;
+    final home = remote.home;
+    if (home == null) throw StateError('$host: no home directory');
+    final paths = remote.paths;
+    var parent = home;
+    for (final name in ['.baocode', 'workspaces']) {
+      final directory = paths.join(parent, name);
+      final entries = await client.list(home, parent);
+      final existing = entries.where((entry) => entry.name == name).firstOrNull;
+      if (existing == null) {
+        await client.create(home, directory, directory: true);
+      } else if (!existing.isDirectory) {
+        throw StateError('$directory is not a directory');
+      }
+      parent = directory;
+    }
+    final root = RemoteLocation.of(host, parent);
+    final id = _newWorkspaceId(root);
+    final directory = paths.join(parent, id);
+    await client.create(home, directory, directory: true);
+    final workspace = ProjectWorkspace(
+      id: id,
+      name: name.trim(),
+      path: RemoteLocation.of(host, directory),
+      folders: folders.toSet().toList(),
+    );
+    // This file is a convenient export at creation time. Preferences are
+    // authoritative for subsequent edits and restores, including offline.
+    final manifest = paths.join(directory, 'workspace.code-workspace');
+    await client.create(home, manifest);
+    // Saving uses the file service's snapshot protection, even for a new file.
+    final previous = await client.read(home, manifest);
+    await client.write(
+      home,
+      manifest,
+      '${const JsonEncoder.withIndent('  ').convert({
+        'folders': [
+          for (final folder in workspace.rawFolders) {'path': folder},
+        ],
+      })}\n',
+      expectedText: previous,
+    );
     _workspaces[workspace.path] = workspace;
     _openProject(workspace.path);
     _save();
@@ -1974,6 +2065,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }) {
     final current = _workspaces[workspace.path];
     if (current == null) return;
+    if (folders != null) {
+      ProjectWorkspace.checkFolders(folders, host: current.host);
+    }
     final updated = current.copyWith(
       name: name?.trim(),
       folders: folders == null
@@ -1983,7 +2077,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
             ],
     );
     if (updated == current) return;
-    workspaceDirectories.write(updated);
+    if (updated.host == null) workspaceDirectories.write(updated);
     _workspaces[updated.path] = updated;
     if (updated.name != current.name) {
       _replaceProject(updated.path, Project(updated.name, updated.path));
@@ -2621,7 +2715,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (kept['workspaces'] case final List workspaces) {
         for (final raw in workspaces) {
           final workspace = ProjectWorkspace.fromJson(raw, root: root);
-          if (workspace == null || raw is! Map) continue;
+          if (workspace == null || raw is! Map || workspace.host != null) {
+            continue;
+          }
           final previous = <String>{
             if (raw['path'] is String) raw['path'] as String,
             // A prior run may already have saved the new workspace path,
@@ -2778,10 +2874,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       final root = workspaceDirectories.root;
       for (final json in workspaces) {
         if (ProjectWorkspace.fromJson(json, root: root) case final workspace?) {
-          _workspaces[workspace.path] = workspaceDirectories.restore(
-            workspace,
-            previousPaths: previousWorkspacePaths[workspace.path] ?? const [],
-          );
+          _workspaces[workspace.path] = workspace.host != null
+              ? workspace
+              : workspaceDirectories.restore(
+                  workspace,
+                  previousPaths:
+                      previousWorkspacePaths[workspace.path] ?? const [],
+                );
         }
       }
     }

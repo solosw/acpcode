@@ -15,6 +15,9 @@ import '../ide/ide_hover.dart';
 import '../ide/ide_input.dart';
 import '../ide/ide_menu.dart';
 import '../l10n/l10n.dart';
+import '../remote/remote_location.dart';
+import '../remote/remote_status.dart' show sshErrorText;
+import '../settings/pages/agent_remote_folder_dialog.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'project_workspace.dart';
@@ -24,6 +27,16 @@ import 'project_workspace_dir_stub.dart'
 import 'window_controls.dart';
 import 'workspace.dart';
 
+/// Picks a folder on the workspace's machine and returns its location.
+Future<String?> pickWorkspaceFolder(
+  BuildContext context, {
+  String? host,
+}) async {
+  if (host == null) return WorkspaceDialog.pickDirectory();
+  final path = await WorkspaceDialog.pickRemoteDirectory(context, host);
+  return path == null ? null : RemoteLocation.of(host, path);
+}
+
 /// Asks for a new workspace's name and folders ([folders] in it to begin
 /// with), or [editing]'s new ones; completes with the workspace made or
 /// changed, or null when dismissed.
@@ -31,6 +44,7 @@ Future<ProjectWorkspace?> showWorkspaceDialog(
   BuildContext context, {
   required Workspace workspace,
   ProjectWorkspace? editing,
+  String? host,
   List<String> folders = const [],
 }) => showGeneralDialog<ProjectWorkspace>(
   context: context,
@@ -38,8 +52,12 @@ Future<ProjectWorkspace?> showWorkspaceDialog(
   barrierLabel: context.l10n.commonDismiss,
   barrierColor: const Color(0x80000000),
   transitionDuration: Duration.zero,
-  pageBuilder: (context, _, _) =>
-      WorkspaceDialog(workspace: workspace, editing: editing, folders: folders),
+  pageBuilder: (context, _, _) => WorkspaceDialog(
+    workspace: workspace,
+    editing: editing,
+    host: editing != null ? editing.host : host,
+    folders: folders,
+  ),
 );
 
 class WorkspaceDialog extends StatefulWidget {
@@ -47,6 +65,7 @@ class WorkspaceDialog extends StatefulWidget {
     super.key,
     required this.workspace,
     this.editing,
+    this.host,
     this.folders = const [],
   });
 
@@ -55,6 +74,9 @@ class WorkspaceDialog extends StatefulWidget {
   /// The workspace changed; null to make one.
   final ProjectWorkspace? editing;
 
+  /// The machine whose folders are offered when creating a workspace.
+  final String? host;
+
   /// The folders a new one starts with.
   final List<String> folders;
 
@@ -62,6 +84,11 @@ class WorkspaceDialog extends StatefulWidget {
   @visibleForTesting
   static Future<String?> Function() pickDirectory =
       WindowControls.pickDirectory;
+
+  /// Picks a raw path on the chosen server.
+  @visibleForTesting
+  static Future<String?> Function(BuildContext, String) pickRemoteDirectory =
+      showAgentRemoteFolderDialog;
 
   /// Whether a folder can be picked in the file manager; replaceable under
   /// test.
@@ -83,6 +110,11 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
   ];
   final _addProject = GlobalKey();
   bool _tried = false;
+  bool _saving = false;
+  String? _error;
+  late final String? _host = widget.editing != null
+      ? widget.editing!.host
+      : widget.host;
 
   Workspace get _workspace => widget.workspace;
 
@@ -94,15 +126,17 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
 
   /// What it is named when the user names it nothing: its folders'.
   String get _suggestedName {
-    final names = [for (final folder in _folders.take(3)) p.basename(folder)];
+    final names = [
+      for (final folder in _folders.take(3)) RemoteLocation.nameOf(folder),
+    ];
     return names.isEmpty ? context.l10n.workspaceNameHint : names.join(', ');
   }
 
-  /// The projects of this machine that may be added: folders, not other
+  /// The projects of this workspace's machine that may be added: folders, not other
   /// workspaces (nor this one).
   List<Project> get _projects => [
     for (final project in _workspace.sidebarProjects)
-      if (project.host == null &&
+      if (project.host == _host &&
           _workspace.workspaceOf(project) == null &&
           project.path != widget.editing?.path)
         project,
@@ -113,7 +147,7 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
   });
 
   Future<void> _pick() async {
-    final folder = await WorkspaceDialog.pickDirectory();
+    final folder = await pickWorkspaceFolder(context, host: _host);
     if (folder == null || !mounted) return;
     setState(() {
       if (!_folders.contains(folder)) _folders.add(folder);
@@ -148,7 +182,8 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
     );
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_saving) return;
     if (_folders.isEmpty) {
       setState(() => _tried = true);
       return;
@@ -156,35 +191,55 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
     final typed = _name.text.trim();
     final name = typed.isEmpty ? _suggestedName : typed;
     final editing = widget.editing;
-    if (editing == null) {
-      Navigator.pop(context, _workspace.createWorkspace(name, _folders));
-      return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final ProjectWorkspace? made;
+      if (editing == null) {
+        made = await _workspace.createWorkspaceOn(
+          name,
+          List.of(_folders),
+          host: _host,
+        );
+      } else {
+        _workspace.updateWorkspace(editing, name: name, folders: _folders);
+        made = _workspace.workspaceAt(editing.path);
+      }
+      if (mounted) Navigator.pop(context, made);
+    } catch (error) {
+      if (!mounted) return;
+      final (message, detail) = sshErrorText(error, context.l10n);
+      setState(() => _error = [?message, ?detail].join('\n'));
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-    _workspace.updateWorkspace(editing, name: name, folders: _folders);
-    Navigator.pop(context, _workspace.workspaceAt(editing.path));
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final colors = themeColors;
-    final fileManager = l10n.fileManager;
+    final fileManager = _host == null
+        ? l10n.fileManager
+        : _workspace.hostLabel(_host);
     return _DialogFrame(
       title: widget.editing == null
           ? l10n.workspaceCreateTitle
           : l10n.workspaceEditTitle,
-      onSubmit: _save,
+      onSubmit: () => unawaited(_save()),
       actions: [
         IdeButton(
           label: widget.editing == null
               ? l10n.workspaceCreate
               : l10n.commonSave,
-          onPressed: _save,
+          onPressed: _saving ? null : () => unawaited(_save()),
         ),
         IdeButton(
           label: l10n.commonCancel,
           secondary: true,
-          onPressed: () => Navigator.pop(context),
+          onPressed: _saving ? null : () => Navigator.pop(context),
         ),
       ],
       child: SingleChildScrollView(
@@ -198,7 +253,7 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
               autofocus: true,
               placeholder: _suggestedName,
               semanticsLabel: l10n.workspaceName,
-              onSubmitted: (_) => _save(),
+              onSubmitted: (_) => unawaited(_save()),
             ),
             const SizedBox(height: 14),
             Text(l10n.workspaceFolders, style: _text(size: 12)),
@@ -233,11 +288,17 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
                             key: ValueKey(folder),
                             workspace: _workspace,
                             folder: folder,
-                            onRemove: () => _toggle(folder),
+                            onRemove: () {
+                              if (!_saving) _toggle(folder);
+                            },
                           ),
                       ],
                     ),
             ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 8),
+              Text(error, style: _text(color: colors['errorForeground'])),
+            ],
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -248,14 +309,14 @@ class _WorkspaceDialogState extends State<WorkspaceDialog> {
                   icon: Codicons.add,
                   label: l10n.workspaceAddProject,
                   secondary: true,
-                  onPressed: _showProjects,
+                  onPressed: _saving ? null : _showProjects,
                 ),
-                if (WorkspaceDialog.canPickDirectory())
+                if (_host != null || WorkspaceDialog.canPickDirectory())
                   IdeButton(
                     icon: Codicons.folderOpened,
                     label: l10n.workspaceAddFolder(fileManager),
                     secondary: true,
-                    onPressed: _pick,
+                    onPressed: _saving ? null : _pick,
                   ),
               ],
             ),

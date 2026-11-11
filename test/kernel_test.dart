@@ -2194,8 +2194,8 @@ void main() {
       kernel.dispose();
     });
 
-    test('full access answers questions itself; Don\'t ask refuses what '
-        'it would ask', () async {
+    test('full access approves operations and asks questions; Don\'t ask '
+        'refuses operations', () async {
       final cli = FakeCli();
       final (:kernel, :transcript, events: _) = claude(cli);
       kernel.send(const KernelTurn(id: 'u1', text: 'go'));
@@ -2274,8 +2274,8 @@ void main() {
           'updatedInput': protectedCommand,
         });
       }
-      // Manual-only safety checks, explicit ask rules and the plan remain
-      // the user's decisions, even when a protected-path check is approvable.
+      // Full access also approves manual-only checks, explicit ask rules
+      // and protected paths: their metadata must not bring back approvals.
       for (final (i, why) in const [
         {'decision_reason_type': 'safetyCheck'},
         {'decision_reason_type': 'safetyCheck', 'classifier_approvable': false},
@@ -2297,11 +2297,11 @@ void main() {
       ].indexed) {
         ask('r2-$i', 'Bash', command, why);
         await pumpEventQueue();
-        expect(transcript.pendingInteraction, isA<ApprovalRequest>());
-        kernel.answer(
-          'r2-$i',
-          const ApprovalAnswer(ApprovalDecision.allowOnce),
-        );
+        expect(transcript.pendingInteraction, isNull);
+        expect(cli.responses.last, {
+          'behavior': 'allow',
+          'updatedInput': command,
+        });
       }
       // The plan is put to the user, not asked about.
       ask('r3', 'ExitPlanMode', {'plan': '1. Do it'});
@@ -2311,6 +2311,21 @@ void main() {
         'behavior': 'deny',
         'message': ClaudeTranslator.planPresented,
       });
+
+      // The same operation still requires approval in the other modes.
+      for (final approval in ['default', 'acceptEdits']) {
+        kernel.permission.select(approval);
+        ask('restricted-$approval', 'Bash', command, {
+          'decision_reason_type': 'safetyCheck',
+          'classifier_approvable': false,
+        });
+        await pumpEventQueue();
+        expect(transcript.pendingInteraction, isA<ApprovalRequest>());
+        kernel.answer(
+          'restricted-$approval',
+          const ApprovalAnswer(ApprovalDecision.allowOnce),
+        );
+      }
 
       // Don't ask: what it would ask about is refused; questions are
       // asked.

@@ -1,4 +1,9 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:bao_remote/client.dart';
+import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/ssh_host.dart';
 
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
@@ -157,6 +162,95 @@ void main() {
       expect(value.projects, hasLength(1));
     },
   );
+
+  for (final (host, home, paths, platform) in [
+    ('win', r'C:\Users\me', p.windows, const RemotePlatform('win', 'x64')),
+    ('wsl+Ubuntu', '/home/me', p.posix, const RemotePlatform('linux', 'x64')),
+  ]) {
+    test('everyday tasks use $host home and path conventions', () async {
+      final toServer = StreamController<String>();
+      final toClient = StreamController<String>();
+      final server = RpcPeer(toServer.stream, toClient.add);
+      final client = RemoteClient(RpcPeer(toClient.stream, toServer.add));
+      client.hello = RemoteHello(
+        protocol: RemoteProtocol.version,
+        version: 'test',
+        platform: platform,
+        pid: 1,
+        home: home,
+        dataDir: paths.join(home, '.baocode-server', 'data'),
+      );
+      final made = <String>[];
+      server.handlers[RemoteProtocol.fsList] = (params, _) {
+        final args = params! as Map;
+        expect(args['root'], home);
+        return [
+          for (final path in made)
+            if (paths.dirname(path) == args['path'])
+              [path, paths.basename(path), true],
+        ];
+      };
+      server.handlers[RemoteProtocol.fsCreate] = (params, _) {
+        final args = params! as Map;
+        expect(args['root'], home);
+        expect(args['directory'], isTrue);
+        made.add(args['path'] as String);
+        return null;
+      };
+      final previous = SshHosts.instance;
+      final hosts = SshHosts.instance = SshHosts(
+        connect: (target, {onProgress}) async =>
+            SshConnection.over(target, client),
+      );
+      addTearDown(() async {
+        client.peer.close();
+        server.close();
+        await hosts.closeAll();
+        SshHosts.instance = previous;
+        await toServer.close();
+        await toClient.close();
+      });
+      final value = workspace();
+      await value.load();
+      value.addSshHost(host);
+      value.sidebarHost = host;
+      final project = await value.openDefaultTaskProjectOn(host);
+      final tasks = paths.join(home, '.baocode', 'tasks');
+      expect(project.path, RemoteLocation.of(host, tasks));
+      expect(project.name, '日常任务');
+      expect(value.isDefaultTaskProject(project), isTrue);
+      expect(value.canRelocate(project), isFalse);
+      value.create(project: project);
+      expect(value.sidebarHost, host);
+      expect(made, [paths.join(home, '.baocode'), tasks]);
+      await value.openDefaultTaskProjectOn(host);
+      expect(made, hasLength(2));
+    });
+  }
+
+  test('a failed connection never opens the local default directory', () async {
+    final previous = SshHosts.instance;
+    final hosts = SshHosts.instance = SshHosts(
+      connect: (target, {onProgress}) async => throw const SshConnectException(
+        SshFailure.authentication,
+        'Connection refused',
+      ),
+    );
+    addTearDown(() async {
+      await hosts.closeAll();
+      SshHosts.instance = previous;
+    });
+    final value = workspace();
+    await value.load();
+    await value.openFolder('ssh://dev/home/me/app');
+    final was = value.selected;
+    await expectLater(
+      value.openDefaultTaskProjectOn('dev'),
+      throwsA(isA<SshConnectException>()),
+    );
+    expect(value.selected, same(was));
+    expect(value.sidebarHost, 'dev');
+  });
 
   test('the everyday entry can reopen a hidden default folder', () async {
     final value = workspace();

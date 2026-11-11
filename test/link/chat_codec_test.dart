@@ -127,6 +127,60 @@ void main() {
     );
   });
 
+  test(
+    'estimated live and finished token statistics survive JSON transport',
+    () {
+      const live = LiveStatusItem(
+        'Working',
+        output: TurnOutput(tokens: 1234, tokensPerSecond: 42, estimated: true),
+      );
+      final decodedLive =
+          ChatCodec.decode(jsonDecode(jsonEncode(ChatCodec.encode(live))))!
+              as LiveStatusItem;
+      expect(decodedLive.output!.tokens, 1234);
+      expect(decodedLive.output!.tokensPerSecond, 42);
+      expect(decodedLive.output!.estimated, isTrue);
+
+      const finished = UserMessageItem(
+        text: 'go',
+        usage: TurnUsage(
+          outputTokens: 234,
+          tokensPerSecond: 50,
+          estimated: true,
+        ),
+      );
+      final decodedFinished =
+          ChatCodec.decode(jsonDecode(jsonEncode(ChatCodec.encode(finished))))!
+              as UserMessageItem;
+      expect(decodedFinished.usage!.outputTokens, 234);
+      expect(decodedFinished.usage!.tokensPerSecond, 50);
+      expect(decodedFinished.usage!.estimated, isTrue);
+    },
+  );
+
+  test('legacy statistics remain unmarked and omit the estimate flag', () {
+    const live = LiveStatusItem(
+      'Working',
+      output: TurnOutput(tokens: 1234, tokensPerSecond: 42),
+    );
+    const finished = UserMessageItem(
+      text: 'go',
+      usage: TurnUsage(outputTokens: 234, tokensPerSecond: 50),
+    );
+    final encodedLive = ChatCodec.encode(live);
+    final encodedFinished = ChatCodec.encode(finished);
+    expect(encodedLive, isNot(contains('estimated')));
+    expect(encodedFinished['usage'] as Map, isNot(contains('estimated')));
+    expect(
+      (ChatCodec.decode(encodedLive)! as LiveStatusItem).output!.estimated,
+      isFalse,
+    );
+    expect(
+      (ChatCodec.decode(encodedFinished)! as UserMessageItem).usage!.estimated,
+      isFalse,
+    );
+  });
+
   group('a bot\'s', () {
     test('pictures from the web go as they were sent', () {
       final url = roundTrip(

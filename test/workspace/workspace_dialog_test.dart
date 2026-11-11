@@ -2,6 +2,16 @@
 // with Create Workspace…, whose dialog takes a name and folders: from the
 // projects listed, or picked in Finder.
 
+import 'dart:io';
+
+import 'package:bao_remote/client.dart';
+import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/ssh_host.dart';
+import 'package:baocode/settings/pages/agent_remote_folder_dialog.dart';
+import 'package:path/path.dart' as p;
+
+import '../remote/remote_harness.dart';
+
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -38,10 +48,12 @@ Future<Workspace> _pumpNew(WidgetTester tester) async {
   );
   final pick = WorkspaceDialog.pickDirectory;
   final canPick = WorkspaceDialog.canPickDirectory;
+  final remotePick = WorkspaceDialog.pickRemoteDirectory;
   WorkspaceDialog.canPickDirectory = () => true;
   addTearDown(() {
     WorkspaceDialog.pickDirectory = pick;
     WorkspaceDialog.canPickDirectory = canPick;
+    WorkspaceDialog.pickRemoteDirectory = remotePick;
   });
   final workspace = Workspace(
     projects: const [
@@ -66,7 +78,184 @@ Future<void> _openMenu(WidgetTester tester, String current) async {
   await tester.pumpAndSettle();
 }
 
+Future<String> _remoteHome(WidgetTester tester) async {
+  final harness = (await tester.runAsync(RemoteHarness.start))!;
+  final home = harness.dataDir.resolveSymbolicLinksSync();
+  final hello = harness.client.hello!;
+  harness.client.hello = RemoteHello(
+    protocol: hello.protocol,
+    version: hello.version,
+    platform: hello.platform,
+    pid: hello.pid,
+    home: home,
+    dataDir: hello.dataDir,
+  );
+  Directory(p.join(home, 'site')).createSync();
+  Directory(p.join(home, 'api')).createSync();
+  final previous = SshHosts.instance;
+  final hosts = SshHosts.instance = SshHosts(
+    connect: (target, {onProgress}) async =>
+        SshConnection.over(target, harness.client),
+  );
+  addTearDown(() async {
+    await hosts.closeAll();
+    SshHosts.instance = previous;
+    await harness.close();
+  });
+  await tester.runAsync(() => hosts['dev'].ready);
+  return home;
+}
+
+Future<void> _waitFor(WidgetTester tester, bool Function() ready) async {
+  await tester.runAsync(() async {
+    for (var i = 0; i < 100; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      await tester.pump();
+      if (ready()) return;
+    }
+    fail(
+      'Remote workspace operation did not finish: '
+      '${tester.widgetList<Text>(find.byType(Text)).map((text) => text.data).join(' | ')}',
+    );
+  });
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets('SSH workspace creation browses and creates on the same host', (
+    tester,
+  ) async {
+    final home = await _remoteHome(tester);
+    final workspace = await _pumpNew(tester);
+    final site = RemoteLocation.of('dev', p.join(home, 'site'));
+    final api = RemoteLocation.of('dev', p.join(home, 'api'));
+    await workspace.openFolder(site);
+    await tester.pumpAndSettle();
+    await _openMenu(tester, 'site');
+    await tester.tap(find.text('Create Workspace…'));
+    await tester.pumpAndSettle();
+    expect(find.text(site), findsOneWidget);
+    expect(find.text('Add from Finder…'), findsNothing);
+    WorkspaceDialog.pickDirectory = () async {
+      fail('A remote workspace must never open the local file picker');
+    };
+    WorkspaceDialog.canPickDirectory = () => false;
+    await tester.pump();
+    await tester.tap(find.text('Add from dev…'));
+    await _waitFor(
+      tester,
+      () =>
+          find.byType(AgentRemoteFolderDialog).evaluate().isNotEmpty &&
+          find.text('api').evaluate().isNotEmpty,
+    );
+    await tester.tap(find.text('api'));
+    await _waitFor(
+      tester,
+      () => find.text(p.join(home, 'api')).evaluate().isNotEmpty,
+    );
+    await tester.tap(find.text('Select this folder'));
+    await tester.pumpAndSettle();
+    expect(find.text(api), findsOneWidget);
+    final dialog = find.byType(WorkspaceDialog);
+    await tester.enterText(
+      find.descendant(of: dialog, matching: find.byType(EditableText)),
+      'remote web',
+    );
+    await tester.tap(find.text('Create'));
+    await _waitFor(tester, () => workspace.workspaces.isNotEmpty);
+    final made = workspace.workspaces.single;
+    expect(made.host, 'dev');
+    expect(made.folders, [site, api]);
+    expect(Directory(RemoteLocation.pathOf(made.path)).existsSync(), isTrue);
+    expect(workspace.selected.project.path, made.path);
+    expect(workspace.sidebarHost, 'dev');
+    expect(workspace.selected.session.kernelContext.workspace!()!.folders, [
+      p.join(home, 'site'),
+      p.join(home, 'api'),
+    ]);
+  }, variant: _mac);
+
+  testWidgets('new workspace only offers projects on the chosen host', (
+    tester,
+  ) async {
+    final home = await _remoteHome(tester);
+    final workspace = await _pumpNew(tester);
+    final site = RemoteLocation.of('dev', p.join(home, 'site'));
+    final api = RemoteLocation.of('dev', p.join(home, 'api'));
+    await workspace.openFolder(site);
+    await workspace.openFolder(api);
+    await workspace.openFolder('ssh://prod/srv/other');
+    workspace.sidebarHost = 'dev';
+    await tester.pumpAndSettle();
+    final shown = showWorkspaceDialog(
+      tester.element(_bar),
+      workspace: workspace,
+      host: workspace.sidebarHost,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Add from dev…'), findsOneWidget);
+    await tester.tap(find.text('Add from Projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('other').hitTestable(), findsNothing);
+    expect(find.text('docs').hitTestable(), findsNothing);
+    await tester.tap(find.text('api').last);
+    await tester.pumpAndSettle();
+    expect(find.text(api), findsOneWidget);
+    await tester.tap(find.text('Create'));
+    await _waitFor(tester, () => workspace.workspaces.isNotEmpty);
+    expect((await shown)!.host, 'dev');
+  }, variant: _mac);
+
+  testWidgets(
+    'editing a local workspace uses local folders with an SSH sidebar selected',
+    (tester) async {
+      final workspace = await _pumpNew(tester);
+      final local = workspace.createWorkspace('local', ['/code/site'])!;
+      workspace.addSshHost('dev');
+      workspace.sidebarHost = 'dev';
+      final shown = showWorkspaceDialog(
+        tester.element(_bar),
+        workspace: workspace,
+        editing: local,
+      );
+      await tester.pumpAndSettle();
+      WorkspaceDialog.pickDirectory = () async => '/code/api';
+      WorkspaceDialog.pickRemoteDirectory = (_, _) async {
+        fail('Local editing opened the remote picker');
+      };
+      await tester.tap(find.text('Add from Finder…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect((await shown)!.folders, ['/code/site', '/code/api']);
+    },
+    variant: _mac,
+  );
+
+  testWidgets('remote creation errors keep the dialog and server selected', (
+    tester,
+  ) async {
+    final home = await _remoteHome(tester);
+    File(p.join(home, '.baocode')).writeAsStringSync('blocked');
+    final workspace = await _pumpNew(tester);
+    final site = RemoteLocation.of('dev', p.join(home, 'site'));
+    await workspace.openFolder(site);
+    final was = workspace.selected;
+    await tester.pumpAndSettle();
+    await _openMenu(tester, 'site');
+    await tester.tap(find.text('Create Workspace…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create'));
+    await _waitFor(
+      tester,
+      () => find.textContaining('is not a directory').evaluate().isNotEmpty,
+    );
+    expect(find.byType(WorkspaceDialog), findsOneWidget);
+    expect(workspace.workspaces, isEmpty);
+    expect(workspace.selected, same(was));
+    expect(workspace.sidebarHost, 'dev');
+  }, variant: _mac);
+
   testWidgets('workspaces are under their own heading, with Create '
       'Workspace…; one picked has the agent work there', (tester) async {
     final workspace = await _pumpNew(tester);

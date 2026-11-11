@@ -12,6 +12,7 @@ import '../icons/project_icon_view.dart';
 import '../kernel/kernel_types.dart';
 import '../l10n/l10n.dart';
 import '../remote/remote_location.dart';
+import '../remote/remote_status.dart' show sshErrorText;
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
@@ -43,6 +44,8 @@ class NewChatFolderBar extends StatelessWidget {
   /// The menu's row for Create Workspace….
   static const _createWorkspaceId = 'baocode.workspace.create';
 
+  static const _defaultTasksId = 'baocode.tasks.default';
+
   /// Before an SSH host, the menu's row for it, which lists its projects
   /// at its side.
   static const _hostId = 'baocode.remote.host:';
@@ -61,6 +64,21 @@ class NewChatFolderBar extends StatelessWidget {
 
   void _moveTo(String path) => workspace.moveNew(thread, path);
 
+  Future<void> _defaultTasks(BuildContext context) async {
+    try {
+      final project = await workspace.openDefaultTaskProjectOn(
+        thread.project.host,
+      );
+      if (context.mounted) _moveTo(project.path);
+    } catch (error) {
+      if (!context.mounted) return;
+      final (message, detail) = sshErrorText(error, context.l10n);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text([?message, ?detail].join('\n'))));
+    }
+  }
+
   Future<void> _pick() async {
     final path = await pickDirectory();
     if (path != null) workspace.moveNew(thread, path);
@@ -73,9 +91,9 @@ class NewChatFolderBar extends StatelessWidget {
     final made = await showWorkspaceDialog(
       context,
       workspace: workspace,
+      host: current.host,
       folders: [
-        if (current.host == null &&
-            !workspace.isDefaultTaskProject(current) &&
+        if (!workspace.isDefaultTaskProject(current) &&
             workspace.workspaceOf(current) == null)
           current.path,
       ],
@@ -88,13 +106,13 @@ class NewChatFolderBar extends StatelessWidget {
     final l10n = context.l10n;
     final defaultDirectory = workspace.defaultTaskDirectory;
     final current = thread.project;
-    final noFolder = defaultDirectory == null
+    final noFolder = defaultDirectory == null && current.host == null
         ? null
         : KernelOption(
-            defaultDirectory,
+            NewChatFolderBar._defaultTasksId,
             l10n.defaultTasksTitle,
             Codicons.home,
-            '${l10n.defaultTasksDetail}\n$defaultDirectory',
+            '${l10n.defaultTasksDetail}\n${current.host == null ? defaultDirectory : '${workspace.hostLabel(current.host!)}: ~/.baocode/tasks'}',
           );
     final remoteGroup = KernelOptionGroup('remote', l10n.newChatRemoteGroup);
     final workspaceGroup = KernelOptionGroup(
@@ -244,6 +262,7 @@ class NewChatFolderBar extends StatelessWidget {
                   _moveTo,
                   host: id.substring(NewChatFolderBar._pickOnId.length),
                 ),
+              NewChatFolderBar._defaultTasksId => _defaultTasks(context),
               NewChatFolderBar._createWorkspaceId => _createWorkspace(context),
               final path => _moveTo(path),
             },
