@@ -3996,6 +3996,28 @@ class AppLocalizationsZh extends AppLocalizations {
   String get generalSettingsClaudeCoreCli => 'Claude Code CLI';
 
   @override
+  String get generalSettingsDefaultAgent => '默认 Agent';
+
+  @override
+  String get generalSettingsDefaultAgentDescription =>
+      '新建对话时使用的 Agent，不影响已有对话。';
+
+  @override
+  String get generalSettingsDefaultMode => '默认模式';
+
+  @override
+  String generalSettingsDefaultModeDescription(String agent) {
+    return '使用 $agent 新建对话时的模式，每个 Agent 分别保存。';
+  }
+
+  @override
+  String get generalSettingsDefaultModeUnavailable =>
+      '该 Agent 连接到已打开的项目后会显示可用模式；部分 Agent 不提供模式。';
+
+  @override
+  String get generalSettingsLastUsed => '沿用上次选择';
+
+  @override
   String get generalSettingsQueuedMessages => '工作中发送的消息';
 
   @override

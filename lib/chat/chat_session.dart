@@ -144,9 +144,16 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     ContextUsage? usage,
     this.quietAfterText = const Duration(seconds: 5),
     ChangeReviewOpener? openReview,
-  }) : kernels = kernels ?? KernelRegistry.all,
-       _openReview =
-           openReview ?? (reviewSupported ? ChangeReview.open : null) {
+  }) : kernels = kernels ?? KernelRegistry.all {
+    _openReview =
+        openReview ??
+        (reviewSupported
+            ? (root, {session}) => ChangeReview.open(
+                root,
+                session: session,
+                cancel: _reviewClosed.future,
+              )
+            : null);
     _transcript = Transcript(
       historyCount: historyCount,
       history: historyCount > 0 ? MockConversation.itemAt : null,
@@ -223,7 +230,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   // --- The review of its changes ----------------------------------------------
 
-  final ChangeReviewOpener? _openReview;
+  late final ChangeReviewOpener? _openReview;
+  final _reviewClosed = Completer<void>();
 
   /// The review of the changes, while it opens; null when there is none.
   Future<ChangeReview?>? _reviewOpening;
@@ -293,8 +301,9 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         return review;
       },
       onError: (Object _) {
-        _reviewUnavailable = true;
-        _pendingReviewEdits.clear();
+        // A failed connection must not disable review for this conversation.
+        // Keep write-time edits and try again on the next attach or turn.
+        _reviewOpening = null;
         return null;
       },
     );
@@ -1243,6 +1252,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       (_kernel as AcpKernel).runCommand(
         parts.first.substring(1),
         parts.length > 1 ? parts.skip(1).join(' ') : '',
+        now,
       );
       return;
     }
@@ -1379,6 +1389,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   @override
   void dispose() {
     _disposed = true;
+    if (!_reviewClosed.isCompleted) _reviewClosed.complete();
     _quietTimer?.cancel();
     _reviewScanTimer?.cancel();
     _pendingReviewEdits.clear();

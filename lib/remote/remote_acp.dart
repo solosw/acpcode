@@ -136,7 +136,12 @@ class RemoteAcpTransport implements AcpTransport {
   Future<void> close() {
     if (_closing case final closing?) return closing;
     _closed = true;
-    return _closing = _close();
+    return _closing = _close().catchError((Object error, StackTrace stack) {
+      // The exit acknowledgement can arrive after SSH resumes. A later
+      // explicit retry must be able to confirm it instead of caching timeout.
+      _closing = null;
+      Error.throwWithStackTrace(error, stack);
+    });
   }
 
   Future<void> _close() async {

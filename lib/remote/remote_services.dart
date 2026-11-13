@@ -107,28 +107,44 @@ void _awaitClient(
 /// The review checkpoints on [host], reopened after SSH reconnects. The
 /// same store object stays with the conversation, retaining its pending
 /// changes and original blobs, with the host's POSIX paths on Windows too.
-Future<RemoteReviewStore?> remoteReviewStore(SshHost host) async =>
-    (await host.ready).openReview(
-      reconnect: (previous) {
-        final ready = Completer<RemoteClient>();
-        void check() {
-          final client = host.client;
-          if (client != null &&
-              !identical(client, previous) &&
-              !client.peer.isClosed) {
-            host.removeListener(check);
-            ready.complete(client);
-          }
-          // A failed login or an explicit disconnect can be followed by a
-          // manual reconnect. Keep this review's blobs and pending operations
-          // waiting for that connection instead of permanently abandoning it.
+Future<RemoteReviewStore?> remoteReviewStore(
+  SshHost host, {
+  Future<void>? cancel,
+}) async {
+  final client = await (cancel == null
+      ? host.ready
+      : Future.any<RemoteClient>([
+          host.ready,
+          cancel.then<RemoteClient>((_) => throw const RpcCancelled()),
+        ]));
+  return client.openReview(
+    cancel: cancel,
+    reconnect: (previous, {cancel}) {
+      final ready = Completer<RemoteClient>();
+      void check() {
+        if (ready.isCompleted) return;
+        final client = host.client;
+        if (client != null &&
+            !identical(client, previous) &&
+            !client.peer.isClosed) {
+          host.removeListener(check);
+          ready.complete(client);
         }
+        // A failed login or an explicit disconnect can be followed by a
+        // manual reconnect. Keep this review's blobs and pending operations
+        // waiting for that connection instead of permanently abandoning it.
+      }
 
-        host.addListener(check);
-        check();
-        return ready.future;
-      },
-    );
+      host.addListener(check);
+      cancel?.then((_) {
+        host.removeListener(check);
+        if (!ready.isCompleted) ready.completeError(const RpcCancelled());
+      });
+      check();
+      return ready.future;
+    },
+  );
+}
 
 /// The files of the project at [root] on [host].
 class RemoteIdeFileService implements IdeHostFiles, IdeRangeFiles {

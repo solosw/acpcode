@@ -22,6 +22,10 @@ import 'package:bao_remote/server.dart';
 const _version = String.fromEnvironment('baocode.version');
 
 Future<void> main(List<String> arguments) async {
+  // A remote ACP agent's MCP child: no server state or UI is started.
+  if (arguments.firstOrNull == ServerMcp.command) {
+    exit(await ServerMcp.runStdio());
+  }
   // `agent <claude's arguments>`: BaoCode's own core, run here as the CLI
   // would be (see ServerClaude.startBuiltin).
   if (arguments.firstOrNull == ServerClaude.agentCommand) {

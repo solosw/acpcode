@@ -109,6 +109,7 @@ class _SkillsStore implements CustomizationStore {
   Future<List<Customization>> list(
     CustomizationKind kind, {
     String? project,
+    Map<String, Map<String, Object?>> mcpDefaults = const {},
   }) async => [
     if (kind == CustomizationKind.skills)
       const Customization(

@@ -129,10 +129,15 @@ KernelDescriptor _descriptor(AcpTransport Function() transport) {
 
 Future<void> _settle() => Future<void>.delayed(Duration.zero);
 
-Future<AcpKernel> _start(_Transport transport, {bool resume = false}) async {
+Future<AcpKernel> _start(
+  _Transport transport, {
+  bool resume = false,
+  Map<String, String> settings = const {},
+}) async {
   final kernel = _descriptor(() => transport).create(
     KernelContext(
       cwd: '/tmp/project',
+      settings: settings,
       resume: resume
           ? SessionRecord(
               id: 'session',
@@ -172,6 +177,61 @@ Future<ChatSession> _pump(WidgetTester tester, _Transport transport) async {
 }
 
 void main() {
+  test('new ACP sessions apply their configured default mode', () async {
+    final transport = _Transport(configs: _configs());
+    final kernel = await _start(transport, settings: {'mode': 'Code'});
+    expect(kernel.mode.selected, 'Code');
+    expect(transport.changes.single['params'], {
+      'sessionId': 'session',
+      'configId': 'agent-mode',
+      'value': 'Code',
+    });
+    expect(
+      transport.written.any((m) => m['method'] == 'session/prompt'),
+      isFalse,
+    );
+  });
+
+  test('resuming an ACP conversation keeps its reported mode', () async {
+    final transport = _Transport(configs: _configs());
+    final kernel = await _start(
+      transport,
+      resume: true,
+      settings: {'mode': 'Code'},
+    );
+    expect(kernel.mode.selected, 'Ask');
+    expect(transport.changes, isEmpty);
+  });
+
+  test(
+    'unsupported default modes leave the ACP agent mode unchanged',
+    () async {
+      final transport = _Transport(configs: _configs());
+      final kernel = await _start(transport, settings: {'mode': 'agent'});
+      expect(kernel.mode.selected, 'Ask');
+      expect(transport.changes, isEmpty);
+    },
+  );
+
+  test('legacy ACP agents also apply the configured default mode', () async {
+    final transport = _Transport()..holdMode = true;
+    final kernel = _descriptor(() => transport).create(
+      const KernelContext(cwd: '/tmp/project', settings: {'mode': 'other'}),
+    ) as AcpKernel;
+    addTearDown(kernel.dispose);
+    kernel.prepare();
+    await _settle();
+    final change = transport.written.singleWhere(
+      (m) => m['method'] == 'session/set_mode',
+    );
+    expect(change['params'], {'sessionId': 'session', 'modeId': 'other'});
+    expect(kernel.health.status, KernelHealthStatus.starting);
+    transport.reply(change, {});
+    await _settle();
+    expect(kernel.health.status, KernelHealthStatus.ready);
+    expect(kernel.mode.selected, 'other');
+  });
+
   for (final legacy in [false, true]) {
     test(
       'prompt waits for pending ACP configuration (legacy: $legacy)',

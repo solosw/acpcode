@@ -7124,6 +7124,42 @@ abstract class AppLocalizations {
   /// **'Claude Code CLI'**
   String get generalSettingsClaudeCoreCli;
 
+  /// No description provided for @generalSettingsDefaultAgent.
+  ///
+  /// In en, this message translates to:
+  /// **'Default Agent'**
+  String get generalSettingsDefaultAgent;
+
+  /// No description provided for @generalSettingsDefaultAgentDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The agent for new conversations. Existing conversations keep their agent.'**
+  String get generalSettingsDefaultAgentDescription;
+
+  /// No description provided for @generalSettingsDefaultMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Default Mode'**
+  String get generalSettingsDefaultMode;
+
+  /// No description provided for @generalSettingsDefaultModeDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The mode for new conversations with {agent}. Saved separately for each agent.'**
+  String generalSettingsDefaultModeDescription(String agent);
+
+  /// No description provided for @generalSettingsDefaultModeUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Modes appear once this agent connects to an open project. Some agents do not offer modes.'**
+  String get generalSettingsDefaultModeUnavailable;
+
+  /// No description provided for @generalSettingsLastUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'Last Used'**
+  String get generalSettingsLastUsed;
+
   /// No description provided for @generalSettingsQueuedMessages.
   ///
   /// In en, this message translates to:

@@ -165,6 +165,89 @@ void main() {
     );
   }
 
+  for (final scenario in ['stale', 'released', 'reacquired', 'permission']) {
+    test('snapshot index lock: $scenario', () async {
+      write('file.txt', 'before\n');
+      final before = (await store.snapshot())!;
+      write('file.txt', 'after\n');
+      final lock = File(p.join(store.gitDir, 'index.lock'));
+      if (scenario != 'permission') {
+        lock.writeAsStringSync('old writer');
+        if (scenario != 'released') {
+          lock.setLastModifiedSync(
+            DateTime.now().subtract(const Duration(minutes: 6)),
+          );
+        }
+      }
+      var adds = 0;
+      GitReviewStore.run =
+          (
+            executable,
+            arguments, {
+            required workingDirectory,
+            environment = const {},
+            input,
+            required timeout,
+          }) async {
+            if (arguments.contains('add')) {
+              expect(environment['LC_ALL'], 'C');
+              adds++;
+              if (scenario == 'permission') {
+                return (
+                  exitCode: 128,
+                  stdout: Uint8List(0),
+                  stderr:
+                      "fatal: Unable to create '${lock.path}': Permission denied",
+                );
+              }
+              if (scenario == 'reacquired' && adds == 2) {
+                lock.writeAsStringSync('new writer');
+              }
+            }
+            final result = await run(
+              executable,
+              arguments,
+              workingDirectory: workingDirectory,
+              environment: environment,
+              input: input,
+              timeout: timeout,
+            );
+            // Release after Git reports the collision, before _add inspects it.
+            if (scenario == 'released' && arguments.contains('add')) {
+              lock.deleteSync();
+            }
+            return result;
+          };
+      if (scenario == 'stale') {
+        expect(await store.snapshot(), isNotNull);
+        expect(lock.existsSync(), isFalse);
+      } else {
+        await expectLater(
+          store.snapshot(),
+          throwsA(
+            scenario == 'permission'
+                ? isA<GitReviewError>()
+                : isA<ReviewUnavailable>().having(
+                    (error) => error.retryable,
+                    'retryable',
+                    isTrue,
+                  ),
+          ),
+        );
+        if (scenario == 'reacquired') {
+          expect(lock.readAsStringSync(), 'new writer');
+        }
+      }
+      expect(adds, scenario == 'stale' || scenario == 'reacquired' ? 2 : 1);
+      GitReviewStore.run = run;
+      if (lock.existsSync()) lock.deleteSync();
+      final after = (await store.snapshot())!;
+      expect((await store.diff(before, after)).map((change) => change.path), [
+        'file.txt',
+      ]);
+    });
+  }
+
   test(
     'an ordinary Git failure is not silently treated as retryable',
     () async {

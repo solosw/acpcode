@@ -2644,6 +2644,17 @@
   "@generalSettingsClaudeCoreCli": {
     "description": "Claude Code core choice: Anthropic's Claude Code command-line program, run as a process."
   },
+  "generalSettingsDefaultAgent": "Default Agent",
+  "generalSettingsDefaultAgentDescription": "The agent for new conversations. Existing conversations keep their agent.",
+  "generalSettingsDefaultMode": "Default Mode",
+  "generalSettingsDefaultModeDescription": "The mode for new conversations with {agent}. Saved separately for each agent.",
+  "@generalSettingsDefaultModeDescription": {
+    "placeholders": {
+      "agent": {"type": "String"}
+    }
+  },
+  "generalSettingsDefaultModeUnavailable": "Modes appear once this agent connects to an open project. Some agents do not offer modes.",
+  "generalSettingsLastUsed": "Last Used",
   "generalSettingsQueuedMessages": "Messages Sent While Working",
   "generalSettingsQueuedMessagesDescription": "When a message sent while the agent is still working is taken up. Applies to messages sent after a change; Claude Code only for now.",
   "generalSettingsQueuedAfterTurn": "After the Current Task",

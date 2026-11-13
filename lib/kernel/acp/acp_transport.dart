@@ -80,7 +80,11 @@ class QueuedAcpTransport implements AcpTransport {
   void write(Map<String, Object?> message) => _inner.write(message);
 
   @override
-  Future<void> close() => _closing ??= _close();
+  Future<void> close() =>
+      _closing ??= _close().catchError((Object error, StackTrace stack) {
+        _closing = null;
+        Error.throwWithStackTrace(error, stack);
+      });
 
   Future<void> _close() async {
     try {

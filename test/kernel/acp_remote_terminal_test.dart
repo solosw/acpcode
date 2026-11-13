@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:bao_remote/client.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/kernel/acp/acp_kernel.dart';
+import 'package:baocode/kernel/acp/acp_terminal.dart';
 import 'package:baocode/kernel/acp/mock_acp_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_event.dart';
@@ -540,6 +541,63 @@ void main() {
     expect(h.approvals, hasLength(previousApprovals));
     expect(connector.links, hasLength(2));
   });
+
+  test(
+    'terminal shutdown can be retried after a delayed remote exit',
+    () async {
+      final client = await SshHosts.instance['dev'].ready;
+      final peer = client.peer;
+      final notifyExit = peer.notificationHandlers[RemoteProtocol.ptyExit]!;
+      final delayedExits = <Object?>[];
+      peer.notificationHandlers[RemoteProtocol.ptyExit] = delayedExits.add;
+      final snapshots = <AcpTerminalSnapshot>[];
+      final terminals = createAcpTerminalHost([
+        RemoteLocation.of('dev', root),
+      ], snapshots.add)!;
+      final serverPeer = connector.links.single.server.peer;
+      final start = serverPeer.handlers[RemoteProtocol.ptyStart]!;
+      var launches = 0;
+      serverPeer.handlers[RemoteProtocol.ptyStart] = (params, call) {
+        launches++;
+        return start(params, call);
+      };
+      addTearDown(() async {
+        peer.notificationHandlers[RemoteProtocol.ptyExit] = notifyExit;
+        for (final params in delayedExits) {
+          notifyExit(params);
+        }
+        await terminals.close();
+      });
+      final command = await terminals.validate({
+        'command': '/bin/sh',
+        'args': ['-c', 'printf started; sleep 30'],
+      });
+      final id = await terminals.create(
+        _session,
+        command,
+        canStart: () => true,
+      );
+      await _until(() => snapshots.any((s) => s.output.contains('started')));
+
+      final closing = terminals.close();
+      expect(identical(closing, terminals.close()), isTrue);
+      await expectLater(closing, throwsA(isA<TimeoutException>()));
+      expect(delayedExits, hasLength(1));
+      expect(terminals.lookup(_session, id).released, isFalse);
+      expect(terminals.hasRunning, isTrue);
+      notifyExit(delayedExits.removeAt(0));
+      await _until(() => !terminals.hasRunning);
+
+      final retried = terminals.close();
+      expect(identical(closing, retried), isFalse);
+      await retried;
+      expect(identical(retried, terminals.close()), isTrue);
+      expect(snapshots.last.released, isTrue);
+      expect(snapshots.last.exitStatus, isNotNull);
+      expect(launches, 1, reason: 'Recovery must not replay the command');
+      expect(peer.isClosed, isFalse);
+    },
+  );
 
   test('disposing the kernel terminates all its remote terminals', () async {
     final h = _Harness(root);

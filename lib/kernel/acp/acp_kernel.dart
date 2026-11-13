@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../chat/chat_models.dart';
 import '../../ide/file_service.dart';
 import '../../remote/remote_location.dart';
+import '../../remote/ssh_host.dart';
 import '../agent_kernel.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
@@ -27,6 +28,7 @@ class AcpKernel
         SelectsEffort,
         ProvidesCommands,
         ReportsContext,
+        QueuesMessages,
         RunsBackgroundTasks,
         WatchesPendingEdits {
   AcpKernel(
@@ -95,6 +97,7 @@ class AcpKernel
   int _replaySeq = 0;
   String? _replayTurnId;
   bool _initialized = false;
+  bool _initialModeApplied = false;
   bool _starting = false;
   bool _disposed = false;
   bool _cancelling = false;
@@ -102,9 +105,15 @@ class AcpKernel
   bool _sessionLoaded = false;
   bool _everLoaded = false;
   bool _retainedLoad = false;
-  final _queuedTurns = <String>{};
+  final _sentTurns = <String>{};
+  final _queuedTurns = <String, KernelTurn>{};
+  KernelTurn? _sendingTurn;
+  bool _sendingStarted = false;
+  bool _sendingCancelled = false;
+  String? _sendNowTurn;
   Future<void> _startTask = Future.value();
   Future<void> _stopping = Future.value();
+  final _failedShutdowns = <Future<void> Function()>{};
   final Map<String, Completer<Map<String, Object?>>> _pending = {};
   final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
@@ -274,6 +283,17 @@ class AcpKernel
       await _ensureSession();
       if (obsolete() || _health.status == KernelHealthStatus.failed) return;
       _initialized = true;
+      if (!_initialModeApplied && _context.resume == null) {
+        _initialModeApplied = true;
+        final initialMode = _context.settings[KernelChoiceKind.mode.name];
+        if (initialMode != null &&
+            mode.selected != initialMode &&
+            mode.options.any((option) => option.id == initialMode)) {
+          mode.select(initialMode);
+          await _configChanges;
+        }
+      }
+      if (obsolete() || _health.status == KernelHealthStatus.failed) return;
       for (final (index, warning) in _mcp.warnings.indexed) {
         emit(
           ItemUpserted(
@@ -373,13 +393,98 @@ class AcpKernel
 
   @override
   void send(KernelTurn turn) {
-    if (_disposed || turn.id == _turnId || !_queuedTurns.add(turn.id)) return;
+    if (_disposed || !_sentTurns.add(turn.id)) return;
+    final busy = _sendingTurn != null || _turnId != null;
+    _queuedTurns[turn.id] = turn;
+    if (busy) {
+      emit(
+        ItemUpserted(
+          nextSeq,
+          turn.id,
+          UserMessageItem(
+            text: turn.text,
+            images: turn.images,
+            queued: true,
+            sentAt: DateTime.now(),
+          ),
+        ),
+      );
+    }
     _prepare();
+    if (busy && turn.now) sendQueuedNow(turn.id);
+    _sendNextTurn();
+  }
+
+  /// ACP has one prompt in flight per session, including while it is
+  /// cancelling: only that request's result lets the next message through.
+  void _sendNextTurn() {
+    if (_disposed ||
+        _sendingTurn != null ||
+        _turnId != null ||
+        _queuedTurns.isEmpty ||
+        _health.status == KernelHealthStatus.failed) {
+      return;
+    }
+    final turn = _queuedTurns.remove(_queuedTurns.keys.first)!;
+    _sendingTurn = turn;
+    _sendingStarted = false;
+    _sendingCancelled = false;
+    if (_sendNowTurn == turn.id) _sendNowTurn = null;
     unawaited(_sendWhenReady(turn, _startGeneration));
   }
 
+  /// A selected message still belongs to the queue while it waits for
+  /// configuration. It can be withdrawn or reordered until TurnStarted.
+  KernelTurn? _takeQueued(String turnId) {
+    final queued = _queuedTurns.remove(turnId);
+    if (queued != null) return queued;
+    final sending = _sendingTurn;
+    if (sending == null ||
+        sending.id != turnId ||
+        _sendingStarted ||
+        _sendingCancelled) {
+      return null;
+    }
+    _sendingCancelled = true;
+    return sending;
+  }
+
+  @override
+  Future<bool> cancelQueued(String turnId) async {
+    if (_disposed || _takeQueued(turnId) == null) return false;
+    if (_sendNowTurn == turnId) _sendNowTurn = null;
+    emit(ItemRemoved(nextSeq, turnId));
+    _releaseIfIdle();
+    return true;
+  }
+
+  @override
+  void moveQueued(String turnId, int index) {
+    if (_disposed) return;
+    final turn = _takeQueued(turnId);
+    if (turn == null) return;
+    final order = _queuedTurns.values.toList();
+    order.insert(index.clamp(0, order.length), turn);
+    _queuedTurns
+      ..clear()
+      ..addEntries(order.map((turn) => MapEntry(turn.id, turn)));
+    emit(QueueReordered(nextSeq, _queuedTurns.keys.toList()));
+  }
+
+  @override
+  void sendQueuedNow(String turnId) {
+    if (_disposed || !_queuedTurns.containsKey(turnId)) return;
+    _sendNowTurn = turnId;
+    moveQueued(turnId, 0);
+    if (!_cancelling) cancel();
+    _sendNextTurn();
+  }
+
   Future<void> _sendWhenReady(KernelTurn turn, int generation) async {
-    bool obsolete() => _disposed || generation != _startGeneration;
+    bool obsolete() =>
+        _disposed ||
+        generation != _startGeneration ||
+        (identical(_sendingTurn, turn) && _sendingCancelled);
     try {
       while (!_initialized &&
           !obsolete() &&
@@ -391,9 +496,14 @@ class AcpKernel
       // Picker callbacks return before ACP acknowledges their settings. A
       // scheduled prompt (and a promptly submitted manual one) must not
       // overtake the configuration requests, including legacy modes.
-      await _configChanges;
-      if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+      while (true) {
+        final changes = _configChanges;
+        await changes;
+        if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+        if (identical(changes, _configChanges)) break;
+      }
       final sessionId = _sessionId!;
+      _sendingStarted = true;
       _turnId = turn.id;
       _cancelling = false;
       _turnStarted = DateTime.now();
@@ -424,12 +534,16 @@ class AcpKernel
       final loadsHistory =
           turn.text.trim().split(RegExp(r'\s+')).first == '/sessions';
       if (loadsHistory) _replaying = true;
-      final result = await _request('session/prompt', {
+      final response = _request('session/prompt', {
         'sessionId': sessionId,
         'prompt': [
           {'type': 'text', 'text': turn.text},
         ],
       });
+      // Send Now may have been picked while the agent was still starting.
+      // Cancel only after it has the prompt, and wait for that prompt to end.
+      if (_sendNowTurn != null && !_cancelling) cancel();
+      final result = await response;
       if (obsolete()) return;
       // /sessions may queue history until the prompt result arrives.
       if (loadsHistory) {
@@ -442,17 +556,24 @@ class AcpKernel
     } on Object catch (error) {
       if (!obsolete()) _fail(error);
     } finally {
-      _queuedTurns.remove(turn.id);
-      _releaseIfIdle();
+      // A restart may already be sending on a replacement transport.
+      if (identical(_sendingTurn, turn)) {
+        _sendingTurn = null;
+        // The interruption was for this prompt only. Reordering the waiting
+        // messages must not interrupt whichever message is taken up next.
+        _sendNowTurn = null;
+        _sendNextTurn();
+        _releaseIfIdle();
+      }
     }
   }
 
-  void runCommand(String name, [String argument = '']) {
+  void runCommand(String name, [String argument = '', bool now = false]) {
     final command = name.startsWith('/') ? name : '/$name';
     final text = argument.trim().isEmpty
         ? command
         : '$command ${argument.trim()}';
-    send(KernelTurn(id: 'command_${++_nextId}', text: text));
+    send(KernelTurn(id: 'command_${++_nextId}', text: text, now: now));
   }
 
   /// Both setup and config changes report the complete state, including
@@ -1609,7 +1730,9 @@ class AcpKernel
       case 'session_end':
       case 'prompt_complete':
       case 'turn_complete':
-        if (_turnId != null) _endTurn(false);
+        // The prompt response is authoritative while a request is in flight.
+        // Keep cancellation in force for late permissions and final updates.
+        if (_turnId != null && _sendingTurn == null) _endTurn(false);
         break;
     }
   }
@@ -2288,6 +2411,7 @@ class AcpKernel
     _turnStarted = null;
     _cancelling = false;
     _closeAssistantStream();
+    scheduleMicrotask(_sendNextTurn);
     if (!_starting) _releaseIfIdle();
   }
 
@@ -2306,7 +2430,7 @@ class AcpKernel
   }
 
   Future<void> _closeTransport(AcpTransport transport) {
-    final closing = Future<void>.sync(transport.close);
+    final closing = _trackShutdown(transport.close);
     _stopping = Future.wait([_stopping, closing]).then((_) {});
     // Observe errors even when nobody is awaiting stopped yet. Keep the
     // original failure on _stopping so a replacement cannot overlap it.
@@ -2318,12 +2442,37 @@ class AcpKernel
     return closing;
   }
 
+  Future<void> _trackShutdown(Future<void> Function() close) async {
+    try {
+      await close();
+      _failedShutdowns.remove(close);
+    } on Object {
+      _failedShutdowns.add(close);
+      rethrow;
+    }
+  }
+
+  Future<void> _retryShutdown(
+    Future<void> previous,
+    Future<void> reconnect,
+  ) async {
+    // Resume SSH while the old process is waiting to report its exit. Even
+    // a failed reconnect must wait for previous cleanup: otherwise another
+    // retry could lose that barrier and overlap the still closing process.
+    await Future.wait([reconnect, previous.catchError((Object _) {})]);
+    // A failed close has not proved exit. Retry it rather than either
+    // keeping its old error forever or overlapping a replacement process.
+    for (final close in [..._failedShutdowns]) {
+      await _trackShutdown(close);
+    }
+  }
+
   void _disconnect() {
     _files = null;
     final terminals = _terminals;
     _terminals = null;
     if (terminals != null) {
-      final closing = Future<void>.sync(terminals.close);
+      final closing = _trackShutdown(terminals.close);
       _stopping = Future.wait([_stopping, closing]).then((_) {});
       unawaited(
         _stopping.catchError((Object error) {
@@ -2344,6 +2493,19 @@ class AcpKernel
       emit(TasksReported(nextSeq, const []));
     }
     _startGeneration++;
+    // A queued item taken for sending may still be waiting for configuration.
+    // Until TurnStarted it remains in the transcript's queue, so remove it too.
+    if (_sendingTurn case final turn? when !_sendingStarted) {
+      emit(ItemRemoved(nextSeq, turn.id));
+    }
+    _sendingTurn = null;
+    _sendingStarted = false;
+    _sendingCancelled = false;
+    _sendNowTurn = null;
+    for (final id in _queuedTurns.keys) {
+      emit(ItemRemoved(nextSeq, id));
+    }
+    _queuedTurns.clear();
     _starting = false;
     _initialized = false;
     _sessionLoaded = false;
@@ -2391,11 +2553,20 @@ class AcpKernel
   @override
   void restart() {
     if (_disposed) return;
+    final location = _context.cwd ?? _context.resume?.cwd;
+    final host = location == null ? null : RemoteLocation.hostOf(location);
+    // Only an explicit retry clears a cached SSH failure. Ordinary prepare
+    // calls must not repeatedly ask every restored conversation to sign in.
+    final reconnect = host == null
+        ? Future<void>.value()
+        : Future.sync(SshHosts.instance[host].reconnect).then<void>((_) {});
     _endTurn(true);
     for (final (index, _) in _mcp.warnings.indexed) {
       emit(ItemRemoved(nextSeq, 'acp_mcp_warning_$index'));
     }
     _disconnect();
+    _stopping = _retryShutdown(_stopping, reconnect);
+    unawaited(_stopping.catchError((Object _) {}));
     _hasConfigOptions = false;
     for (final option in _configOptions.values) {
       option.replace(null);
@@ -2417,6 +2588,7 @@ class AcpKernel
     if (!_released ||
         _disposed ||
         (_turnId != null && !_replaying) ||
+        _sendingTurn != null ||
         _queuedTurns.isNotEmpty ||
         _childSessions.values.any((child) => child.active) ||
         _permissionRpcIds.isNotEmpty ||

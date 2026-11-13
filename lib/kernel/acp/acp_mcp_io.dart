@@ -11,6 +11,7 @@ import '../../mcp/tools_registration.dart';
 import '../../platform/data_dir.dart';
 import '../../remote/remote_customization_disk.dart';
 import '../../remote/remote_location.dart';
+import '../../remote/remote_mcp.dart';
 import '../../remote/ssh_host.dart';
 import '../agent_kernel.dart';
 import '../claude_code/claude_environment.dart';
@@ -36,11 +37,24 @@ Future<AcpMcpServers> loadAcpMcpServers(
     homeDir: customHome,
     disk: host == null ? null : RemoteCustomizationDisk(host),
   );
-  final items = await store.list(CustomizationKind.mcps, project: project);
+  final appDefault = <String, Object?>{};
+  final items = await store.list(
+    CustomizationKind.mcps,
+    project: project,
+    mcpDefaults: host != null && ToolsBridge.instance.http != null
+        ? {'baocode': appDefault}
+        : const {},
+  );
   if (items.isEmpty) return const AcpMcpServers();
   final Map<String, String> inherited;
   if (host == null) {
     inherited = await ClaudeEnvironment.of();
+  } else if (items.every(
+    (item) => item.enabled == false || identical(item.server, appDefault),
+  )) {
+    // App-generated endpoints need no environment expansion. In particular,
+    // a native Windows SSH host need not provide POSIX env or sh commands.
+    inherited = const {};
   } else {
     // Read the remote login environment. Never substitute this client's env
     // (Windows paths and credentials in particular) into a remote config.
@@ -57,17 +71,43 @@ Future<AcpMcpServers> loadAcpMcpServers(
     };
   }
   final connections = <ToolsHttpConnection>[];
+  final relayCommands = <String>{};
   final AcpMcpServers result;
   try {
     result = await buildAcpMcpServers(
       items,
       capabilities: capabilities,
       environment: {...inherited, ...environment},
-      configurationFor: (item) {
-        // Only the effective, enabled app-managed entry is upgraded. Never
-        // override a project/user server or export local credentials over SSH.
+      configurationFor: (item) async {
         final config = item.server;
         final http = ToolsBridge.instance.http;
+        if (host != null && identical(config, appDefault)) {
+          if (http == null) {
+            throw const FormatException(
+              'the app tools listener is unavailable',
+            );
+          }
+          try {
+            final connection = await openRemoteMcp(
+              host,
+              http,
+              cwd: location!,
+              useHttp: capabilities['http'] == true,
+            );
+            connections.add(connection);
+            if (connection.configuration['command'] case final String command) {
+              relayCommands.add(command);
+            }
+            return connection.configuration;
+          } on FormatException {
+            rethrow;
+          } on Object {
+            // Never expose connection addresses, environment or credentials.
+            throw const FormatException('could not open the SSH tools bridge');
+          }
+        }
+        // Only the effective local app-managed entry is upgraded. Explicit
+        // remote/project servers always keep their own configuration.
         if (hostName != null ||
             capabilities['http'] != true ||
             http == null ||
@@ -88,6 +128,9 @@ Future<AcpMcpServers> loadAcpMcpServers(
         return connection.configuration;
       },
       resolveCommand: (command, env) async {
+        // The server reports its own absolute launcher; never look it up in
+        // a login shell (or reinterpret a Windows command as a POSIX path).
+        if (relayCommands.contains(command)) return command;
         if (host == null) {
           return resolveLocalMcpCommand(command, env, cwd: project);
         }

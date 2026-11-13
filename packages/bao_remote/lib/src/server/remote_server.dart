@@ -12,6 +12,7 @@ import '../files/ide_file.dart';
 import '../files/local_files.dart';
 import '../files/recursive_watch.dart';
 import '../git/git_runner.dart';
+import '../mcp/mcp_stdio.dart';
 import '../platform/app_paths.dart';
 import '../platform/machine_platform.dart';
 import '../protocol.dart';
@@ -452,6 +453,7 @@ class RemoteServer {
     pid: pid,
     home: AppPaths.home(Platform.environment),
     dataDir: dataDir,
+    mcpStdioCommand: [...ServerMcp.selfCommand(), ServerMcp.command],
   );
 
   /// This machine, as mason names it.

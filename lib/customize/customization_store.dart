@@ -70,6 +70,7 @@ class CustomizationStore {
   Future<List<Customization>> list(
     CustomizationKind kind, {
     String? project,
+    Map<String, Map<String, Object?>> mcpDefaults = const {},
   }) async {
     if (!supported) return const [];
     final config = await this.config();
@@ -113,7 +114,7 @@ class CustomizationStore {
           ),
       ],
       CustomizationKind.rules => await _rules(config, project),
-      CustomizationKind.mcps => await _servers(project),
+      CustomizationKind.mcps => await _servers(project, defaults: mcpDefaults),
       CustomizationKind.hooks => await _hooks(config, project),
       CustomizationKind.plugins => await _plugins(config, project),
     };
@@ -524,7 +525,10 @@ class CustomizationStore {
   /// project's shared ones in its `.mcp.json`, and the claude.ai
   /// connectors the CLI has reached through the user's account (which it
   /// keeps the names of alone).
-  Future<List<Customization>> _servers(String? project) async {
+  Future<List<Customization>> _servers(
+    String? project, {
+    Map<String, Map<String, Object?>> defaults = const {},
+  }) async {
     final claudeJson = await _claudeJson();
     final state = await _json(claudeJson);
     final projects = state?['projects'];
@@ -570,7 +574,20 @@ class CustomizationStore {
     ];
 
     final mcpJson = project == null ? null : _paths.join(project, '.mcp.json');
+    final userServers = state?['mcpServers'];
     return [
+      // App-provided fallbacks obey the same disabled names and lose to every
+      // explicit user/project entry, including a disabled override.
+      ...servers(
+        CustomizationScope.user,
+        {
+          for (final entry in defaults.entries)
+            if (userServers is! Map || !userServers.containsKey(entry.key))
+              entry.key: entry.value,
+        },
+        claudeJson,
+        editable: false,
+      ),
       ...servers(
         CustomizationScope.user,
         state?['mcpServers'],

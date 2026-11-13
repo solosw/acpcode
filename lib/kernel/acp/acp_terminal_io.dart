@@ -257,7 +257,11 @@ class _TerminalHost implements AcpTerminalHost {
   Future<void> release(String sessionId, String id) =>
       _get(sessionId, id).release();
   @override
-  Future<void> close() => _closing ??= _close();
+  Future<void> close() =>
+      _closing ??= _close().catchError((Object error, StackTrace stack) {
+        _closing = null;
+        Error.throwWithStackTrace(error, stack);
+      });
   Future<void> _close() async {
     _closed = true;
     await Future.wait([
@@ -363,7 +367,11 @@ class _Terminal {
     done.complete(exitStatus!);
   }
 
-  Future<void> kill() => _killing ??= _kill();
+  Future<void> kill() =>
+      _killing ??= _kill().catchError((Object error, StackTrace stack) {
+        _killing = null;
+        Error.throwWithStackTrace(error, stack);
+      });
   Future<void> _kill() async {
     if (exitStatus != null) return;
     // Reuse the app's process-group/ConPTY cleanup rather than killing PIDs
@@ -377,7 +385,11 @@ class _Terminal {
     }
   }
 
-  Future<void> release() => _releasing ??= _release();
+  Future<void> release() =>
+      _releasing ??= _release().catchError((Object error, StackTrace stack) {
+        _releasing = null;
+        Error.throwWithStackTrace(error, stack);
+      });
   Future<void> _release() async {
     await kill();
     await _output.cancel();

@@ -21,6 +21,8 @@ import '../kernel/kernel_registry.dart';
 import '../kernel/kernel_types.dart';
 import '../l10n/l10n.dart';
 import '../models/model_providers.dart';
+import '../settings/chat_defaults.dart';
+import '../settings/user_settings.dart';
 import '../theme/workbench_theme.dart' show ColorThemeStorage;
 import '../remote/remote_location.dart';
 import '../remote/ssh_host.dart' show SshHostState, SshHosts;
@@ -297,6 +299,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     AppLocalizations Function()? l10n,
     this.workspaceDirectories = const ProjectWorkspaceDirectories(),
     this.defaultTaskDirectory,
+    this.userSettings,
     ResumeAfterReset? resumes,
   }) : _projects = [...projects],
        resumes = resumes ?? ResumeAfterReset.current,
@@ -1136,7 +1139,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// A new chat in [folder]'s tabs, shown: an untouched one there reused.
   AgentThread newIdeChat(String folder) {
     final thread =
-        ideChats(folder).where(_isUntouched).firstOrNull ??
+        ideChats(folder).where(_canReuseEmpty).firstOrNull ??
         _newThread(projectAt(folder));
     _addIdeChat(folder, thread);
     _save();
@@ -1286,8 +1289,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// The kernel a new agent starts with: the last one picked.
-  KernelDescriptor get preferredKernel => _preferredKernel;
+  /// Explicit defaults from Settings → General; read when creating a chat.
+  final UserSettings? userSettings;
+
+  /// The configured default, otherwise the last available kernel picked.
+  KernelDescriptor get preferredKernel =>
+      kernels
+          .where((k) => k.id == ChatDefaults.agent(userSettings))
+          .firstOrNull ??
+      kernels.where((k) => k.id == _preferredKernel.id).firstOrNull ??
+      kernels.first;
   KernelDescriptor _preferredKernel;
 
   /// The mode, model, context and effort a new agent starts with: the
@@ -3587,7 +3598,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       throw StateError('No project to create an agent in');
     }
     for (final thread in _threads) {
-      if (thread.project == project && _isUntouched(thread)) {
+      if (thread.project == project && _canReuseEmpty(thread)) {
         select(thread);
         return thread;
       }
@@ -3603,7 +3614,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   AgentThread startAgent(Project project) {
     for (final thread in _threads) {
       if (thread.project == project &&
-          _isUntouched(thread) &&
+          _canReuseEmpty(thread) &&
           !_hasPane(thread)) {
         return thread;
       }
@@ -3670,6 +3681,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return thread;
   }
 
+  /// An empty chat with old defaults must not swallow a request for a new one.
+  bool _canReuseEmpty(AgentThread thread) {
+    if (!_isUntouched(thread)) return false;
+    if (!kernels.any((kernel) => kernel.id == thread.kernel.id)) return false;
+    if (agentSetup?.call(thread.project.path) != null) return true;
+    final agent = ChatDefaults.agent(userSettings);
+    if (kernels.any((kernel) => kernel.id == agent) &&
+        thread.kernel.id != agent) {
+      return false;
+    }
+    final mode = ChatDefaults.modes(userSettings)[thread.kernel.id];
+    if (mode == null) return true;
+    final choice = thread.session.modes;
+    if (choice != null && !choice.options.any((option) => option.id == mode)) {
+      return true;
+    }
+    return (choice?.selected.id ??
+            thread.session.kernelContext.settings['mode']) ==
+        mode;
+  }
+
   /// A new, empty agent in [project], listed here but not shown.
   AgentThread _newThread(
     Project project, {
@@ -3682,9 +3714,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
           final id? => kernels.where((k) => k.id == id).firstOrNull,
           null => null,
         } ??
-        _preferredKernel;
+        preferredKernel;
     final settings = _setUp(project.path, {
       ..._preferredSettings,
+      KernelChoiceKind.mode.name: ?ChatDefaults.modes(userSettings)[kernel.id],
       // Settings → Models' pick, if any, over the last one.
       KernelChoiceKind.model.name: ?ModelProviders.current.defaultModel,
       ...overrides,

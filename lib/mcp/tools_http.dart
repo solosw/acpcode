@@ -1,4 +1,4 @@
-// One in-process Streamable HTTP listener for all local ACP conversations.
+// One in-process Streamable HTTP listener for local and SSH ACP conversations.
 // Per-conversation bearer capabilities never go in user/project configuration.
 import 'dart:async';
 import 'dart:convert';
@@ -35,13 +35,30 @@ class ToolsHttpServer {
     _server!.listen((request) => unawaited(_handle(request)));
   }
 
-  ToolsHttpConnection open({required String cwd}) {
-    final endpoint = url;
-    if (endpoint == null) throw StateError('MCP HTTP listener is not running');
+  ToolsHttpConnection open({required String cwd, Uri? forwardedUrl}) {
+    final endpoint = forwardedUrl ?? url;
+    if (forwardedUrl != null &&
+        (forwardedUrl.scheme != 'http' ||
+            forwardedUrl.host != '127.0.0.1' ||
+            !forwardedUrl.hasPort ||
+            forwardedUrl.port < 1 ||
+            forwardedUrl.userInfo.isNotEmpty ||
+            forwardedUrl.path != '/mcp' ||
+            forwardedUrl.hasQuery ||
+            forwardedUrl.hasFragment)) {
+      throw ArgumentError('MCP forwarding requires a loopback endpoint');
+    }
+    if (url == null || endpoint == null) {
+      throw StateError('MCP HTTP listener is not running');
+    }
     final key = base64Url.encode(
       List.generate(32, (_) => _random.nextInt(256)),
     );
-    final client = _Client(cwd, 'mcp-http-${++_nextClient}');
+    final client = _Client(
+      cwd,
+      'mcp-http-${++_nextClient}',
+      endpoint.authority,
+    );
     _clients[key] = client;
     return ToolsHttpConnection(
       {
@@ -58,10 +75,13 @@ class ToolsHttpServer {
   Future<void> _handle(HttpRequest request) async {
     final response = request.response;
     try {
-      // Native ACP clients need no browser origin. Reject all browser origins,
-      // and require the literal loopback authority (also blocks DNS rebinding).
+      // Reject browser origins and non-loopback authorities before credentials.
+      // An SSH tunnel changes the port; its exact authority is bound to the
+      // authenticated conversation below, never to the whole listener.
+      final authority = request.headers.value('host');
       if (request.headers.value('origin') != null ||
-          request.headers.value('host') != url?.authority) {
+          authority == null ||
+          !RegExp(r'^127\.0\.0\.1:[0-9]+$').hasMatch(authority)) {
         return await _status(response, HttpStatus.forbidden);
       }
       if (request.uri.path != '/mcp' || request.uri.hasQuery) {
@@ -74,6 +94,9 @@ class ToolsHttpServer {
           : null;
       if (client == null) {
         return await _status(response, HttpStatus.unauthorized);
+      }
+      if (authority != client.authority) {
+        return await _status(response, HttpStatus.forbidden);
       }
       final version = request.headers.value('mcp-protocol-version');
       if (version != null && !_versions.contains(version)) {
@@ -193,7 +216,7 @@ class ToolsHttpServer {
 }
 
 class _Client {
-  _Client(this.cwd, this.session) {
+  _Client(this.cwd, this.session, this.authority) {
     _changes = ClaudeSdkTools.changes.listen((_) {
       if (!initialized || closed) return;
       for (final response in [..._events]) {
@@ -210,6 +233,7 @@ class _Client {
 
   final String cwd;
   final String session;
+  final String authority;
   final _cancelled = Completer<void>();
   final _events = <HttpResponse>{};
   final _writes = <HttpResponse, Future<void>>{};

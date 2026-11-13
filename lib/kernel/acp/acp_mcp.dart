@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../customize/customizations.dart';
 import '../../customize/mcp_probe.dart';
 import '../agent_kernel.dart';
@@ -46,7 +48,8 @@ Future<AcpMcpServers> buildAcpMcpServers(
   required Map<String, Object?> capabilities,
   required Map<String, String> environment,
   required AcpMcpCommandResolver resolveCommand,
-  Map<String, Object?>? Function(Customization item)? configurationFor,
+  FutureOr<Map<String, Object?>?> Function(Customization item)?
+  configurationFor,
 }) async {
   int priority(CustomizationScope scope) => switch (scope) {
     CustomizationScope.user => 0,
@@ -69,7 +72,7 @@ Future<AcpMcpServers> buildAcpMcpServers(
   for (final item in effective.values) {
     if (item.enabled == false) continue;
     try {
-      final config = configurationFor?.call(item) ?? item.server;
+      final config = await configurationFor?.call(item) ?? item.server;
       if (config == null) throw const FormatException('Invalid configuration');
       String expand(String value) {
         for (final match in RegExp(

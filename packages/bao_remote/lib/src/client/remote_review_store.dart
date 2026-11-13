@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import '../protocol.dart';
@@ -8,27 +9,48 @@ import '../rpc/rpc_peer.dart';
 /// [ReviewStore] of the remote host: its checkpoints there (in the
 /// server's data folder), every call a request.
 class RemoteReviewStore implements ReviewStore, ReviewSnapshots {
-  RemoteReviewStore(this._peer, this._id, {this._reopen});
+  RemoteReviewStore(
+    this._peer,
+    this._id, {
+    this._reopen,
+    Future<void>? cancel,
+    this._onDispose,
+  }) {
+    cancel?.then((_) => dispose());
+  }
 
   RpcPeer _peer;
   int _id;
   Future<RemoteReviewStore> Function()? _reopen;
   Future<void>? _reopening;
+  final _closed = Completer<void>();
+  final void Function()? _onDispose;
+
+  /// Stops its pending requests and reconnect wait without closing shared SSH.
+  void dispose() {
+    if (_closed.isCompleted) return;
+    _closed.complete();
+    _reopen = null;
+    _onDispose?.call();
+  }
 
   Future<Object?> _call(
     String method, [
     Map<String, Object?> args = const {},
   ]) async {
     while (true) {
+      if (_closed.isCompleted) throw const RpcCancelled();
       await _reopening;
+      if (_closed.isCompleted) throw const RpcCancelled();
       final peer = _peer;
       try {
         return await peer.request(RemoteProtocol.reviewCall, {
           'id': _id,
           'method': method,
           'args': args,
-        });
+        }, _closed.future);
       } on RpcClosed {
+        if (_closed.isCompleted) throw const RpcCancelled();
         final reopen = _reopen;
         if (reopen == null) rethrow;
         // Another call may already have replaced the closed connection.
@@ -43,6 +65,10 @@ class RemoteReviewStore implements ReviewStore, ReviewSnapshots {
   Future<void> _replace(Future<RemoteReviewStore> Function() reopen) async {
     try {
       final store = await reopen();
+      if (_closed.isCompleted) {
+        store.dispose();
+        throw const RpcCancelled();
+      }
       _peer = store._peer;
       _id = store._id;
       _reopen = store._reopen;

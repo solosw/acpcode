@@ -81,48 +81,82 @@ class ChangeReview extends ChangeNotifier {
   /// [realRoot] is [root] with its links resolved, where that is another
   /// path: the agent may tell the project's files by it (Claude Code does:
   /// macOS's `/tmp` is `/private/tmp`), and they are listed by [root].
+  /// The store is borrowed unless `ownsStore` is true, in which case
+  /// [dispose] also closes its remote requests and reconnect waits.
   ChangeReview(
     this._store, {
     required this.root,
     p.Context? paths,
     this.realRoot,
+    this._ownsStore = false,
   }) : _paths = paths ?? (_store is RemoteReviewStore ? p.posix : p.context);
 
   /// The review of the agent working in [root], continuing what [session]
   /// left; null where there can be none (see [openReviewStore]).
-  static Future<ChangeReview?> open(String root, {String? session}) async {
-    final store = await openReviewStore(root);
+  static Future<ChangeReview?> open(
+    String root, {
+    String? session,
+    Future<void>? cancel,
+  }) async {
+    final store = await openReviewStore(root, cancel: cancel);
     if (store == null) return null;
-    // A remote project's paths are its host's (POSIX), whatever this
-    // machine spells its own with.
-    final paths = RemoteLocation.pathsOf(root);
-    final realRoot = await realRootOf(root);
-    root = RemoteLocation.pathOf(root);
-    if (session == null) {
-      return ChangeReview(store, root: root, paths: paths, realRoot: realRoot);
+    try {
+      // A remote project's paths are its host's (POSIX), whatever this
+      // machine spells its own with.
+      final paths = RemoteLocation.pathsOf(root);
+      final realRoot = await realRootOf(root);
+      root = RemoteLocation.pathOf(root);
+      if (session == null) {
+        return ChangeReview(
+          store,
+          root: root,
+          paths: paths,
+          realRoot: realRoot,
+          ownsStore: true,
+        );
+      }
+      return await resume(
+        store,
+        session,
+        root: root,
+        paths: paths,
+        realRoot: realRoot,
+        ownsStore: true,
+      );
+    } on Object {
+      if (store case final RemoteReviewStore remote) remote.dispose();
+      rethrow;
     }
-    return resume(store, session, root: root, paths: paths, realRoot: realRoot);
   }
 
   /// The review over [store], with the changes [session] left pending.
+  /// Borrows [store] unless [ownsStore] is true.
   static Future<ChangeReview> resume(
     ReviewStore store,
     String session, {
     required String root,
     p.Context? paths,
     String? realRoot,
+    bool ownsStore = false,
   }) async {
     final review = ChangeReview(
       store,
       root: root,
       paths: paths,
       realRoot: realRoot,
+      ownsStore: ownsStore,
     );
-    await review._load(session);
-    return review;
+    try {
+      await review._load(session);
+      return review;
+    } on Object {
+      review.dispose();
+      rethrow;
+    }
   }
 
   final ReviewStore _store;
+  final bool _ownsStore;
   final p.Context _paths;
 
   /// The agent's directory (on its host): a path it tells relative is in
@@ -164,12 +198,17 @@ class ChangeReview extends ChangeNotifier {
     if (id == null || id == _session) return;
     final before = _session;
     _session = id;
+    if (before != null) _supersededSessions.add(before);
+    _supersededSessions.remove(id);
     unawaited(
       _enqueue(() async {
-        // Nothing yet: nothing to keep.
-        if (_entries.isEmpty && _unseen.isEmpty) return;
+        // Nothing yet: nothing to keep or migrate.
+        if (_entries.isEmpty &&
+            _unseen.isEmpty &&
+            _supersededSessions.isEmpty) {
+          return;
+        }
         await _persist();
-        if (before != null) await _store.forget(before);
       }),
     );
   }
@@ -794,6 +833,10 @@ class ChangeReview extends ChangeNotifier {
   /// kept again only once it changed.
   String? _persisted;
 
+  /// Source records stay until the current session was saved and their cleanup
+  /// succeeds. A temporary failure must not discard the only saved baseline.
+  final Set<String> _supersededSessions = {};
+
   Future<void> _persist() async {
     final session = _session;
     if (session == null) return;
@@ -821,19 +864,37 @@ class ChangeReview extends ChangeNotifier {
             ],
           });
     final record = '$session\x00$data';
-    if (record == _persisted) return;
-    if (nothing) {
-      await _store.forget(session);
-    } else {
-      await _store.save(
-        session,
-        data,
-        blobs: [
-          for (final entry in kept.values) ...[?entry.base, ?entry.after],
-        ],
-      );
+    if (record != _persisted) {
+      try {
+        if (nothing) {
+          await _store.forget(session);
+        } else {
+          await _store.save(
+            session,
+            data,
+            blobs: [
+              for (final entry in kept.values) ...[?entry.base, ?entry.after],
+            ],
+          );
+        }
+      } on ReviewUnavailable catch (error) {
+        if (!error.retryable) rethrow;
+        // Leave the record dirty so a later observation retries, without
+        // hiding pending edits or losing their base.
+        return;
+      }
+      _persisted = record;
     }
-    _persisted = record;
+    if (_session != session) return;
+    for (final previous in _supersededSessions.toList()) {
+      try {
+        await _store.forget(previous);
+      } on ReviewUnavailable catch (error) {
+        if (!error.retryable) rethrow;
+        return;
+      }
+      _supersededSessions.remove(previous);
+    }
   }
 
   Future<void> _load(String session) async {
@@ -914,6 +975,7 @@ class ChangeReview extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    if (_ownsStore && _store is RemoteReviewStore) _store.dispose();
     super.dispose();
   }
 }

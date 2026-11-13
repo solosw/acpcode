@@ -144,6 +144,7 @@ class RemoteHello {
     required this.pid,
     required this.home,
     required this.dataDir,
+    this.mcpStdioCommand = const [],
   });
 
   factory RemoteHello.fromJson(Map<String, Object?> json) => RemoteHello(
@@ -155,6 +156,8 @@ class RemoteHello {
     pid: json['pid'] as int,
     home: json['home'] as String? ?? '',
     dataDir: json['dataDir'] as String? ?? '',
+    mcpStdioCommand:
+        (json['mcpStdioCommand'] as List?)?.cast<String>() ?? const [],
   );
 
   /// [RemoteProtocol.version] of the server.
@@ -174,6 +177,10 @@ class RemoteHello {
   /// Where the server keeps its own state there (`~/.baocode-server/data`).
   final String dataDir;
 
+  /// The headless stdio-to-HTTP MCP relay, empty on servers predating it.
+  /// Only the command is advertised here; URLs and tokens stay per conversation.
+  final List<String> mcpStdioCommand;
+
   Map<String, Object?> toJson() => {
     'protocol': protocol,
     'version': version,
@@ -181,6 +188,7 @@ class RemoteHello {
     'pid': pid,
     'home': home,
     'dataDir': dataDir,
+    if (mcpStdioCommand.isNotEmpty) 'mcpStdioCommand': mcpStdioCommand,
   };
 }
 

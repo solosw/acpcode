@@ -476,6 +476,43 @@ void main() {
   });
 
   group('review', () {
+    test('retries when SSH is lost during the first review opening', () async {
+      final path = p.join(root, 'a.txt');
+      File(path).writeAsStringSync('before\n');
+      final host = hosts['dev'];
+      await host.ready;
+      final first = connector.links.single;
+      final entered = Completer<void>();
+      first.server.peer.handlers[RemoteProtocol.reviewOpen] = (_, call) async {
+        entered.complete();
+        await call.cancelled;
+        return null;
+      };
+      Object? failure;
+      final opening = remoteReviewStore(host).then(
+        (store) => store,
+        onError: (Object error) {
+          failure = error;
+          return null;
+        },
+      );
+      await entered.future.timeout(const Duration(seconds: 10));
+      await first.drop();
+      final store = await opening.timeout(const Duration(seconds: 10));
+      expect(failure, isNull);
+      expect(store, isNotNull);
+      expect(connector.links, hasLength(2));
+      final review = ChangeReview(store!, root: root);
+      addTearDown(review.dispose);
+      await review.begin();
+      File(path).writeAsStringSync('after\n');
+      await review.observe();
+      expect(review.failure, isNull);
+      expect(review.changes.single.path, path);
+      await review.undoAll();
+      expect(File(path).readAsStringSync(), 'before\n');
+    });
+
     test(
       'keeps tracking and undoing edits after the SSH connection is lost',
       () async {

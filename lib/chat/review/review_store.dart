@@ -12,10 +12,13 @@ export 'package:bao_remote/review.dart';
 /// The store for the files of the project at [root]: its machine's; null
 /// where there is none (the web, or under test). A remote project's is
 /// its host's: its checkpoints there, in the server's data folder.
-Future<ReviewStore?> openReviewStore(String root) async {
+Future<ReviewStore?> openReviewStore(
+  String root, {
+  Future<void>? cancel,
+}) async {
   if (RemoteLocation.hostOf(root) case final host?) {
     if (!reviewSupported) return null;
-    return remoteReviewStore(SshHosts.instance[host]);
+    return remoteReviewStore(SshHosts.instance[host], cancel: cancel);
   }
   return platform.openReviewStore();
 }

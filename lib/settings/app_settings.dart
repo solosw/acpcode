@@ -160,6 +160,7 @@ class AppSettings {
       case SettingsSection.general:
         return GeneralSettingsPage(
           settings: files?.settings,
+          workspace: workspace,
           tips: tips,
           claudeStatus: claudeStatus,
         );

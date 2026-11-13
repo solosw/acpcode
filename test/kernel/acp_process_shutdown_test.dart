@@ -138,11 +138,38 @@ void main() {
       process.exited.completeError(StateError('connection lost'));
       await check;
       expect(cancelled, isTrue);
-      expect(identical(closing, transport.close()), isTrue);
+      final retried = transport.close();
+      expect(identical(closing, retried), isFalse);
+      await expectLater(retried, throwsStateError);
       await process.out.close();
       await process.err.close();
     },
   );
+
+  test('remote close can confirm exit after a shutdown timeout', () async {
+    final process = _Process();
+    final transport = QueuedAcpTransport(
+      RemoteAcpTransport.forProcess(process),
+    );
+    final closing = transport.close();
+    final timedOut = expectLater(closing, throwsA(isA<TimeoutException>()));
+    await timedOut;
+    expect(process.kills, [false, true]);
+
+    final retried = transport.close();
+    expect(identical(closing, retried), isFalse);
+    expect(identical(retried, transport.close()), isTrue);
+    var stopped = false;
+    final waiting = retried.then((_) => stopped = true);
+    await pumpEventQueue();
+    expect(stopped, isFalse, reason: 'Retry still needs proof of exit');
+    process.exited.complete(-9);
+    await waiting;
+    expect(stopped, isTrue);
+    expect(identical(retried, transport.close()), isTrue);
+    await process.out.close();
+    await process.err.close();
+  });
 
   for (final ignoreTerm in [false, true]) {
     test(

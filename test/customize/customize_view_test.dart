@@ -61,6 +61,7 @@ class _MemoryStore implements CustomizationStore {
   Future<List<Customization>> list(
     CustomizationKind kind, {
     String? project,
+    Map<String, Map<String, Object?>> mcpDefaults = const {},
   }) async => [
     if (kind == CustomizationKind.mcps) ...servers,
     if (kind == CustomizationKind.skills)

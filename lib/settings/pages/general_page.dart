@@ -25,8 +25,10 @@ import '../../tips/feature_tips_controller.dart';
 import '../../tips/feature_tips_view.dart';
 import '../../window/window_settings.dart';
 import '../../workspace/main_window.dart';
+import '../../workspace/workspace.dart';
 import '../shell_command_actions.dart';
 import '../user_settings.dart';
+import 'chat_defaults_card.dart';
 import 'settings_dropdown.dart';
 import 'settings_widgets.dart';
 
@@ -48,12 +50,14 @@ class GeneralSettingsPage extends StatelessWidget {
   const GeneralSettingsPage({
     super.key,
     this.settings,
+    this.workspace,
     this.tips,
     this.claudeStatus,
   });
 
   /// settings.json; none under test, where choices are not kept.
   final UserSettings? settings;
+  final Workspace? workspace;
 
   /// The Claude Code that runs now ([localClaudeStatus]); none under
   /// test and on the web, where the path is not shown.
@@ -409,6 +413,7 @@ class GeneralSettingsPage extends StatelessWidget {
                 ),
               ],
             ),
+            ChatDefaultsCard(settings: settings, workspace: workspace),
             if (claudeStatus case final claudeStatus? when !kIsWeb)
               SettingsGroup(
                 title: 'Claude Code',

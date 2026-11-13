@@ -79,11 +79,11 @@ class GitReviewStore {
         ? p.relative(excluded, from: root)
         : null;
     final store = GitReviewStore._(root, gitDir, own, legacy ? source : null);
-    _opened.add(gitDir);
-    // It may be made anew: its latest is set again.
-    _latestTrees.remove(gitDir);
     try {
       await store._locked(() async {
+        _opened.add(gitDir);
+        // It may be made anew: its latest is set again.
+        _latestTrees.remove(gitDir);
         if (!await File(p.join(gitDir, 'HEAD')).exists()) {
           await _dropFolder(gitDir);
           await _initialize(gitDir, root);
@@ -107,6 +107,7 @@ class GitReviewStore {
         }
       });
     } on Object catch (error) {
+      if (error is ReviewUnavailable && error.retryable) rethrow;
       final resource = _resourceFailure(error);
       if (resource != null) throw resource;
       return null;
@@ -380,11 +381,51 @@ class GitReviewStore {
   /// in the same project share it).
   static final Map<String, Future<void>> _locks = {};
 
-  Future<T> _locked<T>(Future<T> Function() body) {
-    final result = (_locks[gitDir] ?? Future.value()).then((_) => body());
+  Future<T> _locked<T>(Future<T> Function() body) => _serialized(gitDir, body);
+
+  static Future<T> _serialized<T>(String gitDir, Future<T> Function() body) {
+    final result = (_locks[gitDir] ?? Future.value()).then(
+      (_) => _guarded(gitDir, body),
+    );
     _locks[gitDir] = result.then((_) {}, onError: (Object _) {});
     return result;
   }
+
+  /// Other server processes must not replace the index while a stale Git
+  /// lock is being removed. The OS releases this guard on process exit; its
+  /// file stays beside the repository, including while it is initialized or
+  /// replaced. Never delete it: another process may still hold its inode.
+  static Future<T> _guarded<T>(
+    String gitDir,
+    Future<T> Function() body,
+  ) => _resources(() async {
+    final file = File('$gitDir.guard');
+    await file.parent.create(recursive: true);
+    final guard = await file.open(mode: FileMode.append);
+    try {
+      try {
+        // Nonblocking, with the same explicit byte range on Windows. POSIX
+        // locks belong to the process, so _locks still serializes our calls.
+        await guard.lock(FileLock.exclusive, 0, 1);
+      } on FileSystemException catch (error) {
+        final code = error.osError?.errorCode;
+        // Only lock acquisition errors are classified here. POSIX fcntl uses
+        // EACCES/EAGAIN for contention; opening and permission failures escape.
+        // ERROR_LOCK_VIOLATION on Windows, EAGAIN/EACCES on POSIX.
+        final busy = Platform.isWindows
+            ? code == 33
+            : code == 11 || code == 13 || code == 35;
+        if (!busy) rethrow;
+        throw const ReviewUnavailable(
+          'Snapshot repository temporarily busy.',
+          retryable: true,
+        );
+      }
+      return await body();
+    } finally {
+      await guard.close();
+    }
+  });
 
   static int _scratch = 0;
 
@@ -396,6 +437,13 @@ class GitReviewStore {
   /// Replaceable by tests to reproduce process failures without waiting a minute.
   @visibleForTesting
   static var run = runProcess;
+
+  // Git must keep automatic maintenance in its waiting process tree so a
+  // timeout cannot release the project queue while detached Git writes on.
+  static const _foregroundMaintenance = [
+    'gc.autoDetach=false',
+    'maintenance.autoDetach=false',
+  ];
 
   /// Runs `git` on the repository and the project, with the index at
   /// [index] (by default its own); fails unless the exit code is in [ok]
@@ -425,6 +473,7 @@ class GitReviewStore {
             'core.fsmonitor=false',
             'core.quotePath=false',
             'core.longpaths=true',
+            ..._foregroundMaintenance,
           ]) ...['-c', setting],
           ...arguments,
         ],
@@ -923,23 +972,46 @@ class GitReviewStore {
       ],
       repo: repo,
       input: utf8.encode(specs.join('\x00')),
+      // Lock conflicts are classified by Git's diagnostic below.
+      environment: const {'LC_ALL': 'C'},
       ok: const {0, 1},
       timeout: const Duration(minutes: 5),
     );
-    try {
-      await add();
-    } on GitReviewError catch (error) {
-      // Left by a Git that was killed (one here would have finished; one
-      // of another run of the app, long since).
-      final lock = File('$index.lock');
-      if (!error.stderr.contains('index.lock') ||
-          !await lock.exists() ||
-          DateTime.now().difference(await lock.lastModified()) <
-              const Duration(minutes: 5)) {
-        rethrow;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await add();
+        return;
+      } on GitReviewError catch (error) {
+        if (!error.stderr.contains('$index.lock') ||
+            !error.stderr.contains('File exists')) {
+          rethrow;
+        }
+        // Another server process may still be writing. Keep the baseline
+        // and pending edits, and let the next scan try again.
+        final busy = ReviewUnavailable(
+          'Snapshot index temporarily busy: $error',
+          retryable: true,
+        );
+        if (attempt != 0) throw busy;
+        final lock = File('$index.lock');
+        final stat = await lock.stat();
+        if (stat.type == FileSystemEntityType.notFound ||
+            DateTime.now().difference(stat.modified) <
+                const Duration(minutes: 5)) {
+          throw busy;
+        }
+        // A lock left by a killed Git can be removed. If another writer
+        // gets there first, the retry still treats its lock as temporary.
+        try {
+          await lock.delete();
+        } on FileSystemException catch (error) {
+          if (error.osError?.errorCode == 2 ||
+              (Platform.isWindows && error.osError?.errorCode == 3)) {
+            throw busy;
+          }
+          rethrow;
+        }
       }
-      await lock.delete();
-      await add();
     }
   }
 
@@ -1443,15 +1515,14 @@ class GitReviewStore {
       await for (final entry in folder.list(followLinks: false)) {
         if (entry is! Directory) continue;
         final gitDir = entry.path;
-        if (await _hasLegacy(gitDir)) continue;
-        if (!await File(p.join(gitDir, 'HEAD')).exists()) {
-          if (!_opened.contains(gitDir)) await _delete(entry);
-          continue;
-        }
-        await _withLock(
-          gitDir,
-          () => _tidyRepository(gitDir, cutoff, since: last),
-        );
+        await _withLock(gitDir, () async {
+          if (await _hasLegacy(gitDir)) return;
+          if (!await File(p.join(gitDir, 'HEAD')).exists()) {
+            if (!_opened.contains(gitDir)) await _delete(entry);
+            return;
+          }
+          await _tidyRepository(gitDir, cutoff, since: last);
+        });
       }
     } on Object {
       // Tried again next time.
@@ -1471,12 +1542,14 @@ class GitReviewStore {
       await for (final entry in folder.list(followLinks: false)) {
         if (entry is! Directory) continue;
         final gitDir = entry.path;
-        if (!_opened.contains(gitDir) ||
-            !await File(p.join(gitDir, 'HEAD')).exists()) {
-          await _delete(entry);
-          continue;
-        }
-        await _withLock(gitDir, () => _clearRepository(gitDir));
+        await _withLock(gitDir, () async {
+          if (!_opened.contains(gitDir) ||
+              !await File(p.join(gitDir, 'HEAD')).exists()) {
+            await _delete(entry);
+            return;
+          }
+          await _clearRepository(gitDir);
+        });
       }
     } on Object {
       // What is left stays.
@@ -1520,9 +1593,7 @@ class GitReviewStore {
     String gitDir,
     Future<void> Function() body,
   ) async {
-    final done = (_locks[gitDir] ?? Future.value()).then((_) => body());
-    _locks[gitDir] = done.then((_) {}, onError: (Object _) {});
-    await done.catchError((Object _) {});
+    await _serialized(gitDir, body).catchError((Object _) {});
   }
 
   static Future<ProcessResult> _gitOn(
@@ -1530,20 +1601,31 @@ class GitReviewStore {
     List<String> arguments, {
     String? input,
   }) async {
-    if (input == null) {
-      return Process.run('git', ['--git-dir=$gitDir', ...arguments]);
+    // Maintenance holds the same project queue as snapshots. It must release
+    // it even when Git or a child retaining its output pipes stops responding.
+    final result = await run(
+      'git',
+      [
+        '--git-dir=$gitDir',
+        for (final setting in _foregroundMaintenance) ...['-c', setting],
+        ...arguments,
+      ],
+      workingDirectory: gitDir,
+      input: input == null ? null : utf8.encode(input),
+      timeout: const Duration(seconds: 60),
+    );
+    if (result.exitCode != 0) {
+      final resource = _resourceFailure(
+        GitReviewError(arguments, result.exitCode, result.stderr),
+      );
+      if (resource != null) throw resource;
     }
-    final process = await Process.start('git', [
-      '--git-dir=$gitDir',
-      ...arguments,
-    ]);
-    final out = process.stdout.drain<void>();
-    final err = process.stderr.drain<void>();
-    process.stdin.write(input);
-    await process.stdin.close();
-    final code = await process.exitCode;
-    await Future.wait([out, err]);
-    return ProcessResult(process.pid, code, '', '');
+    return ProcessResult(
+      0,
+      result.exitCode,
+      utf8.decode(result.stdout, allowMalformed: true),
+      result.stderr,
+    );
   }
 
   static Future<bool> _deleteRefs(String gitDir, Iterable<String> refs) async {

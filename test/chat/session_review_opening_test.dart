@@ -170,6 +170,73 @@ void _toolResult(
 }
 
 void main() {
+  for (final retry in ['attach', 'send']) {
+    test(
+      'retries a failed review opening on $retry and keeps early edits',
+      () async {
+        final temp = Directory.systemTemp.createTempSync('retry-review-');
+        final root = Directory(p.join(temp.path, 'project'))..createSync();
+        final file = File(p.join(root.path, 'file.txt'))
+          ..writeAsStringSync('before\n');
+        final store = BlobReviewStore.open(p.join(temp.path, 'checkpoints'));
+        final review = ChangeReview(store, root: root.path);
+        final first = Completer<ChangeReview?>();
+        var attempts = 0;
+        late final KernelDescriptor descriptor;
+        descriptor = KernelDescriptor(
+          id: 'retry',
+          label: 'Retry',
+          icon: Icons.bolt,
+          description: '',
+          create: (_) => _FastKernel(descriptor, file.path, snapshot: true),
+        );
+        final session = ChatSession(
+          kernel: descriptor,
+          historyCount: 0,
+          kernelContext: KernelContext(cwd: 'ssh://dev${root.path}'),
+          openReview: (_, {session}) {
+            attempts++;
+            return attempts == 1 ? first.future : Future.value(review);
+          },
+        );
+        try {
+          session.attach();
+          session.send(const ComposerMessage(text: 'first edit'));
+          await pumpEventQueue(times: 30);
+          first.completeError(
+            const ReviewUnavailable(
+              'The connection is temporarily unavailable.',
+              retryable: true,
+            ),
+          );
+          await pumpEventQueue(times: 30);
+          expect(attempts, 1);
+          expect(session.changeReview, isNull);
+          if (retry == 'attach') {
+            session.detach();
+            session.attach();
+          } else {
+            session.send(const ComposerMessage(text: 'next edit'));
+          }
+          await pumpEventQueue(times: 100);
+          expect(attempts, 2);
+          expect(session.changeReview, same(review));
+          await review.look();
+          expect(session.fileChanges.single.tracked, isTrue);
+          expect(
+            await session.originalOf(session.fileChanges.single)!(),
+            'before\n',
+          );
+          await review.undoAll();
+          expect(file.readAsStringSync(), 'before\n');
+        } finally {
+          session.dispose();
+          temp.deleteSync(recursive: true);
+        }
+      },
+    );
+  }
+
   for (final name in ['Edit', 'Write']) {
     test(
       'SSH Claude $name supplies a write-time snapshot for delayed review',

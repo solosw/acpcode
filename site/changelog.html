@@ -31,6 +31,14 @@
 
   <section class="release" id="v1.9.2">
     <h2 class="plain"><a href="#v1.9.2">1.9.2</a></h2>
+    <p>Fork updates</p>
+    <ul>
+    <li>Queue messages while an ACP agent is busy, with reordering, withdrawal for editing, and Send now.</li>
+    <li>Choose the default agent and each agent's default mode for new conversations in Settings → General.</li>
+    <li>Use BaoCode's built-in browser MCP tools from ACP agents over SSH when local access is enabled and the target tab is shared.</li>
+    <li>Retry failed or timed-out SSH ACP connections without getting stuck on the previous connection or process.</li>
+    <li>Keep changed-file review and undo working through long SSH sessions, reconnects, and temporary checkpoint or storage failures.</li>
+    </ul>
     <p>This release fixes a batch of chat, model and SSH problems, brings SSH remote to Linux hosts on RISC-V, and lets models go through magpie's gateway.</p>
     <p>New</p>
     <ul>
@@ -53,6 +61,12 @@
 
   <section class="release" id="v1.9.1">
     <h2 class="plain"><a href="#v1.9.1">1.9.1</a></h2>
+    <p>Fork fixes</p>
+    <ul>
+    <li>Connect ACP file reads and writes to chat change review, including files outside the workspace, with Keep and Undo for local and SSH sessions.</li>
+    <li>Resume file tracking after repeated SSH disconnects or a manual reconnect following a failed login, retaining existing undo baselines.</li>
+    <li>Establish a fresh scan baseline when an old snapshot has been collected, preserving recorded file changes; fix tracking through symlinks and during background edits.</li>
+    </ul>
     <p>This release fills in the details: themes can follow the system, models can be imported from ChatGPT credentials, the sidebar's projects can be ordered, the browser tools act more like a person, and a batch of Windows and input problems are fixed.</p>
     <p>New</p>
     <ul>

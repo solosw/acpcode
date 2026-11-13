@@ -4167,6 +4167,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get generalSettingsClaudeCoreCli => 'Claude Code CLI';
 
   @override
+  String get generalSettingsDefaultAgent => 'Default Agent';
+
+  @override
+  String get generalSettingsDefaultAgentDescription =>
+      'The agent for new conversations. Existing conversations keep their agent.';
+
+  @override
+  String get generalSettingsDefaultMode => 'Default Mode';
+
+  @override
+  String generalSettingsDefaultModeDescription(String agent) {
+    return 'The mode for new conversations with $agent. Saved separately for each agent.';
+  }
+
+  @override
+  String get generalSettingsDefaultModeUnavailable =>
+      'Modes appear once this agent connects to an open project. Some agents do not offer modes.';
+
+  @override
+  String get generalSettingsLastUsed => 'Last Used';
+
+  @override
   String get generalSettingsQueuedMessages => 'Messages Sent While Working';
 
   @override

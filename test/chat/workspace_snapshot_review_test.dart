@@ -271,6 +271,43 @@ void main() {
         );
       }
 
+      test('an active snapshot index lock preserves edits and resumes after release', () async {
+        write('explicit.txt', 'explicit before\n');
+        write('later.txt', 'later before\n');
+        await review.begin();
+        await review.before(at('explicit.txt'));
+        write('explicit.txt', 'explicit after\n');
+        await review.after(at('explicit.txt'));
+        final repository = Directory(p.join(checkpoints, 'snapshots'))
+            .listSync()
+            .whereType<Directory>()
+            .singleWhere(
+              (folder) => File(p.join(folder.path, 'HEAD')).existsSync(),
+            );
+        final lock = File(p.join(repository.path, 'index.lock'))
+          ..writeAsStringSync('another server is writing');
+        addTearDown(() {
+          if (lock.existsSync()) lock.deleteSync();
+        });
+        write('later.txt', 'later after\n');
+        await review.observe();
+        expect(review.failure, isNull);
+        expect(lock.readAsStringSync(), 'another server is writing');
+        expect(review.changes.map((change) => change.path), [
+          at('explicit.txt'),
+        ]);
+        lock.deleteSync();
+        await review.observe();
+        expect(review.failure, isNull);
+        expect(review.changes.map((change) => change.path).toSet(), {
+          at('explicit.txt'),
+          at('later.txt'),
+        });
+        await review.undoAll();
+        expect(read('explicit.txt'), 'explicit before\n');
+        expect(read('later.txt'), 'later before\n');
+      });
+
       File scanObject(String tree) {
         final repository = Directory(p.join(checkpoints, 'snapshots'))
             .listSync()

@@ -242,6 +242,7 @@ Future<void> main(List<String> arguments) async {
     unawaited(ResumeAfterReset.current.load());
   }
   final workspace = Workspace(
+    userSettings: files?.settings,
     defaultTaskDirectory: prepareDefaultTaskDirectory(),
     preferences: PreferenceStore.file(),
     // Beside state.json: written as the user types.

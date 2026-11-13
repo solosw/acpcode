@@ -761,35 +761,77 @@ class RemoteClient {
 
   /// The review checkpoints of the remote host, reopened after reconnecting.
   Future<RemoteReviewStore?> openReview({
-    Future<RemoteClient> Function(RemoteClient previous)? reconnect,
+    Future<RemoteClient> Function(
+      RemoteClient previous, {
+      Future<void>? cancel,
+    })?
+    reconnect,
+    Future<void>? cancel,
   }) async {
-    final opened = await peer.request(RemoteProtocol.reviewOpen, const {});
-    if (opened is! Map) return null;
-    return RemoteReviewStore(
-      peer,
-      opened['id'] as int,
-      reopen: reconnect == null
-          ? null
-          : () async {
-              var previous = this;
-              while (true) {
-                final client = await reconnect(previous);
-                try {
-                  final store = await client.openReview(reconnect: reconnect);
-                  if (store == null) {
-                    throw const ReviewUnavailable(
-                      'The remote review is unavailable.',
+    final closed = Completer<void>();
+    void close() {
+      if (!closed.isCompleted) closed.complete();
+    }
+
+    cancel?.then((_) => close());
+    try {
+      var client = this;
+      Object? opened;
+      while (true) {
+        if (closed.isCompleted) throw const RpcCancelled();
+        try {
+          opened = await client.peer.request(
+            RemoteProtocol.reviewOpen,
+            const {},
+            closed.future,
+          );
+          break;
+        } on RpcClosed {
+          if (reconnect == null) rethrow;
+          client = await reconnect(client, cancel: closed.future);
+        }
+      }
+      if (opened is! Map) {
+        close();
+        return null;
+      }
+      return RemoteReviewStore(
+        client.peer,
+        opened['id'] as int,
+        cancel: closed.future,
+        onDispose: close,
+        reopen: reconnect == null
+            ? null
+            : () async {
+                var previous = client;
+                while (true) {
+                  final client = await reconnect(
+                    previous,
+                    cancel: closed.future,
+                  );
+                  try {
+                    final store = await client.openReview(
+                      reconnect: reconnect,
+                      cancel: closed.future,
                     );
+                    if (store == null) {
+                      throw const ReviewUnavailable(
+                        'The remote review is unavailable.',
+                      );
+                    }
+                    return store;
+                  } on RpcClosed {
+                    // The replacement connection can also disappear while its
+                    // store is opening. Wait for the next one, retaining bases.
+                    previous = client;
                   }
-                  return store;
-                } on RpcClosed {
-                  // The replacement connection can also disappear while its
-                  // store is opening. Wait for the next one, retaining bases.
-                  previous = client;
                 }
-              }
-            },
-    );
+              },
+      );
+    } on Object {
+      close();
+      rethrow;
+    }
   }
 
   // --- Terminals -------------------------------------------------------------
