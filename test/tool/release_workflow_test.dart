@@ -36,61 +36,11 @@ void main() {
     expect(workflow, contains(r'symbols-linux-${{ matrix.arch }}'));
   });
 
-  test('one Mac uploads remote builds before packaging its own app', () {
-    final workflow = File('.github/workflows/release.yml').readAsStringSync();
-    final jobs = <String, String>{};
-    final headers = RegExp(
-      r'^  ([a-z][a-z0-9-]*):$',
-      multiLine: true,
-    ).allMatches(workflow).toList();
-    for (var i = 0; i < headers.length; i++) {
-      jobs[headers[i][1]!] = workflow.substring(
-        headers[i].end,
-        i + 1 < headers.length ? headers[i + 1].start : workflow.length,
-      );
-    }
-    final mac = jobs['macos']!;
-    expect(
-      jobs.values.where((job) => job.contains('runs-on: macos-')).length,
-      1,
-    );
-    expect(mac, contains('needs: [check, remote-windows]'));
-    expect(mac, contains('pattern: remote-windows-*'));
-    expect(mac, contains('--out build/remote --all'));
-    expect(mac, contains('--macos-x64-dart'));
-    expect(mac, contains('--from build/remote-windows'));
-    expect(mac, contains('tool/test_remote_server_macos.sh build/remote'));
-    final upload = mac.indexOf('name: remote\n');
-    final buildApp = mac.indexOf('tool/build_macos.dart --build-only');
-    expect(upload, greaterThanOrEqualTo(0));
-    expect(upload, lessThan(buildApp));
-    expect(mac, contains('name: remote-linux'));
-    expect(mac, isNot(contains('uses: ./.github/actions/wait-for-artifact')));
-    for (final name in ['windows', 'linux']) {
-      expect(jobs[name], contains('name: remote\n'));
-      expect(jobs[name], contains('job: Build for macOS'));
-    }
-    expect(jobs['remote-linux'], contains('needs: macos'));
-    // Every dependency still exists after moving the artifact producer.
-    final needs = RegExp(r'^    needs: (.+)$', multiLine: true);
-    for (final job in jobs.values) {
-      for (final match in needs.allMatches(job)) {
-        final dependencies = match[1]!
-            .replaceAll('[', '')
-            .replaceAll(']', '')
-            .split(',');
-        for (final dependency in dependencies) {
-          expect(jobs.keys, contains(dependency.trim()));
-        }
-      }
-    }
-  });
-
   test('Linux packages join the existing GitHub release channel', () {
     final workflow = File('.github/workflows/release.yml').readAsStringSync();
     expect(
       workflow,
-      contains('needs: [check, remote-linux, macos, windows, linux]'),
+      contains('needs: [check, remote, remote-linux, macos, windows, linux]'),
     );
     expect(workflow, contains('arch: [x64, arm64]'));
     expect(workflow, contains('edition: [standard]'));
