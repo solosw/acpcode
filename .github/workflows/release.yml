@@ -147,7 +147,8 @@ jobs:
     # A Mac, as only one builds for macOS: the Linux builds are
     # cross-compiled, the macOS x64 one by an x64 Dart SDK under Rosetta;
     # the Windows ones are taken from Windows (remote-windows).
-    runs-on: macos-15
+    # macos-15 repeatedly failed to acquire an ARM runner before any step ran.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
@@ -224,7 +225,7 @@ jobs:
     # Not after the remote server: its artifact is waited for once the app
     # is built (wait-for-artifact), the two built side by side.
     needs: check
-    runs-on: macos-15
+    runs-on: macos-26
     # The Developer ID certificate and the notary key are the release
     # environment's secrets, for tags only. Without them (a build only, or
     # before they are set) the app is signed ad hoc, and only opens on the
