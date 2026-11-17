@@ -147,23 +147,34 @@
 
   <section class="release" id="v1.9.3">
     <h2 class="plain"><a href="#v1.9.3">1.9.3</a></h2>
-    <p>This release can put files back when you edit a message, shows and uses Claude subscription limit resets, runs on Kylin and UOS Linux, and fixes how context usage is counted along with a batch of chat problems.</p>
+    <p>This release brings in the upstream 2.0.0 series: BaoCode Bash on Windows, conversations that coordinate other conversations, additional project folders and settings migration, along with SSH terminal, file transfer and usage improvements.</p>
     <p>New</p>
     <ul>
-    <li>When you edit an earlier message and send it again, the files the agent changed from that message on can go back as they were; what you or another conversation changed since is kept. Settings → General → Edited Messages: Ask Each Time, Undo the Changes or Keep the Changes. For Claude Code and BaoCode Agent; changes made by commands (Bash) are not tracked.</li>
-    <li>Settings → Models shows, on the Claude Code row, the limit resets your subscription has: how many, what each clears, how much is used and until when. One is used only after you confirm.</li>
-    <li>The Linux .deb runs on glibc 2.31 systems such as Kylin V10 SP1 and UOS 20.</li>
-    <li>The phone app shows how full a conversation's context is (phone app 0.1.10).</li>
+    <li>Windows can use BaoCode Bash with common commands included, without installing Git. Settings → General → Command Line also offers Git Bash, cmd, PowerShell and a custom program.</li>
+    <li>Enable conversation coordination in Settings → General to let an agent assign work to other conversations, check progress and wait for results.</li>
+    <li>Add folders to a project for agents, the file tree, terminals and @ mentions to use.</li>
+    <li>Export settings, upstreams, models and shortcuts from Settings → Data Directory, then import them on another computer. API keys are included only when selected.</li>
+    <li>When editing and resending an earlier message, choose whether to undo the agent's file changes from that message onward while keeping later changes from you or other conversations. Available for Claude Code and BaoCode Agent; command-made changes are excluded.</li>
+    <li>Use code in an SSH terminal to open remote files and folders. Transfers show progress and can be cancelled, and the remote file browser can download folders.</li>
+    <li>Manage project memories in Customize, connect GitCode accounts, and search Markdown and plan previews.</li>
+    <li>View and use Claude subscription limit resets in model settings, and attach up to 100 images per message.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Heavy terminal output no longer delays file and agent requests on the same SSH connection. Listing large conversations uses less memory.</li>
+    <li>Conversations continued in an external terminal are reloaded automatically when returning to BaoCode.</li>
+    <li>Third-party models use the context length reported by their upstream, with context usage aligned to the final request.</li>
+    <li>Workflow shows subagent cards and progress, and archived conversations are grouped by folder.</li>
+    <li>Linux .deb packages support glibc 2.31 systems, including Kylin V10 SP1 and UOS 20.</li>
+    <li>With phone app 0.2.0, send files to agents, receive iPhone push notifications and reopen conversations faster.</li>
     </ul>
     <p>Fixed</p>
     <ul>
-    <li>Context usage shows what the model reported: a conversation full of screenshots no longer counts as millions of tokens, and tool results are counted by call, an image as one.</li>
-    <li>Full access no longer asks about the safety checks Claude Code leaves to a person; your own ask rules still apply.</li>
-    <li>File links an agent writes after changing folders open, and tell a file of your computer from one on the SSH host.</li>
-    <li>When an upstream reports 0 input tokens, usage no longer shows every call as fully cached.</li>
-    <li>The commit panel no longer stalls while the agent answers (hangs of seconds on Intel Macs).</li>
-    <li>Dragging from the start of the text below a code block selects that text.</li>
-    <li>The side panel's buttons no longer cover the chat find bar's close button.</li>
+    <li>Correct context counts for screenshots, tool results and interrupted streams, and cache-hit reporting when an upstream reports zero input tokens.</li>
+    <li>Fix command and subagent permission decisions for third-party models in plan mode with full access, and image requests returning 400 on some Responses upstreams.</li>
+    <li>Fix macOS window placement after external-display sleep and accessibility crashes, along with Windows Chinese input and proxy-variable compatibility.</li>
+    <li>Improve chat text selection, WeChat voice input, Markdown formulas and skills installed through symbolic links.</li>
+    <li>Fix remote file links, the SSH file browser and commit-panel interactions.</li>
     </ul>
   </section>
 
