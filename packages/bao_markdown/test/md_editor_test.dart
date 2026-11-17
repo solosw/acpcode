@@ -257,6 +257,57 @@ void main() {
     expect(state.caretRect(4)!.height, moreOrLessEquals(before.height));
   }, skip: !File(system).existsSync());
 
+  const chinese = '/System/Library/Fonts/Hiragino Sans GB.ttc';
+  testWidgets('a space after Chinese (another font, other metrics) moves '
+      'neither the text nor its caret', (tester) async {
+    await tester.runAsync(() async {
+      for (final (family, path) in [('System', system), ('Chinese', chinese)]) {
+        final bytes = File(path).readAsBytesSync();
+        await (FontLoader(
+          family,
+        )..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+      }
+    });
+    final controller = MarkdownController(
+      text: '你好',
+      selection: const TextSelection.collapsed(offset: 2),
+    );
+    final state = await _pump(
+      tester,
+      controller,
+      style: const MarkdownEditorStyle(
+        text: TextStyle(
+          fontFamily: 'System',
+          fontFamilyFallback: ['Chinese'],
+          fontSize: 13.5,
+          height: 1.5,
+          leadingDistribution: TextLeadingDistribution.even,
+          color: Color(0xFF000000),
+        ),
+      ),
+    );
+    Rect glyph() {
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.byType(RichText).first,
+      );
+      final box = paragraph
+          .getBoxesForSelection(
+            const TextSelection(baseOffset: 0, extentOffset: 1),
+          )
+          .single
+          .toRect();
+      return box.shift(paragraph.localToGlobal(Offset.zero));
+    }
+
+    final text = glyph();
+    final caret = state.caretRect(0)!;
+    controller.replace(2, 2, ' ');
+    await tester.pump();
+    expect(controller.text, '你好 ');
+    expect(glyph(), text);
+    expect(state.caretRect(0), caret);
+  }, skip: !File(system).existsSync() || !File(chinese).existsSync());
+
   testWidgets('code\'s ground is painted under the selection, not with its '
       'text (which would cover the selection)', (tester) async {
     final controller = MarkdownController(text: 'a `code` b');
@@ -703,6 +754,45 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  testWidgets('what an input method put in a while ago it replaces there', (
+    tester,
+  ) async {
+    final controller = MarkdownController(text: 'one\ntwo\nthree');
+    final state = await _pump(tester, controller);
+    state.requestFocus();
+    await tester.pump();
+    // As WeType sends its dictation: what was heard put in, a new line in
+    // it, then, once tidied, replaced at the offsets it was put in at.
+    // The platform's text: what it was told last, as it changed it since.
+    var told = tester.testTextInput.editingState!['text'] as String;
+    final at = told.length;
+    const heard = '说的话\n第二段';
+    tester.testTextInput.log.clear();
+    told += heard;
+    tester.testTextInput.updateEditingValue(
+      TextEditingValue(
+        text: told,
+        selection: TextSelection.collapsed(offset: at + heard.length),
+      ),
+    );
+    await tester.pump();
+    if (tester.testTextInput.log.any(
+      (call) => call.method == 'TextInput.setEditingState',
+    )) {
+      told = tester.testTextInput.editingState!['text'] as String;
+    }
+    const tidied = '说的话。\n第二段。';
+    expect(told.substring(at, at + heard.length), heard);
+    tester.testTextInput.updateEditingValue(
+      TextEditingValue(
+        text: told.replaceRange(at, at + heard.length, tidied),
+        selection: TextSelection.collapsed(offset: at + tidied.length),
+      ),
+    );
+    await tester.pump();
+    expect(controller.text, 'one\ntwo\nthree说的话。\n第二段。');
   });
 
   testWidgets('copied as it shows, pasted back as its markdown', (

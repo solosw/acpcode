@@ -597,6 +597,11 @@ class MarkdownEditorState extends State<MarkdownEditor>
     );
   }
 
+  /// The line box of [style]'s text, whatever fonts its glyphs fall back
+  /// on; with [force] off, the least it is.
+  static StrutStyle _strutOf(TextStyle style, {bool force = true}) =>
+      StrutStyle.fromTextStyle(style, forceStrutHeight: force);
+
   /// A table's or math's line: shown as written where no widget is.
   static bool _isBlockLine(MdLineInfo info) =>
       info.isTable || info.isMath || info.kind == MdLineKind.mathLine;
@@ -681,6 +686,12 @@ class MarkdownEditorState extends State<MarkdownEditor>
           textAlign: widget.textAlign,
           textScaler: scaler,
           softWrap: true,
+          // As high as its text's font makes it, whatever falls back on
+          // others: Chinese on Windows (Microsoft YaHei UI) and a space (the
+          // text's font) sit on baselines apart, a line of both taller than
+          // one of either, and typing a space moved the text. At least that
+          // where a widget is, a picture higher than a line.
+          strutStyle: _strutOf(lineStyle, force: !display.hasWidgets),
         ),
       );
     }
@@ -1404,7 +1415,11 @@ class MarkdownEditorState extends State<MarkdownEditor>
     if (controller.isComposing) controller.composing = TextRange.empty;
   }
 
-  /// The lines around the selection, as the platform is told of them.
+  /// The most of the text the platform is told of, in characters.
+  static const _toldAtMost = 4000;
+
+  /// The text, or when long the lines around the selection, as the
+  /// platform is told of them.
   TextEditingValue _windowValue() {
     final selection = controller.selection;
     if (!selection.isValid) {
@@ -1413,16 +1428,21 @@ class MarkdownEditorState extends State<MarkdownEditor>
       return TextEditingValue.empty;
     }
     final lines = controller.lines;
-    var first = math.max(0, controller.lineAt(selection.start) - 1);
-    var last = math.min(
-      lines.lineCount - 1,
-      controller.lineAt(selection.end) + 1,
-    );
+    // Short, the text is told whole: where it starts never moves, and an
+    // input method that replaces what it put in a while ago (WeType's
+    // dictation, tidied once it ends) finds it where it was. Told the lines
+    // around the caret, the start moved down a line as a new line came
+    // in, and the replacement missed: what it put in was there again.
+    final whole = controller.length <= _toldAtMost;
+    var first = whole ? 0 : math.max(0, controller.lineAt(selection.start) - 1);
+    var last = whole
+        ? lines.lineCount - 1
+        : math.min(lines.lineCount - 1, controller.lineAt(selection.end) + 1);
     var start = lines.lineStart(first);
     var end = lines.lineEnd(last);
     var told = _tell(start, end);
     _remoteCaretOnly = false;
-    if (told.text.length > 4000) {
+    if (told.text.length > _toldAtMost) {
       final line = controller.lineAt(selection.extentOffset);
       first = last = line;
       start = lines.lineStart(line);
@@ -2418,6 +2438,8 @@ class MarkdownEditorState extends State<MarkdownEditor>
                 widget.placeholder!,
                 style: widget.style.text.merge(widget.style.placeholder),
                 textScaler: _scaler,
+                // Where the text typed in shows, its first line's.
+                strutStyle: _strutOf(widget.style.text),
               ),
             ),
           ),

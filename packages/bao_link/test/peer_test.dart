@@ -147,6 +147,7 @@ void main() {
       bool live = true,
       List<Map<String, Object?>> changes = const [],
       bool? earlier,
+      Map<String, Object?>? context,
     }) => LinkSessionUpdate(
       session: 's',
       start: start,
@@ -155,6 +156,7 @@ void main() {
       live: live,
       changes: changes,
       earlier: earlier,
+      context: context,
     );
 
     test('a message streaming in goes as what is added', () async {
@@ -250,6 +252,31 @@ void main() {
       expect(LinkSessionUpdate.fromJson(mirror.apply(wire)!).earlier, isNull);
     });
 
+    test('how full the context is stays, and goes when it changes', () {
+      final slimmer = LinkSessionSlimmer();
+      const half = {'window': 200000, 'used': 100000};
+      final mirror = LinkSessionMirror()
+        ..opened(
+          slimmer.encode(
+            update(0, [message('a')], 1, context: half),
+            full: true,
+          ),
+        );
+
+      // A message streaming in: the context as it was, not sent again.
+      final wire = slimmer.encode(
+        update(0, [message('ab')], 1, context: half),
+        before: message('a'),
+      );
+      expect(wire.containsKey('context'), isFalse);
+      expect(LinkSessionUpdate.fromJson(mirror.apply(wire)!).context, half);
+
+      const more = {'window': 200000, 'used': 150000};
+      final grown = slimmer.encode(update(1, const [], 1, context: more));
+      expect(grown['context'], more);
+      expect(LinkSessionUpdate.fromJson(mirror.apply(grown)!).context, more);
+    });
+
     test('earlier items move what follows along', () {
       final slimmer = LinkSessionSlimmer();
       final mirror = LinkSessionMirror()
@@ -262,6 +289,83 @@ void main() {
       final whole = LinkSessionUpdate.fromJson(mirror.apply(wire)!);
       expect(whole.start, 2);
       expect(whole.items, [message('cd')]);
+    });
+
+    test('opened again, only what changed comes; made whole', () async {
+      final mirror = LinkSessionMirror();
+      final asked = <Object?>[];
+      var answer = <String, Object?>{};
+      final (phone, _, _) = await pair(
+        mirror: mirror,
+        onRequest: (method, params) {
+          if (method == LinkMethods.open) asked.add(params['have']);
+          return method == LinkMethods.open ? answer : null;
+        },
+      );
+      final events = <LinkEvent>[];
+      phone.events.listen(events.add);
+
+      answer = {
+        'session': 's',
+        'start': 0,
+        'count': 3,
+        'items': ['a', 'b', 'c'],
+      };
+      await phone.call(LinkMethods.open, {'session': 's'});
+      await phone.call(LinkMethods.close, {'session': 's'});
+      // The phone has a, b, c: c changed since, d came.
+      answer = {
+        'session': 's',
+        'start': 2,
+        'count': 4,
+        'items': ['C', 'd'],
+      };
+      await phone.call(LinkMethods.open, {'session': 's'});
+      expect(asked, [
+        null,
+        [
+          for (final item in ['a', 'b', 'c']) linkDigest(item),
+        ],
+      ]);
+      final whole = events.last;
+      expect(whole.name, LinkEvents.session);
+      expect(whole.data, containsPair('start', 0));
+      expect(whole.data, containsPair('items', ['a', 'b', 'C', 'd']));
+
+      // One that does not fit what was offered: read again, whole.
+      answer = {
+        'session': 's',
+        'start': 9,
+        'count': 10,
+        'items': ['z'],
+      };
+      await phone.call(LinkMethods.open, {'session': 's'});
+      expect(events.last.name, LinkEvents.resync);
+      answer = {
+        'session': 's',
+        'start': 0,
+        'count': 1,
+        'items': ['z'],
+      };
+      await phone.call(LinkMethods.open, {'session': 's'});
+      expect(asked.last, isNull);
+
+      // What the app kept from before is offered too.
+      mirror.keep('t', ['x']);
+      answer = {'session': 't', 'start': 1, 'count': 1, 'items': const []};
+      await phone.call(LinkMethods.open, {'session': 't'});
+      expect(asked.last, [linkDigest('x')]);
+      expect(events.last.data, containsPair('items', ['x']));
+    });
+
+    test('the same JSON, the same digest', () {
+      final digest = linkDigest({'kind': 'user', 'text': '你好', 'n': 1.5});
+      expect(digest, hasLength(16));
+      expect(linkDigest({'kind': 'user', 'text': '你好', 'n': 1.5}), digest);
+      expect(
+        linkDigest({'kind': 'user', 'text': '你好!', 'n': 1.5}),
+        isNot(digest),
+      );
     });
 
     test('an update that does not fit asks for the session again', () {

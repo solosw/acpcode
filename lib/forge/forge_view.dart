@@ -43,6 +43,7 @@ class ForgeLogo extends StatelessWidget {
       ForgeKind.gitea => Icon(Codicons.repo, size: size, color: color),
       ForgeKind.gitlab => svg(gitlabAsset),
       ForgeKind.gitee => svg(giteeAsset),
+      ForgeKind.gitcode => Icon(Codicons.repo, size: size, color: color),
     };
   }
 }

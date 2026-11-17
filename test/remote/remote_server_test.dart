@@ -148,6 +148,17 @@ void main() {
       );
     });
 
+    test('a file uploaded a stretch at a time, in step only', () async {
+      await client().writeBytes(root, at('up.bin'), [1, 2]);
+      await client().appendBytes(root, at('up.bin'), 2, [3]);
+      expect(File(at('up.bin')).readAsBytesSync(), [1, 2, 3]);
+      await expectLater(
+        client().appendBytes(root, at('up.bin'), 2, [4]),
+        throwsA(isA<RemoteException>()),
+      );
+      expect(File(at('up.bin')).readAsBytesSync(), [1, 2, 3]);
+    });
+
     test('made, renamed, copied and deleted', () async {
       await client().create(root, at('dir'), directory: true);
       await client().create(root, at('dir/a.txt'));
@@ -204,6 +215,28 @@ void main() {
         client().realPath(at('none')),
         throwsA(isA<IdeFileNotFoundException>()),
       );
+    });
+
+    test('browsed from its root, the hidden entries marked', () async {
+      Directory(at('src')).createSync();
+      Directory(at('.cache')).createSync();
+      File(at('.env')).writeAsStringSync('');
+      File(at('a.txt')).writeAsStringSync('');
+      Link(at('linked')).createSync(at('src'));
+      final roots = await client().roots();
+      expect(roots.first.path, '/');
+      final entries = {
+        for (final entry in await client().browse(root))
+          entry.name: (entry.isDirectory, entry.hidden, entry.system),
+      };
+      expect(entries, {
+        'src': (true, false, false),
+        '.cache': (true, true, false),
+        '.env': (false, true, false),
+        'a.txt': (false, false, false),
+        'linked': (true, false, false),
+      });
+      await expectLater(client().browse(at('none')), throwsA(anything));
     });
 
     test('a folder is watched until the subscription ends', () async {
@@ -1016,6 +1049,32 @@ printf '%s\n' "$line"
       expect(await pty.exitCode.timeout(const Duration(seconds: 10)), 4);
       expect(output.toString(), contains('20 90'));
       expect(output.toString(), contains(root));
+    });
+
+    test('one printing much waits for the app to take it in, the rest of '
+        'the connection going on meanwhile', () async {
+      final pty = await client().startPty(
+        cwd: root,
+        shellIntegration: false,
+        shell: ['/bin/sh'],
+      );
+      var received = 0;
+      pty.output.listen((data) => received += data.length);
+      // As the terminal does while what came waits to be parsed.
+      pty.pause();
+      pty.write(
+        utf8.encode('yes 0123456789abcdef | head -c 4000000; exit 0\n'),
+      );
+      await Future<void>.delayed(const Duration(seconds: 1));
+      // Held about where the server stops reading: far from all of it.
+      expect(received, lessThan(512 * 1024));
+      // Another request is answered at once.
+      final answered = Stopwatch()..start();
+      await client().list(root, root);
+      expect(answered.elapsed, lessThan(const Duration(seconds: 1)));
+      pty.resume();
+      expect(await pty.exitCode.timeout(const Duration(seconds: 30)), 0);
+      expect(received, greaterThan(4000000));
     });
 
     test('with shell integration, the shell is given its nonce', () async {

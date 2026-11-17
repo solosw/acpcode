@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import '../bash_exe/bao_bash.dart';
 import '../channel/channel_gate.dart';
 import '../channel/channel_setup.dart' show ChannelSetup;
 import '../diagnostics/diagnostics_upload.dart';
@@ -128,6 +129,17 @@ class AppSettings {
     null => null,
   };
 
+  /// BaoCode Bash and the shell agents run commands in, where they are
+  /// offered (Windows, with settings files); main() makes it the app's
+  /// ([BaoBash.current]).
+  late final BaoBash? bash = switch (files) {
+    final files? => BaoBash.forPlatform(
+      _TipStorage(files.storage),
+      settings: _ShellSettings(files.settings),
+    ),
+    null => null,
+  };
+
   /// Writes the keyboard page's changes into keybindings.json: one for
   /// the app, so they are made one at a time.
   late final KeybindingsEditingService editing = KeybindingsEditingService(
@@ -152,7 +164,11 @@ class AppSettings {
   Widget buildNotice(
     BuildContext context,
     void Function(SettingsSection section) open,
-  ) => BrowserHistoryNotice(open: () => open(SettingsSection.browser));
+  ) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [BrowserHistoryNotice(open: () => open(SettingsSection.browser))],
+  );
 
   /// [section]'s page of the settings dialog.
   Widget buildPage(BuildContext context, SettingsSection section) {
@@ -163,6 +179,7 @@ class AppSettings {
           workspace: workspace,
           tips: tips,
           claudeStatus: claudeStatus,
+          bash: bash,
         );
       case SettingsSection.appearance:
         final themes = WorkbenchThemeService.instance;
@@ -252,7 +269,7 @@ class AppSettings {
           diagnostics: diagnostics,
         );
       case SettingsSection.about:
-        return const AboutSettingsPage();
+        return AboutSettingsPage(host: link);
       case SettingsSection.dataDirectory:
         return const DataDirectoryPage();
     }
@@ -299,6 +316,26 @@ class AppSettings {
 }
 
 /// The app's global storage, as the tips remember themselves in it.
+/// The pick of the shell, in settings.json.
+class _ShellSettings implements ShellSettings {
+  _ShellSettings(this.settings);
+
+  final UserSettings settings;
+
+  @override
+  Object? operator [](String key) => settings[key];
+
+  @override
+  Future<void> update(String key, Object? value) => settings.update(key, value);
+
+  @override
+  void addListener(VoidCallback listener) => settings.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) =>
+      settings.removeListener(listener);
+}
+
 class _TipStorage implements TipStorage {
   _TipStorage(this.storage);
 

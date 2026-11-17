@@ -6,6 +6,7 @@ import '../claude/claude_history_page.dart';
 import '../claude/claude_release.dart';
 import '../claude/claude_sessions.dart';
 import '../claude/claude_unavailable.dart';
+import '../files/browse.dart';
 import '../files/ide_file.dart';
 import '../files/recursive_watch.dart';
 import '../git/git_types.dart';
@@ -41,6 +42,43 @@ class RemotePty {
 
   /// The shell integration's nonce (`VSCODE_NONCE`); empty without it.
   final String nonce;
+
+  /// Whether the server waits for what was taken in to be acknowledged
+  /// ([RemoteProtocol.ptyAck]): one from before does not.
+  bool _flow = false;
+
+  /// Taken in and not yet acknowledged; whether [pause]d.
+  int _unacked = 0;
+  bool _held = false;
+
+  /// Acknowledged in steps of this much.
+  static const _ackEvery = 8 * 1024;
+
+  /// [count] bytes of its output taken in: acknowledged, unless [pause]d.
+  void _took(int count) {
+    if (!_flow) return;
+    _unacked += count;
+    if (!_held && _unacked >= _ackEvery) _ack();
+  }
+
+  void _ack() {
+    if (_unacked == 0 || exited) return;
+    final bytes = _unacked;
+    _unacked = 0;
+    _client.peer.notifyOrRequest(RemoteProtocol.ptyAck, {
+      'id': id,
+      'bytes': bytes,
+    });
+  }
+
+  /// What it prints waits to be parsed: no more acknowledged, so that the
+  /// server stops reading it, until [resume].
+  void pause() => _held = true;
+
+  void resume() {
+    _held = false;
+    _ack();
+  }
 
   final StreamController<Uint8List> _output = StreamController();
   final Completer<int> _exitCode = Completer();
@@ -213,9 +251,15 @@ class RemoteClient {
       final data = decodeBytes(args['data']);
       final pty = _ptys[id];
       if (pty == null) {
-        (_early[('pty', id)] ??= []).add(() => _ptys[id]?._output.add(data));
+        (_early[('pty', id)] ??= []).add(() {
+          _ptys[id]
+            ?.._output.add(data)
+            .._took(data.length);
+        });
       } else if (!pty.exited) {
-        pty._output.add(data);
+        pty
+          .._output.add(data)
+          .._took(data.length);
       }
     };
     handlers[RemoteProtocol.ptyExit] = (params) {
@@ -255,10 +299,26 @@ class RemoteClient {
       _sockets.remove(conn)?.destroy();
       _closedEarly.add(conn);
     };
+    peer.handlers[RemoteProtocol.cliOpen] = (params, _) async {
+      final args = _map(params);
+      final open = onCode;
+      final error = open == null
+          ? 'BaoCode cannot open files from here.'
+          : await open(args['cwd'] as String? ?? '', [
+              for (final arg in args['args'] as List? ?? const [])
+                if (arg is String) arg,
+            ]);
+      return error == null ? null : {'error': error};
+    };
     unawaited(peer.done.then((_) => _lost()));
   }
 
   final RpcPeer peer;
+
+  /// Opens what the `code` command was given in a terminal there: its
+  /// folder and its arguments; says what went wrong, for the command to
+  /// print, or null.
+  Future<String?> Function(String cwd, List<String> args)? onCode;
 
   /// What the server said of itself; set by [initialize].
   RemoteHello? hello;
@@ -423,6 +483,20 @@ class RemoteClient {
     {'root': root, 'path': path, 'data': encodeBytes(bytes)},
   );
 
+  /// Adds [bytes] to the end of [path], made by [writeBytes] and [offset]
+  /// bytes long so far.
+  Future<void> appendBytes(
+    String root,
+    String path,
+    int offset,
+    List<int> bytes,
+  ) => _call(RemoteProtocol.fsAppendBytes, {
+    'root': root,
+    'path': path,
+    'offset': offset,
+    'data': encodeBytes(bytes),
+  });
+
   Future<Uint8List> readBytes(String path) async => decodeBytes(
     await _call<String>(RemoteProtocol.fsReadBytes, {'path': path}),
   );
@@ -501,6 +575,20 @@ class RemoteClient {
   /// [IdeFileNotFoundException] for none.
   Future<String> realPath(String path) =>
       _call(RemoteProtocol.fsRealPath, {'path': path});
+
+  /// Where to browse the host from: its drives on Windows, `/` elsewhere.
+  Future<List<BrowseRoot>> roots() async => [
+    for (final root in await _call<List>(RemoteProtocol.fsRoots, const {}))
+      BrowseRoot.fromJson((root as List).cast()),
+  ];
+
+  /// [path]'s entries as a file browser lists them, hidden ones marked.
+  Future<List<BrowseEntry>> browse(String path) async => [
+    for (final entry in await _call<List>(RemoteProtocol.fsBrowse, {
+      'path': path,
+    }))
+      BrowseEntry.fromJson((entry as List).cast()),
+  ];
 
   // --- Search and Git ----------------------------------------------------------
 
@@ -865,6 +953,7 @@ class RemoteClient {
         'version': ?version,
         'nonce': ?nonce,
         'workspaceRoots': ?workspaceRoots,
+        'flow': true,
       }),
     );
     final id = started['id'] as int;
@@ -876,6 +965,7 @@ class RemoteClient {
       arguments: (started['arguments'] as List? ?? const []).cast(),
       nonce: started['nonce'] as String? ?? '',
     );
+    pty._flow = started['flow'] == true;
     _ptys[id] = pty;
     _flushEarly('pty', id);
     if (peer.isClosed) pty._exit(RemoteProcess.lostExitCode);

@@ -7,7 +7,7 @@
 # A version may be uploaded again (the tag moved to a fixed commit): the
 # GitHub Release for that tag is replaced.
 #
-# This fork's channel is the GitHub Release alone (solosw/baocode): one
+# This fork's channel is the GitHub Release alone (solosw/acpcode): one
 # standard edition, no R2 upload, no test-* sharing, no server-* publishing.
 name: Release
 
@@ -413,7 +413,12 @@ jobs:
     # are what the package runs on from there up. 20.04's glibc 2.31 is
     # Kylin V10's and UOS 20's (#851). This fork builds standard only.
     runs-on: ${{ matrix.runner }}
-    container: ubuntu:20.04
+    container:
+      image: ubuntu:20.04
+      # Public resolvers: the runners' own, as Docker hands it the container,
+      # lost Ubuntu's mirrors (2026-11-11, every Linux build, both arches:
+      # "Could not resolve 'azure.archive.ubuntu.com'"), the host's fine.
+      options: --dns 8.8.8.8 --dns 1.1.1.1
     strategy:
       # One architecture failing leaves the other building, to be re-run alone.
       fail-fast: false
@@ -427,7 +432,8 @@ jobs:
             runner: ubuntu-22.04-arm
     steps:
       # The bare image has none of the runner's tools: git first, for the
-      # checkout to be a repository. Root in it, so no sudo.
+      # checkout to be a repository. zstd, for bao_iroh.yml's cache to be
+      # found (it is saved with it). Root in it, so no sudo.
       - name: Install the build's tools
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -445,7 +451,7 @@ jobs:
           done
           apt-get -o Acquire::Retries=5 install -y build-essential ca-certificates curl git jq unzip \
             xz-utils zip file clang cmake ninja-build pkg-config libgtk-3-dev \
-            liblzma-dev python3 procps xvfb xauth dbus-x11
+            liblzma-dev python3 procps xvfb xauth dbus-x11 zstd
           # The checkout and Flutter's SDK are another user's than root.
           git config --global --add safe.directory '*'
       - uses: actions/checkout@v5

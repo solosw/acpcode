@@ -219,6 +219,18 @@ LRESULT CALLBACK ViewWindow::ViewProc(HWND hwnd, UINT const message,
   auto* that =
       static_cast<ViewWindow*>(GetThisFromHandle(::GetParent(hwnd)));
 
+  // Other apps asking for the view's accessibility objects (screen readers,
+  // and input methods, translators and the like that read what is on screen)
+  // get the system's plain answer for a window, not the engine's. The engine
+  // turns Flutter's semantics on at the first such question and keeps them on,
+  // which costs every frame (PipelineOwner.flushSemantics), and its hit test
+  // over that tree crashes on a child it has no node for
+  // (FlutterPlatformNodeDelegateWindows::HitTestSync, flutter/flutter#195653).
+  // The app makes no claim to work with screen readers.
+  if (message == WM_GETOBJECT) {
+    return ::DefWindowProcW(hwnd, message, wparam, lparam);
+  }
+
   // The cursor's position, over the parts of the window that are the
   // window's own, is this window's to answer — its buttons, and the strip
   // Flutter draws the header in. The view is a child window over the whole
@@ -350,6 +362,11 @@ ViewWindow::MessageHandler(HWND hwnd, UINT const message,
       return 0;
     }
     if (part == HTCAPTION) {
+      // In front of every other window as it is pressed, as a caption the
+      // system runs brings it: the press activates the window only if it
+      // was not already, and an active window can be under another that
+      // came up without taking the keyboard (a chat app's new message).
+      ::SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
       // A double click on the strip is the system's own shortcut for
       // maximizing, and its other way round again.
       const WPARAM command =

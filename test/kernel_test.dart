@@ -57,6 +57,34 @@ Map<String, Object?> recordedResponse(String name, bool Function(Map) match) {
   throw StateError('no such response in $name');
 }
 
+/// A CLI that can hold `get_context_usage` answers until [answerContexts].
+class _DelayedContextCli extends FakeCli {
+  _DelayedContextCli({super.answers});
+
+  bool delayed = false;
+  final _pending = <Map<String, Object?>>[];
+
+  @override
+  void write(Map<String, Object?> message) {
+    final request = message['request'];
+    if (delayed &&
+        request is Map &&
+        request['subtype'] == 'get_context_usage') {
+      _pending.add(message);
+      return;
+    }
+    super.write(message);
+  }
+
+  void answerContexts() {
+    delayed = false;
+    for (final message in _pending) {
+      super.write(message);
+    }
+    _pending.clear();
+  }
+}
+
 /// Claude Code as the test speaks it: answers control requests the way the
 /// CLI does (from recordings), and records what the kernel wrote.
 /// A CLI that answers nothing: one that exits before it does.
@@ -194,11 +222,17 @@ class _SlowStartCli extends FakeCli {
 
 /// A kernel on [cli], with its events applied to a transcript.
 ({ClaudeCodeKernel kernel, Transcript transcript, List<KernelEvent> events})
-claude(FakeCli cli, {KernelContext context = const KernelContext(cwd: '/p')}) {
+claude(
+  FakeCli cli, {
+  KernelContext context = const KernelContext(cwd: '/p'),
+  ModelProviders? providers,
+}) {
   final kernel = ClaudeCodeKernel(
     MockKernels.claudeCode,
     context,
     start: (_) async => cli,
+    providers: providers,
+    providerEnvironment: (_, _) async => const {},
   );
   final transcript = Transcript();
   final events = <KernelEvent>[];
@@ -615,6 +649,87 @@ void main() {
         object: 'List empty',
         detail: null,
       ));
+    });
+
+    test('a workflow is a card, its subagents in it as they go (#836)', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      AgentItem card() =>
+          [for (var i = 0; i < transcript.length; i++) transcript.itemAt(i)]
+              .whereType<AgentItem>()
+              .single;
+      var queued = false;
+      for (final message in recorded('workflow')) {
+        translator.translate(message);
+        if (message['subtype'] == 'task_progress' &&
+            message['workflow_progress'] != null &&
+            !queued) {
+          // The first look: one started, the other waiting its turn.
+          queued = true;
+          final [a, b] = card().children.cast<AgentItem>();
+          expect(a.status, CommandStatus.running);
+          expect(a.startedAt, isNotNull);
+          expect(a.prompt, startsWith('Read the file at /p/a.txt'));
+          expect(b.activity, 'Queued');
+        }
+      }
+      expect(queued, isTrue);
+      final workflow = card();
+      expect(workflow.agentType, ClaudeTranslator.workflowAgentType);
+      expect(
+        workflow.description,
+        'Fan out two agents in parallel to read a.txt and b.txt and return '
+        'their contents',
+      );
+      expect(workflow.background, isTrue);
+      expect(workflow.status, CommandStatus.succeeded);
+      expect(workflow.duration, const Duration(milliseconds: 14722));
+      expect(workflow.prompt, contains('export const meta'));
+      expect(
+        [
+          for (final agent in workflow.children.cast<AgentItem>())
+            (agent.description, agent.status, agent.result?.trim()),
+        ],
+        [
+          ('read:a.txt', CommandStatus.succeeded, 'hello'),
+          ('read:b.txt', CommandStatus.succeeded, 'world'),
+        ],
+      );
+      expect(transcript.tasks.single.background, isTrue);
+    });
+
+    test('a subagent continued once it ended counts the time it ran '
+        'before (#751)', () {
+      final done = AgentItem(
+        description: 'Read',
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 40),
+        startedAt: DateTime(2026),
+      );
+      final again = done.continuedAt(DateTime(2026, 1, 1, 0, 10));
+      expect(again.status, CommandStatus.running);
+      expect(again.ranBefore, const Duration(seconds: 40));
+      expect(
+        AgentStep.elapsed(again, now: DateTime(2026, 1, 1, 0, 10, 5)),
+        const Duration(seconds: 45),
+      );
+      final ended = again.copyWith(
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 20),
+      );
+      expect(AgentStep.elapsed(ended), const Duration(seconds: 60));
+      expect(
+        AgentStep.elapsed(
+          ended
+              .continuedAt(DateTime(2026, 1, 2))
+              .copyWith(duration: const Duration(seconds: 1)),
+        ),
+        const Duration(seconds: 61),
+      );
     });
 
     test('a subagent shows the model its messages ran on, as it runs; '
@@ -1591,6 +1706,50 @@ void main() {
         event({'type': 'message_stop'});
         expect(shown(transcript), ['text: The answer']);
       });
+
+      test('a text block only blank never shows; one that goes on to say '
+          'something shows from then, all of it', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, '\n\n');
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_start',
+          'index': 1,
+          'content_block': {'type': 'text', 'text': ''},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': '\n'},
+        });
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': 'Hi'},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': ' there'},
+        });
+        event({'type': 'content_block_stop', 'index': 1});
+        expect(transcript.length, 1);
+        expect(transcript.itemAt(0), isA<AssistantTextItem>());
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+        translator.translate(
+          whole('u-1', 'msg-1', [
+            {'type': 'text', 'text': '\n\n'},
+            {'type': 'text', 'text': '\nHi there'},
+          ]),
+        );
+        event({'type': 'message_stop'});
+        expect(transcript.length, 1);
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+      });
     });
   });
 
@@ -2247,8 +2406,8 @@ void main() {
       expect(transcript.pendingInteraction, isNull);
       expect(cli.responses.last['behavior'], 'allow');
       expect(cli.responses.last['updatedInput'], command);
-      // Protected paths may be classifier-approved in Accept edits; full
-      // access allows them without prompting, including inside compound Bash.
+      // The CLI's safety checks, those it would leave to a person too, are
+      // allowed without prompting, including inside compound Bash.
       const protectedCommand = {
         'command': "sed -E 's/token/***/g' ~/.claude/settings.local.json",
         'description': 'Inspect local settings',
@@ -2265,6 +2424,18 @@ void main() {
           'decision_reason_type': 'subcommandResults',
           'classifier_approvable': true,
         },
+        {'decision_reason_type': 'safetyCheck'},
+        {
+          'decision_reason_type': 'safetyCheck',
+          'classifier_approvable': false,
+          'decision_reason':
+              'Dangerous rm operation not ruled out — the shell may read '
+              'this command differently than it was parsed',
+        },
+        {
+          'decision_reason_type': 'subcommandResults',
+          'classifier_approvable': false,
+        },
       ].indexed) {
         ask('r2-protected-$i', 'Bash', protectedCommand, why);
         await pumpEventQueue();
@@ -2274,15 +2445,9 @@ void main() {
           'updatedInput': protectedCommand,
         });
       }
-      // Full access also approves manual-only checks, explicit ask rules
-      // and protected paths: their metadata must not bring back approvals.
+      // Full access also approves explicit ask rules and protected paths:
+      // their metadata must not bring back approvals.
       for (final (i, why) in const [
-        {'decision_reason_type': 'safetyCheck'},
-        {'decision_reason_type': 'safetyCheck', 'classifier_approvable': false},
-        {
-          'decision_reason_type': 'subcommandResults',
-          'classifier_approvable': false,
-        },
         {
           'decision_reason_type': 'rule',
           'matched_ask_rule': {'toolName': 'Bash'},
@@ -3564,6 +3729,455 @@ void main() {
         containsAll([ContextKind.used, ContextKind.free, ContextKind.buffer]),
       );
       kernel.dispose();
+    });
+
+    test('the context is as much as the model told, its parts as the CLI '
+        'counted them', () async {
+      final cli = FakeCli(
+        answers: {
+          'get_context_usage': {
+            'totalTokens': 4000,
+            'maxTokens': 10000,
+            'categories': [
+              {'name': 'System prompt', 'tokens': 1000},
+              {'name': 'Messages', 'tokens': 3000},
+              {'name': 'Free space', 'tokens': 5000, 'kind': 'free'},
+              {'name': 'Autocompact buffer', 'tokens': 1000, 'kind': 'buffer'},
+            ],
+          },
+        },
+      );
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      expect(transcript.usage!.used, 4000, reason: 'the CLI count, at first');
+
+      Map<String, Object?> reply(String id, Map<String, Object?> usage) => {
+        'type': 'assistant',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': id,
+          'model': 'gpt-5',
+          'role': 'assistant',
+          'content': [
+            {'type': 'text', 'text': 'ok'},
+          ],
+          'usage': usage,
+        },
+      };
+      cli.push(
+        reply('m1', {
+          'input_tokens': 300,
+          'cache_read_input_tokens': 1500,
+          'output_tokens': 200,
+        }),
+      );
+      // A subagent's is not the conversation's.
+      cli.push({
+        ...reply('s1', {'input_tokens': 9000, 'output_tokens': 1}),
+        'parent_tool_use_id': 'task1',
+      });
+      await pumpEventQueue();
+      var usage = transcript.usage!;
+      expect(usage.used, 2000);
+      int tokens(String label) =>
+          usage.segments.firstWhere((s) => s.label == label).tokens;
+      expect(tokens('System prompt'), 500);
+      expect(tokens('Messages'), 1500);
+      expect(tokens('Free space'), 7000);
+      expect(tokens('Autocompact buffer'), 1000);
+
+      // Compacted: what it told is gone; the CLI's count until it tells
+      // again.
+      cli.push({
+        'type': 'system',
+        'subtype': 'compact_boundary',
+        'compact_metadata': {'trigger': 'auto', 'pre_tokens': 2000},
+      });
+      await pumpEventQueue();
+      usage = transcript.usage!;
+      expect(usage.used, 4000);
+      expect(tokens('Messages'), 3000);
+      kernel.dispose();
+    });
+
+    Future<void> checkContextSequence({
+      required int provisional,
+      required Map<String, Object?> finalUsage,
+      required int finalTotal,
+      required int resultTotal,
+      bool custom = false,
+      bool finalAfterStop = false,
+      bool nextRequest = false,
+    }) async {
+      Map<String, Object?> counted(int total) => {
+        'totalTokens': total,
+        'maxTokens': 200000,
+        'categories': [
+          {'name': 'Messages', 'tokens': total},
+          {'name': 'Free space', 'tokens': 200000 - total, 'kind': 'free'},
+        ],
+      };
+      final answers = {'get_context_usage': counted(1000)};
+      final cli = _DelayedContextCli(answers: answers);
+      final providers = custom
+          ? ModelProviders.memory(
+              providers: [
+                ModelProvider.fromJson({
+                  'id': 'od',
+                  'name': 'open-design',
+                  'protocol': 'anthropic',
+                  'baseUrl': 'https://example.com',
+                  'models': [
+                    {'id': 'kimi-k3.1-pro', 'label': 'Kimi'},
+                  ],
+                })!,
+              ],
+            )
+          : null;
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        providers: providers,
+        context: custom
+            ? const KernelContext(
+                cwd: '/p',
+                settings: {'model': '@od/kimi-k3.1-pro'},
+              )
+            : const KernelContext(cwd: '/p'),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      expect(transcript.usage!.used, 1000);
+
+      Future<void> push(Map<String, Object?> message) async {
+        cli.push(message);
+        await pumpEventQueue();
+      }
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_start',
+          'message': {
+            'id': 'm1',
+            'model': 'claude-opus-5-5',
+            'usage': {'input_tokens': provisional, 'output_tokens': 0},
+          },
+        },
+      });
+      final provisionalUsage = {
+        'input_tokens': provisional,
+        'output_tokens': 0,
+      };
+      Map<String, Object?> reply(
+        Map<String, Object?> usage, {
+        String? stopReason,
+      }) => {
+        'type': 'assistant',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': 'm1',
+          'model': 'claude-opus-5-5',
+          'role': 'assistant',
+          'content': const [],
+          'stop_reason': stopReason,
+          'usage': usage,
+        },
+      };
+      await push(reply(provisionalUsage));
+      expect(
+        transcript.usage!.used,
+        1000,
+        reason: 'a streamed provisional snapshot does not move the total',
+      );
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_delta',
+          'delta': {'stop_reason': 'end_turn'},
+          'usage': finalAfterStop ? const {'output_tokens': 0} : finalUsage,
+        },
+      });
+      if (!finalAfterStop) {
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the final merged request replaces its provisional usage',
+        );
+      }
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {'type': 'message_stop'},
+      });
+      await push(
+        finalAfterStop
+            ? reply(finalUsage, stopReason: 'end_turn')
+            : reply(provisionalUsage, stopReason: 'end_turn'),
+      );
+      expect(
+        transcript.usage!.used,
+        finalTotal,
+        reason: finalAfterStop
+            ? 'a late final assistant replaces its provisional usage'
+            : 'a late provisional snapshot cannot undo the final usage',
+      );
+      answers['get_context_usage'] = counted(resultTotal);
+      cli.delayed = true;
+      await push({'type': 'result', 'subtype': 'success'});
+      if (nextRequest) {
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_start',
+            'message': {
+              'id': 'm2',
+              'model': 'claude-opus-5-5',
+              'usage': {'input_tokens': 7000, 'output_tokens': 0},
+            },
+          },
+        });
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the previous result cannot clear the next request',
+        );
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_delta',
+            'delta': {'stop_reason': 'end_turn'},
+            'usage': {
+              'input_tokens': 2000,
+              'cache_read_input_tokens': 10000,
+              'output_tokens': 100,
+            },
+          },
+        });
+        expect(transcript.usage!.used, 12100);
+      } else {
+        await push({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': 'tool1', 'content': 'ok'},
+            ],
+          },
+        });
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'a result waiting for fresh CLI usage keeps the final total',
+        );
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          custom ? finalTotal : resultTotal,
+          reason: custom
+              ? 'a proxy result keeps the model total, not the proxy estimate'
+              : 'the result lets the CLI recalibrate the completed request',
+        );
+      }
+      kernel.dispose();
+    }
+
+    test('final streamed usage corrects a provisional context below it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('final streamed usage corrects a provisional context above it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 200000,
+        finalUsage: {
+          'input_tokens': 1000,
+          'cache_read_input_tokens': 50000,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 100,
+        },
+        finalTotal: 51100,
+        resultTotal: 50000,
+      );
+    });
+
+    test('custom upstream final usage survives the result', () async {
+      await checkContextSequence(
+        custom: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 3400000,
+      );
+    });
+
+    test('a late final assistant after message_stop replaces provisional '
+        'usage', () async {
+      await checkContextSequence(
+        finalAfterStop: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('a delayed result does not clear the next request', () async {
+      await checkContextSequence(
+        nextRequest: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    group("the tools' results are counted here, an image as one", () {
+      // As Claude Code counts them: a screenshot's base64 as text.
+      final told = {
+        'totalTokens': 4000,
+        'maxTokens': 10000,
+        'categories': [
+          {'name': 'Messages', 'tokens': 4000},
+        ],
+        'messageBreakdown': {
+          'userMessageTokens': 50,
+          'toolCallTokens': 10,
+          'toolResultTokens': 100000,
+          'toolCallsByType': [
+            {'name': 'Screenshot', 'callTokens': 10, 'resultTokens': 100000},
+          ],
+        },
+      };
+      Map<String, Object?> use(String id, String name) => {
+        'type': 'assistant',
+        'uuid': 'a-$id',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': 'm-$id',
+          'role': 'assistant',
+          'model': 'gpt-5',
+          'content': [
+            {'type': 'tool_use', 'id': id, 'name': name, 'input': const {}},
+          ],
+          'usage': {'input_tokens': 1000, 'output_tokens': 10},
+        },
+      };
+      Map<String, Object?> result(String id, Object content) => {
+        'type': 'user',
+        'uuid': 'r-$id',
+        'parent_tool_use_id': null,
+        'message': {
+          'role': 'user',
+          'content': [
+            {'type': 'tool_result', 'tool_use_id': id, 'content': content},
+          ],
+        },
+      };
+      final screenshot = [
+        {
+          'type': 'image',
+          'source': {
+            'type': 'base64',
+            'media_type': 'image/png',
+            'data': 'A' * 400000,
+          },
+        },
+      ];
+
+      test('as they come', () async {
+        final cli = FakeCli(answers: {'get_context_usage': told});
+        final (:kernel, :transcript, events: _) = claude(cli);
+        kernel.send(const KernelTurn(id: 'u1', text: 'look'));
+        await pumpEventQueue();
+        cli.push(use('t1', 'Screenshot'));
+        cli.push(result('t1', screenshot));
+        cli.push(use('t2', 'Read'));
+        await pumpEventQueue();
+        var detail = transcript.usage!.detail!;
+        expect(detail.toolResults, 1500);
+        expect(detail.toolUses.map((item) => (item.name, item.results)), [
+          ('Screenshot', 1500),
+        ]);
+
+        cli.push({'type': 'system', 'subtype': 'compact_boundary'});
+        await pumpEventQueue();
+        detail = transcript.usage!.detail!;
+        expect(detail.toolResults, 0);
+        kernel.dispose();
+      });
+
+      test("a resumed session's, read from its start", () async {
+        final whole = [
+          use('t1', 'Screenshot'),
+          result('t1', screenshot),
+          use('t2', 'Read'),
+          result('t2', 'x' * 400),
+        ];
+        final kernel = ClaudeCodeKernel(
+          MockKernels.claudeCode,
+          KernelContext(
+            cwd: '/p',
+            resume: SessionRecord(
+              id: 's',
+              title: 't',
+              updatedAt: DateTime(2026),
+              cwd: '/p',
+            ),
+          ),
+          start: (_) async => FakeCli(answers: {'get_context_usage': told}),
+          // Its first page has only the last call's.
+          readHistoryPage: (session, {required turns, before}) async =>
+              ClaudeHistoryPage(whole.sublist(2), earlier: 'a-t1'),
+          readHistory: (session) async => whole,
+        );
+        final transcript = Transcript();
+        kernel.events.listen(transcript.apply);
+        kernel.prepare();
+        await pumpEventQueue();
+        final detail = transcript.usage!.detail!;
+        expect(detail.toolResults, 1600);
+        expect(
+          {for (final item in detail.toolUses) item.name: item.results},
+          {'Screenshot': 1500, 'Read': 100},
+        );
+        kernel.dispose();
+      });
     });
 
     test("keeps the calls on Claude Code's own models, timed, and priced "
@@ -6340,14 +6954,22 @@ exec /usr/bin/env "\$@"
         '<command-name>/model</command-name>\n'
             '<command-args></command-args>',
       );
+      // The app's note alone, as the bots' world is sent when the user
+      // said nothing: kept, for it to go on in.
       session('notes', [
         {
           'type': 'text',
           'text':
-              '<system-reminder>The user no longer has a file open in the '
-              'editor.</system-reminder>',
+              '<system-reminder>Now: Thursday 2026-11-12 15:37:56.\n'
+              'What is new: …</system-reminder>',
         },
       ]);
+      // A bot's, told only by the app: kept, for it to go on in.
+      session(
+        'bot',
+        '<bao-event>\n[group g1] The group chat "Team": you, Leo.\n'
+            'New in it: message #3.\n</bao-event>',
+      );
 
       final sessions = (await ClaudeStorage(
         configDir: config,
@@ -6360,6 +6982,8 @@ exec /usr/bin/env "\$@"
           'phone': 'why is this red',
           'goal': '/goal fix #149 and #148',
           'design': '/design a settings page',
+          'bot': '[group g1] The group chat "Team": you, Leo.',
+          'notes': '',
         },
       );
     });

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -8,7 +10,9 @@ import 'package:baocode/chat/chat_history_view.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer_draft.dart';
+import 'package:baocode/chat/selection_recorder.dart';
 import 'package:baocode/chat/widgets/step_header.dart';
+import 'package:baocode/platform/event_log.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
@@ -376,7 +380,18 @@ void main() {
   }
 
   testWidgets('a drag on text that selects nothing is done again on a '
-      'clean list, and reported', (tester) async {
+      'clean list as it is dragged, and logged', (tester) async {
+    final folder = Directory.systemTemp.createTempSync('history_selection');
+    EventLog.current = EventLog(folder.path);
+    SelectionRecorder.debugReset();
+    final written = <String, String>{};
+    SelectionRecorder.write = (hangs, name, text) async =>
+        written['hangs/$name'] = text;
+    addTearDown(() {
+      EventLog.current = null;
+      SelectionRecorder.debugReset();
+      folder.deleteSync(recursive: true);
+    });
     String? copied;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -432,18 +447,147 @@ void main() {
       ),
     );
     await tester.pump();
+    // Done again as it is dragged, not only once let go.
+    expect(delegate.getSelectedContent()?.plainText, answer);
+    // What led to it: the text left on the list.
+    expect(
+      File(EventLog.current!.path)
+          .readAsLinesSync()
+          .where((line) => line.contains(' [selection] ')),
+      [
+        allOf(
+          contains('a drag on text had selected nothing (while held'),
+          contains('done again, selected'),
+          contains('1 unregistered'),
+          contains('steps in ${written.keys.single}'),
+        ),
+      ],
+    );
+    // The steps before it: the press, and the start sent first to the text
+    // left on the list (no item), which answered it was before it all.
+    final steps = written.values.single;
+    expect(steps, contains('== Steps, the newest last'));
+    expect(steps, contains('press '));
+    expect(steps, matches(RegExp(r'got start .*asked #0/-1:prev')));
+    expect(steps, contains('drag done again (while held)'));
+    expect(steps, contains('off since'));
     await mouse.up();
     await tester.pump();
-    expect(
-      tester.takeException().toString(),
-      contains('A drag on text selected nothing (selected done again)'),
-    );
+    expect(tester.takeException(), isNull);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pump();
     expect(copied, answer);
+  });
+
+  testWidgets('a drag whose selection is cleared while held selects from '
+      'where it was pressed again', (tester) async {
+    const answer = 'The parser drops the last token.';
+    final feed = _Feed([
+      const UserMessageItem(text: 'Why does it fail?'),
+      const AssistantTextItem(answer),
+    ])..streaming = false;
+    addTearDown(feed.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(body: ChatHistoryView(feed: feed)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final delegate = tester
+        .widgetList<SelectionContainer>(
+          find.ancestor(
+            of: find.byType(SuperListView),
+            matching: find.byType(SelectionContainer),
+          ),
+        )
+        .map((container) => container.delegate)
+        .whereType<StaticSelectionContainerDelegate>()
+        .first;
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.byWidgetPredicate(
+        (widget) => widget is RichText && widget.text.toPlainText() == answer,
+      ),
+    );
+    Offset at(double x) =>
+        paragraph.localToGlobal(Offset(x, paragraph.size.height / 2));
+    final mouse = await tester.startGesture(
+      at(0.5),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await mouse.moveTo(at(paragraph.size.width / 2));
+    await tester.pump();
+    // As the selection's gesture does when it gives up on the drag.
+    delegate.dispatchSelectionEvent(const ClearSelectionEvent());
+    await mouse.moveTo(at(paragraph.size.width - 0.5));
+    await tester.pump();
+    expect(delegate.getSelectedContent()?.plainText, answer);
+    await mouse.up();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a drag on the text below a code block, begun left of the '
+      'code, selects that text alone', (tester) async {
+    const after = 'The parser drops the last token.';
+    final feed = _Feed([
+      const UserMessageItem(text: 'Why does it fail?'),
+      const AssistantTextItem(
+        'It reads:\n\n```dart\nfinal token = next(); // the last one\n```'
+        '\n\n$after',
+      ),
+    ])..streaming = false;
+    addTearDown(feed.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(body: ChatHistoryView(feed: feed)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final delegate = tester
+        .widgetList<SelectionContainer>(
+          find.ancestor(
+            of: find.byType(SuperListView),
+            matching: find.byType(SelectionContainer),
+          ),
+        )
+        .map((container) => container.delegate)
+        .whereType<StaticSelectionContainerDelegate>()
+        .first;
+    RenderParagraph paragraphOf(String text) =>
+        tester.renderObject<RenderParagraph>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is RichText &&
+                widget.text.toPlainText().startsWith(text),
+          ),
+        );
+    final paragraph = paragraphOf(after);
+    final from = paragraph.localToGlobal(const Offset(0.5, 6));
+    // The text begins left of the code (past its line numbers).
+    expect(
+      from.dx,
+      lessThan(paragraphOf('final token').localToGlobal(Offset.zero).dx),
+    );
+
+    final mouse = await tester.startGesture(
+      from,
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await mouse.moveTo(
+      paragraph.localToGlobal(Offset(paragraph.size.width - 0.5, 6)),
+    );
+    await tester.pump();
+    await mouse.up();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(delegate.getSelectedContent()?.plainText, after);
   });
 
   testWidgets('a release the list did not see (the button let go outside '

@@ -22,6 +22,7 @@ abstract final class KernelRegistry {
       context,
       // On the project's host: this machine, or a remote one's.
       start: startClaude,
+      readHistory: readClaudeHistory,
       readHistoryPage: readClaudeHistoryPage,
       readGoal: readClaudeGoal,
       forkSession: forkClaudeSession,

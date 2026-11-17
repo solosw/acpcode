@@ -1,5 +1,6 @@
 // Over a new chat's input: where it is to work. A menu of the projects
-// (the app-managed everyday tasks first; multi-folder workspaces under their own
+// (the app-managed everyday tasks first; Add Folder to the project picked
+// after this machine's; multi-folder workspaces under their own
 // heading, with Create Workspace…; SSH hosts under theirs, each with a
 // folder there to pick and its projects at its side, and Open Remote
 // Project…) and a button to pick a folder in the system's file manager.
@@ -46,6 +47,9 @@ class NewChatFolderBar extends StatelessWidget {
 
   static const _defaultTasksId = 'baocode.tasks.default';
 
+  /// The menu's row that adds a folder to the project picked.
+  static const _addFolderId = 'baocode.project.addFolder';
+
   /// Before an SSH host, the menu's row for it, which lists its projects
   /// at its side.
   static const _hostId = 'baocode.remote.host:';
@@ -82,6 +86,13 @@ class NewChatFolderBar extends StatelessWidget {
   Future<void> _pick() async {
     final path = await pickDirectory();
     if (path != null) workspace.moveNew(thread, path);
+  }
+
+  /// Adds a folder picked in the file manager to the project the agent is
+  /// to work in: it works in that folder too.
+  Future<void> _addFolder() async {
+    final folder = await pickDirectory();
+    if (folder != null) workspace.addFolder(thread.project.path, folder);
   }
 
   /// Asks for a new workspace (the folder the agent was to work in, in it
@@ -148,7 +159,9 @@ class NewChatFolderBar extends StatelessWidget {
           : project.host == null
           ? Codicons.folder
           : Codicons.remote,
-      switch ((project.host, workspace.workspaceOf(project))) {
+      switch ((project.host, workspace.multiRootAt(project.path))) {
+        (_, final multi?) when multi.inProject =>
+          l10n.newChatProjectAddedFolders(project.path, multi.added.length),
         (_, final multi?) => l10n.newChatWorkspaceDetail(
           multi.folders.length,
           multi.folders.map(RemoteLocation.nameOf).join(', '),
@@ -212,9 +225,21 @@ class NewChatFolderBar extends StatelessWidget {
         ],
     };
     final canCreate = workspace.workspaceDirectories.root != null;
+    final canAdd =
+        WindowControls.canPickDirectory &&
+        current.host == null &&
+        !workspace.isDefaultTaskProject(current) &&
+        !isWorkspace(current);
     final options = [
       ?noFolder,
       for (final project in local) option(project),
+      if (canAdd)
+        KernelOption(
+          NewChatFolderBar._addFolderId,
+          l10n.newChatAddFolderTo(current.name),
+          Codicons.add,
+          l10n.newChatAddFolderToDetail,
+        ),
       for (final project in workspaces) option(project),
       if (canCreate)
         KernelOption(
@@ -245,6 +270,8 @@ class NewChatFolderBar extends StatelessWidget {
     final selected = workspace.isDefaultTaskProject(current)
         ? noFolder!
         : option(current);
+    // A project with folders added to it: how many after its name.
+    final added = workspace.multiRootAt(current.path);
     final fileManager = l10n.fileManager;
     return Row(
       children: [
@@ -252,6 +279,9 @@ class NewChatFolderBar extends StatelessWidget {
           child: ComposerPicker(
             options: options,
             selected: selected,
+            label: added != null && added.inProject
+                ? '${current.name} +${added.added.length}'
+                : null,
             title: l10n.newChatWorkingFolder,
             menuWidth: 290,
             submenuOf: (option) => onHosts[option.id] ?? const [],
@@ -264,6 +294,7 @@ class NewChatFolderBar extends StatelessWidget {
                 ),
               NewChatFolderBar._defaultTasksId => _defaultTasks(context),
               NewChatFolderBar._createWorkspaceId => _createWorkspace(context),
+              NewChatFolderBar._addFolderId => _addFolder(),
               final path => _moveTo(path),
             },
           ),

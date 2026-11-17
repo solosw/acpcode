@@ -2282,6 +2282,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarArchived => 'Archived';
 
   @override
+  String sidebarArchivedIn(String folder) {
+    return '$folder · archived';
+  }
+
+  @override
   String get sidebarOpenFolder => 'Open folder…';
 
   @override
@@ -2707,6 +2712,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentStateRunningInBackground => 'running in the background';
 
   @override
+  String get agentElapsedHint =>
+      'How long it has been at work: the times it was continued add up';
+
+  @override
   String get agentStateRunning => 'running';
 
   @override
@@ -2894,6 +2903,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get imageDefaultSet => 'Set as default image model';
+
+  @override
+  String get imageCopyPrompt => 'Copy prompt';
 
   @override
   String get toolProposingGoal => 'Proposing a goal';
@@ -3981,6 +3993,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String explorerDownloading(int done, int total) {
     return 'Downloading files... $done/$total';
   }
+
+  @override
+  String get explorerDownload => 'Download...';
+
+  @override
+  String explorerDownloadExists(String folder) {
+    return 'Some of them are already in $folder. Replace them?';
+  }
+
+  @override
+  String get explorerDownloadReplace => 'Replace';
 
   @override
   String get explorerPreparingTransfer => 'Preparing files...';
@@ -6825,6 +6848,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get customizeKindRules => 'Rules';
 
   @override
+  String get customizeKindMemory => 'Memory';
+
+  @override
   String get customizeKindCommands => 'Commands';
 
   @override
@@ -6882,6 +6908,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get customizeDisabled => 'Disabled';
+
+  @override
+  String get customizeLinkUnreachable =>
+      'Not loaded: this is a link the system cannot follow. Install the skill as a real folder, or link it again.';
 
   @override
   String get customizeBack => 'Back';
@@ -6952,6 +6982,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get customizeEmptyPlugins =>
       'None installed. Install plugins with /plugin in Claude Code.';
+
+  @override
+  String get customizeEmptyMemory =>
+      'Nothing remembered yet. Claude Code saves what it learns about you and this project here as it works (its auto memory), and reads it back in later conversations.';
 
   @override
   String get customizeEmptyMcpsUser =>
@@ -8546,23 +8580,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get remoteSignInConnect => 'Connect';
 
   @override
-  String remoteFolderPlaceholder(String host) {
-    return 'A folder on $host: pick one, or type a path';
-  }
-
-  @override
-  String get remoteFolderRefresh => 'Read the folders again';
-
-  @override
-  String get remoteOpenThisFolder => 'Open This Folder';
-
-  @override
   String get remoteParentFolder => 'Parent Folder';
-
-  @override
-  String remoteGoTo(String path) {
-    return 'Go to $path';
-  }
 
   @override
   String remoteListFailed(String path) {
@@ -8576,21 +8594,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get remoteFileHostPlaceholder => 'Select a host, to browse its files';
-
-  @override
-  String remoteFilePlaceholder(String host) {
-    return 'A file on $host: pick one, or type a path';
-  }
-
-  @override
-  String remoteOpenFile(String path) {
-    return 'Open $path';
-  }
-
-  @override
-  String remoteOpenFailed(String path) {
-    return 'Could not open $path';
-  }
 
   @override
   String get remoteRecentFiles => 'Recent Remote Files';
@@ -8830,6 +8833,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get newChatCreateWorkspaceDetail => 'Work across several folders';
 
   @override
+  String newChatAddFolderTo(String name) {
+    return 'Add Folder to $name…';
+  }
+
+  @override
+  String get newChatAddFolderToDetail => 'Its agents work there too';
+
+  @override
+  String newChatProjectAddedFolders(String path, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more folders',
+      one: '1 more folder',
+    );
+    return '$path · $_temp0';
+  }
+
+  @override
   String get workspaceCreateTitle => 'Create Workspace';
 
   @override
@@ -8890,6 +8912,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidebarEditProject => 'Edit Project…';
 
   @override
+  String get sidebarAddFolder => 'Add Folder…';
+
+  @override
   String get projectEditTitle => 'Edit Project';
 
   @override
@@ -8898,6 +8923,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get projectLocationDescription =>
       'Moved or renamed the folder? Point the project at it here, and its conversations move along. The folder itself is not moved.';
+
+  @override
+  String get projectFoldersDescription =>
+      'Agents working in this project can read and change the files in the folders added to it too. Conversations already started see them once they start again.';
 
   @override
   String projectChooseFolder(String app) {
@@ -10376,6 +10405,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountsGiteeHosts => 'gitee.com, with a personal access token';
 
   @override
+  String get accountsGitCodeHosts =>
+      'gitcode.com, with a personal access token';
+
+  @override
   String get accountsSignInBrowser => 'Sign in with Browser';
 
   @override
@@ -10430,6 +10463,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get accountsTokenGiteeScopes =>
       'A personal access token with the user_info, projects, pull_requests, issues and notes scopes.';
+
+  @override
+  String get accountsTokenGitCodeScopes =>
+      'A personal access token that can read your user info, and read and write repositories, issues and pull requests.';
 
   @override
   String accountsTokenCreate(String host) {
@@ -11458,6 +11495,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutOpen => 'Open';
+
+  @override
+  String get aboutDeviceId => 'Device ID';
+
+  @override
+  String get aboutCopy => 'Copy';
 
   @override
   String get stashSettingsIssueSync => 'Issues as stashes';
@@ -13809,6 +13852,103 @@ class AppLocalizationsEn extends AppLocalizations {
       'Its quota starts over at once. The credit can\'t be given back, and whatever quota is left now is lost.';
 
   @override
+  String claudeResets(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count resets',
+      one: '1 reset',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get claudeResetsTitle => 'Claude limit resets';
+
+  @override
+  String get claudeResetsDetail =>
+      'Granted by Anthropic. Using one sets the limits it lists back to nothing used. With more than one, they are used one at a time, in the order Anthropic sets.';
+
+  @override
+  String claudeResetClears(String windows) {
+    return 'Clears $windows';
+  }
+
+  @override
+  String claudeResetWindowUsed(String window, int percent) {
+    return '$window ($percent% used)';
+  }
+
+  @override
+  String claudeResetWeeklyOf(String model) {
+    return '$model weekly';
+  }
+
+  @override
+  String get claudeResetNext => 'Usable now';
+
+  @override
+  String get claudeResetQueued =>
+      'Waits its turn: usable once the one above is used';
+
+  @override
+  String get claudeResetUse => 'Use This One…';
+
+  @override
+  String get claudeResetConfirm => 'Use a Claude limit reset?';
+
+  @override
+  String claudeResetConfirmDetail(String label, String windows) {
+    return '“$label” sets $windows back to nothing used, at once. The reset can\'t be given back, and what is left of these limits now is lost.';
+  }
+
+  @override
+  String get claudeResetPaused => 'Paused';
+
+  @override
+  String claudeResetCooldown(String time) {
+    return 'Usable again $time';
+  }
+
+  @override
+  String claudeResetUnavailable(String reason) {
+    return 'Not usable now ($reason)';
+  }
+
+  @override
+  String get claudeResetSignedOut =>
+      'The Claude.ai sign-in has expired; Claude Code renews it as it next runs.';
+
+  @override
+  String claudeResetDone(String windows) {
+    return 'Reset: $windows';
+  }
+
+  @override
+  String claudeResetNotDone(String reason) {
+    return 'Not reset: $reason';
+  }
+
+  @override
+  String get claudeResetNotNext =>
+      'Another reset is the one usable now; nothing was used. Refresh and try again.';
+
+  @override
+  String get claudeResetNotLimited =>
+      'This reset can only be used once a limit is reached; nothing was used.';
+
+  @override
+  String get claudeResetAlreadyUsed =>
+      'This reset was already used; nothing was used now.';
+
+  @override
+  String get claudeResetCoolingDown =>
+      'A reset was just used; wait a little before the next. Nothing was used.';
+
+  @override
+  String get claudeResetsRefresh => 'Refresh';
+
+  @override
   String resetCreditsHint(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -14327,4 +14467,342 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get branchBarPathCopied => 'Path copied';
+
+  @override
+  String get rewindFilesTitle =>
+      'Undo the file changes made after this message?';
+
+  @override
+  String rewindFilesChanged(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return 'The agent changed $_temp0 after this message:';
+  }
+
+  @override
+  String rewindFilesMore(int count) {
+    return '…and $count more';
+  }
+
+  @override
+  String rewindFilesMerged(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count of them were',
+      one: '1 of them was',
+    );
+    return '$_temp0 also changed elsewhere since: those changes are kept.';
+  }
+
+  @override
+  String rewindFilesConflicts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files can\'t',
+      one: '1 file can\'t',
+    );
+    String _temp1 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'they are',
+      one: 'it is',
+    );
+    return '$_temp0 be undone cleanly and will stay as $_temp1:';
+  }
+
+  @override
+  String get rewindFilesCommands =>
+      'What commands changed (Bash) isn\'t tracked and stays.';
+
+  @override
+  String get rewindFilesRevert => 'Undo and Send';
+
+  @override
+  String get rewindFilesKeep => 'Keep and Send';
+
+  @override
+  String get rewindFilesRemember => 'Remember my choice';
+
+  @override
+  String get generalSettingsRewindFiles => 'Edited Messages';
+
+  @override
+  String get generalSettingsRewindFilesDescription =>
+      'When you edit an earlier message and send it again, what happens to the files the agent changed after it. Commands\' (Bash) changes are not tracked. Claude Code and BaoCode agent only.';
+
+  @override
+  String get generalSettingsRewindAsk => 'Ask Each Time';
+
+  @override
+  String get generalSettingsRewindRevert => 'Undo the Changes';
+
+  @override
+  String get generalSettingsRewindKeep => 'Keep the Changes';
+
+  @override
+  String get settingsTransferTitle => 'Move to Another Computer';
+
+  @override
+  String get settingsTransferDescription =>
+      'Your settings, keybindings and upstreams with their models, in one file to import on the other computer.';
+
+  @override
+  String get settingsTransferLabel => 'Settings file';
+
+  @override
+  String get settingsTransferExport => 'Export…';
+
+  @override
+  String get settingsTransferImport => 'Import…';
+
+  @override
+  String get settingsTransferExportQuestion => 'Export your settings?';
+
+  @override
+  String get settingsTransferExportDetail =>
+      'Settings, keybindings and upstreams go into the file. The upstreams\' API keys only if you tick the box below: they are then in the file as plain text, so keep it to yourself and delete it once imported.';
+
+  @override
+  String get settingsTransferWithKeys => 'Include the upstreams\' API keys';
+
+  @override
+  String settingsTransferExported(String path) {
+    return 'Exported to $path';
+  }
+
+  @override
+  String settingsTransferImportQuestion(String file) {
+    return 'Import the settings in $file?';
+  }
+
+  @override
+  String get settingsTransferImportDetail =>
+      'Its settings, keybindings and upstreams replace yours; settings it does not have stay as they are.';
+
+  @override
+  String get settingsTransferImported =>
+      'Imported. Some settings take effect once BaoCode restarts.';
+
+  @override
+  String get settingsTransferNotAFile =>
+      'This is not a settings file BaoCode exported.';
+
+  @override
+  String settingsTransferFailed(String error) {
+    return 'Not done: $error';
+  }
+
+  @override
+  String get generalSettingsSessionTools =>
+      'Agents can coordinate other conversations';
+
+  @override
+  String get generalSettingsSessionToolsDescription =>
+      'An agent can list your other conversations, read where they stand without waking them, hand them work (resumed if stopped, queued if busy) and wait for them. For one conversation that coordinates the others; agents started after the change have it.';
+
+  @override
+  String get generalSettingsCommandLine => 'Command Line';
+
+  @override
+  String get baoBashRecommended => 'BaoCode Bash (recommended)';
+
+  @override
+  String get baoBashDescription =>
+      'A complete bash for agents on Windows: rg, grep, sed, awk, find, jq, tar and some 80 other common commands built in, no Git for Windows needed, and C:\\ and /c/ paths alike. Both the built-in core and Claude Code\'s run their agents\' commands with it.';
+
+  @override
+  String get baoBashNotInstalled => 'Not installed yet.';
+
+  @override
+  String baoBashInstalled(String version) {
+    return 'Version $version installed.';
+  }
+
+  @override
+  String baoBashUpdateAvailable(String version) {
+    return 'Version $version is out.';
+  }
+
+  @override
+  String baoBashDownloading(int percent) {
+    return 'Downloading… $percent%';
+  }
+
+  @override
+  String get baoBashInstall => 'Install';
+
+  @override
+  String baoBashInstallSize(String size) {
+    return 'Install ($size)';
+  }
+
+  @override
+  String get baoBashUpdate => 'Update';
+
+  @override
+  String get baoBashUninstall => 'Uninstall';
+
+  @override
+  String baoBashFailed(String error) {
+    return 'Could not install it: $error';
+  }
+
+  @override
+  String get baoBashNoticeTitle => 'On Windows, BaoCode Bash is recommended';
+
+  @override
+  String get baoBashNoticeBody =>
+      'Agents run commands more reliably with it. It brings bash with rg, grep, sed, awk, find, jq, tar and some 80 other common commands, no Git for Windows needed; it takes C:\\ and /c/ paths alike, so commands no longer fail on the differences between cmd and PowerShell.';
+
+  @override
+  String get baoBashNoticeLater => 'Not Now';
+
+  @override
+  String get baoBashSource => 'Open source:';
+
+  @override
+  String get baoBashHintInstall => 'Install and Use';
+
+  @override
+  String get commandLineShell => 'Shell';
+
+  @override
+  String get commandLineShellDescription =>
+      'What agents run their commands in on Windows. Claude Code\'s CLI core takes bash alone: with cmd or PowerShell picked, it runs Git Bash.';
+
+  @override
+  String get commandLineShellCustom => 'Custom…';
+
+  @override
+  String commandLineShellInUse(String path) {
+    return 'In use: $path';
+  }
+
+  @override
+  String commandLineShellFallback(String shell, String path) {
+    return '$shell is not ready yet: commands run in $path meanwhile.';
+  }
+
+  @override
+  String get commandLineCustomPath => 'Custom shell';
+
+  @override
+  String get commandLineCustomPathDescription =>
+      'The program to run commands with: a bash.exe, cmd.exe, powershell.exe or pwsh.exe.';
+
+  @override
+  String remoteBrowserFolderTitle(String host) {
+    return 'Open a Folder on $host';
+  }
+
+  @override
+  String remoteBrowserFileTitle(String host) {
+    return 'Open a File on $host';
+  }
+
+  @override
+  String get remoteBrowserPlaces => 'Locations';
+
+  @override
+  String get remoteBrowserRecent => 'Recent Locations';
+
+  @override
+  String get remoteBrowserHome => 'Home';
+
+  @override
+  String get remoteBrowserThisPc => 'This PC';
+
+  @override
+  String get remoteBrowserRoot => 'Root';
+
+  @override
+  String remoteBrowserLocalDisk(String drive) {
+    return 'Local Disk ($drive)';
+  }
+
+  @override
+  String get remoteBrowserBack => 'Back';
+
+  @override
+  String get remoteBrowserForward => 'Forward';
+
+  @override
+  String get remoteBrowserRefresh => 'Refresh';
+
+  @override
+  String get remoteBrowserFilter => 'Filter';
+
+  @override
+  String get remoteBrowserView => 'View Options';
+
+  @override
+  String get remoteBrowserShowHidden => 'Hidden Items';
+
+  @override
+  String get remoteBrowserShowSystem => 'Protected Operating System Files';
+
+  @override
+  String get remoteBrowserNewFolder => 'New Folder';
+
+  @override
+  String get remoteBrowserOpen => 'Open';
+
+  @override
+  String get remoteBrowserEmpty => 'This folder is empty.';
+
+  @override
+  String get remoteBrowserNoFolders => 'No folders here.';
+
+  @override
+  String remoteBrowserNoMatch(String filter) {
+    return 'Nothing here matches “$filter”.';
+  }
+
+  @override
+  String remoteBrowserHiddenCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count hidden items',
+      one: '1 hidden item',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get remoteBrowserShowHiddenNow => 'Show';
+
+  @override
+  String get remoteBrowserEditPath => 'Go to a Path';
+
+  @override
+  String get remoteBrowserPathPlaceholder =>
+      'A path: ~/code, /srv/app, D:\\work';
+
+  @override
+  String remoteBrowserNotFound(String path) {
+    return '$path does not exist.';
+  }
+
+  @override
+  String remoteBrowserNotFolder(String path) {
+    return '$path is a file, not a folder.';
+  }
+
+  @override
+  String remoteBrowserMakeFailed(String error) {
+    return 'Could not make the folder: $error';
+  }
+
+  @override
+  String get remoteBrowserFolderAction => 'Open Folder';
+
+  @override
+  String get remoteBrowserFileAction => 'Open File';
 }

@@ -34,7 +34,7 @@ class BashTool extends Tool {
 
 - The shell starts where the last command left it, but give absolute paths where you can: a `cd` inside a compound command may need the user's say-so. Variables and functions do not carry over from call to call; the shell is set up from the user's profile.
 - Do not use it to read or change files (cat, head, tail, sed, awk, echo): Read, Edit and Write do that better, and the user can follow them. Use it for that only when nothing else will do, or the user asked for it.
-- ${_search(session)} Keep a search narrow (a folder, a file type) and its output short (`-l`, `| head`).
+${_shellNote(session)}- ${_search(session)} Keep a search narrow (a folder, a file type) and its output short (`-l`, `| head`).
 - What a command prints is shown to you, not always to the user: say what matters in your reply.
 - `timeout` is in milliseconds: ${defaultTimeout.inMilliseconds} unless given, at most ${maxTimeout.inMilliseconds} in the foreground.
 - `run_in_background` starts it detached: it runs on across turns, and you are woken when it ends. `timeout` then bounds how long it may run (${defaultBackgroundTimeout.inMilliseconds} unless given, at most ${maxBackgroundTimeout.inMilliseconds}): at that limit it is stopped, and you are told. It needs no `&`.
@@ -45,12 +45,33 @@ class BashTool extends Tool {
 - Make commits and push them only when told to; on the default branch, start a branch for them first.
 - End commit messages and pull request descriptions with the attribution lines the conversation gives in a <system-reminder>, when it gives any.''';
 
+  /// What the shell is, where it is not what a model expects of the
+  /// platform: BaoCode Bash or PowerShell on Windows.
+  static String _shellNote(AgentSession session) => switch (session.shell) {
+    Shell(baoBash: true) => '- ${Shell.baoBashNote}\n',
+    Shell(kind: ShellKind.powershell) => '- ${Shell.powershellNote}\n',
+    _ => '',
+  };
+
   /// How to search, with what this machine has: a model told of `rg`
-  /// where there is none spends a call finding that out.
-  static String _search(AgentSession session) =>
-      session.fileIndex.ripgrep != null
-      ? "To find files and what is in them, search here: `rg` (or `grep -rn`) for text, `rg --files -g '<glob>'` (or `find`) for names."
-      : 'To find files and what is in them, search here: `grep -rn` for text, `find` for names (ripgrep is not installed: no `rg`).';
+  /// where there is none spends a call finding that out, and one left to
+  /// cmd.exe's own writes scripts to search with.
+  static String _search(AgentSession session) {
+    final posix = session.shell.posix;
+    if (session.shell.kind == ShellKind.powershell) {
+      return session.fileIndex.ripgrep != null
+          ? "To find files and what is in them, search here: `rg` for text, `rg --files -g '<glob>'` for names. Search rather than write a script to."
+          : 'To find files and what is in them, search here (ripgrep is not installed): `Get-ChildItem -Recurse -File | Select-String -Pattern "text"` for text, `Get-ChildItem -Recurse -Filter "*name*"` for names. Search rather than write a script to.';
+    }
+    if (session.shell.baoBash || session.fileIndex.ripgrep != null) {
+      return posix
+          ? "To find files and what is in them, search here: `rg` (or `grep -rn`) for text, `rg --files -g '<glob>'` (or `find`) for names. Search rather than write a script to."
+          : "To find files and what is in them, search here: `rg` for text, `rg --files -g \"<glob>\"` for names (the shell is cmd.exe: double quotes). Search rather than write a script to.";
+    }
+    return posix
+        ? 'To find files and what is in them, search here: `grep -rn` for text, `find` for names (ripgrep is not installed: no `rg`). Search rather than write a script to.'
+        : 'To find files and what is in them, search here (the shell is cmd.exe, ripgrep is not installed): `findstr /s /n /i /c:"text" *.ext` for text, `dir /s /b *name*` for names. Search rather than write a script to.';
+  }
 
   @override
   Map<String, Object?> get inputSchema => const {

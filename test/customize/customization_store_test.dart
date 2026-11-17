@@ -151,6 +151,87 @@ void main() {
     );
   });
 
+  test('a skill linked in is listed; a link leading nowhere says so, '
+      'and is deleted (#859)', () async {
+    final elsewhere = p.join(temp.path, 'manager', 'pdf');
+    write(
+      p.join(elsewhere, 'SKILL.md'),
+      '---\nname: pdf\ndescription: Reads PDFs\n---\n',
+    );
+    Directory(p.join(config, 'skills')).createSync(recursive: true);
+    Link(p.join(config, 'skills', 'pdf')).createSync(elsewhere);
+    final dead = p.join(config, 'skills', 'gone');
+    Link(dead).createSync(p.join(temp.path, 'nowhere'));
+
+    final skills = await store.list(CustomizationKind.skills);
+    expect(
+      [for (final s in skills) (s.name, s.description, s.unreachable)],
+      [('gone', '', true), ('pdf', 'Reads PDFs', false)],
+    );
+    expect(skills.first.editable, isFalse);
+    await store.delete(skills.first);
+    expect(Link(dead).existsSync(), isFalse);
+    expect(
+      [for (final s in await store.list(CustomizationKind.skills)) s.name],
+      ['pdf'],
+    );
+  });
+
+  test('a project\'s memories, and its AGENTS.md where it has no CLAUDE.md '
+      '(#852)', () async {
+    final memory = p.join(
+      config,
+      'projects',
+      claudeProjectDirName(project),
+      'memory',
+    );
+    write(p.join(memory, 'MEMORY.md'), '- [Tabs](tabs.md) — use tabs\n');
+    write(
+      p.join(memory, 'tabs.md'),
+      '---\nname: tabs\ndescription: The user wants tabs\n---\n\nTabs.\n',
+    );
+    write(p.join(memory, 'notes.txt'), 'not one');
+    final memories = await store.list(
+      CustomizationKind.memory,
+      project: project,
+    );
+    expect(
+      [for (final m in memories) (m.scope, m.name, m.description)],
+      [
+        (
+          CustomizationScope.project,
+          'MEMORY.md',
+          '- [Tabs](tabs.md) — use tabs',
+        ),
+        (CustomizationScope.project, 'tabs.md', 'The user wants tabs'),
+      ],
+    );
+    expect(memories.last.removePath, p.join(memory, 'tabs.md'));
+    expect(await store.list(CustomizationKind.memory), isEmpty);
+
+    write(p.join(project, 'AGENTS.md'), '# Agents\n\nUse Dart.\n');
+    List<String> rules(List<Customization> all) => [
+      for (final r in all)
+        if (r.scope == CustomizationScope.project) r.name,
+    ];
+    expect(rules(await store.list(CustomizationKind.rules, project: project)), [
+      'AGENTS.md',
+    ]);
+    // CLAUDE.md there: read in its place.
+    write(p.join(project, '.claude', 'CLAUDE.md'), 'Use Dart.\n');
+    expect(rules(await store.list(CustomizationKind.rules, project: project)), [
+      p.join('.claude', 'CLAUDE.md'),
+    ]);
+  });
+
+  test('a project\'s folder under Claude Code\'s, as it names it', () {
+    expect(claudeProjectDirName('/Users/me/my app'), '-Users-me-my-app');
+    expect(claudeProjectDirName(r'C:\Users\me\app'), 'C--Users-me-app');
+    final long = claudeProjectDirName('/${'a' * 300}');
+    expect(long.length, greaterThan(200));
+    expect(long, startsWith('-${'a' * 199}-'));
+  });
+
   test('lists servers, hooks and plugins from their JSON files', () async {
     write(
       p.join(temp.path, 'home', '.claude.json'),

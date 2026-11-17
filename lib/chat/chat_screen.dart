@@ -14,6 +14,8 @@ import '../kernel/kernel_types.dart';
 import '../keybindings/chat_keybindings.dart';
 import '../l10n/l10n.dart';
 import '../models/model_welcome.dart';
+import '../bash_exe/bao_bash.dart';
+import '../bash_exe/bao_bash_view.dart' show BaoBashHint;
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
@@ -518,6 +520,7 @@ class _ChatScreenState extends State<ChatScreen>
     ChatWidth.current.removeListener(_widthChanged);
     ChatMinimap.enabled.removeListener(_widthChanged);
     _existence?.dispose();
+    _folderExistence?.dispose();
     _keyScope.dispose();
     for (final layer in _layers) {
       layer.dispose();
@@ -971,6 +974,15 @@ class _ChatScreenState extends State<ChatScreen>
     (path) => widget.fileLinks?.exists?.call(path) ?? Future.value(false),
   );
 
+  /// And which folders, those of its links too.
+  FileExistence? _folderExistence;
+  FileExistence? get _folders => widget.fileLinks?.folderExists == null
+      ? null
+      : _folderExistence ??= FileExistence(
+          (path) =>
+              widget.fileLinks?.folderExists?.call(path) ?? Future.value(false),
+        );
+
   /// Opens [request] where [ChatScreen.fileLinks] says: a file's changes
   /// with what the session knows of them.
   void _openFile(FileOpenRequest request) {
@@ -1117,6 +1129,7 @@ class _ChatScreenState extends State<ChatScreen>
             paths: links.paths,
             onOpen: _openFile,
             existence: _files,
+            folders: _folders,
             readBytes: links.readBytes,
             sizeOf: links.sizeOf,
             inPanel: links.inPanel,
@@ -1430,6 +1443,13 @@ class _ChatScreenState extends State<ChatScreen>
               // Claude Code being downloaded for this machine, or put on
               // a remote project's host.
               ClaudeInstallBanner(location: _session.kernelContext.cwd),
+              // Windows: BaoCode Bash recommended to whoever runs commands
+              // in neither it nor Git Bash, for a project on this machine.
+              if (BaoBash.current case final bash?
+                  when !RemoteLocation.isRemote(
+                    _session.kernelContext.cwd ?? '',
+                  ))
+                BaoBashHint(bash: bash),
               // Reset credits of the model's ChatGPT accounts about to
               // expire: a plan to use them.
               ResetCreditsHint(model: _session.models?.selected.id),

@@ -96,13 +96,14 @@ class ExplorerService extends ChangeNotifier {
     _workspace = null;
   }
 
-  /// A multi-folder workspace's folders changed: the tree and Quick Open
-  /// follow.
+  /// A multi-folder workspace's folders changed (or a project's, folders
+  /// added to it or taken out): the tree and Quick Open follow.
   void rootsChanged() {
     final workspace = _workspace;
-    if (workspace == null || !workspace.isMultiRoot) return;
-    controller.setRoots(workspace.roots, multiRoot: true);
-    fileIndex.roots = workspace.roots;
+    if (workspace == null) return;
+    final multi = workspace.isMultiRoot;
+    controller.setRoots(multi ? workspace.roots : const [], multiRoot: multi);
+    fileIndex.roots = multi ? workspace.roots : null;
   }
 
   /// settings.json read again: its exclusions follow it (a pattern added

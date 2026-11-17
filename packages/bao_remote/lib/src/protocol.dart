@@ -15,7 +15,7 @@ import 'search/text_query.dart';
 abstract final class RemoteProtocol {
   /// Raise it whenever a method or a shape changes: an app and a server of
   /// another version do not talk, and the app puts its own server in place.
-  static const version = 10;
+  static const version = 12;
 
   static const initialize = 'initialize';
   static const shutdown = 'shutdown';
@@ -43,11 +43,24 @@ abstract final class RemoteProtocol {
   /// How many bytes files and folders take, counted up to a limit.
   static const fsSize = 'fs/size';
   static const fsWriteBytes = 'fs/writeBytes';
+
+  /// `{path, offset, data}`: bytes added to the end of a file
+  /// [fsWriteBytes] made, which is [offset] long: a big file is uploaded a
+  /// stretch at a time, as [fsReadRange] downloads it.
+  static const fsAppendBytes = 'fs/appendBytes';
   static const fsWalk = 'fs/walk';
   static const fsWatch = 'fs/watch';
   static const fsStat = 'fs/stat';
   static const fsEntries = 'fs/entries';
   static const fsRealPath = 'fs/realPath';
+
+  /// Where to browse the machine from: its drives on Windows, `/` elsewhere
+  /// (`BrowseRoot`s).
+  static const fsRoots = 'fs/roots';
+
+  /// A folder's entries as a file browser lists them, each with whether
+  /// the system hides it (`BrowseEntry`s).
+  static const fsBrowse = 'fs/browse';
 
   // Search and Git.
   static const searchText = 'search/text';
@@ -85,6 +98,14 @@ abstract final class RemoteProtocol {
   static const ptyResize = 'pty/resize';
   static const ptyKill = 'pty/kill';
   static const ptyOutput = 'pty/output';
+
+  /// `{id, bytes}`: of a terminal started with `flow`, how much of its
+  /// output the app took in. Past [ptyHighWatermark] not taken in, the
+  /// server reads no more of it until it is down to [ptyLowWatermark]:
+  /// what it prints does not crowd out the rest of the connection.
+  static const ptyAck = 'pty/ack';
+  static const ptyHighWatermark = 128 * 1024;
+  static const ptyLowWatermark = 32 * 1024;
   static const ptyExit = 'pty/exit';
   static const ptyProfiles = 'pty/profiles';
 
@@ -102,6 +123,12 @@ abstract final class RemoteProtocol {
   static const tcpConnect = 'tcp/connect';
   static const tcpData = 'tcp/data';
   static const tcpClose = 'tcp/close';
+
+  /// The server's request of the app: `{cwd, args}`, what the `code`
+  /// command was given in a terminal there (see ServerCli), to open as the
+  /// app's own `code` command would; answered with `{error}` for the
+  /// command to print, or null.
+  static const cliOpen = 'cli/open';
 }
 
 /// Bytes as JSON carries them.

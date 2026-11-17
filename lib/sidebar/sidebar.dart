@@ -89,7 +89,13 @@ String relativeTime(DateTime time, DateTime now, [AppLocalizations? l10n]) {
 
 /// A heading and the agents under it.
 class _Group {
-  const _Group(this.id, this.label, this.threads, {this.project});
+  const _Group(
+    this.id,
+    this.label,
+    this.threads, {
+    this.project,
+    this.archivedOf,
+  });
 
   final String id;
   final String label;
@@ -97,6 +103,9 @@ class _Group {
 
   /// Set for a project group, which can start a new agent there.
   final Project? project;
+
+  /// Set for a group of a folder's archived agents.
+  final Project? archivedOf;
 
   bool get pinned => id == _pinnedGroup;
 }
@@ -107,7 +116,8 @@ const _pinnedGroup = 'pinned';
 /// beside (see [Workspace.askBeside]).
 const _asideIndent = 16.0;
 
-/// The group of the archived agents, while they show.
+/// The groups of the archived agents, a folder's each, while they show:
+/// their ids' start.
 const _archivedGroup = 'archived';
 
 /// Where an agent dragged within the list would go: in [group], before or
@@ -1042,11 +1052,21 @@ class _SidebarState extends State<Sidebar>
           ),
         ],
       },
+      // By folder, the one talked in last first.
       if (_showArchived)
-        _Group(_archivedGroup, l10n.sidebarArchived, [
+        for (final project in {
           for (final thread in threads)
-            if (thread.archived) thread,
-        ]),
+            if (thread.archived) thread.project,
+        })
+          _Group(
+            '$_archivedGroup:${project.path}',
+            l10n.sidebarArchivedIn(project.name),
+            [
+              for (final thread in threads)
+                if (thread.archived && thread.project == project) thread,
+            ],
+            archivedOf: project,
+          ),
     ];
   }
 
@@ -1892,12 +1912,15 @@ class _SidebarState extends State<Sidebar>
       // delete them all.
       menu: project != null
           ? () => _projectItems(project)
-          : group.id == _archivedGroup
-          ? () => _archivedItems(context.l10n)
+          : group.archivedOf != null
+          ? () => _archivedItems(context.l10n, project: group.archivedOf)
           : null,
       folders: project == null
           ? null
           : _workspace.workspaceOf(project)?.folders,
+      added: project == null
+          ? const []
+          : _workspace.multiRootAt(project.path)?.added ?? const [],
       dragged: project != null && identical(project, _draggedProject),
       speedMatch: _speedHits[group.id],
       // The one the speed search found; else one folded over the agent open.
@@ -1996,7 +2019,8 @@ class _SidebarState extends State<Sidebar>
       onDeleteAll: (threads) => unawaited(_confirmDelete(threads)),
       dragThreads: () => _targetsFor(thread),
       drag: widget.drag,
-      showProject: group.project == null,
+      // Archived ones are under a heading naming their folder.
+      showProject: group.project == null && group.archivedOf == null,
       showTime: SidebarTimes.shown.value,
       projectIcon: switch (_workspace.iconOf(thread.project)) {
         null when _workspace.workspaceOf(thread.project) != null => Icon(
@@ -2068,6 +2092,13 @@ class _SidebarState extends State<Sidebar>
             showProjectDialog(context, workspace: _workspace, project: project),
           ),
         ),
+      if (_workspace.canAddFolders(project.path) &&
+          WindowControls.canPickDirectory)
+        SidebarMenuItem(
+          l10n.sidebarAddFolder,
+          icon: Icons.create_new_folder_outlined,
+          onSelected: () => unawaited(_addFolder(project)),
+        ),
       SidebarMenuItem(
         l10n.sidebarRevealIn(Editor.folder.localizedPlatformLabel(l10n)),
         icon: Editor.folder.icon,
@@ -2119,6 +2150,14 @@ class _SidebarState extends State<Sidebar>
           onSelected: () => _workspace.deleteWorkspace(multi),
         ),
     ];
+  }
+
+  /// Adds a folder picked in the file manager to [project]: its agents
+  /// work in it too from then on.
+  Future<void> _addFolder(Project project) async {
+    final folder = await WindowControls.pickDirectory();
+    if (folder == null || !mounted) return;
+    _workspace.addFolder(project.path, folder);
   }
 
   static Object _iconSlot(Project project) => (#icon, project.path);
@@ -2473,33 +2512,46 @@ class _SidebarState extends State<Sidebar>
     );
   }
 
-  List<SidebarMenuItem> _archivedItems(AppLocalizations l10n) => [
-    SidebarMenuItem(
-      // Checked while they show, as a click on the button switches them.
-      l10n.sidebarArchived,
-      icon: Icons.inventory_2_outlined,
-      checked: _showArchived,
-      onSelected: _toggleArchived,
-    ),
-    SidebarMenuItem(
-      l10n.sidebarUnarchiveAll,
-      icon: Icons.unarchive_outlined,
-      onSelected: () {
-        _workspace
-          ..unarchiveAll(where: _here)
-          ..showArchived = false;
-      },
-    ),
-    SidebarMenuItem(
-      l10n.sidebarDeleteArchived,
-      icon: Icons.delete_outline_rounded,
-      destructive: true,
-      onSelected: () => unawaited(_confirmDeleteArchived()),
-    ),
-  ];
+  /// The archived agents' menu: all of them, or [project]'s (a folder's
+  /// group's).
+  List<SidebarMenuItem> _archivedItems(
+    AppLocalizations l10n, {
+    Project? project,
+  }) {
+    bool of(AgentThread thread) =>
+        _here(thread) && (project == null || thread.project == project);
+    return [
+      SidebarMenuItem(
+        // Checked while they show, as a click on the button switches them.
+        l10n.sidebarArchived,
+        icon: Icons.inventory_2_outlined,
+        checked: _showArchived,
+        onSelected: _toggleArchived,
+      ),
+      SidebarMenuItem(
+        l10n.sidebarUnarchiveAll,
+        icon: Icons.unarchive_outlined,
+        onSelected: () {
+          _workspace.unarchiveAll(where: of);
+          // Shown still while others are.
+          if (_archivedCount == 0) _workspace.showArchived = false;
+        },
+      ),
+      SidebarMenuItem(
+        l10n.sidebarDeleteArchived,
+        icon: Icons.delete_outline_rounded,
+        destructive: true,
+        onSelected: () => unawaited(_confirmDeleteArchived(where: of)),
+      ),
+    ];
+  }
 
-  Future<void> _confirmDeleteArchived() async {
-    final count = _archivedCount;
+  Future<void> _confirmDeleteArchived({
+    bool Function(AgentThread thread)? where,
+  }) async {
+    final count = _workspace.threads
+        .where((t) => t.archived && (where ?? _here)(t))
+        .length;
     if (count == 0) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2515,9 +2567,8 @@ class _SidebarState extends State<Sidebar>
       },
     );
     if (!(confirmed ?? false)) return;
-    _workspace
-      ..deleteArchived(where: _here)
-      ..showArchived = false;
+    _workspace.deleteArchived(where: where ?? _here);
+    if (_archivedCount == 0) _workspace.showArchived = false;
   }
 
   Widget _buildArchivedLabel(int count, bool active) {
@@ -2758,6 +2809,7 @@ class _GroupHeader extends StatelessWidget {
     this.pinned = false,
     this.icon,
     this.folders,
+    this.added = const [],
   });
 
   final _Group group;
@@ -2817,6 +2869,10 @@ class _GroupHeader extends StatelessWidget {
   /// The folders of the project, a multi-folder workspace's; null for a
   /// folder's.
   final List<String>? folders;
+
+  /// The folders added to a folder's project, its agents working in them
+  /// too.
+  final List<String> added;
 
   @override
   Widget build(BuildContext context) {
@@ -3013,12 +3069,29 @@ class _GroupHeader extends StatelessWidget {
       // Where the project is: its name says only which. Over the name
       // alone, not the buttons beside it, which come and go with the
       // pointer.
+      // With folders added to it: how many after its name, which they are
+      // under where it is.
+      final color = AppColors.textFaint;
       return _RowHover(
-        content: (context) => Text(project.path),
+        content: (context) => Text(
+          [project.path, for (final folder in added) '+ $folder'].join('\n'),
+        ),
         child: Align(
           alignment: Alignment.centerLeft,
           widthFactor: 1,
-          child: label,
+          child: added.isEmpty
+              ? label
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(child: label),
+                    const SizedBox(width: 6),
+                    Text(
+                      '+${added.length}',
+                      style: TextStyle(color: color, fontSize: 11),
+                    ),
+                  ],
+                ),
         ),
       );
     }

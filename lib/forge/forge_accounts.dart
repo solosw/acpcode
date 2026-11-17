@@ -283,7 +283,7 @@ class ForgeAccounts extends ChangeNotifier {
         ForgeKind.github => githubClient.isNotEmpty,
         ForgeKind.gitlab => gitlabClient.isNotEmpty,
         // No device flow: a token only.
-        ForgeKind.gitea || ForgeKind.gitee => false,
+        ForgeKind.gitea || ForgeKind.gitee || ForgeKind.gitcode => false,
       };
 
   static String _secretId(String host) => 'forge.$host';
@@ -327,6 +327,12 @@ class ForgeAccounts extends ChangeNotifier {
     // Its [host] is the instance's whole origin: http, or https, and its
     // Web port.
     ForgeKind.gitea => GiteaApi(host: host, http: http, token: token),
+    ForgeKind.gitcode => GitCodeApi(
+      host: host,
+      scheme: scheme,
+      http: http,
+      token: token,
+    ),
   };
 
   /// [ref]'s API: its host's, signed in; null without an account there.
@@ -491,8 +497,8 @@ class ForgeAccounts extends ChangeNotifier {
         throw const ForgeException(
           'Gitea supports personal access tokens only.',
         );
-      case ForgeKind.gitee:
-        throw const ForgeException('Gitee signs in with a token only.');
+      case ForgeKind.gitee || ForgeKind.gitcode:
+        throw ForgeException('${kind.label} signs in with a token only.');
       case ForgeKind.github || ForgeKind.gitlab:
         break;
     }
@@ -502,19 +508,24 @@ class ForgeAccounts extends ChangeNotifier {
       switch (kind) {
         ForgeKind.github => Uri.https(host, '/login/device/code'),
         ForgeKind.gitlab ||
-        ForgeKind.gitee => Uri.https(host, '/oauth/authorize_device'),
+        ForgeKind.gitee ||
+        ForgeKind.gitcode => Uri.https(host, '/oauth/authorize_device'),
         ForgeKind.gitea => throw StateError('Token sign-in only'),
       },
       headers: const {'Accept': 'application/json'},
       form: {
         'client_id': switch (kind) {
           ForgeKind.github => githubClient,
-          ForgeKind.gitlab || ForgeKind.gitee => gitlabClient,
+          ForgeKind.gitlab ||
+          ForgeKind.gitee ||
+          ForgeKind.gitcode => gitlabClient,
           ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
         'scope': switch (kind) {
           ForgeKind.github => _githubScopes,
-          ForgeKind.gitlab || ForgeKind.gitee => _gitlabScopes,
+          ForgeKind.gitlab ||
+          ForgeKind.gitee ||
+          ForgeKind.gitcode => _gitlabScopes,
           ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
       },
@@ -556,8 +567,8 @@ class ForgeAccounts extends ChangeNotifier {
         throw const ForgeException(
           'Gitea supports personal access tokens only.',
         );
-      case ForgeKind.gitee:
-        throw const ForgeException('Gitee signs in with a token only.');
+      case ForgeKind.gitee || ForgeKind.gitcode:
+        throw ForgeException('${code.kind.label} signs in with a token only.');
       case ForgeKind.github || ForgeKind.gitlab:
         break;
     }
@@ -579,14 +590,17 @@ class ForgeAccounts extends ChangeNotifier {
         switch (code.kind) {
           ForgeKind.github => Uri.https(code.host, '/login/oauth/access_token'),
           ForgeKind.gitlab ||
-          ForgeKind.gitee => Uri.https(code.host, '/oauth/token'),
+          ForgeKind.gitee ||
+          ForgeKind.gitcode => Uri.https(code.host, '/oauth/token'),
           ForgeKind.gitea => throw StateError('Token sign-in only'),
         },
         headers: const {'Accept': 'application/json'},
         form: {
           'client_id': switch (code.kind) {
             ForgeKind.github => githubClient,
-            ForgeKind.gitlab || ForgeKind.gitee => gitlabClient,
+            ForgeKind.gitlab ||
+            ForgeKind.gitee ||
+            ForgeKind.gitcode => gitlabClient,
             ForgeKind.gitea => throw StateError('Token sign-in only'),
           },
           'device_code': code.deviceCode,

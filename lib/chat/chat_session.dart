@@ -1328,9 +1328,16 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   }
 
   /// Resends the user message at [index] as [message]: everything after it
-  /// is discarded and the turn runs again from there.
+  /// is discarded and the turn runs again from there. With [revertFiles],
+  /// what those turns did to the files is undone first (see
+  /// [ChangeReview.rewind]); else it is left, as the user's.
   @override
-  void editMessage(int index, ComposerMessage message, {UserPlace? from}) {
+  void editMessage(
+    int index,
+    ComposerMessage message, {
+    UserPlace? from,
+    bool revertFiles = false,
+  }) {
     if (_kernel case final RewindsConversation kernel
         when !message.isEmpty && itemAt(index) is UserMessageItem) {
       stop();
@@ -1342,6 +1349,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
           if (!queued) lastSeen = _transcript.idAt(i) ?? lastSeen;
         }
       }
+      final dropped = _turnsFrom(index);
       // Sent once the agent has gone back: turned down, it would follow
       // all of the conversation.
       unawaited(
@@ -1352,11 +1360,54 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
               turns: turns,
               lastSeen: lastSeen,
             )
-            .then((rewound) {
-              if (rewound && !_disposed) send(message, from: from);
+            .then((rewound) async {
+              if (!rewound || _disposed) return;
+              if (_activeReview case final review?) {
+                if (revertFiles) {
+                  // What a turn stopped just now may still be writing.
+                  await review.look();
+                  await review.rewind(dropped);
+                } else {
+                  await review.forgetTurns(dropped);
+                }
+              }
+              if (!_disposed) send(message, from: from);
             }),
       );
     }
+  }
+
+  /// The user messages from [index] on (by their ids): the turns they
+  /// began.
+  Set<String> _turnsFrom(int index) => {
+    for (var i = index; i < _transcript.length; i++)
+      if (_transcript.itemAt(i) is UserMessageItem) ?_transcript.idAt(i),
+  };
+
+  /// What sending the message at [index] again could put back of the
+  /// files the turns from it on changed: empty when nothing.
+  Future<List<RewindFile>> rewindPlanAt(int index) async {
+    final review = _activeReview;
+    if (review == null ||
+        _kernel is! RewindsConversation ||
+        index >= _transcript.length ||
+        _transcript.itemAt(index) is! UserMessageItem) {
+      return const [];
+    }
+    final turns = _turnsFrom(index);
+    if (!review.changedIn(turns)) return const [];
+    return review.planRewind(turns);
+  }
+
+  /// The user message whose turn the agent's edits are of now: the last
+  /// taken up (one the agent takes up on its own goes with it).
+  String? get _editTurn {
+    for (var i = _transcript.length - 1; i >= 0; i--) {
+      if (_transcript.itemAt(i) case UserMessageItem(queued: false)) {
+        return _transcript.idAt(i);
+      }
+    }
+    return null;
   }
 
   void stop() => _kernel.cancel();
@@ -1417,15 +1468,17 @@ class _ReviewWatch implements EditWatch {
 
   @override
   Future<void> beforeEdit(String path) async {
+    final turn = session._editTurn;
     final key = session._absolute(path);
     session._reviewWrites[key] = (session._reviewWrites[key] ?? 0) + 1;
-    await (await _review())?.before(path);
+    await (await _review())?.before(path, turn: turn);
   }
 
   @override
   Future<void> afterEdit(String path) async {
+    final turn = session._editTurn;
     try {
-      await (await _review())?.after(path);
+      await (await _review())?.after(path, turn: turn);
     } finally {
       final key = session._absolute(path);
       final remaining = (session._reviewWrites[key] ?? 1) - 1;

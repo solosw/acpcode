@@ -203,6 +203,10 @@ class RemoteIdeFileService implements IdeHostFiles, IdeRangeFiles {
       (await _client).sizeOf(paths, limit: limit);
 
   @override
+  Future<void> appendBytes(String path, int offset, Uint8List bytes) async =>
+      (await _client).appendBytes(root, path, offset, bytes);
+
+  @override
   Stream<void> watchDirectory(String directory) => resilientStream(
     host,
     (client) => client.watchDirectory(directory),
@@ -356,6 +360,14 @@ class RemotePtyAdapter extends Pty {
 
   @override
   void kill([PtySignal signal = PtySignal.hangup]) => _pty.kill(signal.number);
+
+  // The terminal's flow control, carried to the host: what waits to be
+  // parsed holds the program there, not the connection.
+  @override
+  void pause() => _pty.pause();
+
+  @override
+  void resume() => _pty.resume();
 }
 
 /// A language server's process on the remote host.

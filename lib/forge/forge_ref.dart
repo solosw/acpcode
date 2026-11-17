@@ -1,4 +1,4 @@
-// Where code is hosted ("forges": GitHub, GitLab, Gitee, theirs or one of
+// Where code is hosted ("forges": GitHub, GitLab, Gitee, GitCode, theirs or one of
 // their own), told from links and Git remotes: a repository, and an issue or a
 // pull (merge) request in it. Nothing here asks the network.
 
@@ -10,6 +10,7 @@ enum ForgeKind {
   github,
   gitlab,
   gitee,
+  gitcode,
   // Last: an account of one is an instance's own, its whole address typed,
   // where the others are a service's (they are listed in this order too).
   gitea;
@@ -23,6 +24,7 @@ enum ForgeKind {
     gitlab => 'GitLab',
     gitea => 'Gitea',
     gitee => 'Gitee',
+    gitcode => 'GitCode',
   };
 
   /// Its hosted service's host: the one a token or a sign-in is for when
@@ -32,12 +34,13 @@ enum ForgeKind {
     gitlab => 'gitlab.com',
     gitea => '',
     gitee => 'gitee.com',
+    gitcode => 'gitcode.com',
   };
 }
 
 /// What a host is: [ForgeKind.github] for github.com, [ForgeKind.gitlab]
-/// for gitlab.com, [ForgeKind.gitee] for gitee.com, else as [kindOf] says
-/// (an account's on it); null when it cannot be told.
+/// for gitlab.com, [ForgeKind.gitee] for gitee.com, [ForgeKind.gitcode] for
+/// gitcode.com, else as configured accounts say; null when it cannot be told.
 // Gitea lookup accepts a full Web origin, or a bare host for SSH remotes.
 typedef ForgeKindOf = ForgeKind? Function(String host);
 
@@ -45,6 +48,7 @@ ForgeKind? publicForgeKind(String host) => switch (host.toLowerCase()) {
   'github.com' || 'www.github.com' => ForgeKind.github,
   'gitlab.com' || 'www.gitlab.com' => ForgeKind.gitlab,
   'gitee.com' || 'www.gitee.com' => ForgeKind.gitee,
+  'gitcode.com' || 'www.gitcode.com' => ForgeKind.gitcode,
   _ => null,
 };
 
@@ -160,7 +164,7 @@ class ForgeRepo {
         ? kindOf?.call(host) ?? publicForgeKind(host)
         : _webKind(Uri.parse(origin), kindOf);
     if (kind == null) return null;
-    // GitHub's, Gitea's and Gitee's are owner/name, no more.
+    // Only GitLab supports repository paths deeper than owner/name.
     if (kind != ForgeKind.gitlab && path.split('/').length != 2) return null;
     if (kind == ForgeKind.gitea) {
       // An instance's pages are its whole origin; a remote over SSH names
@@ -225,6 +229,12 @@ class ForgeRef {
     ),
     (ForgeKind.gitee, ForgeItemKind.pull) => repo.url.replace(
       path: '/${repo.path}/pulls/$number',
+    ),
+    (ForgeKind.gitcode, ForgeItemKind.issue) => repo.url.replace(
+      path: '/${repo.path}/issues/$key',
+    ),
+    (ForgeKind.gitcode, ForgeItemKind.pull) => repo.url.replace(
+      path: '/${repo.path}/pull/$number',
     ),
   };
 
@@ -307,13 +317,17 @@ class ForgeRef {
       }
       return null;
     }
-    // GitHub uses /pull/; Gitea uses /pulls/, on registered instances.
+    // GitHub and GitCode use /pull/; registered Gitea instances use /pulls/.
+    // GitCode also accepts its older merge request paths.
     if (parts.length >= 4 &&
-        (known == ForgeKind.github || known == ForgeKind.gitea)) {
+        (known == ForgeKind.github ||
+            known == ForgeKind.gitea ||
+            known == ForgeKind.gitcode)) {
       final kind = switch (parts[2]) {
         'issues' => ForgeItemKind.issue,
-        'pull' when known == ForgeKind.github => ForgeItemKind.pull,
+        'pull' when known != ForgeKind.gitea => ForgeItemKind.pull,
         'pulls' => ForgeItemKind.pull,
+        'merge_requests' when known == ForgeKind.gitcode => ForgeItemKind.pull,
         _ => null,
       };
       final number = int.tryParse(parts[3]);

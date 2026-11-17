@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:bao_editor/monaco/flutter/editor_document_model.dart';
 import 'package:bao_markdown/bao_markdown.dart';
+import 'package:baocode/chat/widgets/markdown_math.dart';
+import 'package:baocode/ide/ide_find_widget.dart';
 import 'package:baocode/ide/markdown/markdown_preview.dart';
 import 'package:baocode/ide/markdown/markdown_task_box.dart';
 import 'package:baocode/theme/app_theme.dart';
@@ -181,6 +183,36 @@ void main() {
     await tester.pumpAndSettle();
     expect(model.text, '- [ ] write\n\nText.');
   });
+
+  for (final readOnly in [false, true]) {
+    testWidgets('a table\'s formulas show typeset, no cell typed in '
+        '(readOnly: $readOnly, #998)', (tester) async {
+      final model = EditorDocumentModel(
+        '| Use | How |\n'
+        '| :--- | :--- |\n'
+        r'| Threshold | The valley is $T$ |'
+        '\n'
+        r'| Entropy | $H=-\sum p_i\log_2 p_i$; **flatter, larger** |'
+        '\n',
+      );
+      await pumpPreview(tester, model, readOnly: readOnly);
+      expect(tester.takeException(), isNull);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is MathView && widget.tex == 'T',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is MathView && widget.tex == r'H=-\sum p_i\log_2 p_i',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining(r'\sum', findRichText: true), findsNothing);
+    });
+  }
 
   testWidgets('a file dropped goes after the block it is let go on', (
     tester,
@@ -709,5 +741,55 @@ void main() {
     await tester.tap(find.byIcon(Codicons.close));
     await tester.pumpAndSettle();
     expect(model.text, '| x | y |\n|---|---|\n| Docs | 2 |\n');
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
+  testWidgets('⌘F finds in it: the match at hand selected, stepped '
+      'through, from the selection on', (tester) async {
+    final lines = [
+      '# Plan',
+      '',
+      for (var i = 0; i < 80; i++) 'Step $i: nothing here.',
+      'The **target** is near the end.',
+      'One more target.',
+    ];
+    await pumpPreview(
+      tester,
+      EditorDocumentModel(lines.join('\n')),
+      readOnly: true,
+    );
+    final text = _controller(tester).text;
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(MarkdownEditor)) + const Offset(60, 40),
+    );
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.meta);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.meta);
+    await tester.pump();
+    expect(find.byType(IdeFindWidget), findsOneWidget);
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(IdeFindWidget),
+            matching: find.byType(EditableText),
+          )
+          .first,
+      'TARGET',
+    );
+    await tester.pumpAndSettle();
+    final first = text.indexOf('target');
+    expect(
+      _controller(tester).selection,
+      TextSelection(baseOffset: first, extentOffset: first + 6),
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    final second = text.lastIndexOf('target');
+    expect(_controller(tester).selection.start, second);
+    // Shown: scrolled down to it.
+    expect(_state(tester).topLine, greaterThan(1));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.byType(IdeFindWidget), findsNothing);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 }

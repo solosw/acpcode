@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bao_agent/bao_agent.dart' show Shell;
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import '../../bash_exe/bao_bash.dart';
 import '../../models/launch_environment.dart';
 import '../../network/network_proxy_io.dart';
+import '../../network/tls.dart';
 import '../../platform/data_dir.dart';
 import '../../platform/child_process_registry.dart';
 import 'claude_code_transport.dart';
@@ -82,6 +85,22 @@ class ProcessTransport implements ClaudeCodeTransport {
     }
   }
 
+  /// [launch] with what BaoCode Bash has told, when the CLI runs its
+  /// commands in it ([baoBash]): ahead of the launch's own instructions,
+  /// unless they are all its prompt.
+  @visibleForTesting
+  static ClaudeLaunch toldOfBash(
+    ClaudeLaunch launch, {
+    required bool baoBash,
+  }) => !baoBash || launch.ownPrompt
+      ? launch
+      : launch.copyWith(
+          instructions: [
+            Shell.baoBashNote,
+            if (launch.instructions case final own? when own.isNotEmpty) own,
+          ].join('\n\n'),
+        );
+
   static Future<ClaudeCodeTransport> start(ClaudeLaunch launch) async {
     // Left over from a run that ended without stopping them: gone first, so
     // two processes never go on with one session.
@@ -94,12 +113,23 @@ class ProcessTransport implements ClaudeCodeTransport {
     final settingsFile = launch.hasSecrets
         ? await ClaudeSettingsFile.write(launch.settings)
         : null;
+    // Its commands run in the shell Settings → General → Command Line
+    // picks, where that is a bash (Windows), unless the user named one and
+    // picked none; told what BaoCode Bash has when it is that.
+    final bash = BaoBash.cliEnvironment({
+      ...Platform.environment,
+      ...cli.environment,
+    });
+    final told = toldOfBash(launch, baoBash: BaoBash.givesBaoBash(bash));
     final started = switch (settingsFile) {
-      final path? => launch.withSettingsFile(path),
-      null => launch,
+      final path? => told.withSettingsFile(path),
+      null => told,
     };
     // The proxy as it is now: Clash may have been turned on since.
     final proxy = await NetworkProxy.instance.environment();
+    // The machine's own certificates, as the app's requests trust them:
+    // Node bundles Mozilla's roots alone.
+    final certificates = await nodeCertificatesEnvironment(cli.environment);
     try {
       final process = await Process.start(
         cli.executable,
@@ -108,10 +138,13 @@ class ProcessTransport implements ClaudeCodeTransport {
         environment: {
           ...cli.environment,
           ...proxy,
+          ...certificates,
+          ...bash,
           // A provider's session: none of the user's own model setup.
           if (launch.env != null)
             for (final name in ClaudeModelVariables.inherited) name: '',
           ...ClaudeLaunch.environment,
+          ...ClaudeEntrypoint.of(launch.env, cli.environment),
           ...ClaudeEnvironment.stateDirectory(cli.environment),
         },
         // The login shell's environment is the whole of it; on Windows it

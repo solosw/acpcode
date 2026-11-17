@@ -14,18 +14,21 @@ import '../terminal/shell_integration_files.dart';
 import '../terminal/shell_integration_injection.dart';
 import '../terminal/terminal_shell.dart';
 import 'remote_server.dart';
+import 'server_cli.dart';
 
 /// The terminals of the remote projects: the user's shell there on a
 /// pseudo terminal ([PosixPty]; on Windows a pseudo console, package
 /// bao_pty's, PowerShell the shell), in the environment a terminal gives, with
 /// VS Code's shell integration unless the app says not to. Where the
 /// Claude Code run is the one the server installed, its `claude` is on the
-/// PATH there, as VS Code puts `code` on its terminals'.
+/// PATH there, as VS Code puts `code` on its terminals'; so is the app's
+/// own `code` ([ServerCli]).
 class ServerPty {
   ServerPty(
     this._peer, {
     void Function(String message)? log,
     Future<String?> Function()? claudeDirectory,
+    this._cli,
   }) : _log = log ?? ((_) {}),
        _claudeDirectory = claudeDirectory ?? (() async => null) {
     final handlers = _peer.handlers;
@@ -33,6 +36,11 @@ class ServerPty {
     handlers[RemoteProtocol.ptyWrite] = (params, _) {
       final args = paramsOf(params);
       _ptys[args['id']]?.write(decodeBytes(args['data']));
+      return null;
+    };
+    handlers[RemoteProtocol.ptyAck] = (params, _) {
+      final args = paramsOf(params);
+      _ptys[args['id']]?.acked(args['bytes'] as int? ?? 0);
       return null;
     };
     handlers[RemoteProtocol.ptyResize] = (params, _) {
@@ -78,6 +86,9 @@ class ServerPty {
   final RpcPeer _peer;
   final void Function(String message) _log;
   final Future<String?> Function() _claudeDirectory;
+
+  /// The `code` command of the terminals, where there is one.
+  final ServerCli? _cli;
   final Map<int, _Terminal> _ptys = {};
   int _nextId = 0;
   bool _closed = false;
@@ -152,23 +163,36 @@ class ServerPty {
       arguments = applied.arguments;
       environment.addAll(applied.mixin);
     }
+    final separator = os == TerminalOs.windows ? ';' : ':';
+    final pathName = os == TerminalOs.windows
+        ? environment.keys.firstWhere(
+            (key) => key.toUpperCase() == 'PATH',
+            orElse: () => 'Path',
+          )
+        : 'PATH';
+    // What the shell integration puts ahead of the PATH again, once a
+    // login shell's profile has set it anew (/etc/profile does on Debian).
+    var pathPrefix = '';
     if (await _claudeDirectory() case final claude?) {
-      // After the user's own; and again once a login shell's profile has
-      // set PATH anew (/etc/profile does on Debian), by the integration.
-      final separator = os == TerminalOs.windows ? ';' : ':';
-      final name = os == TerminalOs.windows
-          ? environment.keys.firstWhere(
-              (key) => key.toUpperCase() == 'PATH',
-              orElse: () => 'Path',
-            )
-          : 'PATH';
-      final path = environment[name];
-      environment[name] = path == null || path.isEmpty
+      // After the user's own.
+      final path = environment[pathName];
+      environment[pathName] = path == null || path.isEmpty
           ? claude
           : '$path$separator$claude';
-      if (nonce.isNotEmpty) {
-        environment['VSCODE_PATH_PREFIX'] = '$claude$separator';
-      }
+      pathPrefix = '$claude$separator';
+    }
+    if (await _cli?.environment() case final cli?) {
+      // Ahead of the user's own, as VS Code's: `code` is the app's here.
+      environment.addAll(cli);
+      final directory = _cli!.directory;
+      final path = environment[pathName];
+      environment[pathName] = path == null || path.isEmpty
+          ? directory
+          : '$directory$separator$path';
+      pathPrefix = '$directory$separator$pathPrefix';
+    }
+    if (nonce.isNotEmpty && pathPrefix.isNotEmpty) {
+      environment['VSCODE_PATH_PREFIX'] = pathPrefix;
     }
     // Explicit command overrides belong to this host's environment, never
     // the app's. Applied again here, after the app's defaults and the
@@ -228,13 +252,15 @@ class ServerPty {
     }
     final id = ++_nextId;
     _ptys[id] = pty;
-    pty.output.listen(
-      (data) => _peer.notify(RemoteProtocol.ptyOutput, {
+    // An app that acknowledges what it took in: none read past it.
+    pty.flow = args['flow'] == true;
+    pty.output.listen((data) {
+      _peer.notify(RemoteProtocol.ptyOutput, {
         'id': id,
         'data': encodeBytes(data),
-      }),
-      onError: (Object error) => _log('Terminal $id: $error'),
-    );
+      });
+      pty.sent(data.length);
+    }, onError: (Object error) => _log('Terminal $id: $error'));
     unawaited(
       pty.exitCode.then((code) {
         _ptys.remove(id);
@@ -247,6 +273,7 @@ class ServerPty {
       'executable': shell.executable,
       'arguments': arguments,
       'nonce': nonce,
+      'flow': pty.flow,
     };
   }
 
@@ -279,6 +306,38 @@ sealed class _Terminal {
   /// [signal] (a hangup by default); on Windows, which has none, the
   /// process ends, with every process it started.
   void kill([int signal = 1]);
+
+  /// Whether the app acknowledges its output ([RemoteProtocol.ptyAck]):
+  /// then no more than [RemoteProtocol.ptyHighWatermark] of it is out
+  /// unacknowledged.
+  bool get flow => _flow;
+  bool _flow = false;
+  set flow(bool on) {
+    _flow = on;
+    if (on) _flowed();
+  }
+
+  /// [count] bytes more of its output sent.
+  void sent(int count) {
+    if (!_flow) return;
+    _unacked += count;
+    _flowed();
+  }
+
+  /// [count] bytes of its output taken in by the app.
+  void acked(int count) {
+    if (!_flow) return;
+    _unacked = (_unacked - count).clamp(0, _unacked);
+    _acked += count;
+    _flowed();
+  }
+
+  /// Sent and not yet acknowledged; acknowledged all told.
+  int _unacked = 0;
+  int _acked = 0;
+
+  /// What [sent] and [acked] changed, carried to the process.
+  void _flowed();
 }
 
 class _PosixTerminal extends _Terminal {
@@ -298,6 +357,11 @@ class _PosixTerminal extends _Terminal {
   void resize(int columns, int rows) => _pty.resize(columns, rows);
   @override
   void kill([int signal = 1]) => _pty.kill(signal);
+
+  /// Read no further than what was acknowledged and the window after it:
+  /// held at the source, not after what was read waits to be sent.
+  @override
+  void _flowed() => _pty.allow(_acked + RemoteProtocol.ptyHighWatermark);
 }
 
 class _WindowsTerminal extends _Terminal {
@@ -321,5 +385,20 @@ class _WindowsTerminal extends _Terminal {
     // apart from it: the tree, as Windows has no process groups to signal.
     killProcessTree(_pty.pid);
     _pty.kill(PtySignal.kill);
+  }
+
+  bool _paused = false;
+
+  /// Paused past the high watermark unacknowledged, resumed under the
+  /// low one (the pseudo console is read here, so it stops at once).
+  @override
+  void _flowed() {
+    if (!_paused && _unacked > RemoteProtocol.ptyHighWatermark) {
+      _paused = true;
+      _pty.pause();
+    } else if (_paused && _unacked < RemoteProtocol.ptyLowWatermark) {
+      _paused = false;
+      _pty.resume();
+    }
   }
 }

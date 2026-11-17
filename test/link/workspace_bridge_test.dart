@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bao_link/bao_link.dart';
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:baocode/chat/chat_session.dart' show ComposerMessage, UserPlace;
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/bots/bot_folders.dart';
+import 'package:baocode/bots/bot_groups.dart';
 import 'package:baocode/bots/bots.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
@@ -179,6 +181,41 @@ void main() {
       expect(texts(opened.items), ['u5', '-', 'u6', '-']);
       expect(opened.earlier, isTrue);
     });
+
+    test(
+      'opened again with what the phone has: only what is new comes',
+      () async {
+        final first = await open(4);
+        final have = [for (final item in first.items) linkDigest(item)];
+        final session = workspace.threads.first.session;
+        session.send(const ComposerMessage(text: 'more'));
+        await settle();
+        final again = LinkSessionUpdate.fromJson(
+          (await bridge.handle(LinkMethods.open, {
+                'session': id,
+                'window': 4,
+                'have': have,
+              }))!
+              as Map<String, Object?>,
+        );
+        // From where the phone's first item is: its four left out.
+        expect(again.start, 4);
+        expect(again.count, greaterThan(4));
+        expect(texts(again.items).first, 'more');
+        expect(again.earlier, isTrue);
+        // What the desktop does not have (another conversation's): all of it.
+        final other = LinkSessionUpdate.fromJson(
+          (await bridge.handle(LinkMethods.open, {
+                'session': id,
+                'window': 4,
+                'have': [linkDigest('elsewhere')],
+              }))!
+              as Map<String, Object?>,
+        );
+        expect(other.start, 0);
+        expect(other.count, 4);
+      },
+    );
 
     test('a window beyond the items has all, and no earlier', () async {
       final opened = await open(100);
@@ -455,6 +492,23 @@ void main() {
         throwsA(isA<LinkRemoteException>()),
       );
     });
+
+    test('what sending a message again would put back of the files is '
+        'asked by the same index', () async {
+      await open(3);
+      // Nothing the agent changed is known: nothing to ask.
+      expect(
+        await bridge.handle(LinkMethods.rewindPlan, {
+          'session': id,
+          'index': 1,
+        }),
+        {'files': <Object?>[], 'setting': 'ask'},
+      );
+      expect(
+        bridge.handle(LinkMethods.rewindPlan, {'session': id, 'index': 0}),
+        throwsA(isA<LinkRemoteException>()),
+      );
+    });
   });
 
   group('image', () {
@@ -602,6 +656,86 @@ void main() {
     );
   });
 
+  test('a group: made, its messages sent and read, its new ones as they '
+      'come to a phone that has it open', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    bots.groups.tell = (_, _, _) {};
+    final mia = bots.save(name: 'Mia', identity: '', abilities: {});
+    final (phone, desktop) = await peers();
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
+      bots: bots,
+    )..start();
+    addTearDown(withBots.dispose);
+    final made = LinkGroup.fromJson(
+      ((await withBots.handle(LinkMethods.saveGroup, {
+                'name': '江湖',
+                'members': ['assistant', mia.id],
+                'gap': 30,
+              }))!
+              as Map)['group']
+          as Map<String, Object?>,
+    );
+    expect(made.members, ['assistant', mia.id]);
+    expect(made.gap, 30);
+    expect(withBots.state().groups.single.name, '江湖');
+    final png = base64.encode([137, 80, 78, 71]);
+    final send = {
+      'group': made.id,
+      'text': ' 你们好 ',
+      'images': [
+        {'data': png, 'type': 'image/png'},
+      ],
+      'id': 'm1',
+    };
+    expect(await withBots.handle(LinkMethods.sendGroup, send), {'seq': 1});
+    // Sent again, as when the link dropped: once.
+    expect(await withBots.handle(LinkMethods.sendGroup, send), {'seq': 1});
+    expect(withBots.state().groups.single.unread, 0);
+    // Mia has its conversation, as the phone sees.
+    final room = withBots.state().groups.single;
+    expect(['assistant', mia.id], contains(room.holder));
+    expect(room.passesLeft, BotGroups.passes);
+    final opened =
+        (await withBots.handle(LinkMethods.openGroup, {'group': made.id}))!
+            as Map;
+    expect(opened['more'], isFalse);
+    final first = LinkGroupMessage.fromJson(
+      (opened['messages'] as List).single as Map<String, Object?>,
+    );
+    expect((first.text, first.mine), ('你们好', true));
+    expect(
+      await withBots.handle(LinkMethods.groupImage, {
+        'group': made.id,
+        'image': first.images.single,
+      }),
+      {'type': 'image/png', 'data': png},
+    );
+    // Mia told of it, and answers.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final came = phone.events
+        .firstWhere((e) => e.name == LinkEvents.group)
+        .timeout(const Duration(seconds: 5));
+    bots.groups.turnEnded(made.id, mia.id, '<bot_say>嗨</bot_say>');
+    final event = (await came).data! as Map;
+    expect(event['group'], made.id);
+    expect(
+      [
+        for (final m in event['messages'] as List)
+          LinkGroupMessage.fromJson(m as Map<String, Object?>).from,
+      ],
+      [mia.id],
+    );
+    await withBots.handle(LinkMethods.deleteGroup, {'group': made.id});
+    expect(withBots.state().groups, isEmpty);
+  });
+
   test('a bot\'s files open from its chat: by their full path', () async {
     final workspace = Workspace();
     addTearDown(workspace.dispose);
@@ -651,6 +785,54 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('a file from the phone: kept for the agent, by its name', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (_, desktop) = await peers();
+    final uploads = Directory.systemTemp.createTempSync('phone_uploads');
+    addTearDown(() => uploads.deleteSync(recursive: true));
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'PC', kind: 'pc', system: 'Win'),
+      bots: bots,
+      uploadsOf: (_, _) => '${uploads.path}/phone',
+    );
+    addTearDown(withBots.dispose);
+    final bytes = [80, 75, 3, 4, 0, 1, 2];
+    Future<Map> upload(String name) async => await withBots.handle(
+      LinkMethods.upload,
+      {'bot': 'assistant', 'name': name, 'data': base64.encode(bytes)},
+    ) as Map;
+    final first = (await upload('报价单.xlsx'))['path'] as String;
+    expect(first, startsWith('${uploads.path}/phone/'));
+    expect(first, endsWith('/报价单.xlsx'));
+    expect(File(first).readAsBytesSync(), bytes);
+    // The same name again: a folder of its own, the first one kept.
+    final second = (await upload('报价单.xlsx'))['path'] as String;
+    expect(second, isNot(first));
+    expect(File(first).existsSync(), isTrue);
+    expect(
+      await withBots.handle(LinkMethods.upload, {
+        'bot': 'assistant',
+        'name': 'big.bin',
+        'data': base64.encode(Uint8List(LinkLimits.upload + 1)),
+      }),
+      containsPair('tooLarge', true),
+    );
+  });
+
+  test('a file from the phone keeps its name, not its folders', () {
+    expect(WorkspaceBridge.uploadName('../../etc/passwd'), 'passwd');
+    expect(WorkspaceBridge.uploadName(r'C:\x\a:b?.txt'), 'a_b_.txt');
+    expect(WorkspaceBridge.uploadName('..'), 'file');
+    expect(WorkspaceBridge.uploadName(null), 'file');
+    expect(WorkspaceBridge.uploadName('合同 v2.docx'), '合同 v2.docx');
   });
 }
 

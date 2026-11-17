@@ -1,4 +1,5 @@
 import 'bots.dart';
+import 'groups.dart';
 
 /// What a phone asks a desktop ([LinkPeer.call]).
 abstract final class LinkMethods {
@@ -22,11 +23,16 @@ abstract final class LinkMethods {
   /// `{}`: the [LinkState] now; [LinkEvents.state] follows each change.
   static const state = 'state';
 
-  /// `{"session", "window"?}`: follows the session, [LinkEvents.session]
-  /// bringing all of it at once, then what changes. With `window` (an
-  /// int N), only the last N items at first, and more as it asks
-  /// ([earlier]); `start` and `count` of every update are then counted
-  /// from the first item the phone has, not the session's first.
+  /// `{"session", "window"?, "have"?}`: follows the session,
+  /// [LinkEvents.session] bringing all of it at once, then what changes.
+  /// With `window` (an int N), only the last N items at first, and more as
+  /// it asks ([earlier]); `start` and `count` of every update are then
+  /// counted from the first item the phone has, not the session's first.
+  /// With `have` (the [linkDigest]s of the items the phone still has of
+  /// it, from a connection before), its first update starts where the
+  /// phone's first item is, and leaves out those it has as they are: its
+  /// `start` is how many. [LinkPeer] sends it, and makes the update whole
+  /// again, by itself ([LinkSessionMirror]).
   static const open = 'open';
 
   /// `{"session", "count"?}` -> `{"items": [...], "earlier"}`: up to
@@ -50,13 +56,26 @@ abstract final class LinkMethods {
   /// behind it. Answered with `{"session"}`.
   static const send = 'send';
 
-  /// `{"session", "index", "text", "images"?, "mentions"?}`: the user's
-  /// message at `index` (counted from the phone's first item, as an
-  /// update's `start` is) sent again as this, as the desktop's edit of a
-  /// message: everything after it is discarded, and the turn runs again
-  /// from there. `notFound` where there is no message of the user's;
-  /// `unsupported` where the agent cannot go back.
+  /// `{"session", "index", "text", "images"?, "mentions"?,
+  /// "revertFiles"?}`: the user's message at `index` (counted from the
+  /// phone's first item, as an update's `start` is) sent again as this, as
+  /// the desktop's edit of a message: everything after it is discarded,
+  /// and the turn runs again from there. With `revertFiles`, what the
+  /// agent did to the files from it on is put back first (see
+  /// [rewindPlan]); without, the files are left. `notFound` where there is
+  /// no message of the user's; `unsupported` where the agent cannot go
+  /// back.
   static const edit = 'edit';
+
+  /// `{"session", "index"}`: what [edit] with `revertFiles` would put back
+  /// of the files, asked before it, as the desktop asks. Answered with
+  /// `{"files": [{"name", "outcome"}], "setting"}`: each file by its path
+  /// in the project, `outcome` `restore` (put back as it was), `merge`
+  /// (changed elsewhere since: that is kept) or `conflict` (cannot be:
+  /// left as it is); `setting`, the desktop's choice — `ask`, or `revert`
+  /// or `keep` without asking. No files: nothing to ask. `unknown` from a
+  /// desktop before it: nothing is asked, the files are left.
+  static const rewindPlan = 'rewindPlan';
 
   /// `{"session"}`: stops the turn under way.
   static const stop = 'stop';
@@ -163,9 +182,17 @@ abstract final class LinkMethods {
   /// [LinkLimits.download].
   static const download = 'download';
 
+  /// `{"project"?, "bot"?, "name", "data"}` (base64): a file of the
+  /// phone's (one the user picked there, one another app shared) put where
+  /// the project's agent, or the bot's, reads it without asking: on its
+  /// host, apart from the project. Answered with `{"path"}`, full, for a
+  /// message to name (`@path`, in its mentions); with `{"tooLarge": true}`
+  /// past [LinkLimits.upload].
+  static const upload = 'upload';
+
   /// `{"bot"?, "name", "avatar"?, "avatarImage"?, "identity", "abilities",
-  /// "proactive", "chatOnly"?}` (as [LinkBot]'s JSON; `chatOnly` not said,
-  /// as it was): the bot changed, or a new one (no
+  /// "proactive", "chatOnly"?, "writesFirst"?}` (as [LinkBot]'s JSON;
+  /// `chatOnly`, `writesFirst` not said, as they were): the bot changed, or a new one (no
   /// `bot`): `{"bot": LinkBot}`. `avatarImage`, `{"data" (base64), "type"}`
   /// (at most [LinkLimits.avatar]), is a new picture for it; else `avatar`
   /// is an emoji, or the picture it has, kept.
@@ -204,9 +231,71 @@ abstract final class LinkMethods {
   /// none). Sent when it changes, and on connecting.
   static const setMe = 'setMe';
 
-  /// Those whose answers can be large: each goes on a stream of its own
-  /// (see [LinkPeer]), holding up nothing else.
-  static const bulk = {read, image, icon, files, folder, botAvatar, extensions};
+  /// `{"token"?, "sandbox"?, "needsInput"?, "done"?, "bots"?, "notices"?}`:
+  /// what the desktop pushes the phone (through APNs) while it is [away]:
+  /// its token (hex; none stops them), `sandbox` for a development build,
+  /// and in its own words what it says of an agent asking (`needsInput`)
+  /// or done (`done`), `{device}` the desktop's name in them; `bots` to be
+  /// told of what bots write, and of their `notices` (by kind, `{title}`
+  /// the agent's). A kind with no words is not pushed. Sent on connecting,
+  /// and when it changes; kept by the desktop. `unknown` from one before.
+  static const push = 'push';
+
+  /// `{"away": bool}`: the phone's app in the background (or in front
+  /// again): the desktop pushes it ([push]) what it would have told of
+  /// itself. A phone not connected is away too.
+  static const away = 'away';
+
+  /// `{"group"?, "name", "members", "passes"?, "rules"?, "gap"?}`: the
+  /// group chat changed, or a new one (no `group`), of the bots [members]
+  /// names (their ids) and the user; `passes`, how many times its
+  /// conversation may be passed on ([LinkGroup.passes]), `rules` its
+  /// rules, `gap` the seconds between its bots' answers ([LinkGroup.gap])
+  /// (each none, as it was): `{"group": LinkGroup}`.
+  /// `unknown` from a desktop before groups.
+  static const saveGroup = 'saveGroup';
+
+  /// `{"group"}`: the group deleted, its messages with it.
+  static const deleteGroup = 'deleteGroup';
+
+  /// `{"group", "count"?}`: its last `count` messages (50 if not said),
+  /// `{"messages": [LinkGroupMessage], "more"}` (`more`: there are
+  /// earlier ones); and those that come after, as they come
+  /// ([LinkEvents.group]), till [closeGroup]. Read by the user.
+  static const openGroup = 'openGroup';
+
+  /// `{"group", "before", "count"?}`: its `count` messages (50 if not
+  /// said) before the `before`th: `{"messages", "more"}`.
+  static const earlierGroup = 'earlierGroup';
+
+  /// `{"group"}`: its messages no longer sent as they come.
+  static const closeGroup = 'closeGroup';
+
+  /// `{"group", "text", "images"?, "id"?, "ref"?}` (`images` as [send]'s;
+  /// `ref`, the number of the message it quotes): the user's message to
+  /// the group: `{"seq"}`. Sent again with the same `id`, taken once.
+  static const sendGroup = 'sendGroup';
+
+  /// `{"group", "image"}`: a picture of one of its messages
+  /// ([LinkGroupMessage.images]): `{"type", "data"}`.
+  static const groupImage = 'groupImage';
+
+  /// Those whose answers, or requests, can be large: each goes on a stream
+  /// of its own (see [LinkPeer]), holding up nothing else. A picture sent
+  /// (the user's, a bot's) is up to a megabyte: on the control stream, an
+  /// agent opened after it waited seconds over a relay.
+  static const bulk = {
+    read,
+    image,
+    icon,
+    files,
+    folder,
+    botAvatar,
+    extensions,
+    groupImage,
+    setMe,
+    saveBot,
+  };
 }
 
 /// How much of what a phone asks for it gets, at most.
@@ -229,6 +318,10 @@ abstract final class LinkLimits {
   /// A file's bytes, opened in another app: base64, under the relay's
   /// burst (16 MiB).
   static const download = 8 * 1024 * 1024;
+
+  /// A file's bytes, from the phone ([LinkMethods.upload]): as
+  /// [download].
+  static const upload = 8 * 1024 * 1024;
 }
 
 /// A task an agent left running beside the conversation: a command, a
@@ -350,6 +443,10 @@ abstract final class LinkEvents {
 
   /// The desktop unpaired the phone; the connection ends.
   static const unpaired = 'unpaired';
+
+  /// `{"group", "messages": [LinkGroupMessage]}`: a group's messages that
+  /// came, of a group opened ([LinkMethods.openGroup]).
+  static const group = 'group';
 
   /// A [LinkOutput]: what a task watched ([LinkMethods.watchOutput]) wrote.
   static const output = 'output';
@@ -621,6 +718,7 @@ class LinkState {
     this.projects = const [],
     this.sessions = const [],
     this.bots = const [],
+    this.groups = const [],
   });
 
   factory LinkState.fromJson(Map<String, Object?> json) => LinkState(
@@ -637,6 +735,10 @@ class LinkState {
       for (final bot in (json['bots'] as List?) ?? const [])
         LinkBot.fromJson(_map(bot)),
     ],
+    groups: [
+      for (final group in (json['groups'] as List?) ?? const [])
+        LinkGroup.fromJson(_map(group)),
+    ],
   );
 
   final DeviceInfo device;
@@ -647,11 +749,16 @@ class LinkState {
   /// [sessions].
   final List<LinkBot> bots;
 
+  /// The group chats of the user and their [bots].
+  final List<LinkGroup> groups;
+
   Map<String, Object?> toJson() => {
     'device': device.toJson(),
     'projects': [for (final project in projects) project.toJson()],
     'sessions': [for (final session in sessions) session.toJson()],
     if (bots.isNotEmpty) 'bots': [for (final bot in bots) bot.toJson()],
+    if (groups.isNotEmpty)
+      'groups': [for (final group in groups) group.toJson()],
   };
 }
 
@@ -736,6 +843,7 @@ class LinkSessionUpdate {
     this.tasks = const [],
     this.earlier,
     this.goal,
+    this.context,
   });
 
   factory LinkSessionUpdate.fromJson(Map<String, Object?> json) =>
@@ -763,6 +871,10 @@ class LinkSessionUpdate {
         ],
         earlier: json['earlier'] as bool?,
         goal: switch (json['goal']) {
+          final Map<String, Object?> map => map,
+          _ => null,
+        },
+        context: switch (json['context']) {
           final Map<String, Object?> map => map,
           _ => null,
         },
@@ -801,6 +913,13 @@ class LinkSessionUpdate {
   /// "duration", "tokens"}`, its times in milliseconds.
   final Map<String, Object?>? goal;
 
+  /// How full the agent's context is, if its kernel says: `{"window",
+  /// "used", "parts": [{"part", "tokens"}], "compactAt"}`, a part by the
+  /// desktop's key for it (`system`, `tools`, `mcp`, `memory`, `skills`,
+  /// `messages`) or the kernel's own name, `compactAt` where it is
+  /// compacted, in tokens.
+  final Map<String, Object?>? context;
+
   Map<String, Object?> toJson() => {
     'session': session,
     'start': start,
@@ -813,6 +932,7 @@ class LinkSessionUpdate {
     if (tasks.isNotEmpty) 'tasks': [for (final task in tasks) task.toJson()],
     'earlier': ?earlier,
     'goal': ?goal,
+    'context': ?context,
   };
 }
 

@@ -6,4 +6,5 @@ export 'src/claude/claude_settings_file.dart';
 export 'src/mcp/mcp_stdio.dart';
 export 'src/server/remote_server.dart';
 export 'src/server/server_claude.dart' show ServerClaude;
+export 'src/server/server_cli.dart' show ServerCli, runCodeCommand;
 export 'src/server/server_session.dart';

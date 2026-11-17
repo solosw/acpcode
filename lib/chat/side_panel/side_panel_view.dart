@@ -33,6 +33,7 @@ import '../../ide/ide_modern_ui.dart';
 import '../../ide/ide_panes.dart';
 import '../../ide/ide_tab_bar.dart'
     show IdeEditorTab, IdeTabStrip, ideTabDescriptions;
+import '../../ide/ide_view_state.dart' show IdeViewState;
 import '../../ide/save_copy.dart';
 import '../../ide/tab_reorder.dart';
 import '../../ide/tab_strip_scroll.dart';
@@ -964,6 +965,7 @@ class AgentSidePanelView extends StatelessWidget {
         files,
         path,
         text: edit != null && edit.dirty ? edit.controller.document.text : null,
+        context: context,
       ).then<void>(
         (_) {},
         onError: (Object error) {
@@ -1010,9 +1012,10 @@ class AgentSidePanelView extends StatelessWidget {
       shown: tabs.terminal,
       onShow: (id) => panel.openTerminal(session, id),
       // Shown here, the panel's own left as it was.
-      onNew: () => terminals?.create(activate: false),
-      onNewWithProfile: (profile) =>
-          terminals?.create(profile: profile, activate: false),
+      onNew: ({cwd}) => terminals?.create(cwd: cwd, activate: false),
+      onNewWithProfile: (profile, {cwd}) =>
+          terminals?.create(profile: profile, cwd: cwd, activate: false),
+      folders: roots,
       tasks: SessionTerminalTasks(session),
       files: files,
       skipShell: terminalSkipShell,
@@ -1301,6 +1304,14 @@ class AgentSidePanelView extends StatelessWidget {
     onEdit: (edit) => panel.keepEdit(tab, edit),
     diffScroll: tab.diffScroll,
     onDiffScrolled: (offset) => tab.diffScroll = offset,
+    // Where the file's tab was left before.
+    viewState: tab.diff ? IdeViewState.empty : panel.viewStateOf(tab.path),
+    onPreviewLeft: tab.diff
+        ? null
+        : (line) => panel.keepViewState(
+            tab.path,
+            (kept) => kept.copyWith(previewLine: line),
+          ),
     agentEdit: tab.diff || tab.request.local || tab.request.readOnly
         ? null
         : IdeAgentEdit.inSession(session, tab.path),

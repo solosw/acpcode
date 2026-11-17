@@ -39,6 +39,7 @@ void main() {
           if (openFile) {
             await OpenRemoteFileFlow(
               show: shown.add,
+              browse: (_) async => null,
               l10n: englishLocalizations,
               onOpen: (_) {},
               added: added,
@@ -48,6 +49,7 @@ void main() {
           } else {
             await OpenRemoteFlow(
               show: shown.add,
+              browse: (_) async => null,
               l10n: englishLocalizations,
               onOpen: (_) {},
               added: added,

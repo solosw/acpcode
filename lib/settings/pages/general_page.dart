@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
+import '../../bash_exe/bao_bash.dart';
+import '../../bash_exe/bao_bash_view.dart';
 import '../../ide/explorer_excludes.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_menu.dart';
@@ -12,6 +14,7 @@ import '../../kernel/claude_code/claude_path_setting.dart';
 import '../../kernel/commit_attribution.dart';
 import '../../kernel/prompt_suggestions.dart';
 import '../../chat/composer/composer_polish.dart' show ComposerPolishSetting;
+import '../../chat/rewind_files_setting.dart';
 import '../../chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import '../../kernel/queued_messages.dart';
 import '../../l10n/l10n.dart';
@@ -26,6 +29,7 @@ import '../../tips/feature_tips_view.dart';
 import '../../window/window_settings.dart';
 import '../../workspace/main_window.dart';
 import '../../workspace/workspace.dart';
+import '../../workspace/session_tools.dart';
 import '../shell_command_actions.dart';
 import '../user_settings.dart';
 import 'chat_defaults_card.dart';
@@ -42,8 +46,7 @@ import 'settings_widgets.dart';
 /// (`chat.composer.polish`), whether usage data is sent
 /// (`telemetry.telemetryLevel`), whether the turn under way shows its time,
 /// speed and tokens (`chat.liveTurnStats`), the Claude Code to run
-/// (`claudeCode.path`),
-/// the `code` shell command, and Open with BaoCode in Finder's or
+/// (`claudeCode.path`), BaoCode Bash on Windows, the `code` shell command, and Open with BaoCode in Finder's or
 /// Explorer's context menu. A choice is written at once; the default is not
 /// written.
 class GeneralSettingsPage extends StatelessWidget {
@@ -53,6 +56,7 @@ class GeneralSettingsPage extends StatelessWidget {
     this.workspace,
     this.tips,
     this.claudeStatus,
+    this.bash,
   });
 
   /// settings.json; none under test, where choices are not kept.
@@ -62,6 +66,9 @@ class GeneralSettingsPage extends StatelessWidget {
   /// The Claude Code that runs now ([localClaudeStatus]); none under
   /// test and on the web, where the path is not shown.
   final Future<LocalClaudeStatus?> Function()? claudeStatus;
+
+  /// BaoCode Bash, where it is offered (Windows); none under test.
+  final BaoBash? bash;
 
   /// The feature tips: those not on yet are listed first.
   final FeatureTipsController? tips;
@@ -367,6 +374,19 @@ class GeneralSettingsPage extends StatelessWidget {
                         l10n.generalSettingsQueuedDuringTurn,
                   },
                 ),
+                _choiceRow(
+                  context,
+                  key: RewindFilesSetting.settingKey,
+                  label: l10n.generalSettingsRewindFiles,
+                  description: l10n.generalSettingsRewindFilesDescription,
+                  values: {
+                    RewindFilesSetting.ask.name: l10n.generalSettingsRewindAsk,
+                    RewindFilesSetting.revert.name:
+                        l10n.generalSettingsRewindRevert,
+                    RewindFilesSetting.keep.name:
+                        l10n.generalSettingsRewindKeep,
+                  },
+                ),
                 SettingsSwitchRow(
                   label: l10n.generalSettingsPromptSuggestions,
                   description: l10n.generalSettingsPromptSuggestionsDescription,
@@ -388,6 +408,15 @@ class GeneralSettingsPage extends StatelessWidget {
                     TelemetrySetting.settingKey,
                     on ? null : TelemetrySetting.off,
                   ),
+                ),
+                SettingsSwitchRow(
+                  label: l10n.generalSettingsSessionTools,
+                  description: l10n.generalSettingsSessionToolsDescription,
+                  value: SessionToolsSetting.enabled(
+                    settings?[SessionToolsSetting.settingKey],
+                  ),
+                  onChanged: (on) =>
+                      _write(SessionToolsSetting.settingKey, on ? true : null),
                 ),
                 SettingsSwitchRow(
                   label: l10n.generalSettingsComposerPolish,
@@ -446,6 +475,11 @@ class GeneralSettingsPage extends StatelessWidget {
                     ],
                   ),
                 ],
+              ),
+            if (bash case final bash?)
+              SettingsGroup(
+                title: l10n.generalSettingsCommandLine,
+                children: [CommandLineSettings(bash: bash)],
               ),
             SettingsGroup(
               title: l10n.generalSettingsWindows,

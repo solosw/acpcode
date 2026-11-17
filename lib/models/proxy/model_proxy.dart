@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../../network/tls.dart';
 import '../../usage/usage_capture.dart';
 import '../../usage/usage_ledger.dart';
 import '../../usage/usage_trace.dart';
@@ -114,7 +115,7 @@ class ModelProxy {
 
   Future<HttpClient> _upstream() async {
     if (_client case final client?) return client;
-    return _client = HttpClient()
+    return _client = HttpClient(context: await upstreamSecurityContext())
       ..connectionTimeout = const Duration(seconds: 30)
       ..idleTimeout = const Duration(seconds: 30)
       ..findProxy = _findProxy ?? (_) => 'DIRECT';
@@ -979,16 +980,11 @@ class _ClientGone implements Exception {
   String toString() => 'Claude Code closed the connection';
 }
 
-/// About how many tokens [request]'s input comes to: a quarter of its
-/// text, as no upstream counts them.
-int estimateInputTokens(Map<String, Object?> request) {
-  final text = jsonEncode({
-    'system': request['system'],
-    'messages': request['messages'],
-    'tools': request['tools'],
-  });
-  return (utf8.encode(text).length / 4).ceil();
-}
+/// About how many tokens [request]'s input comes to, as no upstream counts
+/// them: as the usage counts a request's context ([analyzeRequest]), an
+/// image or a document as one, not its base64 as text.
+int estimateInputTokens(Map<String, Object?> request) =>
+    analyzeRequest(request, (_) => null).context?.total ?? 0;
 
 /// The header Claude Code names its session in on every request: what
 /// [sessionId] falls back on.

@@ -1,6 +1,6 @@
 // What Claude Code is customized with, as the Customize page lists it:
-// skills, subagents, slash commands, rules (CLAUDE.md and `rules/`), MCP
-// servers, hooks and plugins, each the user's own (under its config folder)
+// skills, subagents, slash commands, rules (CLAUDE.md and `rules/`), the
+// memories Claude keeps of a project, MCP servers, hooks and plugins, each the user's own (under its config folder)
 // or a project's (under `<project>/.claude/`). See customization_store.dart
 // for where each is read from.
 
@@ -11,6 +11,7 @@ enum CustomizationKind {
   skills,
   subagents,
   rules,
+  memory,
   commands,
   hooks;
 
@@ -18,7 +19,7 @@ enum CustomizationKind {
   /// and edited as text.
   bool get creatable => switch (this) {
     skills || subagents || commands || rules => true,
-    plugins || mcps || hooks => false,
+    plugins || mcps || hooks || memory => false,
   };
 
   /// Kept in a JSON file of [scope]'s meant to be edited by hand, among
@@ -58,6 +59,7 @@ class Customization {
     this.detail,
     this.enabled,
     this.server,
+    this.unreachable = false,
   });
 
   final CustomizationKind kind;
@@ -92,6 +94,11 @@ class Customization {
   /// An MCP server's entry (`command`, `args`, `env`, or `url`): what is
   /// started to ask whether it answers. Null for a claude.ai connector's.
   final Map<String, Object?>? server;
+
+  /// A skill whose folder is a link that cannot be followed (one leading
+  /// nowhere the system can reach): listed, so it is not missed without
+  /// a word, though nothing of it can be read.
+  final bool unreachable;
 }
 
 /// The front matter of a markdown file (`---` lines around `key: value`
@@ -222,5 +229,6 @@ String template(CustomizationKind kind, String name) => switch (kind) {
   CustomizationKind.rules => '# $name\n\n- A rule Claude keeps to.\n',
   CustomizationKind.plugins ||
   CustomizationKind.mcps ||
-  CustomizationKind.hooks => '',
+  CustomizationKind.hooks ||
+  CustomizationKind.memory => '',
 };

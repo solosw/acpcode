@@ -2,7 +2,7 @@
 
 BaoCode 的版本号怎么定、一个版本怎么发出去、发到哪里、已安装的应用怎么拿到它，以及第一次发布前要准备什么。应用这一侧怎么检查、下载、校验、安装，见 [auto-update.md](auto-update.md)。
 
-- 下载与更新：本 fork 的 [GitHub Releases](https://github.com/solosw/baocode/releases)，清单是 Release 附件 `latest.json`
+- 下载与更新：本 fork 的 [GitHub Releases](https://github.com/solosw/acpcode/releases)，清单是 Release 附件 `latest.json`
 - 上游官网参考：`https://baocode.dev`（Cloudflare Worker 静态资源，`site/`）；与 fork 桌面更新渠道分开
 - 构建与发布：GitHub Actions，`.github/workflows/release.yml`
 - 工具：`tool/bump_version.dart`、`tool/build_macos.dart`、`tool/build_windows.dart`、`tool/build_remote_server.dart`、`tool/release_manifest.dart`
@@ -137,7 +137,7 @@ CI 会照常构建，重新建 GitHub Release（不删除触发构建的标签�
 
 几个设计上的考虑：
 
-- **远程服务端和安装包一起上传**：`remote` 任务编译一次，macOS、Windows 和 Linux 的应用带同一份 `servers.json`（六个平台都有）。六个 `baocode-server-*.gz` 作为 GitHub Release 附件，地址是 `https://github.com/solosw/baocode/releases/download/v<营销版本>/baocode-server-<平台>.gz`。重新发布同一个标签会替换这些文件。
+- **远程服务端和安装包一起上传**：`remote` 任务编译一次，macOS、Windows 和 Linux 的应用带同一份 `servers.json`（六个平台都有）。六个 `baocode-server-*.gz` 作为 GitHub Release 附件，地址是 `https://github.com/solosw/acpcode/releases/download/v<营销版本>/baocode-server-<平台>.gz`。重新发布同一个标签会替换这些文件。
 - **应用和远程服务端同时编**：`macos`、`windows`、`linux` 不 `needs` `remote`，应用编完、打包前才用 `.github/actions/wait-for-artifact` 等 `remote` 产物（远程服务端的 job 失败或被取消——macOS 机器可能 15 分钟都分不到——就立刻跟着失败，像 `needs` 一样；最多等 20 分钟）；`publish` 仍然等 `remote` 和 `remote-linux` 整个跑完（含 Linux 上的测试）。
 - **Windows 的服务端在 Windows 上编**：`dart compile exe` 只编运行它的 dart 所在平台的架构，所以 `remote-windows` 任务在 Windows runner 上出 x64 和 arm64 两份，`remote` 用 `--from` 收进来；`VERSION` 由六份二进制一起算哈希，四份应用带的是同一个 `servers.json`。
 - **bao_iroh 的 Rust 不在发版时编**：`bao_iroh.yml` 在 main 上按 `packages/bao_iroh/rust/` 的哈希给每个目标编一次，存进 main 的缓存（标签上的运行只能读 main 的缓存，标签自己存的别的标签读不到，所以发版任务只读不存，flutter-action 也不开缓存）；各构建任务用 `.github/actions/bao-iroh-prebuilt` 取到 `packages/bao_iroh/build/prebuilt/<target>/`，构建钩子直接用。没取到（Rust 只在标签上改了、或 `bao_iroh.yml` 还没跑完）就照旧现编，所以取不到时紧跟一步 `.github/actions/setup-rust`。
@@ -148,7 +148,7 @@ CI 会照常构建，重新建 GitHub Release（不删除触发构建的标签�
 
 ## 5. GitHub Release 上有什么
 
-`https://github.com/solosw/baocode/releases/download/v<营销版本>/` 下的附件：
+`https://github.com/solosw/acpcode/releases/download/v<营销版本>/` 下的附件：
 
 ```
 latest.json                              应用读取的版本、更新日志、下载地址和校验值
@@ -170,7 +170,7 @@ baocode-server-windows-x64.gz
 baocode-server-windows-arm64.gz
 ```
 
-旧版本 Release 的服务端附件要保留，旧版应用的 `servers.json` 仍指向它们。最新版入口是 `https://github.com/solosw/baocode/releases/latest/download/latest.json`。清单格式见 [auto-update.md 第 5 节](auto-update.md#5-服务端约定)，其中上游 R2 部署说明不用于 fork。
+旧版本 Release 的服务端附件要保留，旧版应用的 `servers.json` 仍指向它们。最新版入口是 `https://github.com/solosw/acpcode/releases/latest/download/latest.json`。清单格式见 [auto-update.md 第 5 节](auto-update.md#5-服务端约定)，其中上游 R2 部署说明不用于 fork。
 
 ## 6. 更新的数据流
 
@@ -182,7 +182,7 @@ baocode-server-windows-arm64.gz
 
 **已安装的应用**（`update.mode` 是默认的“自动检查并下载”时）：
 
-1. 启动 30 秒后、之后每 6 小时，GET `https://github.com/solosw/baocode/releases/latest/download/latest.json`。
+1. 启动 30 秒后、之后每 6 小时，GET `https://github.com/solosw/acpcode/releases/latest/download/latest.json`。
 2. 解析清单；下载链接必须通过 `UpdateUrlPolicy`（包括 GitHub Release 下载域名）；本 fork 清单生成 GitHub 附件链接。版本不比自己新，或者没有本平台的条目 → 已是最新，结束。
 3. 后台下载本平台的安装包（Mac 按处理器取 Apple silicon 或 Intel 的包，见 [auto-update.md 5.2](auto-update.md#52-latestjson-格式)）到 `<数据目录>/updates/<版本>/`，支持断点续传。
 4. 校验大小和 SHA-256；若清单带签名也校验 Ed25519（公钥内置在应用里），无签名可用。任何适用的校验不过就删掉，报错。macOS 还会检查新 .app 的 bundle id，以及在当前应用有正式签名时，新 .app 是不是同一个 Team 签的。
@@ -338,7 +338,7 @@ macOS 本机签名时用的环境变量：
 
 > 以下保留上游独立流程的说明；不由 fork 桌面 Release 工作流启用，也不改变 fork 的 GitHub 更新渠道。
 
-手机版（Android 的 APK、iOS 走 TestFlight）由 `.github/workflows/mobile.yml` 构建，和桌面版分开发布，版本号也分开（手机版 `pubspec.yaml` 里的版本，`0.x` 算 Beta）。官网下载页的 Android 按钮是 `/dl/android`，由 `site-worker/index.js` 按 `releases/mobile/latest.json` 跳转到当前版本。
+手机版（Android 的 APK、iOS 走 TestFlight）由 `.github/workflows/mobile.yml` 构建，和桌面版分开发布，版本号也分开（手机版 `pubspec.yaml` 里的版本，`0.x` 算 Beta）。官网下载页的 Android 主按钮是 `/dl/android`，由 `site-worker/index.js` 按 `releases/mobile/latest.json` 跳转到当前版本的 arm64 包（`downloads.androidArm64`，体积不到一半，有些手机的安装器装不了全架构的大包）；旁边的「通用版」是 `/dl/android-universal`，跳到全架构包（`downloads.android`），给 32 位老手机和模拟器。
 
 ```sh
 git tag mobile-v0.1.0 && git push origin mobile-v0.1.0      # 发布：标签要和手机版的版本一致

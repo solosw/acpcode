@@ -46,6 +46,16 @@ Map<String, String> launchEnvironment({
       token = key ?? '';
     }
   }
+  // The proxy is on this machine: never through the user's HTTP proxy.
+  // Both spellings, as the user's proxy is given ([ProxyRoute.environment]):
+  // some programs read the one and some the other.
+  final localNoProxy = {
+    if (noProxy case final list? when list.trim().isNotEmpty)
+      for (final entry in list.split(','))
+        if (entry.trim().isNotEmpty) entry.trim(),
+    '127.0.0.1',
+    'localhost',
+  }.join(',');
   final roles = provider.roles;
   // This upstream's own model by its id; another's as it is picked.
   String? role(String? value) => switch (parseModelRef(value)) {
@@ -76,13 +86,7 @@ Map<String, String> launchEnvironment({
     // What each request is for (a subagent's, a compaction), for the
     // calls kept: the proxy does not pass it on.
     if (recordUsage) UsageHeaders.gatewayHintsVariable: '1',
-    // The proxy is on this machine: never through the user's HTTP proxy.
-    if (proxied)
-      'NO_PROXY': [
-        if (noProxy case final list? when list.trim().isNotEmpty) list.trim(),
-        '127.0.0.1',
-        'localhost',
-      ].join(','),
+    if (proxied) ...{'NO_PROXY': localNoProxy, 'no_proxy': localNoProxy},
     // A provider spoken to directly carries its own headers in Claude
     // Code's variable (a proxied one goes through the proxy, which sets
     // them itself): `Name: Value` a line, only the names that may be set.
@@ -202,4 +206,37 @@ abstract final class ClaudeModelVariables {
     subagentForce,
     ...cleared,
   ];
+}
+
+/// What Claude Code is told runs it: `claude -p` names itself `sdk-cli`
+/// otherwise, whose use a Claude plan's 5-hour limit counts at about
+/// twice the interactive CLI's (anthropics/claude-code#97074).
+abstract final class ClaudeEntrypoint {
+  static const variable = 'CLAUDE_CODE_ENTRYPOINT';
+  static const name = 'baocode';
+
+  /// What the CLI goes with other than the user's Claude sign-in: a key,
+  /// a server not Anthropic's, a cloud's.
+  static const _elsewhere = [
+    ClaudeModelVariables.baseUrl,
+    ClaudeModelVariables.authToken,
+    ClaudeModelVariables.apiKey,
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_FOUNDRY',
+  ];
+
+  /// [name], for a session on the user's own Claude sign-in: none on a
+  /// provider ([env]), nor where [base] (the environment it starts in)
+  /// has it go elsewhere.
+  static Map<String, String> of(
+    Map<String, String>? env, [
+    Map<String, String> base = const {},
+  ]) {
+    if (env != null) return const {};
+    if (_elsewhere.any((name) => base[name]?.isNotEmpty ?? false)) {
+      return const {};
+    }
+    return const {variable: name};
+  }
 }

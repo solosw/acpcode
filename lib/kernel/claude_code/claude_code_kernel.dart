@@ -38,6 +38,7 @@ import 'claude_sdk_tools.dart';
 import 'turn_stats.dart';
 import 'control_channel.dart';
 import 'local_time_zone.dart';
+import 'tool_result_tally.dart';
 import 'usage_limit.dart';
 
 /// Reads a kept session: its conversation lines, oldest first, along the
@@ -179,11 +180,20 @@ class ClaudeCodeKernel
     if (_model case final model? when !_pickedFast.containsKey(model)) {
       _pickedFast[model] = settings[KernelChoiceKind.fast.name] == 'fast';
     }
+    // A provider's model goes by what was picked for it, else its own
+    // (#914): a session resumed on one, on the context it had; a new one
+    // not on the context another model was last on.
+    if ((_context.resume, _model, _window)
+        case (_?, final model?, final window?)
+        when _providers.resolve(model) != null) {
+      _pickedWindows[model] = window;
+    }
     Future<ClaudeHistoryPage> wholePage(
       SessionRecord session, {
       required int turns,
       String? before,
     }) async => ClaudeHistoryPage.whole(await readHistory!(session));
+    _readHistory = readHistory;
     final pager = readHistoryPage ?? (readHistory == null ? null : wholePage);
     if ((_context.resume, pager) case (final session?, final read?)) {
       _pager = read;
@@ -454,6 +464,34 @@ class ClaudeCodeKernel
   /// Claude plan's calls' makeup, which no proxy sees.
   ContextDetail? _contextDetail;
 
+  /// What the CLI last counted in the context, by part: told again,
+  /// scaled, as the model tells what its context comes to.
+  ({int total, List<ContextSegment> segments})? _counted;
+
+  /// What the context comes to as the model told it: its last request's
+  /// input and output. The CLI's count is its own estimate for a model
+  /// behind the proxy (images' base64 as text, once). Null with none
+  /// since the context changed (compacted, rewound) or a result recalibrated it.
+  int? _toldContext;
+
+  /// The tool calls' results in the context, counted here: Claude Code's
+  /// breakdown counts an image's base64 as text. Known ([_resultsKnown])
+  /// for a new conversation, and for a resumed one once read from its
+  /// start or its last compaction.
+  var _results = ToolResultTally();
+  late bool _resultsKnown = _context.resume == null;
+
+  /// Reading the whole session for [_results]: the latest, given up on
+  /// as another starts or the context changes under it.
+  int _resultsReading = 0;
+  ClaudeHistoryReader? _readHistory;
+
+  /// [_contextDetail], its tool calls' results as counted here.
+  ContextDetail? get _shownDetail => switch (_contextDetail) {
+    final detail? when _resultsKnown => detail.withToolResults(_results.byTool),
+    final detail => detail,
+  };
+
   /// The models' own windows, by the model the CLI resolved them to, as
   /// reported while they were in use.
   static final Map<String, int> _modelWindows = {};
@@ -625,6 +663,7 @@ class ClaudeCodeKernel
         return;
       }
       _transport = transport;
+      // Share the request merger; custom providers record their calls already.
       _usage = custom == null
           ? ClaudeUsageMeter(
               record: (call, {trace}) =>
@@ -633,12 +672,15 @@ class ClaudeCodeKernel
               underway: (key, progress) => progress == null
                   ? UsageLedger.current.end(key)
                   : UsageLedger.current.begin(key, progress),
-              makeup: () => _contextDetail,
+              makeup: () => _shownDetail,
               session: () => _sessionId,
               providerName: 'Claude Code',
               quota: () => _quota,
             )
-          : null;
+          : ClaudeUsageMeter(
+              record: (call, {trace}) {},
+              session: () => _sessionId,
+            );
       final control = _control = ControlChannel(transport.write);
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
@@ -1015,6 +1057,7 @@ class ClaudeCodeKernel
           turn.now &&
           _queued.contains(turn.id) &&
           _translator.workingInBackground;
+      _results.mark(turn.id);
       transport.write({
         'type': 'user',
         'uuid': turn.id,
@@ -1322,6 +1365,12 @@ class ClaudeCodeKernel
             );
           }
           emit(Rewound(nextSeq, itemId: itemId, index: index));
+          // Its last request held what is rewound too.
+          _usage?.clearContext();
+          _toldContext = null;
+          _resultsReading++;
+          _resultsKnown = _resultsKnown && _results.rewind(itemId);
+          unawaited(_refreshContext());
           rewound.complete(true);
         })
         .catchError((Object error) {
@@ -1682,7 +1731,8 @@ class ClaudeCodeKernel
     // Full access approves operations here (see _cliApproval), including
     // checks and ask rules the CLI still sends in Accept edits. Questions
     // remain the user's to answer. In Plan the classifier still reviews
-    // commands when the provider supports it.
+    // commands when the provider supports it; without one, they are approved
+    // here too.
     if (_approval == 'bypassPermissions' &&
         (_work != 'plan' || !_classifies) &&
         tool != 'AskUserQuestion') {
@@ -1834,6 +1884,15 @@ class ClaudeCodeKernel
   void _receive(Map<String, Object?> message) {
     if (_control?.receive(message) ?? false) return;
     _usage?.receive(message);
+    if (message['type'] == 'stream_event') {
+      final told = _toldContext;
+      _toldContext = _usage?.mainContextTokens ?? _toldContext;
+      if (_toldContext != told) _reportContext();
+    }
+    if (message['type'] case 'assistant' || 'user'
+        when _results.add(message) && _resultsKnown) {
+      _reportContext();
+    }
     switch (message['type']) {
       case ClaudeExit.type:
         _exited(
@@ -1915,7 +1974,12 @@ class ClaudeCodeKernel
         );
         emitInfoChanged();
       case 'assistant':
+        final told = _toldContext;
         if (_countRequest(message)) _reportStats();
+        if (_usage case final usage?) {
+          _toldContext = usage.mainContextTokens ?? told;
+        }
+        if (_toldContext != told) _reportContext();
         if (message['error'] == 'rate_limit') {
           _limitSaid(message['message']);
           _accountsLimited();
@@ -2206,7 +2270,7 @@ class ClaudeCodeKernel
         _ => TurnUsage(costUsd: turnCost),
       },
     );
-    unawaited(_refreshContext());
+    unawaited(_refreshContext(completed: _custom == null));
   }
 
   // --- Goal ------------------------------------------------------------------------
@@ -2615,7 +2679,8 @@ class ClaudeCodeKernel
   /// conversation's: once, as a message comes a content block at a time.
   /// Later lines update the fields they give. A subagent's is left out, as
   /// its transcript is apart. Whether it was added or its usage changed.
-  bool _countRequest(Map<String, Object?> message) {
+  /// One of an [earlier] page, read after the rest, is not the last.
+  bool _countRequest(Map<String, Object?> message, {bool earlier = false}) {
     if (message['parent_tool_use_id'] != null ||
         message['isSidechain'] == true) {
       return false;
@@ -2639,8 +2704,11 @@ class ClaudeCodeKernel
     );
     // None at all: one of the CLI's own (an API error), not the model's.
     if (tokens.total == 0) return false;
-    _lastRequest = id;
-    _lastModel = model;
+    if (!earlier) {
+      _lastRequest = id;
+      _lastModel = model;
+      _toldContext = tokens.total + (claudeInt(usage['output_tokens']) ?? 0);
+    }
     if (usage.containsKey('cache_read_input_tokens') ||
         usage.containsKey('cache_creation_input_tokens')) {
       _cachingModels.add(model);
@@ -2655,6 +2723,11 @@ class ClaudeCodeKernel
   /// The conversation was compacted, maybe mid-turn: the context shown
   /// drops to what is left at once, then to what the CLI counts.
   void _compacted(Map<String, Object?> message) {
+    _toldContext = null;
+    // None of the results before it are left: known from here on.
+    _results.clear();
+    _resultsKnown = true;
+    _resultsReading++;
     final meta = message['compact_metadata'];
     if (meta is Map && meta['post_tokens'] is int) {
       emit(
@@ -2670,9 +2743,10 @@ class ClaudeCodeKernel
     unawaited(_refreshContext());
   }
 
-  Future<void> _refreshContext() async {
+  Future<void> _refreshContext({bool completed = false}) async {
     final control = _control;
     if (control == null) return;
+    final contextRequest = _usage?.mainContextRequest;
     try {
       // In full: each part's things too (the system prompt's sections,
       // the built-in tools, the messages by tool), counted where it runs.
@@ -2690,32 +2764,94 @@ class ClaudeCodeKernel
         _modelWindows[model] = raw;
       }
       emitInfoChanged();
-      emit(
-        UsageReported(
-          nextSeq,
-          ContextUsage(
-            window: max,
-            used: usage['totalTokens'] as int? ?? 0,
-            segments: [
-              for (final raw in usage['categories'] as List? ?? const [])
-                if (raw is Map && raw['tokens'] is int)
-                  ContextSegment(
-                    '${raw['name']}',
-                    raw['tokens'] as int,
-                    kind: switch (raw['kind']) {
-                      'free' => ContextKind.free,
-                      'buffer' => ContextKind.buffer,
-                      'deferred' => ContextKind.deferred,
-                      _ => ContextKind.used,
-                    },
-                  ),
-            ],
-            detail: _contextDetail = ContextDetail.parse(usage),
-          ),
-        ),
+      _contextDetail = ContextDetail.parse(usage);
+      _counted = (
+        total: usage['totalTokens'] as int? ?? 0,
+        segments: [
+          for (final raw in usage['categories'] as List? ?? const [])
+            if (raw is Map && raw['tokens'] is int)
+              ContextSegment(
+                '${raw['name']}',
+                raw['tokens'] as int,
+                kind: switch (raw['kind']) {
+                  'free' => ContextKind.free,
+                  'buffer' => ContextKind.buffer,
+                  'deferred' => ContextKind.deferred,
+                  _ => ContextKind.used,
+                },
+              ),
+        ],
       );
+      // Only the same request's fresh count supersedes its final total.
+      if (completed && identical(_usage?.mainContextRequest, contextRequest)) {
+        _usage?.clearContext();
+        _toldContext = null;
+      }
+      _reportContext();
     } on Object {
       // Context usage is a nicety: an older CLI may not answer.
+    }
+  }
+
+  /// What fills the context: as much as the model last told
+  /// ([_toldContext]), else as the CLI counted it; its parts as the CLI
+  /// counted them, scaled to that. Nothing before the CLI has counted.
+  void _reportContext() {
+    final counted = _counted;
+    if (counted == null) return;
+    final used = _toldContext ?? counted.total;
+    final scale = counted.total > 0 ? used / counted.total : 1.0;
+    final kept = counted.segments
+        .where((s) => s.kind == ContextKind.buffer)
+        .fold(0, (sum, s) => sum + s.tokens);
+    emit(
+      UsageReported(
+        nextSeq,
+        ContextUsage(
+          window: _contextWindow,
+          used: used,
+          segments: scale == 1
+              ? counted.segments
+              : [
+                  for (final s in counted.segments)
+                    switch (s.kind) {
+                      ContextKind.used => ContextSegment(
+                        s.label,
+                        (s.tokens * scale).round(),
+                      ),
+                      ContextKind.free => ContextSegment(
+                        s.label,
+                        math.max(0, _contextWindow - used - kept),
+                        kind: ContextKind.free,
+                      ),
+                      _ => s,
+                    },
+                ],
+          detail: _shownDetail,
+        ),
+      ),
+    );
+  }
+
+  /// Counts [_results] from the whole of [session], for a resumed one
+  /// whose first page did not reach back to its start or a compaction.
+  Future<void> _readResults(SessionRecord session) async {
+    final read = _readHistory;
+    if (read == null) return;
+    final reading = ++_resultsReading;
+    try {
+      final lines = await read(session);
+      if (_disposed || reading != _resultsReading) return;
+      final whole = ToolResultTally();
+      for (final line in lines) {
+        whole.add(line);
+      }
+      // And what came while it was read.
+      _results = whole..takeNewer(_results);
+      _resultsKnown = true;
+      _reportContext();
+    } on Object {
+      // Claude Code's breakdown stays shown.
     }
   }
 
@@ -2851,13 +2987,26 @@ class ClaudeCodeKernel
         ..replaying = true
         ..keptTurns = kept;
       var counted = false;
+      var whole = page.earlier == null;
       for (final line in page.entries) {
         if (line['type'] == 'assistant') counted |= _countRequest(line);
+        _results.add(line);
+        // What the model told before it is no longer what it holds.
+        if (line case {'type': 'system', 'subtype': 'compact_boundary'}) {
+          _toldContext = null;
+          whole = true;
+        }
         _translator.translate(line);
+      }
+      if (whole) {
+        _resultsKnown = true;
+      } else {
+        unawaited(_readResults(session));
       }
       _readHead = _translator.head;
       _translator.endReplay();
       if (counted) _reportStats();
+      _reportContext();
     } on Object catch (error) {
       emit(
         ItemUpserted(
@@ -2909,7 +3058,9 @@ class ClaudeCodeKernel
             ..keptTurns = kept;
       var counted = false;
       for (final line in page.entries) {
-        if (line['type'] == 'assistant') counted |= _countRequest(line);
+        if (line['type'] == 'assistant') {
+          counted |= _countRequest(line, earlier: true);
+        }
         translator.translate(line);
       }
       translator.endPage(after: _readHead);
@@ -3220,11 +3371,12 @@ class ClaudeCodeKernel
     final current = model.selected;
     if (current == null) return;
     if (effort.selected case final level?) _pickedEfforts[current] = level;
-    final window = switch (_custom) {
-      (_, final info) => _windowFor(info),
-      null => _windows[contextSize.selected],
-    };
-    if (window != null) _pickedWindows[current] = window;
+    // A provider's model's is noted as it is picked: else it is its own,
+    // as its upstream says (see _windowFor).
+    if (_custom != null) return;
+    if (_windows[contextSize.selected] case final window?) {
+      _pickedWindows[current] = window;
+    }
   }
 
   /// [model]'s variant with the long context or without, as there is one.
@@ -3259,10 +3411,13 @@ class ClaudeCodeKernel
   String? _effortFor(ProviderModel info) =>
       info.effortLevels.contains(_effort) ? _effort : info.initialEffort;
 
-  /// The context a provider's model fills before compacting: the one
-  /// picked, if it offers it, else its own.
-  int _windowFor(ProviderModel info) =>
-      info.contextOptions.contains(_window) ? _window! : info.initialContext;
+  /// The context a provider's model (the one in use) fills before
+  /// compacting: the one picked for it, if it offers it, else its own (as
+  /// its upstream says, else as set): not one picked with another model.
+  int _windowFor(ProviderModel info) => switch (_pickedWindows[_model]) {
+    final picked? when info.contextOptions.contains(picked) => picked,
+    _ => info.initialContext,
+  };
 
   /// The context the session compacts at: a provider's model's, else as
   /// picked (null for the CLI's own).
@@ -3417,10 +3572,11 @@ class ClaudeCodeKernel
     },
     selectedFor: (model) {
       if (model == this.model.selected) return contextSize.selected;
-      final window = _pickedWindows[model] ?? _window;
       if (_providers.resolve(model) case (_, final info)) {
-        return '${info.contextOptions.contains(window) ? window : info.initialContext}';
+        final picked = _pickedWindows[model];
+        return '${info.contextOptions.contains(picked) ? picked : info.initialContext}';
       }
+      final window = _pickedWindows[model] ?? _window;
       return _windows.entries
           .where((entry) => entry.value == window)
           .firstOrNull
@@ -3554,9 +3710,11 @@ class ClaudeCodeKernel
       _approval == 'bypassPermissions' ? 'acceptEdits' : _approval;
 
   /// Plan's commands are left to the classifier with the approvals that
-  /// approve for the user; asked about with the others.
+  /// approve for the user, where it runs on the model: on another
+  /// provider's there is none to leave them to (see [_permission]), and
+  /// the CLI, told to use it all the same, refuses what it cannot check.
   bool get _reviewsPlan =>
-      _approval == 'auto' || _approval == 'bypassPermissions';
+      _classifies && (_approval == 'auto' || _approval == 'bypassPermissions');
 
   /// Whether the auto mode classifier runs on the model: not on another
   /// provider's.

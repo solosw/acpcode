@@ -46,6 +46,18 @@ class _Transport extends MockAcpTransport {
       });
   void Function()? onLoad;
   bool holdPrompt = false;
+
+  void completePrompt() {
+    final prompt = written.lastWhere(
+      (message) => message['method'] == 'session/prompt',
+    );
+    _messages.add({
+      'jsonrpc': '2.0',
+      'id': prompt['id'],
+      'result': {'stopReason': 'end_turn'},
+    });
+  }
+
   @override
   void write(Map<String, Object?> message) {
     if (message['method'] == 'session/load') onLoad?.call();
@@ -162,8 +174,8 @@ class _GateReview extends ChangeReview {
   final entered = Completer<void>();
   final proceed = Completer<void>();
   @override
-  Future<void> before(String path) async {
-    await super.before(path);
+  Future<void> before(String path, {String? turn}) async {
+    await super.before(path, turn: turn);
     entered.complete();
     await proceed.future;
   }
@@ -452,7 +464,7 @@ void main() {
       });
       final gate = h.review as _GateReview;
       await gate.entered.future;
-      h.transport.notify({'sessionUpdate': 'turn_complete'});
+      h.transport.completePrompt();
       await until(() => h.events.whereType<TurnEnded>().isNotEmpty);
       await pumpEventQueue(times: 100);
       gate.proceed.complete();

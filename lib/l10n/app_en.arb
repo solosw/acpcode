@@ -1059,6 +1059,14 @@
   },
   "sidebarDone": "Done",
   "sidebarArchived": "Archived",
+  "sidebarArchivedIn": "{folder} · archived",
+  "@sidebarArchivedIn": {
+    "placeholders": {
+      "folder": {
+        "type": "String"
+      }
+    }
+  },
   "sidebarOpenFolder": "Open folder…",
   "sidebarAgents": "Agents",
   "sidebarCollapseAll": "Collapse All",
@@ -1425,6 +1433,7 @@
   "@agentStateRunningInBackground": {
     "description": "Lowercase, after a subagent's name."
   },
+  "agentElapsedHint": "How long it has been at work: the times it was continued add up",
   "agentStateRunning": "running",
   "@agentStateRunning": {
     "description": "Lowercase, after a subagent's name."
@@ -1540,6 +1549,7 @@
   "imagePickDecline": "Skip",
   "imageSetDefault": "Set as default",
   "imageDefaultSet": "Set as default image model",
+  "imageCopyPrompt": "Copy prompt",
   "toolProposingGoal": "Proposing a goal",
   "toolProposedGoal": "Proposed a goal",
   "goalAdopt": "Set as goal",
@@ -2560,6 +2570,16 @@
       }
     }
   },
+  "explorerDownload": "Download...",
+  "explorerDownloadExists": "Some of them are already in {folder}. Replace them?",
+  "@explorerDownloadExists": {
+    "placeholders": {
+      "folder": {
+        "type": "String"
+      }
+    }
+  },
+  "explorerDownloadReplace": "Replace",
   "explorerPreparingTransfer": "Preparing files...",
   "composerCopyToHostFailed": "Couldn't copy the files to the remote host: {error}",
   "@composerCopyToHostFailed": {
@@ -4709,6 +4729,7 @@
   "customizeKindSkills": "Skills",
   "customizeKindSubagents": "Subagents",
   "customizeKindRules": "Rules",
+  "customizeKindMemory": "Memory",
   "customizeKindCommands": "Commands",
   "customizeKindHooks": "Hooks",
   "customizeScopeUser": "User",
@@ -4728,6 +4749,7 @@
   "customizeReadOnly": "Read only: Claude Code keeps this file itself.",
   "customizeEnabled": "Enabled",
   "customizeDisabled": "Disabled",
+  "customizeLinkUnreachable": "Not loaded: this is a link the system cannot follow. Install the skill as a real folder, or link it again.",
   "customizeBack": "Back",
   "customizeClose": "Close Customize",
   "customizeDeleteTitle": "Delete {name}?",
@@ -4788,6 +4810,7 @@
     }
   },
   "customizeEmptyPlugins": "None installed. Install plugins with /plugin in Claude Code.",
+  "customizeEmptyMemory": "Nothing remembered yet. Claude Code saves what it learns about you and this project here as it works (its auto memory), and reads it back in later conversations.",
   "customizeEmptyMcpsUser": "None yet. Add one with: claude mcp add --scope user <name> -- <command>",
   "customizeEmptyMcpsLocal": "None yet. Add one with claude mcp add, run in the project.",
   "customizeEmptyMcpsProject": "None yet. Servers shared with the project go in its .mcp.json.",
@@ -5861,28 +5884,7 @@
   "remoteSignInRefused": "That was not accepted. Try again.",
   "remoteSignInRemember": "Remember on this computer (in the system keychain)",
   "remoteSignInConnect": "Connect",
-  "remoteFolderPlaceholder": "A folder on {host}: pick one, or type a path",
-  "@remoteFolderPlaceholder": {
-    "placeholders": {
-      "host": {
-        "type": "String"
-      }
-    }
-  },
-  "remoteFolderRefresh": "Read the folders again",
-  "@remoteFolderRefresh": {
-    "description": "The button at the right of the quick pick browsing a remote host's folders: it lists the folder again, e.g. one made in a terminal since."
-  },
-  "remoteOpenThisFolder": "Open This Folder",
   "remoteParentFolder": "Parent Folder",
-  "remoteGoTo": "Go to {path}",
-  "@remoteGoTo": {
-    "placeholders": {
-      "path": {
-        "type": "String"
-      }
-    }
-  },
   "remoteListFailed": "Could not list {path}",
   "@remoteListFailed": {
     "placeholders": {
@@ -5900,30 +5902,6 @@
     }
   },
   "remoteFileHostPlaceholder": "Select a host, to browse its files",
-  "remoteFilePlaceholder": "A file on {host}: pick one, or type a path",
-  "@remoteFilePlaceholder": {
-    "placeholders": {
-      "host": {
-        "type": "String"
-      }
-    }
-  },
-  "remoteOpenFile": "Open {path}",
-  "@remoteOpenFile": {
-    "placeholders": {
-      "path": {
-        "type": "String"
-      }
-    }
-  },
-  "remoteOpenFailed": "Could not open {path}",
-  "@remoteOpenFailed": {
-    "placeholders": {
-      "path": {
-        "type": "String"
-      }
-    }
-  },
   "remoteRecentFiles": "Recent Remote Files",
   "remoteOpenFileOn": "Open File on {host}...",
   "@remoteOpenFileOn": {
@@ -6236,6 +6214,30 @@
     "description": "The menu's choice that makes a workspace of several folders for a new chat to work in."
   },
   "newChatCreateWorkspaceDetail": "Work across several folders",
+  "newChatAddFolderTo": "Add Folder to {name}…",
+  "@newChatAddFolderTo": {
+    "description": "The menu's choice, in the menu of where a new chat works, that picks a folder in the file manager and adds it to the project picked: its agents work in it too.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "monad"
+      }
+    }
+  },
+  "newChatAddFolderToDetail": "Its agents work there too",
+  "newChatProjectAddedFolders": "{path} · {count, plural, =1{1 more folder} other{{count} more folders}}",
+  "@newChatProjectAddedFolders": {
+    "description": "Under a project with folders added to it in the menu of where a new chat works: where it is, and how many folders were added to it.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/Users/me/monad"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "workspaceCreateTitle": "Create Workspace",
   "@workspaceCreateTitle": {
     "description": "The title of the dialog that makes a workspace of several folders."
@@ -6301,6 +6303,10 @@
     "description": "Forgets a workspace; its folders and sessions are kept."
   },
   "sidebarEditProject": "Edit Project…",
+  "sidebarAddFolder": "Add Folder…",
+  "@sidebarAddFolder": {
+    "description": "A project's menu item: picks a folder in the file manager and adds it to the project, its agents working in it too."
+  },
   "@sidebarEditProject": {
     "description": "A project's menu item: its name and folder, in a dialog."
   },
@@ -6310,6 +6316,7 @@
     "description": "The label of a project's folder in its dialog."
   },
   "projectLocationDescription": "Moved or renamed the folder? Point the project at it here, and its conversations move along. The folder itself is not moved.",
+  "projectFoldersDescription": "Agents working in this project can read and change the files in the folders added to it too. Conversations already started see them once they start again.",
   "projectChooseFolder": "Choose in {app}…",
   "@projectChooseFolder": {
     "placeholders": {
@@ -7248,6 +7255,7 @@
   "accountsGitHubHosts": "github.com, or your company's GitHub Enterprise",
   "accountsGitLabHosts": "gitlab.com, or a self-managed GitLab (http:// or https://, with its port)",
   "accountsGiteeHosts": "gitee.com, with a personal access token",
+  "accountsGitCodeHosts": "gitcode.com, with a personal access token",
   "accountsSignInBrowser": "Sign in with Browser",
   "accountsSignInToken": "Use a Token…",
   "accountsViaBrowser": "signed in with browser",
@@ -7294,6 +7302,7 @@
   "accountsTokenGitHubScopes": "A classic token with the repo and read:user scopes, or a fine-grained token with read and write access to issues and pull requests.",
   "accountsTokenGitLabScopes": "A personal access token with the api scope.",
   "accountsTokenGiteeScopes": "A personal access token with the user_info, projects, pull_requests, issues and notes scopes.",
+  "accountsTokenGitCodeScopes": "A personal access token that can read your user info, and read and write repositories, issues and pull requests.",
   "accountsTokenCreate": "Create a Token on {host}",
   "@accountsTokenCreate": {
     "placeholders": {
@@ -7767,6 +7776,8 @@
   "aboutFeedback": "Report an Issue",
   "aboutFeedbackDetail": "Open an issue on GitHub, or see those others opened",
   "aboutOpen": "Open",
+  "aboutDeviceId": "Device ID",
+  "aboutCopy": "Copy",
   "stashSettingsIssueSync": "Issues as stashes",
   "stashSettingsIssueSyncDescription": "A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.",
     "stashIssueSyncMine": "Only those assigned to or opened by me",
@@ -8773,6 +8784,37 @@
   "modelsResetCreditConfirm": "Use a reset credit of {account}?",
   "@modelsResetCreditConfirm": {"placeholders": {"account": {"type": "String"}}},
   "modelsResetCreditConfirmDetail": "Its quota starts over at once. The credit can't be given back, and whatever quota is left now is lost.",
+  "claudeResets": "{count, plural, =1{1 reset} other{{count} resets}}",
+  "@claudeResets": {"placeholders": {"count": {"type": "int"}}},
+  "claudeResetsTitle": "Claude limit resets",
+  "claudeResetsDetail": "Granted by Anthropic. Using one sets the limits it lists back to nothing used. With more than one, they are used one at a time, in the order Anthropic sets.",
+  "claudeResetClears": "Clears {windows}",
+  "@claudeResetClears": {"placeholders": {"windows": {"type": "String"}}},
+  "claudeResetWindowUsed": "{window} ({percent}% used)",
+  "@claudeResetWindowUsed": {"placeholders": {"window": {"type": "String"}, "percent": {"type": "int"}}},
+  "claudeResetWeeklyOf": "{model} weekly",
+  "@claudeResetWeeklyOf": {"placeholders": {"model": {"type": "String"}}},
+  "claudeResetNext": "Usable now",
+  "claudeResetQueued": "Waits its turn: usable once the one above is used",
+  "claudeResetUse": "Use This One…",
+  "claudeResetConfirm": "Use a Claude limit reset?",
+  "claudeResetConfirmDetail": "“{label}” sets {windows} back to nothing used, at once. The reset can't be given back, and what is left of these limits now is lost.",
+  "@claudeResetConfirmDetail": {"placeholders": {"label": {"type": "String"}, "windows": {"type": "String"}}},
+  "claudeResetPaused": "Paused",
+  "claudeResetCooldown": "Usable again {time}",
+  "@claudeResetCooldown": {"placeholders": {"time": {"type": "String"}}},
+  "claudeResetUnavailable": "Not usable now ({reason})",
+  "@claudeResetUnavailable": {"placeholders": {"reason": {"type": "String"}}},
+  "claudeResetSignedOut": "The Claude.ai sign-in has expired; Claude Code renews it as it next runs.",
+  "claudeResetDone": "Reset: {windows}",
+  "@claudeResetDone": {"placeholders": {"windows": {"type": "String"}}},
+  "claudeResetNotDone": "Not reset: {reason}",
+  "@claudeResetNotDone": {"placeholders": {"reason": {"type": "String"}}},
+  "claudeResetNotNext": "Another reset is the one usable now; nothing was used. Refresh and try again.",
+  "claudeResetNotLimited": "This reset can only be used once a limit is reached; nothing was used.",
+  "claudeResetAlreadyUsed": "This reset was already used; nothing was used now.",
+  "claudeResetCoolingDown": "A reset was just used; wait a little before the next. Nothing was used.",
+  "claudeResetsRefresh": "Refresh",
   "resetCreditsHint": "{count, plural, =1{A reset credit expires} other{{count} reset credits expire}} within a week. To get their worth, use Codex models on this plan, resetting once the quota runs out:",
   "@resetCreditsHint": {"placeholders": {"count": {"type": "int"}}},
   "resetCreditsHintDay": "{day}: reset {count, plural, =1{once} other{{count} times}}",
@@ -8984,5 +9026,155 @@
   "branchBarPathCopied": "Path copied",
   "@branchBarPathCopied": {
     "description": "Hover of the project folder under the chat once clicked: its path was copied."
-  }
+  },
+  "rewindFilesTitle": "Undo the file changes made after this message?",
+  "rewindFilesChanged": "The agent changed {count, plural, =1{1 file} other{{count} files}} after this message:",
+  "@rewindFilesChanged": {"placeholders": {"count": {"type": "int"}}},
+  "rewindFilesMore": "…and {count} more",
+  "@rewindFilesMore": {"placeholders": {"count": {"type": "int"}}},
+  "rewindFilesMerged": "{count, plural, =1{1 of them was} other{{count} of them were}} also changed elsewhere since: those changes are kept.",
+  "@rewindFilesMerged": {"placeholders": {"count": {"type": "int"}}},
+  "rewindFilesConflicts": "{count, plural, =1{1 file can't} other{{count} files can't}} be undone cleanly and will stay as {count, plural, =1{it is} other{they are}}:",
+  "@rewindFilesConflicts": {"placeholders": {"count": {"type": "int"}}},
+  "rewindFilesCommands": "What commands changed (Bash) isn't tracked and stays.",
+  "rewindFilesRevert": "Undo and Send",
+  "rewindFilesKeep": "Keep and Send",
+  "rewindFilesRemember": "Remember my choice",
+  "generalSettingsRewindFiles": "Edited Messages",
+  "generalSettingsRewindFilesDescription": "When you edit an earlier message and send it again, what happens to the files the agent changed after it. Commands' (Bash) changes are not tracked. Claude Code and BaoCode agent only.",
+  "generalSettingsRewindAsk": "Ask Each Time",
+  "generalSettingsRewindRevert": "Undo the Changes",
+  "generalSettingsRewindKeep": "Keep the Changes",
+  "settingsTransferTitle": "Move to Another Computer",
+  "settingsTransferDescription": "Your settings, keybindings and upstreams with their models, in one file to import on the other computer.",
+  "settingsTransferLabel": "Settings file",
+  "settingsTransferExport": "Export…",
+  "settingsTransferImport": "Import…",
+  "settingsTransferExportQuestion": "Export your settings?",
+  "settingsTransferExportDetail": "Settings, keybindings and upstreams go into the file. The upstreams' API keys only if you tick the box below: they are then in the file as plain text, so keep it to yourself and delete it once imported.",
+  "settingsTransferWithKeys": "Include the upstreams' API keys",
+  "settingsTransferExported": "Exported to {path}",
+  "@settingsTransferExported": {"placeholders": {"path": {"type": "String"}}},
+  "settingsTransferImportQuestion": "Import the settings in {file}?",
+  "@settingsTransferImportQuestion": {"placeholders": {"file": {"type": "String"}}},
+  "settingsTransferImportDetail": "Its settings, keybindings and upstreams replace yours; settings it does not have stay as they are.",
+  "settingsTransferImported": "Imported. Some settings take effect once BaoCode restarts.",
+  "settingsTransferNotAFile": "This is not a settings file BaoCode exported.",
+  "settingsTransferFailed": "Not done: {error}",
+  "@settingsTransferFailed": {"placeholders": {"error": {"type": "String"}}},
+  "generalSettingsSessionTools": "Agents can coordinate other conversations",
+  "generalSettingsSessionToolsDescription": "An agent can list your other conversations, read where they stand without waking them, hand them work (resumed if stopped, queued if busy) and wait for them. For one conversation that coordinates the others; agents started after the change have it.",
+  "generalSettingsCommandLine": "Command Line",
+  "baoBashRecommended": "BaoCode Bash (recommended)",
+  "baoBashDescription": "A complete bash for agents on Windows: rg, grep, sed, awk, find, jq, tar and some 80 other common commands built in, no Git for Windows needed, and C:\\ and /c/ paths alike. Both the built-in core and Claude Code's run their agents' commands with it.",
+  "baoBashNotInstalled": "Not installed yet.",
+  "baoBashInstalled": "Version {version} installed.",
+  "@baoBashInstalled": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "baoBashUpdateAvailable": "Version {version} is out.",
+  "@baoBashUpdateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "baoBashDownloading": "Downloading… {percent}%",
+  "@baoBashDownloading": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "baoBashInstall": "Install",
+  "baoBashInstallSize": "Install ({size})",
+  "@baoBashInstallSize": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "baoBashUpdate": "Update",
+  "baoBashUninstall": "Uninstall",
+  "baoBashFailed": "Could not install it: {error}",
+  "@baoBashFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "baoBashNoticeTitle": "On Windows, BaoCode Bash is recommended",
+  "baoBashNoticeBody": "Agents run commands more reliably with it. It brings bash with rg, grep, sed, awk, find, jq, tar and some 80 other common commands, no Git for Windows needed; it takes C:\\ and /c/ paths alike, so commands no longer fail on the differences between cmd and PowerShell.",
+  "baoBashNoticeLater": "Not Now",
+  "baoBashSource": "Open source:",
+  "baoBashHintInstall": "Install and Use",
+  "commandLineShell": "Shell",
+  "commandLineShellDescription": "What agents run their commands in on Windows. Claude Code's CLI core takes bash alone: with cmd or PowerShell picked, it runs Git Bash.",
+  "commandLineShellCustom": "Custom…",
+  "commandLineShellInUse": "In use: {path}",
+  "@commandLineShellInUse": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "commandLineShellFallback": "{shell} is not ready yet: commands run in {path} meanwhile.",
+  "@commandLineShellFallback": {
+    "placeholders": {
+      "shell": {
+        "type": "String"
+      },
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "commandLineCustomPath": "Custom shell",
+  "commandLineCustomPathDescription": "The program to run commands with: a bash.exe, cmd.exe, powershell.exe or pwsh.exe.",
+  "remoteBrowserFolderTitle": "Open a Folder on {host}",
+  "@remoteBrowserFolderTitle": {"placeholders": {"host": {"type": "String"}}},
+  "remoteBrowserFileTitle": "Open a File on {host}",
+  "@remoteBrowserFileTitle": {"placeholders": {"host": {"type": "String"}}},
+  "remoteBrowserPlaces": "Locations",
+  "remoteBrowserRecent": "Recent Locations",
+  "remoteBrowserHome": "Home",
+  "remoteBrowserThisPc": "This PC",
+  "remoteBrowserRoot": "Root",
+  "remoteBrowserLocalDisk": "Local Disk ({drive})",
+  "@remoteBrowserLocalDisk": {"placeholders": {"drive": {"type": "String"}}},
+  "remoteBrowserBack": "Back",
+  "remoteBrowserForward": "Forward",
+  "remoteBrowserRefresh": "Refresh",
+  "remoteBrowserFilter": "Filter",
+  "remoteBrowserView": "View Options",
+  "remoteBrowserShowHidden": "Hidden Items",
+  "remoteBrowserShowSystem": "Protected Operating System Files",
+  "remoteBrowserNewFolder": "New Folder",
+  "remoteBrowserOpen": "Open",
+  "remoteBrowserEmpty": "This folder is empty.",
+  "remoteBrowserNoFolders": "No folders here.",
+  "remoteBrowserNoMatch": "Nothing here matches “{filter}”.",
+  "@remoteBrowserNoMatch": {"placeholders": {"filter": {"type": "String"}}},
+  "remoteBrowserHiddenCount": "{count, plural, =1{1 hidden item} other{{count} hidden items}}",
+  "@remoteBrowserHiddenCount": {"placeholders": {"count": {"type": "int"}}},
+  "remoteBrowserShowHiddenNow": "Show",
+  "remoteBrowserEditPath": "Go to a Path",
+  "remoteBrowserPathPlaceholder": "A path: ~/code, /srv/app, D:\\work",
+  "remoteBrowserNotFound": "{path} does not exist.",
+  "@remoteBrowserNotFound": {"placeholders": {"path": {"type": "String"}}},
+  "remoteBrowserNotFolder": "{path} is a file, not a folder.",
+  "@remoteBrowserNotFolder": {"placeholders": {"path": {"type": "String"}}},
+  "remoteBrowserMakeFailed": "Could not make the folder: {error}",
+  "@remoteBrowserMakeFailed": {"placeholders": {"error": {"type": "String"}}},
+  "remoteBrowserFolderAction": "Open Folder",
+  "remoteBrowserFileAction": "Open File"
 }
