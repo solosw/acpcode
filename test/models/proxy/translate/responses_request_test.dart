@@ -32,6 +32,71 @@ const grokSignature =
     'HmlYdr2aCAqCYP/m9mr8PS6KOsdMs72FGDigmydR+Jsmuv8KX97yWPlbOwmXJgWn0CbHaCacdQD3+n5EvpgLfPNmafS3kdICBjRuDf4bzHy7uBiUhNVhqPtp/ee1y9q4imPE4LYgD1VZ4J+bp9mTeqA1+nC9Oue58CiNEMV9SVaGenCD+aBnVuSTzQhD32Y+68i6HLJW0Dx6ifaRfb8hxYtA/sPM+/FTvAMW11nRho5a2BBSkpnzfqqAz/e/vGJ77/bygpXM823QA9wL9i0X';
 
 void main() {
+  test(
+    'copies explicit output limit and sampling without inventing defaults',
+    () {
+      final out = convertClaudeRequestToResponses('gpt-test', {
+        'messages': [],
+        'max_tokens': 87,
+        'temperature': 0,
+        'top_p': 0.8,
+      });
+      expect(out['max_output_tokens'], 87);
+      expect(out['temperature'], 0);
+      expect(out['top_p'], 0.8);
+      final unset = convertClaudeRequestToResponses('gpt-test', {
+        'messages': [],
+      });
+      for (final key in ['max_output_tokens', 'temperature', 'top_p']) {
+        expect(unset.containsKey(key), false);
+      }
+    },
+  );
+
+  test('URL images survive in user messages and tool results', () {
+    const image = {
+      'type': 'image',
+      'source': {'type': 'url', 'url': 'https://images.example/picture.png'},
+    };
+    final out = convertClaudeRequestToResponses('gpt-test', {
+      'messages': [
+        {
+          'role': 'user',
+          'content': [image],
+        },
+        {
+          'role': 'assistant',
+          'content': [
+            {
+              'type': 'tool_use',
+              'id': 'call_1',
+              'name': 'screenshot',
+              'input': {},
+            },
+          ],
+        },
+        {
+          'role': 'user',
+          'content': [
+            {
+              'type': 'tool_result',
+              'tool_use_id': 'call_1',
+              'content': [image],
+            },
+          ],
+        },
+      ],
+    });
+    final input = out['input'] as List;
+    const expected = {
+      'type': 'input_image',
+      'image_url': 'https://images.example/picture.png',
+      'detail': 'auto',
+    };
+    expect(input.first['content'], [expected]);
+    expect(input.last['output'], [expected]);
+  });
+
   test('standard Responses request shape', () {
     final out = convert('{"messages":[{"role":"user","content":"hi"}]}');
     expect(out.get('model').string, 'test-model');

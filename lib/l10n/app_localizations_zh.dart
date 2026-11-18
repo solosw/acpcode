@@ -13973,4 +13973,66 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get remoteBrowserFileAction => '打开文件';
+
+  @override
+  String get modelsGatewayTitle => '本地模型网关';
+
+  @override
+  String get modelsGatewayDescription =>
+      '通过一个本地地址访问已启用的上游，支持 OpenAI Chat Completions、Responses 和 Anthropic Messages API。';
+
+  @override
+  String get modelsGatewayEnable => '开启本地网关';
+
+  @override
+  String get modelsGatewayEnableDescription => '开启后随 BaoCode 启动，关闭后停止监听端口。';
+
+  @override
+  String get modelsGatewayPort => '监听端口';
+
+  @override
+  String get modelsGatewayPortDescription => '仅监听 127.0.0.1，默认端口为 8317。';
+
+  @override
+  String get modelsGatewayPortInvalid => '请输入 1 到 65535 之间的端口。';
+
+  @override
+  String get modelsGatewayKey => '网关密钥';
+
+  @override
+  String get modelsGatewayKeyDescription =>
+      '本地客户端使用的密钥，保存在 settings.json，默认为 baocode。上游密钥由 BaoCode 保管。';
+
+  @override
+  String get modelsGatewayKeyInvalid => '请输入非空密钥，仅使用不含空格的可打印 ASCII 字符。';
+
+  @override
+  String get modelsGatewayProxy => '使用 BaoCode 网络代理';
+
+  @override
+  String get modelsGatewayProxyDescription => '按照“设置 → 网络”的代理配置访问上游，关闭后直连。';
+
+  @override
+  String get modelsGatewayStarting => '正在应用网关设置…';
+
+  @override
+  String get modelsGatewayRunning => '网关正在运行';
+
+  @override
+  String get modelsGatewayStopped => '网关已停止';
+
+  @override
+  String get modelsGatewayModelIds =>
+      '通过 GET /v1/models 获取模型列表。模型 ID 为 @上游ID/模型名，可区分不同上游的同名模型。';
+
+  @override
+  String get modelsGatewayCopyAddress => '复制地址';
+
+  @override
+  String get modelsGatewayApply => '保存并应用';
+
+  @override
+  String modelsGatewayError(String error) {
+    return '网关错误：$error';
+  }
 }

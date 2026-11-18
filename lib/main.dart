@@ -78,6 +78,7 @@ import 'keybindings/keymap.dart';
 import 'keybindings/vscode_import.dart';
 import 'l10n/l10n.dart';
 import 'models/featured_upstreams.dart';
+import 'models/gateway/gateway_settings.dart';
 import 'models/magpie_follow.dart';
 import 'models/model_icons.dart';
 import 'models/model_providers.dart';
@@ -614,6 +615,11 @@ void followSettingsFiles(SettingsFiles files) {
     usageStorageIn(p.join(DataDirectory.current.path, 'usage')),
   )..follow(files.settings);
   unawaited(UsageLedger.current.prune());
+  ModelGateway.current = ModelGateway.settings(
+    files.settings,
+    ModelProviders.current,
+  );
+  unawaited(ModelGateway.current!.start());
   // The models' prices, the calls' costs worked out from them.
   UsagePrices.current = UsagePrices()..follow(files.settings);
   // The upstreams' sites' icons, for those that show no other: in the
@@ -942,6 +948,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
         stopClaudeProcesses(),
         RemoteClaudeTransport.stopAll(),
         stopModelProxy(),
+        ?ModelGateway.current?.close(),
         stopLspProcesses(),
         ?widget.themeExtensions?.dispose(),
         stopPtyProcesses(),

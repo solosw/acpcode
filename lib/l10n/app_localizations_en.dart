@@ -14805,4 +14805,70 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get remoteBrowserFileAction => 'Open File';
+
+  @override
+  String get modelsGatewayTitle => 'Local model gateway';
+
+  @override
+  String get modelsGatewayDescription =>
+      'Use the enabled upstreams through one local address, with OpenAI Chat Completions, Responses and Anthropic Messages APIs.';
+
+  @override
+  String get modelsGatewayEnable => 'Enable local gateway';
+
+  @override
+  String get modelsGatewayEnableDescription =>
+      'Starts with BaoCode while enabled. Turning it off closes the listening port.';
+
+  @override
+  String get modelsGatewayPort => 'Listening port';
+
+  @override
+  String get modelsGatewayPortDescription =>
+      'Listens on 127.0.0.1 only. Default: 8317.';
+
+  @override
+  String get modelsGatewayPortInvalid => 'Enter a port between 1 and 65535.';
+
+  @override
+  String get modelsGatewayKey => 'Gateway API key';
+
+  @override
+  String get modelsGatewayKeyDescription =>
+      'The key local clients use, kept in settings.json. Default: baocode. Upstream keys stay in BaoCode.';
+
+  @override
+  String get modelsGatewayKeyInvalid =>
+      'Enter a non-empty key using printable ASCII characters without spaces.';
+
+  @override
+  String get modelsGatewayProxy => 'Use BaoCode network proxy';
+
+  @override
+  String get modelsGatewayProxyDescription =>
+      'Uses Settings → Network to reach upstreams. Turn off to connect directly.';
+
+  @override
+  String get modelsGatewayStarting => 'Applying gateway settings…';
+
+  @override
+  String get modelsGatewayRunning => 'Gateway is running';
+
+  @override
+  String get modelsGatewayStopped => 'Gateway is stopped';
+
+  @override
+  String get modelsGatewayModelIds =>
+      'GET /v1/models lists model IDs as @upstream-id/model-name, so models with the same name remain distinct.';
+
+  @override
+  String get modelsGatewayCopyAddress => 'Copy Address';
+
+  @override
+  String get modelsGatewayApply => 'Save and Apply';
+
+  @override
+  String modelsGatewayError(String error) {
+    return 'Gateway error: $error';
+  }
 }

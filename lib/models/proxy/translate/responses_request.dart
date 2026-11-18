@@ -35,6 +35,12 @@ Map<String, Object?> convertClaudeRequestToResponses(
   final root = JsonValue.of(request);
   final toolNameMap = buildShortToolNameMap(root);
   final out = <String, Object?>{'model': model, 'input': <Object?>[]};
+  final maxTokens = root.get('max_tokens');
+  if (maxTokens.exists) out['max_output_tokens'] = maxTokens.value;
+  for (final key in const ['temperature', 'top_p']) {
+    final value = root.get(key);
+    if (value.exists) out[key] = value.value;
+  }
   final inputItems = <Map<String, Object?>>[];
 
   // The system prompt as a developer message.
@@ -344,6 +350,10 @@ Map<String, Object?> inputImage(String url) => {
 
 String? _dataUrl(JsonValue source) {
   if (!source.exists) return null;
+  if (source.get('type').string == 'url') {
+    final url = source.get('url').string;
+    return url.isEmpty ? null : url;
+  }
   var data = source.get('data').string;
   if (data.isEmpty) data = source.get('base64').string;
   if (data.isEmpty) return null;

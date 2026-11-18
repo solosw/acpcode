@@ -118,12 +118,17 @@
 
   <section class="release" id="v1.9.5">
     <h2 class="plain"><a href="#v1.9.5">1.9.5</a></h2>
-    <p>这一版加了 Bot 群聊，Bot 能给出下一句的推荐回复，朗读时还能带上语气。</p>
+    <p>本次新增可选的本地模型网关，把所有已启用上游中配置的模型聚合到一个本地接口。</p>
     <p>新功能</p>
     <ul>
-    <li>群聊：把两个以上的 Bot 拉进同一个对话。你停下输入后，它们轮流决定要不要接话，被 @ 的先说，你每说一句它们只回有限的几条。在手机版里创建和使用。</li>
-    <li>手机版打开推荐回复时，Bot 会在回复最后给出两三条简短的推荐回复。</li>
-    <li>手机版朗读 Bot 的消息时，Bot 可以标出语气（如 [whispers] 轻声、[laughs] 笑）；对话和通知里不显示这些标记。</li>
+    <li>在“设置 → 模型”中开启网关。默认地址为 <a href="http://127.0.0.1:8317%EF%BC%8C%E9%BB%98%E8%AE%A4%E5%AF%86%E9%92%A5%E4%B8%BA">http://127.0.0.1:8317，默认密钥为</a> baocode，端口和密钥均可修改。</li>
+    <li>支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages，提供流式输出及受支持的跨协议对话转换。</li>
+    <li>可选择使用 BaoCode 网络代理访问上游，或直接连接。模型 ID 包含上游 ID，便于区分不同上游中的同名模型。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>转换到 Responses 协议时，保留输出 token 上限、受支持的采样参数和 URL 图片。</li>
+    <li>应用推理强度设置时保持 Anthropic 的真实模型名称不变。</li>
     </ul>
   </section>
 

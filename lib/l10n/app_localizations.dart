@@ -24114,6 +24114,120 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open File'**
   String get remoteBrowserFileAction;
+
+  /// No description provided for @modelsGatewayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Local model gateway'**
+  String get modelsGatewayTitle;
+
+  /// No description provided for @modelsGatewayDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use the enabled upstreams through one local address, with OpenAI Chat Completions, Responses and Anthropic Messages APIs.'**
+  String get modelsGatewayDescription;
+
+  /// No description provided for @modelsGatewayEnable.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable local gateway'**
+  String get modelsGatewayEnable;
+
+  /// No description provided for @modelsGatewayEnableDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Starts with BaoCode while enabled. Turning it off closes the listening port.'**
+  String get modelsGatewayEnableDescription;
+
+  /// No description provided for @modelsGatewayPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Listening port'**
+  String get modelsGatewayPort;
+
+  /// No description provided for @modelsGatewayPortDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Listens on 127.0.0.1 only. Default: 8317.'**
+  String get modelsGatewayPortDescription;
+
+  /// No description provided for @modelsGatewayPortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a port between 1 and 65535.'**
+  String get modelsGatewayPortInvalid;
+
+  /// No description provided for @modelsGatewayKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Gateway API key'**
+  String get modelsGatewayKey;
+
+  /// No description provided for @modelsGatewayKeyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The key local clients use, kept in settings.json. Default: baocode. Upstream keys stay in BaoCode.'**
+  String get modelsGatewayKeyDescription;
+
+  /// No description provided for @modelsGatewayKeyInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a non-empty key using printable ASCII characters without spaces.'**
+  String get modelsGatewayKeyInvalid;
+
+  /// No description provided for @modelsGatewayProxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Use BaoCode network proxy'**
+  String get modelsGatewayProxy;
+
+  /// No description provided for @modelsGatewayProxyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Uses Settings → Network to reach upstreams. Turn off to connect directly.'**
+  String get modelsGatewayProxyDescription;
+
+  /// No description provided for @modelsGatewayStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Applying gateway settings…'**
+  String get modelsGatewayStarting;
+
+  /// No description provided for @modelsGatewayRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Gateway is running'**
+  String get modelsGatewayRunning;
+
+  /// No description provided for @modelsGatewayStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Gateway is stopped'**
+  String get modelsGatewayStopped;
+
+  /// No description provided for @modelsGatewayModelIds.
+  ///
+  /// In en, this message translates to:
+  /// **'GET /v1/models lists model IDs as @upstream-id/model-name, so models with the same name remain distinct.'**
+  String get modelsGatewayModelIds;
+
+  /// No description provided for @modelsGatewayCopyAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Address'**
+  String get modelsGatewayCopyAddress;
+
+  /// No description provided for @modelsGatewayApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and Apply'**
+  String get modelsGatewayApply;
+
+  /// No description provided for @modelsGatewayError.
+  ///
+  /// In en, this message translates to:
+  /// **'Gateway error: {error}'**
+  String modelsGatewayError(String error);
 }
 
 class _AppLocalizationsDelegate

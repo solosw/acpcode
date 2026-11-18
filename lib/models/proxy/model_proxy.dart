@@ -58,6 +58,7 @@ class ModelProxy {
     required this._key,
     this._onError,
     this._findProxy,
+    this.followRedirects = true,
     this._codex,
     this._usage,
     @visibleForTesting String? token,
@@ -77,6 +78,10 @@ class ModelProxy {
   /// The HTTP proxy to reach the upstreams through, a connection each
   /// (the app's `NetworkProxy`); straight to them without one.
   final String Function(Uri url)? _findProxy;
+
+  /// Whether upstream redirects may be followed. Public gateway requests
+  /// disable this so provider credentials stay at the configured endpoint.
+  final bool followRedirects;
 
   /// What a request must carry, as a bearer token or `x-api-key`.
   final String token;
@@ -450,6 +455,7 @@ class ModelProxy {
       }
       final client = await _upstream();
       final upstreamRequest = await client.postUrl(url);
+      upstreamRequest.followRedirects = followRedirects;
       final key = await _key(provider.id);
       upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
       // The user's own headers after them: a name that may not be set is
@@ -482,7 +488,8 @@ class ModelProxy {
         answer.statusCode,
         UsageTraceMessage.headersOf(answer.headers.forEach),
       );
-      if (answer.statusCode >= 400) {
+      if (answer.statusCode >= 400 ||
+          !followRedirects && answer.statusCode >= 300) {
         final text = await utf8.decodeStream(answer);
         meter?.trace?.upstreamText(text);
         final message = upstreamErrorMessage(answer.statusCode, text);
@@ -616,6 +623,7 @@ class ModelProxy {
     final url = query.isEmpty ? path : path.replace(query: query);
     final client = await _upstream();
     final upstreamRequest = await client.postUrl(url);
+    upstreamRequest.followRedirects = followRedirects;
     final key = await _key(provider.id);
     upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
     // OpenCode, told a session, sends it to a backend that refuses the
@@ -657,7 +665,8 @@ class ModelProxy {
       answer.statusCode,
       UsageTraceMessage.headersOf(answer.headers.forEach),
     );
-    if (answer.statusCode >= 400) {
+    if (answer.statusCode >= 400 ||
+        !followRedirects && answer.statusCode >= 300) {
       final text = await utf8.decodeStream(answer);
       meter?.trace
         ?..upstreamText(text)

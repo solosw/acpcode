@@ -23,6 +23,7 @@ import '../../models/codex/codex_service.dart';
 import '../../models/codex/codex_usage.dart';
 import '../../models/auxiliary_model_menu.dart';
 import '../../models/featured_upstreams.dart';
+import '../../models/gateway/gateway_settings.dart';
 import '../../models/magpie.dart';
 import '../../models/magpie_follow.dart';
 import '../../models/model_icons.dart';
@@ -40,6 +41,7 @@ import '../../workspace/window_controls.dart';
 import 'codex_import_dialog.dart';
 import 'featured_upstreams_strip.dart';
 import 'model_dialogs.dart';
+import 'model_gateway_section.dart';
 import 'settings_dropdown.dart';
 import 'settings_widgets.dart';
 import '../../ide/ide_back_button.dart';
@@ -422,6 +424,8 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
             _imageRow(context),
           ],
         ),
+        if (ModelGateway.current case final gateway?)
+          ModelGatewaySection(gateway: gateway),
         SettingsGroup(
           title: l10n.modelsProviders,
           children: [
