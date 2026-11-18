@@ -24,6 +24,14 @@ Use the exact model IDs returned by `/v1/models`: `@<upstream-id>/<model-name>`.
 
 Requests using the upstream's own protocol pass through with their native options. Other combinations translate stateless conversations, including streamed text, function tools and results, reasoning and supported images. Cross-protocol requests for stateful Responses, built-in tools or structured output return an explicit error; use the upstream's native protocol for those features. The gateway exposes conversation APIs; models configured only for image generation remain listed with their kind but cannot be called through these conversation endpoints.
 
+## Usage and agent attribution
+
+Calls through all three gateway APIs are included in Settings → Usage when recording is enabled, including native and translated requests, streaming and non-streaming replies. Each gateway request is counted once. Token counts come from the upstream usage fields; missing counts are not estimated. Costs use the actual upstream and model prices. The model list and count_tokens endpoint are excluded.
+
+To reliably identify a client, configure it to send `x-baocode-agent: My ACP agent`. An explicit label takes precedence over recognized User-Agent names (Codex, OpenCode, Claude Code, Gemini CLI, Goose, Cline and Aider). Generic OpenAI/Anthropic SDK headers do not identify an agent; these calls stay labeled as the local model gateway. Attribution is a client-supplied label, not authentication.
+
+Clients may send `x-baocode-session` to associate calls with a BaoCode conversation. Existing Claude Code request-class, agent ID, parent agent ID and agent-type hints are retained separately. Without these hints, the gateway cannot infer the conversation or subagent. The Usage page agent filter separates gateway clients.
+
 Configuration is stored in the `models.gateway` object in `settings.json`:
 
 ```json

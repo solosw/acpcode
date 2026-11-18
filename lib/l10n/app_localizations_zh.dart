@@ -13008,7 +13008,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ustatRecordDescription =>
-      'Claude Code 自带模型的调用从它的输出读取；使用自定义上游的会话经过 BaoCode 的本地代理记录。对之后启动的会话生效。';
+      'Claude Code 的调用从输出或自定义上游代理记录；其他 agent 经过本地模型网关的调用也会统计，并根据可用的请求头区分客户端。对之后的调用生效。';
 
   @override
   String get ustatRecordOffDescription =>

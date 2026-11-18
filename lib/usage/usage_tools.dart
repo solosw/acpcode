@@ -368,6 +368,8 @@ abstract final class UsageTools {
       'upstream': call.providerName ?? call.provider,
       'kind': call.requestClass.name,
       'agent': ?call.agentType,
+      'source': ?call.source,
+      'client_agent': ?call.clientAgent,
       if (call.failed) 'status': call.status,
       if (call.cancelled) 'cancelled': true,
       'error': ?call.error,

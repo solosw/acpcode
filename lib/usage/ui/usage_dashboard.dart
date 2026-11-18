@@ -334,6 +334,14 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
     final providers = summary.providers.entries.toList()
       ..sort((a, b) => a.value.compareTo(b.value));
     final models = summary.models.toList()..sort();
+    final agents = UsageSummary.of(
+      _ledger.shown(_calls),
+      UsageFilter(
+        from: _time.from,
+        until: _time.until,
+        session: filter.session,
+      ),
+    ).byAgent;
     return UsageFilterBar(
       trailing: [
         if (filter.narrowed || filter.session != null)
@@ -380,6 +388,25 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
           ],
           onChanged: (picked) => _setFilter(filter.copyWith(models: picked)),
         ),
+        if (agents.keys.any((key) => key.startsWith('gateway/')))
+          UsageMultiPicker<String>(
+            icon: Codicons.person,
+            label: l10n.ustatAgent,
+            selected: filter.agents,
+            choices: [
+              for (final group in agents.values)
+                (
+                  value: group.key,
+                  label: group.key.isEmpty
+                      ? l10n.ustatMainAgent
+                      : group.key == 'gateway/unknown'
+                      ? l10n.modelsGatewayTitle
+                      : group.label ?? group.key,
+                  color: null,
+                ),
+            ],
+            onChanged: (picked) => _setFilter(filter.copyWith(agents: picked)),
+          ),
         UsageMultiPicker<UsageClass>(
           icon: Codicons.typeHierarchy,
           label: l10n.ustatKind,

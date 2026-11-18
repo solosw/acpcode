@@ -4,6 +4,8 @@ import 'dart:io';
 
 import '../../network/tls.dart';
 import '../../usage/usage_ledger.dart';
+import '../../usage/usage_capture.dart';
+import '../../usage/usage_trace.dart';
 import '../codex/codex_accounts_io.dart';
 import '../model_provider.dart';
 import '../model_providers.dart';
@@ -24,6 +26,7 @@ class GatewayServer {
     UsageLedger Function()? usage,
   }) : _providers = providers,
        _findProxy = findProxy,
+       _usage = usage,
        _bridge = ModelProxy(
          provider: providers.provider,
          key: providers.key,
@@ -32,12 +35,14 @@ class GatewayServer {
          followRedirects: false,
          codex: codex,
          usage: usage,
+         usageSource: 'gateway',
        );
 
   final ModelProviders _providers;
   final String apiKey;
   final String Function(Uri)? _findProxy;
   final ModelProxy _bridge;
+  final UsageLedger Function()? _usage;
   HttpServer? _server;
   WatchedServerSocket? _sockets;
   Future<void>? _starting;
@@ -157,6 +162,9 @@ class GatewayServer {
         onError: (Object _) => call.cancel(),
       ),
     );
+    UsageLedger? ledger;
+    UsageMeter? meter;
+    var status = 502;
     var started = false;
     var protocol = GatewayProtocol.openaiChat;
     try {
@@ -229,6 +237,42 @@ class GatewayServer {
       };
       final HttpClientResponse answer;
       if (native) {
+        if (!countTokens) {
+          ledger = _usage?.call();
+          if (ledger != null && ledger.enabled) {
+            final info = _requestInfo(body, protocol, request, ledger.detailed);
+            final followed = meter = UsageMeter(
+              provider: provider.id,
+              providerName: provider.name,
+              protocol: provider.protocol.name,
+              responseProtocol: protocol.name,
+              source: 'gateway',
+              clientAgent: gatewayClientAgent(request.headers.value),
+              model: found.model.id,
+              effort: _effort(body, protocol),
+              stream: body['stream'] == true,
+              session:
+                  request.headers.value(UsageHeaders.session) ??
+                  sessionId(
+                    body,
+                    header: request.headers.value(sessionHeaderName),
+                  ),
+              requestBytes: utf8.encode(jsonEncode(body)).length,
+              info: info,
+            );
+            call.meter = followed;
+            ledger.begin(followed, () => followed.progress);
+            if (ledger.trace) {
+              followed.trace = UsageTrace(UsageTrace.newId(DateTime.now()))
+                ..asked(
+                  method: request.method,
+                  url: request.uri.toString(),
+                  headers: UsageTraceMessage.headersOf(request.headers.forEach),
+                  body: jsonEncode(body),
+                );
+            }
+          }
+        }
         answer = await _direct(
           provider,
           {...body, 'model': found.model.id},
@@ -253,6 +297,12 @@ class GatewayServer {
           countTokens,
         );
       }
+      status = answer.statusCode;
+      meter?.answered();
+      meter?.trace?.answered(
+        answer.statusCode,
+        UsageTraceMessage.headersOf(answer.headers.forEach),
+      );
       if (call.cancelled) return;
       if (answer.statusCode >= 300 && answer.statusCode < 400) {
         await call.read(answer).drain<void>();
@@ -314,14 +364,20 @@ class GatewayServer {
         }
       }
     } on _Failure catch (error) {
+      status = error.status;
+      meter?.fail(error.message);
       if (!call.cancelled && !started) {
         await _error(request.response, error.status, error.message, protocol);
       }
     } on FormatException catch (error) {
+      status = 400;
+      meter?.fail(error.message);
       if (!call.cancelled && !started) {
         await _error(request.response, 400, error.message, protocol);
       }
     } on Object {
+      status = 502;
+      meter?.fail('Unable to complete the upstream request');
       if (!call.cancelled && !started) {
         await _error(
           request.response,
@@ -332,6 +388,16 @@ class GatewayServer {
       }
     } finally {
       call.done = true;
+      if (call.cancelled) meter?.cancel();
+      final trace = meter?.trace;
+      trace?.finish(
+        status,
+        UsageTraceMessage.headersOf(request.response.headers.forEach),
+      );
+      if (meter?.finish(status) case final record?) {
+        ledger?.record(record, trace: trace);
+      }
+      if (meter != null) ledger?.end(meter);
       _calls.remove(call);
       await request.response.close().catchError((Object _) {});
     }
@@ -397,7 +463,24 @@ class GatewayServer {
         HttpHeaders.acceptHeader,
         body['stream'] == true ? 'text/event-stream' : 'application/json',
       );
-    request.write(jsonEncode(body));
+    if (body['stream'] == true &&
+        provider.protocol == ProviderProtocol.openaiChat) {
+      body = {
+        ...body,
+        'stream_options': {
+          if (body['stream_options'] is Map) ...body['stream_options'] as Map,
+          'include_usage': true,
+        },
+      };
+    }
+    final payload = jsonEncode(body);
+    call.meter?.trace?.sending(
+      method: 'POST',
+      url: url,
+      headers: UsageTraceMessage.headersOf(request.headers.forEach),
+      body: payload,
+    );
+    request.write(payload);
     return request.close();
   }
 
@@ -438,14 +521,48 @@ class GatewayServer {
       ..set(HttpHeaders.authorizationHeader, 'Bearer ${endpoint.token}');
     for (final name in const [
       sessionHeaderName,
+      UsageHeaders.session,
+      UsageHeaders.requestClass,
+      UsageHeaders.agentId,
+      UsageHeaders.parentAgentId,
+      UsageHeaders.agentType,
+      UsageHeaders.promptId,
+      UsageHeaders.compaction,
+      UsageHeaders.contextCompacted,
+      UsageHeaders.toolDurations,
       'anthropic-beta',
       'anthropic-version',
     ]) {
       final value = incoming.headers.value(name);
       if (value != null) request.headers.set(name, value);
     }
+    final agent = gatewayClientAgent(incoming.headers.value);
+    if (agent != null) request.headers.set(UsageHeaders.clientAgent, agent);
     request.write(jsonEncode(converted));
     return request.close();
+  }
+
+  static UsageRequestInfo _requestInfo(
+    Map<String, dynamic> body,
+    GatewayProtocol protocol,
+    HttpRequest request,
+    bool detailed,
+  ) {
+    // Context estimates use the common Messages representation. Native-only
+    // features must remain usable even when no cross-protocol equivalent exists.
+    try {
+      return analyzeRequest(
+        gatewayToAnthropic(body, protocol),
+        request.headers.value,
+        detailed: detailed,
+      );
+    } on FormatException {
+      return analyzeRequest(
+        const {'messages': <Object>[]},
+        request.headers.value,
+        detailed: false,
+      );
+    }
   }
 
   static String? _effort(Map<String, dynamic> body, GatewayProtocol protocol) {
@@ -555,6 +672,7 @@ class GatewayServer {
 class _Call {
   final _gone = Completer<void>();
   HttpClientRequest? _request;
+  UsageMeter? meter;
   bool done = false;
   bool get cancelled => _gone.isCompleted;
 
@@ -575,7 +693,10 @@ class _Call {
     output = StreamController<List<int>>(
       onListen: () {
         subscription = input.listen(
-          output.add,
+          (chunk) {
+            meter?.bytes(chunk);
+            output.add(chunk);
+          },
           onError: output.addError,
           onDone: output.close,
         );

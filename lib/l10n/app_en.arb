@@ -8747,7 +8747,7 @@
   "ustatDataTitle": "Data",
   "ustatDataDescription": "Detailed records take room: keep them as long as you like, and clear what you no longer need.",
   "ustatRecord": "Record usage",
-  "ustatRecordDescription": "Claude Code's own calls are read from what it prints; sessions on a custom upstream go through BaoCode's local proxy, which keeps each call. Applies to agents started from now on.",
+  "ustatRecordDescription": "Claude Code calls are read from its output or custom-upstream proxy. Calls by other agents through the local model gateway are also recorded, with the client identified from request headers when available. Applies to new calls.",
   "ustatRecordOffDescription": "Turn it on to keep each call to a model: tokens, the cache, time, by conversation, subagent and tool.",
   "ustatDetailed": "Detailed records",
   "ustatDetailedDescription": "Also keeps what filled each request's context and the tools' share. Takes more room.",

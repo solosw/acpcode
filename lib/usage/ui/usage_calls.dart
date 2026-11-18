@@ -353,7 +353,9 @@ class _CallRow extends StatelessWidget {
 
   Widget _tag(BuildContext context) => UsageClassTag(
     call.requestClass,
-    text: call.requestClass.agent
+    text: call.source == 'gateway'
+        ? call.clientAgent ?? context.l10n.modelsGatewayTitle
+        : call.requestClass.agent
         ? call.agentType ?? UsageFormat.ofClass(context, call.requestClass)
         : null,
   );
@@ -600,7 +602,10 @@ class _CallRow extends StatelessWidget {
                       ),
                       UsageClassTag(
                         call.requestClass,
-                        text: call.requestClass.agent
+                        text: call.source == 'gateway'
+                            ? call.clientAgent ??
+                                  context.l10n.modelsGatewayTitle
+                            : call.requestClass.agent
                             ? call.agentType ??
                                   UsageFormat.ofClass(
                                     context,
@@ -742,7 +747,15 @@ class UsageCallDetail extends StatelessWidget {
           _ => null,
         },
       ),
-      (l10n.ustatFieldAgent, [?call.agentType, ?call.agentId].join(' · ')),
+      (
+        l10n.ustatFieldAgent,
+        [
+          if (call.source == 'gateway') l10n.modelsGatewayTitle,
+          ?call.clientAgent,
+          ?call.agentType,
+          ?call.agentId,
+        ].join(' · '),
+      ),
       (l10n.ustatFieldTask, call.task),
       (l10n.ustatFieldAccount, call.account),
       (l10n.ustatFieldUpstreamLatency, ms(call.headers)),

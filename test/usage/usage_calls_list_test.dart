@@ -1,5 +1,7 @@
 import 'package:baocode/l10n/app_localizations.dart';
 import 'package:baocode/usage/ui/usage_calls.dart';
+import 'package:baocode/usage/ui/usage_dashboard.dart';
+import 'package:baocode/usage/ui/usage_filters.dart';
 import 'package:baocode/usage/usage_ledger.dart';
 import 'package:baocode/usage/usage_record.dart';
 import 'package:flutter/material.dart';
@@ -43,6 +45,78 @@ Widget _app(
 );
 
 void main() {
+  testWidgets('usage dashboard can filter the gateway calling clients', (
+    tester,
+  ) async {
+    final ledger = UsageLedger(MemoryUsageStorage());
+    addTearDown(ledger.dispose);
+    for (final client in ['Codex', 'OpenCode']) {
+      ledger.record(
+        UsageCall(
+          at: DateTime.now(),
+          duration: const Duration(seconds: 1),
+          status: 200,
+          provider: 'relay',
+          model: 'model',
+          source: 'gateway',
+          clientAgent: client,
+        ),
+      );
+    }
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(child: UsageSettingsPage(ledger: ledger)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final finder = find.byWidgetPredicate(
+      (widget) => widget is UsageMultiPicker<String> && widget.label == '代理',
+    );
+    expect(finder, findsOneWidget);
+    final picker = tester.widget<UsageMultiPicker<String>>(finder);
+    expect(
+      picker.choices.map((choice) => choice.label),
+      containsAll(['Codex', 'OpenCode']),
+    );
+    picker.onChanged({'gateway/Codex'});
+    await tester.pumpAndSettle();
+    expect(tester.widget<UsageMultiPicker<String>>(finder).selected, {
+      'gateway/Codex',
+    });
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('gateway calls show their calling client and gateway source', (
+    tester,
+  ) async {
+    final ledger = UsageLedger(MemoryUsageStorage());
+    addTearDown(ledger.dispose);
+    final call = UsageCall(
+      at: DateTime.now(),
+      duration: const Duration(seconds: 1),
+      status: 200,
+      provider: 'relay',
+      model: 'model',
+      source: 'gateway',
+      clientAgent: 'OpenCode',
+    );
+    await tester.pumpWidget(_app([call], ledger));
+    expect(find.text('OpenCode'), findsOneWidget);
+    await tester.tap(find.byType(UsageClassTag));
+    await tester.pump();
+    expect(find.textContaining('本地模型网关'), findsOneWidget);
+    expect(find.textContaining('OpenCode'), findsWidgets);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('a call opened stays open as the calls are read again', (
     tester,
   ) async {

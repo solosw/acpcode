@@ -368,7 +368,7 @@ class UsageSummary {
       final agent = summary.byAgent[call.agentKey] ??= UsageGroup(
         call.agentKey,
       );
-      agent.label ??= call.agentType;
+      agent.label ??= call.clientAgent ?? call.agentType;
       agent.detail ??= call.task;
       agent.totals.add(call, price);
       if (call.promptId case final prompt?) {

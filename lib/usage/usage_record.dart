@@ -323,6 +323,8 @@ class UsageCall {
     this.error,
     this.providerName,
     this.protocol,
+    this.source,
+    this.clientAgent,
     this.upstreamModel,
     this.effort,
     this.fast = false,
@@ -384,6 +386,12 @@ class UsageCall {
 
   /// How it was spoken to (`openaiChat`, `anthropic`…).
   final String? protocol;
+
+  /// Entry point of this call, where known.
+  final String? source;
+
+  /// Calling client named by its headers, independently of subagent IDs.
+  final String? clientAgent;
 
   /// The model asked for (without the effort Claude Code puts after it),
   /// and the one the upstream says answered, where that is another.
@@ -496,7 +504,9 @@ class UsageCall {
   }
 
   /// The agent it is the work of: the subagent's id, else the main one's.
-  String get agentKey => agentId ?? '';
+  String get agentKey => source == 'gateway'
+      ? 'gateway/${clientAgent ?? 'unknown'}${agentId == null ? '' : '/$agentId'}'
+      : agentId ?? '';
 
   static String _clip(String text, int max) =>
       text.length <= max ? text : '${text.substring(0, max)}…';
@@ -514,6 +524,8 @@ class UsageCall {
     'p': provider,
     'pn': ?providerName,
     'pr': ?protocol,
+    'src': ?source,
+    'cli': ?clientAgent,
     'm': model,
     'um': ?upstreamModel,
     'ef': ?effort,
@@ -603,6 +615,8 @@ class UsageCall {
       providerName: text('pn')
           ?.replaceFirst(RegExp(r'^Claude (?=Claude )'), ''),
       protocol: text('pr'),
+      source: text('src'),
+      clientAgent: text('cli'),
       model: text('m') ?? '',
       upstreamModel: text('um'),
       effort: text('ef'),
@@ -660,6 +674,8 @@ class UsageCall {
     provider: provider,
     providerName: providerName,
     protocol: protocol,
+    source: source,
+    clientAgent: clientAgent,
     model: model,
     upstreamModel: upstreamModel,
     effort: effort,
@@ -701,6 +717,8 @@ class UsageCall {
         provider: provider,
         providerName: providerName,
         protocol: protocol,
+        source: source,
+        clientAgent: clientAgent,
         model: model,
         upstreamModel: upstreamModel,
         effort: effort,
@@ -749,6 +767,8 @@ class UsageCall {
     provider: provider,
     providerName: providerName,
     protocol: protocol,
+    source: source,
+    clientAgent: clientAgent,
     model: model,
     upstreamModel: upstreamModel,
     effort: effort,

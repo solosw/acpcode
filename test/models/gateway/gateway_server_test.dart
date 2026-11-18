@@ -7,6 +7,10 @@ import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/models/proxy/watched_socket.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/usage/usage_ledger.dart';
+import 'package:baocode/usage/usage_record.dart';
+import 'package:baocode/usage/usage_prices.dart';
+import 'package:baocode/usage/usage_query.dart';
 
 typedef _Answer = ({int status, String text});
 
@@ -163,6 +167,7 @@ void main() {
   late ModelProviders providers;
   late GatewayServer gateway;
   late ModelProvider provider;
+  late UsageLedger ledger;
 
   setUp(() async {
     HttpOverrides.global = null;
@@ -175,14 +180,210 @@ void main() {
     );
     providers = ModelProviders.memory(providers: [provider]);
     await providers.setKey('a', 'upstream-secret');
-    gateway = GatewayServer(providers: providers);
+    ledger = UsageLedger(MemoryUsageStorage());
+    gateway = GatewayServer(providers: providers, usage: () => ledger);
     await gateway.start(port: 0);
   });
   tearDown(() async {
     await gateway.close();
     await upstream.close();
     providers.dispose();
+    ledger.dispose();
   });
+
+  for (final entry in [
+    ('anthropic', ProviderProtocol.anthropic),
+    ('chat', ProviderProtocol.openaiChat),
+    ('responses', ProviderProtocol.openaiResponses),
+  ]) {
+    for (final stream in [false, true]) {
+      test(
+        'native ${entry.$1} stream=$stream records usage and client once',
+        () async {
+          ledger.trace = true;
+          await providers.save(provider.copyWith(protocol: entry.$2));
+          final usage = entry.$1 == 'chat'
+              ? {
+                  'prompt_tokens': 20,
+                  'completion_tokens': 8,
+                  'prompt_tokens_details': {'cached_tokens': 7},
+                  'completion_tokens_details': {'reasoning_tokens': 3},
+                }
+              : entry.$1 == 'responses'
+              ? {
+                  'input_tokens': 20,
+                  'output_tokens': 8,
+                  'input_tokens_details': {'cached_tokens': 7},
+                  'output_tokens_details': {'reasoning_tokens': 3},
+                }
+              : {
+                  'input_tokens': 13,
+                  'output_tokens': 8,
+                  'cache_read_input_tokens': 7,
+                  'cache_creation_input_tokens': 2,
+                };
+          final whole = <String, Object?>{
+            ...switch (entry.$1) {
+              'chat' => _chat,
+              'responses' => _response,
+              _ => _message,
+            },
+            'usage': usage,
+          };
+          final events = <Map<String, Object?>>[
+            if (entry.$1 == 'anthropic') ...[
+              {'type': 'message_start', 'message': whole},
+              {
+                'type': 'content_block_delta',
+                'index': 0,
+                'delta': {'type': 'text_delta', 'text': 'hello'},
+              },
+              {
+                'type': 'message_delta',
+                'delta': {'stop_reason': 'end_turn'},
+                'usage': usage,
+              },
+              {'type': 'message_stop'},
+            ] else if (entry.$1 == 'chat') ...[
+              {
+                'model': 'one',
+                'choices': [
+                  {
+                    'index': 0,
+                    'delta': {'content': 'hello'},
+                    'finish_reason': null,
+                  },
+                ],
+              },
+              {
+                'choices': [
+                  {'index': 0, 'delta': {}, 'finish_reason': 'stop'},
+                ],
+              },
+              {'choices': [], 'usage': usage},
+            ] else ...[
+              {'type': 'response.output_text.delta', 'delta': 'hello'},
+              {'type': 'response.completed', 'response': whole},
+            ],
+          ];
+          upstream.reply = (request, body) async {
+            request.response.headers.contentType = stream
+                ? ContentType('text', 'event-stream')
+                : ContentType.json;
+            if (stream) {
+              for (final event in events) {
+                request.response.write(
+                  'data: ${jsonEncode(event)}$chr10$chr10',
+                );
+                await request.response.flush();
+              }
+              if (entry.$1 == 'chat') {
+                request.response.write('data: [DONE]$chr10$chr10');
+              }
+            } else {
+              request.response.write(jsonEncode(whole));
+            }
+            await request.response.close();
+          };
+          final answer = await _ask(
+            gateway,
+            _path(entry.$1),
+            body: _body(entry.$1, stream: stream),
+            headers: {
+              'user-agent': 'opencode/1.2.3',
+              'x-baocode-session': 'acp-session',
+            },
+          );
+          expect(answer.status, 200, reason: answer.text);
+          final calls = await ledger.range();
+          expect(calls, hasLength(1));
+          final call = calls.single;
+          expect(call.source, 'gateway');
+          expect(call.clientAgent, 'OpenCode');
+          expect(call.session, 'acp-session');
+          expect(call.provider, 'a');
+          expect(call.model, 'one');
+          expect(call.protocol, entry.$2.name);
+          expect(call.input, 13);
+          expect(call.output, 8);
+          expect(call.cacheRead, 7);
+          expect(call.reasoning, entry.$1 == 'anthropic' ? 0 : 3);
+          expect(call.failed, false);
+          expect(call.headers, isNotNull);
+          expect(call.firstToken, isNotNull);
+          expect(call.responseBytes, utf8.encode(answer.text).length);
+          expect(ledger.underway('acp-session'), isEmpty);
+          const price = ModelPrice(input: 2, output: 8, cacheRead: 0.5);
+          expect(
+            price.cost(call),
+            closeTo(
+              (26 + 64 + 3.5 + (entry.$1 == 'anthropic' ? 4 : 0)) / 1000000,
+              1e-12,
+            ),
+          );
+          if (entry.$1 == 'chat' && stream) {
+            expect(
+              upstream.seen.single.body['stream_options']['include_usage'],
+              true,
+            );
+          }
+          final decoded = UsageCall.decode(call.encode())!;
+          expect(decoded.clientAgent, 'OpenCode');
+          expect(decoded.brief.source, 'gateway');
+          expect(decoded.labeled(sessionTitle: 'ACP').clientAgent, 'OpenCode');
+          expect(decoded.withQuota({}).source, 'gateway');
+          final trace = await ledger.traceOf(call);
+          expect(trace, isNotNull);
+          final traced = jsonEncode(trace!.toJson());
+          expect(traced, isNot(contains('upstream-secret')));
+          expect(traced, isNot(contains('Bearer baocode')));
+          final summary = UsageSummary.of([decoded], const UsageFilter());
+          expect(summary.byAgent['gateway/OpenCode']?.label, 'OpenCode');
+        },
+      );
+    }
+  }
+
+  test(
+    'gateway records failed upstream calls and respects disabled usage',
+    () async {
+      upstream.reply = (request, body) async {
+        request.response.statusCode = 429;
+        request.response.write(
+          jsonEncode({
+            'error': {'message': 'limited'},
+          }),
+        );
+        await request.response.close();
+      };
+      expect(
+        (await _ask(gateway, '/v1/messages', body: _body('anthropic'))).status,
+        429,
+      );
+      final calls = await ledger.range();
+      expect(calls, hasLength(1));
+      expect(calls.single.failed, true);
+      expect(calls.single.source, 'gateway');
+      expect(calls.single.clientAgent, isNull);
+      ledger.enabled = false;
+      await _ask(gateway, '/v1/messages', body: _body('anthropic'));
+      expect(await ledger.range(), hasLength(1));
+      ledger.enabled = true;
+      await _ask(gateway, '/v1/models');
+      await _ask(
+        gateway,
+        '/v1/messages/count_tokens',
+        body: _body('anthropic'),
+      );
+      await _ask(
+        gateway,
+        '/v1/messages',
+        body: _body('anthropic'),
+        auth: false,
+      );
+      expect(await ledger.range(), hasLength(1));
+    },
+  );
 
   test(
     'aggregates enabled models, retains qualified IDs, and follows changes',
@@ -352,7 +553,17 @@ void main() {
           }
           await request.response.close();
         };
-        final answer = await _ask(gateway, _path(source), body: _body(source));
+        final answer = await _ask(
+          gateway,
+          _path(source),
+          body: _body(source),
+          headers: {
+            'x-baocode-agent': 'My ACP agent',
+            'x-baocode-session': 'acp-1',
+            'x-claude-code-agent-id': 'child-1',
+            'x-claude-code-request-class': 'subagent',
+          },
+        );
         expect(answer.status, 200, reason: answer.text);
         final decoded = jsonDecode(answer.text);
         if (source == 'anthropic') {
@@ -364,6 +575,22 @@ void main() {
         }
         expect(upstream.seen.single.body['model'], 'one');
         expect(upstream.seen.single.url.path, _path(target.$1));
+        final calls = await ledger.range();
+        expect(
+          calls,
+          hasLength(1),
+          reason: 'A converted request is counted once',
+        );
+        final call = calls.single;
+        expect(call.source, 'gateway');
+        expect(call.clientAgent, 'My ACP agent');
+        expect(call.agentId, 'child-1');
+        expect(call.session, 'acp-1');
+        expect(call.requestClass, UsageClass.subagent);
+        expect(call.provider, 'a');
+        expect(call.model, 'one');
+        expect(call.input, 3);
+        expect(call.output, 2);
         expect(
           upstream.seen.single.headers['authorization'],
           'Bearer upstream-secret',
@@ -592,6 +819,10 @@ void main() {
         const Duration(seconds: 3),
         onTimeout: () => throw StateError('upstream connection stayed open'),
       );
+      final calls = await ledger.range();
+      expect(calls, hasLength(1));
+      expect(calls.single.cancelled, true);
+      expect(calls.single.source, 'gateway');
     });
   }
 

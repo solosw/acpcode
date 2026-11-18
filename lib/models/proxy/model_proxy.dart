@@ -61,6 +61,7 @@ class ModelProxy {
     this.followRedirects = true,
     this._codex,
     this._usage,
+    this.usageSource,
     @visibleForTesting String? token,
   }) : token = token ?? _newToken();
 
@@ -74,6 +75,9 @@ class ModelProxy {
   /// Where each request to an upstream is kept (see [UsageLedger]); none
   /// kept without it.
   final UsageLedger Function()? _usage;
+
+  /// Entry point for an owned proxy used by the local gateway.
+  final String? usageSource;
 
   /// The HTTP proxy to reach the upstreams through, a connection each
   /// (the app's `NetworkProxy`); straight to them without one.
@@ -360,6 +364,10 @@ class ModelProxy {
       provider: provider.id,
       providerName: provider.name,
       protocol: provider.protocol.name,
+      source: usageSource,
+      clientAgent: usageSource == 'gateway'
+          ? gatewayClientAgent(request.headers.value)
+          : null,
       model: requested.modelName.trim(),
       effort: effort.isEmpty ? null : effort,
       fast: fast,

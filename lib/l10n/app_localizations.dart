@@ -22546,7 +22546,7 @@ abstract class AppLocalizations {
   /// No description provided for @ustatRecordDescription.
   ///
   /// In en, this message translates to:
-  /// **'Claude Code\'s own calls are read from what it prints; sessions on a custom upstream go through BaoCode\'s local proxy, which keeps each call. Applies to agents started from now on.'**
+  /// **'Claude Code calls are read from its output or custom-upstream proxy. Calls by other agents through the local model gateway are also recorded, with the client identified from request headers when available. Applies to new calls.'**
   String get ustatRecordDescription;
 
   /// No description provided for @ustatRecordOffDescription.

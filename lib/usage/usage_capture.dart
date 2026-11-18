@@ -21,6 +21,9 @@ abstract final class UsageHeaders {
   /// session Claude Code's process gave itself.
   static const session = 'x-baocode-session';
 
+  /// External client name (codex, opencode, or another agent).
+  static const clientAgent = 'x-baocode-agent';
+
   /// Claude Code's variable that has it send them to a gateway (what the
   /// proxy is to it).
   static const gatewayHintsVariable = 'CLAUDE_CODE_GATEWAY_HINT_HEADERS';
@@ -36,6 +39,35 @@ abstract final class UsageHeaders {
     toolDurations,
     session,
   };
+}
+
+/// Client attribution is advisory: SDK/protocol headers alone do not identify
+/// an agent. Only recognize known user agents, or an explicit caller label.
+String? gatewayClientAgent(String? Function(String) header) {
+  final explicit = header(UsageHeaders.clientAgent)?.trim();
+  if (explicit != null && explicit.isNotEmpty) {
+    return explicit.substring(0, math.min(explicit.length, 120));
+  }
+  final agent = header('user-agent')?.toLowerCase() ?? '';
+  for (final (pattern, name) in [
+    ('codex', 'Codex'),
+    ('opencode', 'OpenCode'),
+    ('claude-code', 'Claude Code'),
+    ('claude-cli', 'Claude Code'),
+    ('gemini-cli', 'Gemini CLI'),
+    ('goose', 'Goose'),
+    ('cline', 'Cline'),
+    ('aider', 'Aider'),
+  ]) {
+    if (RegExp(
+      '(^|[^a-z0-9])$pattern([/_ .-]|'
+      r'$'
+      ')',
+    ).hasMatch(agent)) {
+      return name;
+    }
+  }
+  return null;
 }
 
 /// What a request's body and headers tell of it, before it goes.
@@ -529,6 +561,9 @@ class UsageMeter {
     required this.info,
     this.providerName,
     this.protocol,
+    this.source,
+    this.clientAgent,
+    this.responseProtocol = 'anthropic',
     this.effort,
     this.fast = false,
     this.stream = true,
@@ -543,6 +578,13 @@ class UsageMeter {
   final String provider;
   final String? providerName;
   final String? protocol;
+  final String? source;
+  final String? clientAgent;
+
+  /// Wire format being observed; independent of the upstream's protocol.
+  final String responseProtocol;
+  bool _terminal = false;
+  final Set<String> _openaiTools = {};
   final String model;
   final String? effort;
   final bool fast;
@@ -635,6 +677,10 @@ class UsageMeter {
   /// The answer whole: a message, not events.
   void message(Object? json) {
     if (json is! Map) return;
+    if (responseProtocol != 'anthropic') {
+      _openai(json, whole: true);
+      return;
+    }
     _firstToken ??= _watch.elapsed;
     _usage(json['usage']);
     if (json['model'] case final String model) _upstreamModel ??= model;
@@ -686,6 +732,11 @@ class UsageMeter {
   void _line(String line) {
     if (!line.startsWith('data:')) return;
     _sawEvent = true;
+    if (responseProtocol == 'openaiChat' &&
+        line.substring(5).trim() == '[DONE]') {
+      _terminal = true;
+      return;
+    }
     // A piece of the answer once the first is in: only its bytes count.
     if (_firstToken != null && line.contains('"content_block_delta"')) return;
     final Object? event;
@@ -695,6 +746,10 @@ class UsageMeter {
       return;
     }
     if (event is! Map) return;
+    if (responseProtocol != 'anthropic') {
+      _openai(event);
+      return;
+    }
     if (bringsAnswer(event)) _firstToken ??= _watch.elapsed;
     switch (event['type']) {
       case 'message_start':
@@ -723,6 +778,128 @@ class UsageMeter {
         if (event['error'] case {'message': final String message}) {
           fail(message);
         }
+    }
+  }
+
+  /// Native OpenAI replies, observed without changing the bytes forwarded.
+  void _openai(Map json, {bool whole = false}) {
+    final response = json['response'] is Map ? json['response'] as Map : json;
+    if (response['model'] case final String model) _upstreamModel ??= model;
+    if (response['service_tier'] case final String tier) _serviceTier = tier;
+    final usage = response['usage'];
+    if (usage is Map) {
+      int tokens(Object? value) =>
+          value is num ? math.max(0, value.toInt()) : 0;
+      final chat = responseProtocol == 'openaiChat';
+      final input = tokens(usage[chat ? 'prompt_tokens' : 'input_tokens']);
+      final details =
+          usage[chat ? 'prompt_tokens_details' : 'input_tokens_details'];
+      final cached = details is Map ? tokens(details['cached_tokens']) : 0;
+      _input = math.max(0, input - cached);
+      _cacheRead = cached;
+      _output = tokens(usage[chat ? 'completion_tokens' : 'output_tokens']);
+      final outputDetails =
+          usage[chat ? 'completion_tokens_details' : 'output_tokens_details'];
+      if (outputDetails is Map) {
+        _reasoning = tokens(outputDetails['reasoning_tokens']);
+      }
+    }
+    if (response['error'] case {'message': final String message}) fail(message);
+    final type = json['type'];
+    if (type == 'error') fail('${json['message'] ?? 'Upstream stream error'}');
+    if (type == 'response.failed' || type == 'response.incomplete') {
+      fail('The upstream response did not complete');
+      _terminal = true;
+    }
+    if (type == 'response.completed' ||
+        (whole && response['status'] == 'completed')) {
+      _terminal = true;
+      _stopReason = 'completed';
+    }
+    if (whole &&
+        (response['status'] == 'failed' ||
+            response['status'] == 'incomplete')) {
+      fail('The upstream response did not complete');
+      _terminal = true;
+    }
+    if ((type == 'response.output_text.delta' ||
+            type == 'response.reasoning_summary_text.delta' ||
+            type == 'response.function_call_arguments.delta') &&
+        json['delta'] is String &&
+        (json['delta'] as String).isNotEmpty) {
+      _firstToken ??= _watch.elapsed;
+    }
+    void tool(Map item, String fallback, {bool serverDone = false}) {
+      final key = '${item['id'] ?? item['call_id'] ?? fallback}';
+      final name =
+          item['name'] ??
+          (item['function'] is Map ? (item['function'] as Map)['name'] : null);
+      if (name is String && name.isNotEmpty && _openaiTools.add(key)) {
+        _toolCalls[name] = (_toolCalls[name] ?? 0) + 1;
+        _firstToken ??= _watch.elapsed;
+      }
+      final kind = item['type'];
+      if (kind == 'web_search_call' &&
+          serverDone &&
+          _openaiTools.add('server/$key')) {
+        _serverToolsSeen['web_search'] =
+            (_serverToolsSeen['web_search'] ?? 0) + 1;
+      }
+    }
+
+    if (json['item'] case final Map item) {
+      if (type == 'response.output_item.done' ||
+          type == 'response.output_item.added') {
+        tool(
+          item,
+          'item/${json['output_index']}',
+          serverDone: type == 'response.output_item.done',
+        );
+      }
+    }
+    if (response['output'] case final List items when whole || _terminal) {
+      for (var i = 0; i < items.length; i++) {
+        final item = items[i];
+        if (item is! Map) continue;
+        tool(
+          item,
+          'item/$i',
+          serverDone:
+              response['status'] == 'completed' ||
+              item['status'] == 'completed',
+        );
+        if (item['content'] case final List content when content.isNotEmpty) {
+          _firstToken ??= _watch.elapsed;
+        }
+      }
+    }
+    if (json['choices'] case final List choices) {
+      for (var i = 0; i < choices.length; i++) {
+        final choice = choices[i];
+        if (choice is! Map) continue;
+        if (choice['finish_reason'] case final String reason) {
+          _terminal = true;
+          _stopReason = reason;
+        }
+        final content = whole ? choice['message'] : choice['delta'];
+        if (content is! Map) continue;
+        if ((content['content'] is String &&
+                (content['content'] as String).isNotEmpty) ||
+            (content['reasoning_content'] is String &&
+                (content['reasoning_content'] as String).isNotEmpty)) {
+          _firstToken ??= _watch.elapsed;
+        }
+        if (content['tool_calls'] case final List tools) {
+          for (var j = 0; j < tools.length; j++) {
+            if (tools[j] case final Map item) {
+              tool(
+                item,
+                'choice/${choice['index'] ?? i}/${item['index'] ?? j}',
+              );
+            }
+          }
+        }
+      }
     }
   }
 
@@ -781,6 +958,12 @@ class UsageMeter {
       }
       _whole.clear();
     }
+    if (responseProtocol != 'anthropic' &&
+        status < 300 &&
+        !_cancelled &&
+        !_terminal) {
+      fail('The upstream response ended before completion');
+    }
     _watch.stop();
     return _call(_cancelled ? UsageCall.cancelledStatus : status);
   }
@@ -804,6 +987,8 @@ class UsageMeter {
       provider: provider,
       providerName: providerName,
       protocol: protocol,
+      source: source,
+      clientAgent: clientAgent,
       model: model,
       upstreamModel: _upstreamModel == model ? null : _upstreamModel,
       effort: effort,

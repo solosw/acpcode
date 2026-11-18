@@ -13732,7 +13732,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ustatRecordDescription =>
-      'Claude Code\'s own calls are read from what it prints; sessions on a custom upstream go through BaoCode\'s local proxy, which keeps each call. Applies to agents started from now on.';
+      'Claude Code calls are read from its output or custom-upstream proxy. Calls by other agents through the local model gateway are also recorded, with the client identified from request headers when available. Applies to new calls.';
 
   @override
   String get ustatRecordOffDescription =>
