@@ -840,23 +840,12 @@ Object? _stopSequence(JsonValue response) {
 
 /// The usage of a Responses reply: input tokens (less those read from or
 /// written to the cache), output tokens, cache reads, cache writes.
-(int, int, int, int) extractResponsesUsage(JsonValue usage) {
-  if (!usage.exists || usage.isNull) return (0, 0, 0, 0);
-  var input = usage.get('input_tokens').integer;
-  final output = usage.get('output_tokens').integer;
-  final cached = usage.get('input_tokens_details.cached_tokens').integer;
-  var cacheWrite = usage.get('input_tokens_details.cache_write_tokens').integer;
-  if (cacheWrite <= 0) {
-    cacheWrite = usage
-        .get('input_tokens_details.cache_creation_tokens')
-        .integer;
-  }
-  // One at a time, so that two huge counts cannot overflow.
-  for (final deduct in [cached, cacheWrite]) {
-    if (deduct > 0) input = input >= deduct ? input - deduct : 0;
-  }
-  return (input < 0 ? 0 : input, output, cached, cacheWrite);
-}
+(int, int, int, int) extractResponsesUsage(JsonValue usage) =>
+    extractOpenAICompatibleUsage(
+      usage,
+      inputKey: 'input_tokens',
+      outputKey: 'output_tokens',
+    );
 
 /// The reasoning tokens, as `output_tokens_details.thinking_tokens`, at
 /// most the output tokens.

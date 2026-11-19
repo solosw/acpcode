@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:math';
 
 import '../kernel/claude_code/claude_sdk_tools.dart';
+import 'local_mcp_endpoint.dart';
 
 /// An ACP conversation's access to the shared listener, not a child process.
 class ToolsHttpConnection {
@@ -35,7 +36,11 @@ class ToolsHttpServer {
     _server!.listen((request) => unawaited(_handle(request)));
   }
 
-  ToolsHttpConnection open({required String cwd, Uri? forwardedUrl}) {
+  ToolsHttpConnection open({
+    required String cwd,
+    Uri? forwardedUrl,
+    LocalMcpEndpoint? localMcp,
+  }) {
     final endpoint = forwardedUrl ?? url;
     if (forwardedUrl != null &&
         (forwardedUrl.scheme != 'http' ||
@@ -58,6 +63,7 @@ class ToolsHttpServer {
       cwd,
       'mcp-http-${++_nextClient}',
       endpoint.authority,
+      localMcp,
     );
     _clients[key] = client;
     return ToolsHttpConnection(
@@ -99,7 +105,9 @@ class ToolsHttpServer {
         return await _status(response, HttpStatus.forbidden);
       }
       final version = request.headers.value('mcp-protocol-version');
-      if (version != null && !_versions.contains(version)) {
+      if (client.localMcp == null &&
+          version != null &&
+          !_versions.contains(version)) {
         return await _status(response, HttpStatus.badRequest);
       }
       final accept = request.headers.value('accept') ?? '';
@@ -137,7 +145,11 @@ class ToolsHttpServer {
       }
       if (message is! Map<String, Object?> ||
           message['jsonrpc'] != '2.0' ||
-          message['method'] is! String ||
+          (message['method'] is! String &&
+              !(client.localMcp != null &&
+                  message.containsKey('id') &&
+                  (message.containsKey('result') ||
+                      message.containsKey('error')))) ||
           (message.containsKey('params') && message['params'] is! Map) ||
           (message.containsKey('id') &&
               message['id'] is! String &&
@@ -146,6 +158,11 @@ class ToolsHttpServer {
       }
       if (client.closed) {
         return await _status(response, HttpStatus.unauthorized);
+      }
+      if (client.localMcp case final endpoint?) {
+        final answer = await endpoint.call(message);
+        if (answer.isEmpty) return await _status(response, HttpStatus.accepted);
+        return await _json(response, answer);
       }
       if (!message.containsKey('id')) {
         if (message['method'] == 'notifications/initialized') {
@@ -216,7 +233,12 @@ class ToolsHttpServer {
 }
 
 class _Client {
-  _Client(this.cwd, this.session, this.authority) {
+  _Client(this.cwd, this.session, this.authority, this.localMcp) {
+    if (localMcp case final endpoint?) {
+      endpoint.onEvent = (message) =>
+          _broadcast('data: ${jsonEncode(message)}\n\n');
+      return;
+    }
     _changes = ClaudeSdkTools.changes.listen((_) {
       if (!initialized || closed) return;
       for (final response in [..._events]) {
@@ -238,7 +260,15 @@ class _Client {
   final _events = <HttpResponse>{};
   final _writes = <HttpResponse, Future<void>>{};
   final _heartbeats = <HttpResponse, Timer>{};
-  late final StreamSubscription<void> _changes;
+  final LocalMcpEndpoint? localMcp;
+  StreamSubscription<void>? _changes;
+
+  void _broadcast(String event) {
+    for (final response in [..._events]) {
+      unawaited(_write(response, event));
+    }
+  }
+
   bool initialized = false;
   bool get closed => _cancelled.isCompleted;
   ClaudeSdkCall get call =>
@@ -298,7 +328,8 @@ class _Client {
   void close() {
     if (closed) return;
     _cancelled.complete();
-    unawaited(_changes.cancel());
+    unawaited(_changes?.cancel());
+    localMcp?.close();
     for (final response in [..._events]) {
       _closeEvent(response);
     }

@@ -204,23 +204,30 @@ void main() {
           await providers.save(provider.copyWith(protocol: entry.$2));
           final usage = entry.$1 == 'chat'
               ? {
-                  'prompt_tokens': 20,
+                  'prompt_tokens': 22,
                   'completion_tokens': 8,
-                  'prompt_tokens_details': {'cached_tokens': 7},
+                  'prompt_cache_hit_tokens': 7,
+                  'cache_creation_input_tokens': 2,
                   'completion_tokens_details': {'reasoning_tokens': 3},
                 }
               : entry.$1 == 'responses'
               ? {
-                  'input_tokens': 20,
+                  'input_tokens': 22,
                   'output_tokens': 8,
-                  'input_tokens_details': {'cached_tokens': 7},
+                  'input_tokens_details': {
+                    'cached_tokens': 7,
+                    'cache_write_tokens': 2,
+                  },
                   'output_tokens_details': {'reasoning_tokens': 3},
                 }
               : {
                   'input_tokens': 13,
                   'output_tokens': 8,
                   'cache_read_input_tokens': 7,
-                  'cache_creation_input_tokens': 2,
+                  'cache_creation': {
+                    'ephemeral_5m_input_tokens': 1,
+                    'ephemeral_1h_input_tokens': 1,
+                  },
                 };
           final whole = <String, Object?>{
             ...switch (entry.$1) {
@@ -307,6 +314,7 @@ void main() {
           expect(call.input, 13);
           expect(call.output, 8);
           expect(call.cacheRead, 7);
+          expect(call.cacheWrite, 2);
           expect(call.reasoning, entry.$1 == 'anthropic' ? 0 : 3);
           expect(call.failed, false);
           expect(call.headers, isNotNull);
@@ -316,10 +324,7 @@ void main() {
           const price = ModelPrice(input: 2, output: 8, cacheRead: 0.5);
           expect(
             price.cost(call),
-            closeTo(
-              (26 + 64 + 3.5 + (entry.$1 == 'anthropic' ? 4 : 0)) / 1000000,
-              1e-12,
-            ),
+            closeTo((26 + 64 + 3.5 + 4) / 1000000, 1e-12),
           );
           if (entry.$1 == 'chat' && stream) {
             expect(
@@ -536,6 +541,37 @@ void main() {
     ].where((value) => value != target.$1)) {
       test('$source -> ${target.$1} request and nonstream answer', () async {
         await providers.save(provider.copyWith(protocol: target.$2));
+        final upstreamAnswer = switch (target.$1) {
+          'chat' => {
+            ..._chat,
+            'usage': {
+              'prompt_tokens': 12,
+              'completion_tokens': 2,
+              'prompt_cache_hit_tokens': 7,
+              'cache_creation_input_tokens': 2,
+            },
+          },
+          'responses' => {
+            ..._response,
+            'usage': {
+              'input_tokens': 12,
+              'output_tokens': 2,
+              'input_tokens_details': {
+                'cached_tokens': 7,
+                'cache_write_tokens': 2,
+              },
+            },
+          },
+          _ => {
+            ..._message,
+            'usage': {
+              'input_tokens': 3,
+              'output_tokens': 2,
+              'cache_read_input_tokens': 7,
+              'cache_creation': {'ephemeral_5m_input_tokens': 2},
+            },
+          },
+        };
         upstream.reply = (request, body) async {
           if (target.$1 == 'responses') {
             request.response.headers.contentType = ContentType(
@@ -543,13 +579,11 @@ void main() {
               'event-stream',
             );
             request.response.write(
-              'data: ${jsonEncode({'type': 'response.completed', 'response': _response})}$chr10$chr10',
+              'data: ${jsonEncode({'type': 'response.completed', 'response': upstreamAnswer})}$chr10$chr10',
             );
           } else {
             request.response.headers.contentType = ContentType.json;
-            request.response.write(
-              jsonEncode(target.$1 == 'chat' ? _chat : _message),
-            );
+            request.response.write(jsonEncode(upstreamAnswer));
           }
           await request.response.close();
         };
@@ -558,7 +592,8 @@ void main() {
           _path(source),
           body: _body(source),
           headers: {
-            'x-baocode-agent': 'My ACP agent',
+            'user-agent': 'opencode/1.2.3',
+            if (source == 'anthropic') 'x-baocode-agent': 'My ACP agent',
             'x-baocode-session': 'acp-1',
             'x-claude-code-agent-id': 'child-1',
             'x-claude-code-request-class': 'subagent',
@@ -583,7 +618,10 @@ void main() {
         );
         final call = calls.single;
         expect(call.source, 'gateway');
-        expect(call.clientAgent, 'My ACP agent');
+        expect(
+          call.clientAgent,
+          source == 'anthropic' ? 'My ACP agent' : 'OpenCode',
+        );
         expect(call.agentId, 'child-1');
         expect(call.session, 'acp-1');
         expect(call.requestClass, UsageClass.subagent);
@@ -591,6 +629,8 @@ void main() {
         expect(call.model, 'one');
         expect(call.input, 3);
         expect(call.output, 2);
+        expect(call.cacheRead, 7);
+        expect(call.cacheWrite, 2);
         expect(
           upstream.seen.single.headers['authorization'],
           'Bearer upstream-secret',

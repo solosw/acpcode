@@ -26,6 +26,12 @@ void main() {
     );
     expect(detect({'user-agent': 'codex_cli_rs/0.1'}), 'Codex');
     expect(detect({'user-agent': 'opencode/1'}), 'OpenCode');
+    expect(detect({'user-agent': 'OpenCodeDesktop/2.0'}), 'OpenCode');
+    expect(detect({'user-agent': 'MyAgent/2.0 (darwin)'}), 'MyAgent');
+    expect(
+      detect({'user-agent': 'undici', 'originator': 'codex_cli_rs'}),
+      'Codex',
+    );
     expect(
       detect({'user-agent': 'claude-cli/2.1 (external, cli)'}),
       'Claude Code',
@@ -59,6 +65,28 @@ void main() {
     expect(call.output, 0);
     expect(call.responseBytes, utf8.encode(line).length);
     expect(m.finish(200), isNull);
+  });
+
+  test('cache details can arrive separately from token totals', () {
+    final m = meter('openaiChat');
+    final newline = String.fromCharCode(10);
+    for (final usage in [
+      {'prompt_tokens': 22, 'completion_tokens': 8},
+      {
+        'prompt_tokens_details': {'cached_tokens': 7},
+      },
+      {
+        'prompt_tokens_details': {'cache_write_tokens': 2},
+      },
+    ]) {
+      m.events('data: ${jsonEncode({'usage': usage})}$newline');
+    }
+    m.events('data: [DONE]$newline');
+    final call = m.finish(200)!;
+    expect(call.input, 13);
+    expect(call.output, 8);
+    expect(call.cacheRead, 7);
+    expect(call.cacheWrite, 2);
   });
 
   test('native Responses errors and partial usage survive cancellation', () {

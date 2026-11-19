@@ -701,22 +701,9 @@ List<String> _reasoningTexts(JsonValue node) {
 /// The usage of an OpenAI reply: input tokens (less those read from or
 /// written to the cache, which Anthropic counts apart), output tokens,
 /// cache reads, cache writes.
-(int, int, int, int) extractOpenAIUsage(JsonValue usage) {
-  if (!usage.exists || usage.isNull) return (0, 0, 0, 0);
-  var input = usage.get('prompt_tokens').integer;
-  final output = usage.get('completion_tokens').integer;
-  final cached = usage.get('prompt_tokens_details.cached_tokens').integer;
-  var cacheWrite = usage
-      .get('prompt_tokens_details.cache_write_tokens')
-      .integer;
-  if (cacheWrite <= 0) {
-    cacheWrite = usage
-        .get('prompt_tokens_details.cache_creation_tokens')
-        .integer;
-  }
-  // One at a time, so that two huge counts cannot overflow.
-  for (final deduct in [cached, cacheWrite]) {
-    if (deduct > 0) input = input >= deduct ? input - deduct : 0;
-  }
-  return (input < 0 ? 0 : input, output, cached, cacheWrite);
-}
+(int, int, int, int) extractOpenAIUsage(JsonValue usage) =>
+    extractOpenAICompatibleUsage(
+      usage,
+      inputKey: 'prompt_tokens',
+      outputKey: 'completion_tokens',
+    );

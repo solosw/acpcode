@@ -216,9 +216,13 @@ class _StdioRelay {
       _emit(_error(null, -32700, 'Parse error'));
       return;
     }
+    final reply =
+        message is Map &&
+        (message.containsKey('result') || message.containsKey('error')) &&
+        (message['id'] is String || message['id'] is num);
     if (message is! Map<String, Object?> ||
         message['jsonrpc'] != '2.0' ||
-        message['method'] is! String ||
+        (message['method'] is! String && !reply) ||
         (message.containsKey('params') && message['params'] is! Map) ||
         (message.containsKey('id') &&
             message['id'] is! String &&
@@ -233,7 +237,9 @@ class _StdioRelay {
       return;
     }
     _pending++;
-    if (message['id'] case final Object id) _pendingRequests.add(id);
+    if (message['id'] case final Object id when message['method'] is String) {
+      _pendingRequests.add(id);
+    }
     // Do not serialize POSTs: cancellation and other calls must reach the app
     // while a long-running tools/call is still waiting for its result.
     unawaited(_post(message));
@@ -246,10 +252,11 @@ class _StdioRelay {
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(message));
       final response = await request.close();
-      if (!message.containsKey('id') &&
-          response.statusCode == HttpStatus.accepted) {
+      final expectsReply =
+          message['method'] is String && message.containsKey('id');
+      if (!expectsReply && response.statusCode == HttpStatus.accepted) {
         await response.drain<void>();
-      } else if (message.containsKey('id') &&
+      } else if (expectsReply &&
           response.statusCode == HttpStatus.ok &&
           response.headers.contentType?.mimeType == 'application/json') {
         final answer = jsonDecode(await utf8.decoder.bind(response).join());
@@ -272,7 +279,7 @@ class _StdioRelay {
     } on Object {
       _finish(3);
     } finally {
-      if (message.containsKey('id')) _pendingRequests.remove(message['id']);
+      if (message['method'] is String) _pendingRequests.remove(message['id']);
       _pending--;
       _settled();
     }

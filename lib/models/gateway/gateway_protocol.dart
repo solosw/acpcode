@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import '../proxy/translate/common.dart' show anthropicCacheCreationTokens;
+import '../proxy/translate/json_value.dart';
+
 /// The public wire format accepted by the local model gateway.
 enum GatewayProtocol { anthropic, openaiChat, openaiResponses }
 
@@ -432,7 +435,7 @@ String _finishReason(Object? reason, bool tools) => switch (reason) {
 
 _Json _usage(_Json usage, GatewayProtocol protocol) {
   final cached = usage['cache_read_input_tokens'] as num? ?? 0;
-  final written = usage['cache_creation_input_tokens'] as num? ?? 0;
+  final written = anthropicCacheCreationTokens(JsonValue(usage));
   final input = (usage['input_tokens'] as num? ?? 0) + cached + written;
   final output = usage['output_tokens'] as num? ?? 0;
   final reasoning =
@@ -449,6 +452,7 @@ _Json _usage(_Json usage, GatewayProtocol protocol) {
         ? 'prompt_tokens_details'
         : 'input_tokens_details'): {
       'cached_tokens': cached,
+      if (written > 0) 'cache_write_tokens': written,
     },
     if (reasoning != null)
       (protocol == GatewayProtocol.openaiChat

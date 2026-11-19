@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import '../models/proxy/translate/common.dart'
+    show anthropicCacheCreationTokens, extractOpenAICompatibleUsage;
+import '../models/proxy/translate/json_value.dart';
 import 'usage_record.dart';
 import 'usage_trace.dart';
 
@@ -41,33 +44,70 @@ abstract final class UsageHeaders {
   };
 }
 
-/// Client attribution is advisory: SDK/protocol headers alone do not identify
-/// an agent. Only recognize known user agents, or an explicit caller label.
+/// Client attribution uses an explicit label, a known agent signature, or a
+/// specific User-Agent product name. Generic SDKs don't identify their caller.
 String? gatewayClientAgent(String? Function(String) header) {
   final explicit = header(UsageHeaders.clientAgent)?.trim();
   if (explicit != null && explicit.isNotEmpty) {
     return explicit.substring(0, math.min(explicit.length, 120));
   }
-  final agent = header('user-agent')?.toLowerCase() ?? '';
-  for (final (pattern, name) in [
-    ('codex', 'Codex'),
-    ('opencode', 'OpenCode'),
-    ('claude-code', 'Claude Code'),
-    ('claude-cli', 'Claude Code'),
-    ('gemini-cli', 'Gemini CLI'),
-    ('goose', 'Goose'),
-    ('cline', 'Cline'),
-    ('aider', 'Aider'),
-  ]) {
-    if (RegExp(
-      '(^|[^a-z0-9])$pattern([/_ .-]|'
-      r'$'
-      ')',
-    ).hasMatch(agent)) {
-      return name;
+  final userAgent = header('user-agent')?.trim() ?? '';
+  for (final value in [userAgent, header('originator') ?? '']) {
+    final agent = value.toLowerCase();
+    for (final (pattern, name) in const [
+      (r'codex', 'Codex'),
+      (r'open[-_ ]?code(?:[-_ ]?(?:desktop|cli))?', 'OpenCode'),
+      (r'claude[-_ ]?(code|cli)', 'Claude Code'),
+      (r'gemini[-_ ]?cli', 'Gemini CLI'),
+      (r'kimi[-_ ]?(cli|code)', 'Kimi Code'),
+      (r'qwen[-_ ]?code', 'Qwen Code'),
+      (r'goose', 'Goose'),
+      (r'cline', 'Cline'),
+      (r'aider', 'Aider'),
+    ]) {
+      if (RegExp(
+        '(^|[^a-z0-9])$pattern(?=[^a-z0-9]|'
+        r'$)',
+      ).hasMatch(agent)) {
+        return name;
+      }
     }
   }
-  return null;
+  for (final name in const ['x-opencode-session', 'x-opencode-request']) {
+    if (header(name)?.trim().isNotEmpty == true) return 'OpenCode';
+  }
+  final product = RegExp(r'^[a-zA-Z][a-zA-Z0-9._-]{0,119}')
+      .stringMatch(userAgent);
+  if (product == null ||
+      const {
+        'ai-sdk',
+        'anthropic',
+        'anthropic-sdk',
+        'axios',
+        'bun',
+        'curl',
+        'dart',
+        'deno',
+        'go-http-client',
+        'httpx',
+        'java',
+        'mozilla',
+        'node',
+        'node-fetch',
+        'okhttp',
+        'openai',
+        'openai-python',
+        'openai-node',
+        'python',
+        'python-httpx',
+        'python-requests',
+        'reqwest',
+        'undici',
+        'wget',
+      }.contains(product.toLowerCase())) {
+    return null;
+  }
+  return product;
 }
 
 /// What a request's body and headers tell of it, before it goes.
@@ -585,6 +625,7 @@ class UsageMeter {
   final String responseProtocol;
   bool _terminal = false;
   final Set<String> _openaiTools = {};
+  final _openaiUsage = <String, Object?>{};
   final String model;
   final String? effort;
   final bool fast;
@@ -791,15 +832,29 @@ class UsageMeter {
       int tokens(Object? value) =>
           value is num ? math.max(0, value.toInt()) : 0;
       final chat = responseProtocol == 'openaiChat';
-      final input = tokens(usage[chat ? 'prompt_tokens' : 'input_tokens']);
-      final details =
-          usage[chat ? 'prompt_tokens_details' : 'input_tokens_details'];
-      final cached = details is Map ? tokens(details['cached_tokens']) : 0;
-      _input = math.max(0, input - cached);
-      _cacheRead = cached;
-      _output = tokens(usage[chat ? 'completion_tokens' : 'output_tokens']);
-      final outputDetails =
-          usage[chat ? 'completion_tokens_details' : 'output_tokens_details'];
+      final inputKey = chat ? 'prompt_tokens' : 'input_tokens';
+      final outputKey = chat ? 'completion_tokens' : 'output_tokens';
+      // Some compatible relays send totals and cache details in separate
+      // frames. Each field is cumulative, so retain fields omitted later.
+      for (final entry in usage.entries) {
+        if (entry.key is! String || entry.value == null) continue;
+        final key = entry.key as String;
+        final previous = _openaiUsage[key];
+        final value = entry.value;
+        _openaiUsage[key] = value is Map && previous is Map
+            ? {...previous, ...value}
+            : value;
+      }
+      final (input, output, read, write) = extractOpenAICompatibleUsage(
+        JsonValue(_openaiUsage),
+        inputKey: inputKey,
+        outputKey: outputKey,
+      );
+      _input = input;
+      _cacheRead = math.max(0, read);
+      _cacheWrite = math.max(0, write);
+      _output = math.max(0, output);
+      final outputDetails = _openaiUsage['${outputKey}_details'];
       if (outputDetails is Map) {
         _reasoning = tokens(outputDetails['reasoning_tokens']);
       }
@@ -913,7 +968,8 @@ class UsageMeter {
     if (at('cache_read_input_tokens') case final n? when n > 0) {
       _cacheRead = n;
     }
-    if (at('cache_creation_input_tokens') case final n? when n > 0) {
+    if (anthropicCacheCreationTokens(JsonValue(usage)) case final n
+        when n > 0) {
       _cacheWrite = n;
     }
     if (usage['service_tier'] case final String tier when tier.isNotEmpty) {

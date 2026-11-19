@@ -28,7 +28,9 @@ Requests using the upstream's own protocol pass through with their native option
 
 Calls through all three gateway APIs are included in Settings → Usage when recording is enabled, including native and translated requests, streaming and non-streaming replies. Each gateway request is counted once. Token counts come from the upstream usage fields; missing counts are not estimated. Costs use the actual upstream and model prices. The model list and count_tokens endpoint are excluded.
 
-To reliably identify a client, configure it to send `x-baocode-agent: My ACP agent`. An explicit label takes precedence over recognized User-Agent names (Codex, OpenCode, Claude Code, Gemini CLI, Goose, Cline and Aider). Generic OpenAI/Anthropic SDK headers do not identify an agent; these calls stay labeled as the local model gateway. Attribution is a client-supplied label, not authentication.
+To reliably identify a client, configure it to send `x-baocode-agent: My ACP agent`. The gateway gives that label priority, then checks known agent signatures in User-Agent and client headers. A specific User-Agent product name is used as a fallback. Requests with only generic SDK headers stay labeled as the local model gateway. Client labels are for usage attribution.
+
+Cache read and write counts use the fields reported by the upstream, including OpenAI-style usage details and DeepSeek cache hits. The gateway separates these counts from uncached input for pricing.
 
 Clients may send `x-baocode-session` to associate calls with a BaoCode conversation. Existing Claude Code request-class, agent ID, parent agent ID and agent-type hints are retained separately. Without these hints, the gateway cannot infer the conversation or subagent. The Usage page agent filter separates gateway clients.
 

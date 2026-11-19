@@ -20,9 +20,11 @@ import '../kernel/claude_code/claude_haiku.dart';
 import '../kernel/claude_code/claude_storage_io.dart';
 import '../kernel/claude_code/dart_core_transport.dart';
 import '../kernel/claude_code/process_transport.dart';
+import '../mcp/tools_http.dart';
 import '../models/launch_environment.dart';
 import 'remote_claude_install.dart';
 import 'remote_location.dart';
+import 'remote_mcp.dart';
 import 'ssh_host.dart';
 import 'port_forwards.dart';
 
@@ -325,7 +327,7 @@ Future<String> askRemoteHaiku(
 /// Claude Code on a remote host, over its server: the same lines as a
 /// local process's ([ProcessTransport]).
 class RemoteClaudeTransport implements ClaudeCodeTransport {
-  RemoteClaudeTransport._(this._process) {
+  RemoteClaudeTransport._(this._process, [this._mcp = const {}]) {
     _live.add(this);
     _process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
@@ -373,8 +375,18 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
     final client = await _clientOf(host);
     final cwd = RemoteLocation.pathOf(launch.cwd);
     final env = await remoteModelEnvironment(client, launch.env);
-    final started = launch.copyWith(cwd: cwd, env: env);
     final forwarded = await PortForwards.instance.remoteEnvironment(host.host);
+    final mcp = launch.tools == null || launch.userServers
+        ? await openRemoteUserMcp(host, launch.cwd)
+        : const <String, ToolsHttpConnection>{};
+    var startedProcess = false;
+    final started = launch.copyWith(
+      cwd: cwd,
+      env: env,
+      bridgedMcpServers: mcp.map(
+        (name, connection) => MapEntry(name, connection.configuration),
+      ),
+    );
     try {
       final process = await startRemoteCore(
         host,
@@ -395,7 +407,8 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
           core: core,
         ),
       );
-      return RemoteClaudeTransport._(process);
+      startedProcess = true;
+      return RemoteClaudeTransport._(process, mcp);
     } on ClaudeDownloadFailed catch (error) {
       throw ClaudeUnavailable(
         'Claude Code could not be installed on '
@@ -426,10 +439,17 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
       throw ClaudeUnavailable(
         'The connection to ${RemoteLocation.hostName(host.host)} was lost',
       );
+    } finally {
+      if (!startedProcess) {
+        for (final connection in mcp.values) {
+          connection.close();
+        }
+      }
     }
   }
 
   final RemoteProcess _process;
+  final Map<String, ToolsHttpConnection> _mcp;
   final StreamController<Map<String, Object?>> _messages =
       StreamController.broadcast();
   final List<String> _stderr = [];
@@ -460,6 +480,7 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
   }
 
   void _exited(int code) {
+    _closeMcp();
     _exitCode = code;
     _live.remove(this);
     if (code == RemoteProcess.lostExitCode) {
@@ -486,8 +507,15 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
   @override
   Future<void> get exited => _process.exitCode.then((_) {});
 
+  void _closeMcp() {
+    for (final connection in _mcp.values) {
+      connection.close();
+    }
+  }
+
   @override
   void close() {
+    _closeMcp();
     if (_exitCode != null) return;
     unawaited(_process.closeStdin());
     _process.kill();

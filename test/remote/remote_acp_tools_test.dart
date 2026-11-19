@@ -9,11 +9,14 @@ import 'package:bao_remote/client.dart' show RemoteHello, RemoteProtocol;
 import 'package:bao_remote/server.dart' show ServerMcp;
 import 'package:baocode/kernel/acp/acp_mcp.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
+import 'package:baocode/kernel/claude_code/claude_environment.dart';
 import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/mcp/tools_bridge.dart';
 import 'package:baocode/platform/data_dir.dart';
+
 import 'package:baocode/remote/remote_host_settings.dart';
 import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/remote_mcp.dart';
 import 'package:baocode/remote/ssh_host.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -29,6 +32,7 @@ void main() {
   late RemoteHostSettings previousSettings;
   late MemoryConnector connector;
   late String home;
+  late String localHome;
   late String project;
   late HttpClient http;
   final tools = ToolsBridge.instance;
@@ -45,12 +49,19 @@ void main() {
     home = Directory(p.join(temp.path, 'remote-home')).path;
     project = Directory(p.join(temp.path, 'project')).path;
     Directory(home).createSync();
+    localHome = p.join(temp.path, 'local-home');
+    Directory(localHome).createSync();
+    ClaudeEnvironment.use(
+      {...Platform.environment, 'HOME': localHome}
+        ..remove('CLAUDE_CONFIG_DIR')
+        ..remove(ClaudeEnvironment.dataPathVariable),
+    );
     Directory(project).createSync();
     connector = MemoryConnector(serverData.path);
     SshHosts.instance = SshHosts(connect: connector.call);
     RemoteHostSettings.instance = RemoteHostSettings();
     http = _RealHttp().createHttpClient(null)..findProxy = (_) => 'DIRECT';
-    await tools.start();
+    await HttpOverrides.runWithHttpOverrides(tools.start, _RealHttp());
     expect(tools.http?.url, isNotNull);
     ClaudeSdkTools.register(
       ClaudeSdkTool(
@@ -67,6 +78,7 @@ void main() {
       item.close();
     }
     loaded.clear();
+    ClaudeEnvironment.use(null);
     ClaudeSdkTools.unregister('ssh_context');
     ClaudeSdkTools.unregister('ssh_wait');
     http.close(force: true);
@@ -139,6 +151,145 @@ void main() {
 
   void userConfig(Map<String, Object?> value) =>
       File(p.join(home, '.claude.json')).writeAsStringSync(jsonEncode(value));
+
+  void localConfig(Map<String, Object?> servers) =>
+      File(p.join(localHome, '.claude.json'))
+          .writeAsStringSync(jsonEncode({'mcpServers': servers}));
+
+  test('SSH ACP calls a locally installed stdio MCP', () async {
+    final fixture = File(p.join(localHome, 'echo-mcp.sh'));
+    final reply = jsonEncode({
+      'jsonrpc': '2.0',
+      'id': 1,
+      'result': {
+        'tools': [
+          {'name': 'only_on_client'},
+        ],
+      },
+    });
+    fixture.writeAsStringSync(
+      [
+        'IFS= read -r request',
+        "echo '$reply'",
+        'while IFS= read -r request; do :; done',
+      ].join(String.fromCharCode(10)),
+    );
+    localConfig({
+      'local_stdio': {
+        'command': '/bin/sh',
+        'args': [fixture.path],
+        'env': {'TEST_LOCAL_SECRET': 'only-for-local-process'},
+      },
+    });
+    final result = await load();
+    expect(result.warnings, isEmpty);
+    final own = result.servers.singleWhere((s) => s['name'] == 'local_stdio');
+    expect(jsonEncode(own), isNot(contains(fixture.path)));
+    expect(jsonEncode(own), isNot(contains('only-for-local-process')));
+    final (status, answer) = await rpc(own, method: 'tools/list');
+    expect(status, 200);
+    expect(answer['result'], {
+      'tools': [
+        {'name': 'only_on_client'},
+      ],
+    });
+    final uri = Uri.parse(own['url'] as String);
+    RemoteHostSettings.instance.setLocalAccess('dev', false);
+    final client = await SshHosts.instance['dev'].ready;
+    await until(() => client.forwardedPorts.isEmpty);
+    expect(
+      (await rpc(own, target: tools.http!.url, authority: uri.authority)).$1,
+      401,
+    );
+  });
+
+  test('SSH ACP reaches a local HTTP MCP with app-side headers', () async {
+    final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => upstream.close(force: true));
+    final seen = Completer<String?>();
+    upstream.listen((request) async {
+      seen.complete(request.headers.value('authorization'));
+      final message =
+          jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'jsonrpc': '2.0',
+          'id': message['id'],
+          'result': {
+            'tools': [
+              {'name': 'local_http_tool'},
+            ],
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    localConfig({
+      'local_http': {
+        'type': 'http',
+        'url': 'http://127.0.0.1:${upstream.port}/mcp',
+        'headers': {'Authorization': 'Bearer local-upstream-key'},
+      },
+    });
+    final result = await load();
+    expect(result.warnings, isEmpty);
+    final own = result.servers.singleWhere((s) => s['name'] == 'local_http');
+    expect(Uri.parse(own['url'] as String).port, isNot(upstream.port));
+    expect(jsonEncode(own), isNot(contains('local-upstream-key')));
+    final (status, answer) = await rpc(own, method: 'tools/list');
+    expect(status, 200);
+    expect(answer['result'], {
+      'tools': [
+        {'name': 'local_http_tool'},
+      ],
+    });
+    expect(await seen.future, 'Bearer local-upstream-key');
+  });
+
+  test('SSH ACP and Claude keep remote overrides and disabled names', () async {
+    localConfig({
+      for (final name in ['bridged', 'overridden', 'disabled'])
+        name: {'url': 'http://127.0.0.1:8765/mcp'},
+    });
+    userConfig({
+      'mcpServers': {
+        'overridden': {'url': 'https://example.test/mcp'},
+      },
+      'projects': {
+        project: {
+          'disabledMcpServers': ['disabled'],
+        },
+      },
+    });
+    final result = await load();
+    expect(result.warnings, isEmpty);
+    final byName = {
+      for (final config in result.servers) config['name']: config,
+    };
+    expect(byName.keys, unorderedEquals(['baocode', 'bridged', 'overridden']));
+    expect(byName['overridden']!['url'], 'https://example.test/mcp');
+    expect(Uri.parse(byName['bridged']!['url'] as String).port, isNot(8765));
+    final client = await SshHosts.instance['dev'].ready;
+    client.hello = RemoteHello.fromJson({
+      ...client.hello!.toJson(),
+      'home': home,
+    });
+    final claude = await openRemoteUserMcp(
+      SshHosts.instance['dev'],
+      RemoteLocation.of('dev', project),
+    );
+    addTearDown(() {
+      for (final bridge in claude.values) {
+        bridge.close();
+      }
+    });
+    expect(claude.keys, ['bridged']);
+    expect(
+      Uri.parse(claude['bridged']!.configuration['url'] as String).port,
+      isNot(8765),
+    );
+  });
 
   test(
     'SSH HTTP MCP reaches the app with remote context and no disk registration',

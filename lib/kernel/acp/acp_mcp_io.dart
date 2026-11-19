@@ -4,18 +4,22 @@ import 'package:path/path.dart' as p;
 
 import '../../customize/customization_store.dart';
 import '../../customize/customizations.dart';
+import '../../mcp/local_mcp_config.dart';
 import '../../mcp/tools_bridge.dart';
 import '../../mcp/tools_http.dart';
 import '../../mcp/tools_protocol.dart';
 import '../../mcp/tools_registration.dart';
 import '../../platform/data_dir.dart';
 import '../../remote/remote_customization_disk.dart';
+import '../../remote/remote_host_settings.dart';
 import '../../remote/remote_location.dart';
 import '../../remote/remote_mcp.dart';
 import '../../remote/ssh_host.dart';
 import '../agent_kernel.dart';
 import '../claude_code/claude_environment.dart';
 import 'acp_mcp.dart';
+
+export '../../mcp/local_mcp_config.dart' show resolveLocalMcpCommand;
 
 Future<AcpMcpServers> loadAcpMcpServers(
   KernelContext context,
@@ -38,19 +42,36 @@ Future<AcpMcpServers> loadAcpMcpServers(
     disk: host == null ? null : RemoteCustomizationDisk(host),
   );
   final appDefault = <String, Object?>{};
+  final http = ToolsBridge.instance.http;
+  final localEnvironment =
+      host == null ||
+          (http != null && RemoteHostSettings.instance.localAccess(host.host))
+      ? await ClaudeEnvironment.of()
+      : const <String, String>{};
+  final local =
+      host != null &&
+          http != null &&
+          RemoteHostSettings.instance.localAccess(host.host)
+      ? await localMcpDefaults(localEnvironment)
+      : const <String, Map<String, Object?>>{};
   final items = await store.list(
     CustomizationKind.mcps,
     project: project,
-    mcpDefaults: host != null && ToolsBridge.instance.http != null
-        ? {'baocode': appDefault}
-        : const {},
+    mcpDefaults: {
+      if (host != null && http != null) 'baocode': appDefault,
+      ...local,
+    },
   );
   if (items.isEmpty) return const AcpMcpServers();
   final Map<String, String> inherited;
   if (host == null) {
-    inherited = await ClaudeEnvironment.of();
+    inherited = localEnvironment;
   } else if (items.every(
-    (item) => item.enabled == false || identical(item.server, appDefault),
+    (item) =>
+        item.enabled == false ||
+        identical(item.server, appDefault) ||
+        (local.containsKey(item.name) &&
+            identical(item.server, local[item.name])),
   )) {
     // App-generated endpoints need no environment expansion. In particular,
     // a native Windows SSH host need not provide POSIX env or sh commands.
@@ -81,7 +102,9 @@ Future<AcpMcpServers> loadAcpMcpServers(
       configurationFor: (item) async {
         final config = item.server;
         final http = ToolsBridge.instance.http;
-        if (host != null && identical(config, appDefault)) {
+        final custom =
+            local.containsKey(item.name) && identical(config, local[item.name]);
+        if (host != null && (identical(config, appDefault) || custom)) {
           if (http == null) {
             throw const FormatException(
               'the app tools listener is unavailable',
@@ -93,6 +116,9 @@ Future<AcpMcpServers> loadAcpMcpServers(
               http,
               cwd: location!,
               useHttp: capabilities['http'] == true,
+              localMcp: custom
+                  ? createLocalMcpEndpoint(config!, localEnvironment)
+                  : null,
             );
             connections.add(connection);
             if (connection.configuration['command'] case final String command) {
@@ -167,52 +193,4 @@ Future<AcpMcpServers> loadAcpMcpServers(
       }
     },
   );
-}
-
-/// ACP requires absolute commands. Search the agent's PATH, not the GUI's;
-/// Windows uses ';' and PATHEXT, not the remote host's POSIX spelling.
-String? resolveLocalMcpCommand(
-  String command,
-  Map<String, String> environment, {
-  String? cwd,
-  p.Context? paths,
-  bool? windows,
-  bool Function(String path)? fileExists,
-}) {
-  final isWindows = windows ?? Platform.isWindows;
-  final context = paths ?? (isWindows ? p.windows : p.posix);
-  String? variable(String name) {
-    if (!isWindows) return environment[name];
-    for (final entry in environment.entries.toList().reversed) {
-      if (entry.key.toUpperCase() == name) return entry.value;
-    }
-    return null;
-  }
-
-  final extensions = <String>[
-    '',
-    if (isWindows && context.extension(command).isEmpty)
-      ...(variable('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD')
-          .split(';')
-          .expand((value) => [value, value.toLowerCase()]),
-  ];
-  final directories =
-      context.isAbsolute(command) ||
-          command.contains('/') ||
-          command.contains('\\')
-      ? [cwd ?? Directory.current.path]
-      : (variable('PATH') ?? '').split(isWindows ? ';' : ':');
-  for (final directory in directories) {
-    if (directory.isEmpty) continue;
-    final base = context.normalize(
-      context.join(cwd ?? Directory.current.path, directory, command),
-    );
-    for (final extension in extensions) {
-      final candidate = '$base$extension';
-      if (fileExists?.call(candidate) ?? File(candidate).existsSync()) {
-        return candidate;
-      }
-    }
-  }
-  return null;
 }

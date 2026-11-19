@@ -6,6 +6,52 @@ import 'dart:convert';
 import 'json_value.dart';
 import 'util.dart';
 
+/// OpenAI-compatible input totals include cached tokens. BaoCode's input,
+/// cache read and cache write counts are disjoint for display and pricing.
+(int, int, int, int) extractOpenAICompatibleUsage(
+  JsonValue usage, {
+  required String inputKey,
+  required String outputKey,
+}) {
+  if (!usage.exists || usage.isNull) return (0, 0, 0, 0);
+  final details = usage.get('${inputKey}_details');
+  int firstPositive(List<JsonValue> values) {
+    for (final value in values) {
+      if (value.integer > 0) return value.integer;
+    }
+    return 0;
+  }
+
+  final standardRead = details.get('cached_tokens').integer;
+  final alternateRead = firstPositive([
+    usage.get('prompt_cache_hit_tokens'),
+    usage.get('cache_read_input_tokens'),
+  ]);
+  final read = standardRead > 0 || alternateRead == 0
+      ? standardRead
+      : alternateRead;
+  final write = firstPositive([
+    details.get('cache_write_tokens'),
+    details.get('cache_creation_tokens'),
+    usage.get('cache_creation_input_tokens'),
+  ]);
+  var input = usage.get(inputKey).integer;
+  // Deduct separately to avoid overflowing even on malformed usage counts.
+  for (final cached in [read, write]) {
+    if (cached > 0) input = input >= cached ? input - cached : 0;
+  }
+  return (input < 0 ? 0 : input, usage.get(outputKey).integer, read, write);
+}
+
+int anthropicCacheCreationTokens(JsonValue usage) {
+  final total = usage.get('cache_creation_input_tokens').integer;
+  if (total > 0) return total;
+  final details = usage.get('cache_creation');
+  final short = details.get('ephemeral_5m_input_tokens').integer;
+  final long = details.get('ephemeral_1h_input_tokens').integer;
+  return short.clamp(0, (1 << 62) - 1) + long.clamp(0, (1 << 62) - 1);
+}
+
 /// One server-sent event: its name and JSON data, and the blank line that
 /// ends it.
 String sseEvent(String event, Object? data) =>

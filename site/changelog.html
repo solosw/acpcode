@@ -96,6 +96,17 @@
     </ul>
   </section>
 
+  <section class="release" id="v1.9.7">
+    <h2 class="plain"><a href="#v1.9.7">1.9.7</a></h2>
+    <p>SSH agents can now use custom MCP servers configured on your desktop, and the local model gateway reports client and cache usage more accurately.</p>
+    <p>Fixed</p>
+    <ul>
+    <li>With local access enabled for your SSH host, restart the remote agent session to use local stdio, HTTP and SSE MCP servers. Remote overrides and disabled entries take precedence. Local MCP credentials stay on the desktop.</li>
+    <li>Recognize more gateway clients from User-Agent and client headers, with x-baocode-agent taking precedence.</li>
+    <li>Count uncached input, cache reads and cache writes separately, including usage reported across streaming chunks or translated between protocols.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v1.9.6">
     <h2 class="plain"><a href="#v1.9.6">1.9.6</a></h2>
     <p>This release adds local model gateway calls to Usage, so calls from ACP agents and other clients can be tracked alongside Claude Code.</p>

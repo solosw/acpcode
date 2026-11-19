@@ -66,6 +66,7 @@ class ClaudeLaunch {
     this.ownPrompt = false,
     this.models = const [],
     this.sdkServers = const [],
+    this.bridgedMcpServers = const {},
     this.tools,
     this.userServers = false,
     this.allowed = const [],
@@ -90,6 +91,9 @@ class ClaudeLaunch {
   /// The app's own MCP servers (see claude_sdk_tools.dart), their tools
   /// allowed without asking: they only do what the app does.
   final List<String> sdkServers;
+
+  /// Session-scoped MCP endpoints reached via the SSH connection.
+  final Map<String, Map<String, Object?>> bridgedMcpServers;
 
   /// The only built-in tools it has (`--tools`; none for an empty list),
   /// [sdkServers]' tools aside; all when null. Set, [sdkServers] are its
@@ -187,6 +191,7 @@ class ClaudeLaunch {
     Map<String, String>? env,
     String? settingsPath,
     String? instructions,
+    Map<String, Map<String, Object?>>? bridgedMcpServers,
   }) => ClaudeLaunch(
     cwd: cwd ?? this.cwd,
     resume: resume,
@@ -207,7 +212,9 @@ class ClaudeLaunch {
     ownPrompt: ownPrompt,
     models: models,
     sdkServers: sdkServers,
+    bridgedMcpServers: bridgedMcpServers ?? this.bridgedMcpServers,
     tools: tools,
+    userServers: userServers,
     allowed: allowed,
     promptSuggestions: promptSuggestions,
     switches: switches,
@@ -346,13 +353,16 @@ class ClaudeLaunch {
       tools.join(','),
       if (!userServers) '--strict-mcp-config',
     ],
-    if (sdkServers.isNotEmpty) ...[
+    if (sdkServers.isNotEmpty || bridgedMcpServers.isNotEmpty) ...[
       '--mcp-config',
       jsonEncode({
         'mcpServers': {
+          ...bridgedMcpServers,
           for (final name in sdkServers) name: {'type': 'sdk', 'name': name},
         },
       }),
+    ],
+    if (sdkServers.isNotEmpty) ...[
       '--allowedTools',
       sdkServers.map((name) => 'mcp__$name').join(','),
     ],
