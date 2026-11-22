@@ -83,6 +83,8 @@ class _StdioRelay {
   StreamSubscription<String>? _events;
   Future<void> _writes = Future.value();
   Timer? _drain;
+  Timer? _eventRetry;
+  var _eventFailures = 0;
   var _pending = 0;
   final _pendingRequests = <Object>{};
   var _inputEnded = false;
@@ -116,6 +118,7 @@ class _StdioRelay {
       // Transport and decoding failures are intentionally indistinguishable.
     } finally {
       _drain?.cancel();
+      _eventRetry?.cancel();
       // Closing stateless HTTP alone does not cancel app-side calls. A child
       // may exit while its ACP conversation (and bearer capability) lives on.
       if (_pendingRequests.isNotEmpty) {
@@ -172,14 +175,32 @@ class _StdioRelay {
 
   Future<void> _listenEvents() async {
     final request = await _http.getUrl(url);
+    if (_done.isCompleted) {
+      request.abort();
+      return;
+    }
     _headers(request, events: true);
-    final response = await request.close().timeout(const Duration(seconds: 5));
+    final response = await request.close().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        request.abort();
+        throw TimeoutException('MCP events unavailable');
+      },
+    );
+    if (_done.isCompleted) return;
     if (response.statusCode != HttpStatus.ok ||
         response.headers.contentType?.mimeType != 'text/event-stream') {
       throw const FormatException('MCP events unavailable');
     }
+    final connected = Stopwatch()..start();
+    void disconnected() {
+      if (connected.elapsed >= const Duration(seconds: 5)) _eventFailures = 0;
+      _retryEvents();
+    }
+
     final data = <String>[];
     _events = response
+        .timeout(const Duration(seconds: 45))
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
@@ -202,9 +223,38 @@ class _StdioRelay {
               data.add(value.startsWith(' ') ? value.substring(1) : value);
             }
           },
-          onError: (Object _) => _finish(3),
-          onDone: () => _finish(3),
+          onError: (Object _) => disconnected(),
+          onDone: disconnected,
+          cancelOnError: true,
         );
+  }
+
+  void _retryEvents() {
+    if (_done.isCompleted) return;
+    const delays = [250, 500, 1000, 2000, 4000];
+    if (_eventFailures == delays.length) {
+      _finish(3);
+      return;
+    }
+    // The conversation bearer still owns the session. Replace only the GET,
+    // keeping outstanding POSTs and never replaying tool calls.
+    _eventRetry = Timer(
+      Duration(milliseconds: delays[_eventFailures++]),
+      () async {
+        try {
+          await _listenEvents();
+        } on Object catch (error) {
+          if (error is SocketException ||
+              error is HttpException ||
+              error is TimeoutException) {
+            _retryEvents();
+          } else {
+            // A revoked capability or incompatible endpoint is terminal.
+            _finish(3);
+          }
+        }
+      },
+    );
   }
 
   void _read(String line) {

@@ -16,7 +16,9 @@ void main() {
   late HttpClient http;
 
   setUp(() async {
-    server = ToolsHttpServer();
+    server = ToolsHttpServer(
+      heartbeatInterval: const Duration(milliseconds: 50),
+    );
     http = _RealHttp().createHttpClient(null);
     await Future.wait(List.generate(8, (_) => server.start()));
     ClaudeSdkTools.register(
@@ -226,11 +228,9 @@ void main() {
   });
 
   test(
-    'SSE announces tool changes and reconnect retains connection context',
+    'idle SSE sends repeated heartbeats before and after initialization',
     () async {
       final connection = server.open(cwd: '/project');
-      await rpc(connection, 'initialize');
-      await rpc(connection, 'notifications/initialized', id: null);
       final request = await http.getUrl(server.url!);
       request.headers.set(
         'Authorization',
@@ -238,13 +238,70 @@ void main() {
       );
       request.headers.set('Accept', 'text/event-stream');
       final response = await request.close();
-      expect(response.statusCode, 200);
-      expect(response.headers.contentType?.mimeType, 'text/event-stream');
+      expect(response.headers.value('cache-control'), 'no-cache, no-transform');
+      expect(response.headers.value('x-accel-buffering'), 'no');
       final lines = StreamIterator(
-        response.transform(utf8.decoder).transform(const LineSplitter()),
+        response
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .where((line) => line.isNotEmpty),
       );
-      expect(await lines.moveNext(), isTrue);
+      addTearDown(lines.cancel);
+      const deadline = Duration(seconds: 2);
+      expect(await lines.moveNext().timeout(deadline), isTrue);
       expect(lines.current, ': connected');
+      expect(await lines.moveNext().timeout(deadline), isTrue);
+      expect(lines.current, ': keepalive');
+      await rpc(connection, 'initialize');
+      await rpc(connection, 'notifications/initialized', id: null);
+      expect(await lines.moveNext().timeout(deadline), isTrue);
+      expect(lines.current, ': keepalive');
+      expect((await rpc(connection, 'ping'))['result'], isEmpty);
+      connection.close();
+      while (await lines.moveNext().timeout(deadline)) {
+        expect(lines.current, ': keepalive');
+      }
+    },
+  );
+
+  test(
+    'SSE announces tool changes and reconnect retains connection context',
+    () async {
+      final connection = server.open(cwd: '/project');
+      await rpc(connection, 'initialize');
+      await rpc(connection, 'notifications/initialized', id: null);
+      Future<StreamIterator<String>> listen() async {
+        final request = await http.getUrl(server.url!);
+        request.headers.set(
+          'Authorization',
+          (connection.configuration['headers'] as Map)['Authorization']
+              as String,
+        );
+        request.headers.set('Accept', 'text/event-stream');
+        final response = await request.close();
+        expect(response.statusCode, 200);
+        expect(response.headers.contentType?.mimeType, 'text/event-stream');
+        final lines = StreamIterator(
+          response.transform(utf8.decoder).transform(const LineSplitter()),
+        );
+        addTearDown(lines.cancel);
+        expect(await lines.moveNext(), isTrue);
+        expect(lines.current, ': connected');
+        return lines;
+      }
+
+      Future<void> expectToolsChanged(StreamIterator<String> lines) async {
+        while (await lines.moveNext().timeout(const Duration(seconds: 2))) {
+          if (!lines.current.startsWith('data:')) continue;
+          final event = jsonDecode(lines.current.substring(5)) as Map;
+          expect(event['method'], 'notifications/tools/list_changed');
+          return;
+        }
+        fail('SSE ended before the tool list notification');
+      }
+
+      final lines = await listen();
+      await expectToolsChanged(lines);
       ClaudeSdkTools.register(
         ClaudeSdkTool(
           name: 'http_changed',
@@ -253,19 +310,16 @@ void main() {
           run: (_, _) async => 'ok',
         ),
       );
-      String event = '';
-      while (await lines.moveNext().timeout(const Duration(seconds: 2))) {
-        if (lines.current.startsWith('data:')) {
-          event = lines.current.substring(5).trim();
-          break;
-        }
-      }
-      expect(
-        (jsonDecode(event) as Map)['method'],
-        'notifications/tools/list_changed',
-      );
+      await expectToolsChanged(lines);
       await lines.cancel();
-      expect((await rpc(connection, 'ping'))['result'], isEmpty);
+      ClaudeSdkTools.unregister('http_changed');
+      final reconnected = await listen();
+      await expectToolsChanged(reconnected);
+      final tools = (await rpc(connection, 'tools/list'))['result'] as Map;
+      expect(
+        tools['tools'],
+        isNot(contains(containsPair('name', 'http_changed'))),
+      );
       connection.close();
     },
   );

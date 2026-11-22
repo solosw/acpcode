@@ -340,6 +340,94 @@ void main() {
     expect(await relay.errors, 'BaoCode MCP: the tools connection ended.\n');
   });
 
+  test('a dropped SSE stream reconnects without replaying pending tools', () async {
+    final listener = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => listener.close(force: true));
+    final streams = <HttpResponse>[];
+    final toolResponse = Completer<HttpResponse>();
+    var revoked = false;
+    var calls = 0;
+    const token = 'private-reconnect-token';
+    void reply(HttpResponse response, Object? id, Map<String, Object?> result) {
+      response.headers.contentType = ContentType.json;
+      response.write(
+        jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': result}),
+      );
+    }
+
+    listener.listen((request) async {
+      final response = request.response;
+      expect(request.headers.value('authorization'), 'Bearer $token');
+      if (request.method == 'GET') {
+        if (revoked) {
+          response.statusCode = HttpStatus.unauthorized;
+          await response.close();
+          return;
+        }
+        if (streams.isNotEmpty) {
+          expect(request.headers.value('mcp-protocol-version'), '2025-11-25');
+        }
+        response.headers.contentType = ContentType('text', 'event-stream');
+        response.bufferOutput = false;
+        response.write(': connected\n\n');
+        await response.flush();
+        streams.add(response);
+        return;
+      }
+      final message =
+          jsonDecode(await utf8.decoder.bind(request).join()) as Map;
+      switch (message['method']) {
+        case 'initialize':
+          reply(response, message['id'], {'protocolVersion': '2025-11-25'});
+        case 'notifications/initialized':
+          response.statusCode = HttpStatus.accepted;
+        case 'tools/call':
+          calls++;
+          toolResponse.complete(response);
+          return;
+        case 'ping':
+          reply(response, message['id'], {});
+      }
+      await response.close();
+    });
+
+    final relay = await _Relay.start({
+      ServerMcp.urlVariable: 'http://127.0.0.1:${listener.port}/mcp',
+      ServerMcp.tokenVariable: token,
+    });
+    await relay.initialize();
+    await relay.send('tools/call', id: 1);
+    final pending = await toolResponse.future.timeout(
+      const Duration(seconds: 5),
+    );
+    await streams.single.close();
+    await until(() => streams.length == 2);
+    streams.last.write(
+      'data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n',
+    );
+    await streams.last.flush();
+    await until(
+      () => relay.messages.any(
+        (message) => message['method'] == 'notifications/tools/list_changed',
+      ),
+    );
+    reply(pending, 1, {
+      'content': [
+        {'type': 'text', 'text': 'done'},
+      ],
+    });
+    await pending.close();
+    expect(_text(await relay.response(1)), 'done');
+    await relay.send('ping', id: 2);
+    expect((await relay.response(2))['result'], isEmpty);
+    expect(calls, 1);
+
+    revoked = true;
+    await streams.last.close();
+    expect(await relay.process.exitCode.timeout(const Duration(seconds: 5)), 3);
+    expect(await relay.errors, 'BaoCode MCP: the tools connection ended.\n');
+  });
+
   test(
     'app disconnect ends the relay and its outstanding HTTP requests',
     () async {

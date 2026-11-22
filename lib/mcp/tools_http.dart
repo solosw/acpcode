@@ -17,6 +17,9 @@ class ToolsHttpConnection {
 }
 
 class ToolsHttpServer {
+  ToolsHttpServer({this._heartbeatInterval = const Duration(seconds: 5)});
+
+  final Duration _heartbeatInterval;
   static final _random = Random.secure();
   static int _nextClient = 0;
   static const _versions = ['2025-11-25', '2025-06-18', '2025-03-26'];
@@ -64,6 +67,7 @@ class ToolsHttpServer {
       'mcp-http-${++_nextClient}',
       endpoint.authority,
       localMcp,
+      _heartbeatInterval,
     );
     _clients[key] = client;
     return ToolsHttpConnection(
@@ -233,7 +237,13 @@ class ToolsHttpServer {
 }
 
 class _Client {
-  _Client(this.cwd, this.session, this.authority, this.localMcp) {
+  _Client(
+    this.cwd,
+    this.session,
+    this.authority,
+    this.localMcp,
+    this.heartbeatInterval,
+  ) {
     if (localMcp case final endpoint?) {
       endpoint.onEvent = (message) =>
           _broadcast('data: ${jsonEncode(message)}\n\n');
@@ -241,17 +251,13 @@ class _Client {
     }
     _changes = ClaudeSdkTools.changes.listen((_) {
       if (!initialized || closed) return;
-      for (final response in [..._events]) {
-        unawaited(
-          _write(
-            response,
-            'data: {"jsonrpc":"2.0",'
-            '"method":"notifications/tools/list_changed"}\n\n',
-          ),
-        );
-      }
+      _broadcast(_toolsChanged);
     });
   }
+
+  static const _toolsChanged =
+      'data: {"jsonrpc":"2.0",'
+      '"method":"notifications/tools/list_changed"}\n\n';
 
   final String cwd;
   final String session;
@@ -261,6 +267,7 @@ class _Client {
   final _writes = <HttpResponse, Future<void>>{};
   final _heartbeats = <HttpResponse, Timer>{};
   final LocalMcpEndpoint? localMcp;
+  final Duration heartbeatInterval;
   StreamSubscription<void>? _changes;
 
   void _broadcast(String event) {
@@ -276,21 +283,31 @@ class _Client {
 
   Future<void> events(HttpResponse response) async {
     response.headers.contentType = ContentType('text', 'event-stream');
-    response.headers.set('cache-control', 'no-cache');
+    response.headers.set('cache-control', 'no-cache, no-transform');
+    response.headers.set('x-accel-buffering', 'no');
     response.bufferOutput = false;
     _events.add(response);
-    // Flush headers immediately; comments also keep idle channels alive.
-    _heartbeats[response] = Timer.periodic(const Duration(seconds: 15), (_) {
-      unawaited(_write(response, ': keepalive\n\n'));
-    });
+    final refreshTools = initialized && localMcp == null;
     try {
       await _write(response, ': connected\n\n');
+      // A new listener may have missed registry changes while disconnected.
+      if (refreshTools) await _write(response, _toolsChanged);
+      _scheduleHeartbeat(response);
       await response.done;
     } on Object {
       // A reconnect does not cancel calls or revoke this conversation.
     } finally {
       _closeEvent(response);
     }
+  }
+
+  void _scheduleHeartbeat(HttpResponse response) {
+    if (!_events.contains(response)) return;
+    // Wait for the previous flush so a slow reader cannot queue heartbeats.
+    _heartbeats[response] = Timer(heartbeatInterval, () async {
+      await _write(response, ': keepalive\n\n');
+      _scheduleHeartbeat(response);
+    });
   }
 
   Future<void> _write(HttpResponse response, String event) {
