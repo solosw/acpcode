@@ -29,6 +29,28 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.1">
+    <h2 class="plain"><a href="#v2.0.1">2.0.1</a></h2>
+    <p>This release expands conversation coordination, adds Antigravity as a model provider, and improves SSH and browser tool reliability.</p>
+    <p>New</p>
+    <ul>
+    <li>Agents and bots can start conversations, choose their models, assign work in separate worktrees, and receive progress and completion reports.</li>
+    <li>Fork a conversation from any completed turn. Suggested replies appear above the composer and come from the current response.</li>
+    <li>Sign in with Google to use Antigravity models with the built-in core, including web search, image generation and per-model quotas. Customize the system prompt in Built-in Core settings.</li>
+    <li>Pick which connected browser agents use and save files directly on the SSH host through the remote file picker.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Search large projects in parallel, open files beyond the previous 50,000-file limit, and watch large remote directory trees with fewer stalls.</li>
+    <li>Switch models across providers during a conversation. Turn costs reflect current usage prices, and mobile connections can fall back to another configured relay.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Keep the built-in MCP event stream alive while idle. The SSH relay reconnects after a temporary SSE disconnect without repeating tool calls.</li>
+    <li>Respect custom subagent models across providers. Improve text selection, queued message dragging and model search with an input method.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.0">
     <h2 class="plain"><a href="#v2.0.0">2.0.0</a></h2>
     <p>2.0 is a major release. Windows gets BaoCode Bash, and agents no longer fight PowerShell. One conversation can direct the others, a project can take in other folders, and your settings move to another computer in one file. The phone can send files to an agent, and an iPhone gets push notifications.</p>
