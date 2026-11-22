@@ -1736,6 +1736,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get quickOpenNoMatchingResults => '没有匹配的结果';
 
   @override
+  String quickOpenTooManyFiles(int count) {
+    return '只搜索了前 $count 个文件，项目里的文件更多';
+  }
+
+  @override
   String get quickOpenRecentlyUsed => '最近使用';
 
   @override
@@ -1967,6 +1972,62 @@ class AppLocalizationsZh extends AppLocalizations {
     });
     return '$_temp0';
   }
+
+  @override
+  String sessionStepDone(String action) {
+    String _temp0 = intl.Intl.selectLogic(action, {
+      'new': '开了对话',
+      'send': '派活给',
+      'wait': '等了',
+      'read': '看了',
+      'stop': '停下了',
+      'changes': '查看了改动',
+      'list': '列出了对话',
+      'models': '看了可用模型',
+      'other': '统筹了',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String sessionStepRunning(String action) {
+    String _temp0 = intl.Intl.selectLogic(action, {
+      'new': '正在开对话',
+      'send': '正在派活给',
+      'wait': '正在等',
+      'read': '正在看',
+      'stop': '正在停下',
+      'changes': '正在查看改动',
+      'list': '正在列出对话',
+      'models': '正在看可用模型',
+      'other': '正在统筹',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get sessionOpen => '打开对话';
+
+  @override
+  String sessionStatus(String status) {
+    String _temp0 = intl.Intl.selectLogic(status, {
+      'running': '进行中',
+      'waiting': '等你回答',
+      'done': '已完成',
+      'failed': '出错了',
+      'other': '',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get sessionAnswer => '去回答';
+
+  @override
+  String get sessionShowMore => '展开';
+
+  @override
+  String get sessionShowLess => '收起';
 
   @override
   String get sidePanelPlan => '计划';
@@ -2978,6 +3039,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get turnCopy => '复制回复';
 
   @override
+  String get turnFork => '从这里 Fork';
+
+  @override
   String get turnCopied => '已复制';
 
   @override
@@ -3090,6 +3154,30 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get activityCompacting => '正在压缩对话';
+
+  @override
+  String get noticeCompacted => '对话已压缩';
+
+  @override
+  String get noticeCompactedAuto => '对话已自动压缩';
+
+  @override
+  String get noticeCompactedTooLong => '对话已提前压缩：服务商以超出模型上下文为由拒绝了请求';
+
+  @override
+  String noticeCompactedTooLongWindow(String window) {
+    return '对话已提前压缩：服务商以超出模型上下文为由拒绝了请求，模型实际能用的比设定的 $window 小';
+  }
+
+  @override
+  String noticeCompactedTokens(String tokens) {
+    return '$tokens token';
+  }
+
+  @override
+  String noticeCompactedFromTo(String before, String after) {
+    return '$before → $after token';
+  }
 
   @override
   String get activityPlanning => '正在规划下一步';
@@ -3540,6 +3628,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get queuedRemove => '移出队列';
+
+  @override
+  String get replySuggestionHint => '单击放进输入框，双击直接发送';
 
   @override
   String get stopConfirmMessage => '要停止 Agent 吗？';
@@ -4053,11 +4144,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get generalSettingsQueuedDuringTurn => '插入当前任务';
 
   @override
-  String get generalSettingsPromptSuggestions => '建议下一条提示';
+  String get generalSettingsPromptSuggestions => '推荐回复';
 
   @override
   String get generalSettingsPromptSuggestionsDescription =>
-      '每轮结束后在输入框里给出灰色的下一条消息建议，按 Tab 采用。每条建议都会带着整段对话额外请求一次模型，关掉可以节省 token。从下一条消息起生效；目前仅支持 Claude Code。';
+      '每轮结束后，在输入框上方给出两三句你可能想发的话：单击放进输入框润色，双击直接发送；输入框空着时按 Tab 采用第一句。由 Agent 在回复末尾顺手写出，不额外请求模型。从下一条消息起生效。';
 
   @override
   String generalSettingsCommitAttributionLabel(String name) {
@@ -5060,6 +5151,43 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String langRunning(String id) {
     return '$id 正在运行';
+  }
+
+  @override
+  String langError(String id) {
+    return '$id 发生错误';
+  }
+
+  @override
+  String langWarning(String id) {
+    return '$id 发出警告';
+  }
+
+  @override
+  String get langClickForDetails => '单击查看日志和设置';
+
+  @override
+  String get langViewLog => '查看日志';
+
+  @override
+  String get langOpenLspSettings => '打开 LSP 设置';
+
+  @override
+  String get langServerLogLabel => 'LSP 日志';
+
+  @override
+  String langNoLogOutput(String id) {
+    return '$id 暂无日志输出。';
+  }
+
+  @override
+  String langServerInitializing(String id) {
+    return '$id 正在初始化（点击状态栏查看详情）';
+  }
+
+  @override
+  String langServerImportError(String id) {
+    return '$id 项目加载失败（点击状态栏查看详情）';
   }
 
   @override
@@ -6748,6 +6876,10 @@ class AppLocalizationsZh extends AppLocalizations {
       '用 ChatGPT 账号登录，按套餐额度使用 Codex 模型。添加多个账号时，请求按下方的负载模式分配，额度用尽的账号会自动让给下一个。';
 
   @override
+  String get modelsAccountsDescriptionAntigravity =>
+      '用 Google 账号登录，按套餐额度使用 Antigravity 的模型（Gemini、Claude），始终在 BaoCode 内置内核上运行。每组模型各有额度：某组用尽的账号只在这组模型上让给下一个。Google 发现账号在 Antigravity 之外使用时可能封号，请用可以承受损失的账号。';
+
+  @override
   String get modelsAccountsNone => '还没有账号';
 
   @override
@@ -6912,7 +7044,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get quotaBarThisChat => '当前对话';
 
   @override
-  String get quotaBarRefresh => '刷新额度';
+  String get quotaBarRefresh => '刷新额度数据';
 
   @override
   String modelsQuotaResetsIn(String time) {
@@ -6964,6 +7096,10 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get modelsAccountPortBusy =>
       '登录回调用的 1455 端口被其他程序占用了（例如 Docker 里的代理，或正在登录的 Codex CLI）。照常在浏览器里登录即可：登录后的页面会打不开或显示别的内容，把地址栏里的完整地址复制粘贴到下面。';
+
+  @override
+  String get modelsAccountPortBusyAntigravity =>
+      '登录回调用的 51121 端口被其他程序占用了（例如 Antigravity 本身，或正在登录的代理）。照常在浏览器里登录即可：登录后的页面会打不开或显示别的内容，把地址栏里的完整地址复制粘贴到下面。';
 
   @override
   String get modelsAccountCallback => '登录后的地址';
@@ -7237,13 +7373,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '为每个对话发送独立的 prompt_cache_key，让上游（或背后有多个后端的中转站）把同一对话的请求路由到已缓存的位置。上游不接受该字段时请关闭。';
 
   @override
-  String get modelsCodexVersion => 'Codex 版本';
-
-  @override
-  String get modelsCodexVersionDescription =>
-      '以哪个版本的 Codex CLI 身份发起请求。后端只列出该版本支持的模型，缺少新模型时可填更新的版本号，再刷新模型列表。留空使用应用默认值。';
-
-  @override
   String get modelsEnv => '额外环境变量';
 
   @override
@@ -7440,16 +7569,14 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsManage => '管理模型…';
 
   @override
-  String modelsSwitchTitle(String name) {
-    return '切换到 $name？';
+  String modelsFallbackHint(String picked, String fallback) {
+    return '$picked 的安全检查拦下了一条消息，Claude Code 已改用 $fallback 回答。可在菜单里切回。';
   }
 
   @override
-  String get modelsSwitchDetail =>
-      'Claude Code 会在新上游上重启，并用 --resume 接续当前对话。历史记录会原样发给新模型，部分上游首次处理会较慢。如果还有回复在进行，发送下一条消息时会先停止它。';
-
-  @override
-  String get modelsSwitchConfirm => '切换';
+  String modelsFallbackSwitchBack(String name) {
+    return '切回 $name';
+  }
 
   @override
   String get modelsAuxiliary => '辅助模型';
@@ -7862,7 +7989,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get appearanceSettingsMinimapDescription =>
-      '在对话左侧显示整段对话的缩略图，滚动时显示当前所在位置，点击或拖动即可跳转。开启时代替右侧滚动条；窗口太窄时不显示。关闭后恢复右侧滚动条。';
+      '在对话旁显示整段对话的缩略图，滚动时显示当前所在位置，点击或拖动即可跳转。开启时代替右侧滚动条；窗口太窄时不显示。关闭后恢复右侧滚动条。';
 
   @override
   String get appearanceSettingsWindowBlur => '原生高斯模糊';
@@ -7913,6 +8040,24 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get minimapElasticityBouncy => 'Q 弹';
+
+  @override
+  String get appearanceSettingsMinimapSide => '缩略图位置';
+
+  @override
+  String get appearanceSettingsMinimapSideDescription =>
+      '缩略图放在对话的左侧还是右侧。放在右侧时占用滚动条的位置，在侧边面板按钮的下方。';
+
+  @override
+  String appearanceSettingsMinimapSideLabel(String side) {
+    return '缩略图位置：$side';
+  }
+
+  @override
+  String get minimapSideLeft => '左侧';
+
+  @override
+  String get minimapSideRight => '右侧';
 
   @override
   String get appearanceSettingsCodeFont => '代码字体';
@@ -8071,6 +8216,11 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String remoteConnectionLost(String host) {
+    return '与 $host 的连接已断开，正在自动重试。发出的消息会等连上后再处理';
+  }
+
+  @override
   String get remoteRetry => '重试';
 
   @override
@@ -8134,6 +8284,11 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String remoteStatusFailed(String kind, String host) {
     return '$kind: $host（已断开）';
+  }
+
+  @override
+  String remoteStatusDown(String kind, String host) {
+    return '$kind: $host（已断开，正在重试...）';
   }
 
   @override
@@ -8866,6 +9021,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sidebarHostDisconnected => '已断开';
 
   @override
+  String get sidebarHostDown => '已断开，正在重试...';
+
+  @override
   String get sidebarHostIdle => '未连接';
 
   @override
@@ -9084,9 +9242,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mobileRelayInvalid => '不是中继地址，应形如 https://relay.example.com';
 
   @override
-  String get mobileRelayPinned => '指定的中继';
-
-  @override
   String get mobileRelayCustom => '自定义';
 
   @override
@@ -9094,6 +9249,24 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get mobileRelayCustomDescription => '你自己部署的中继（baocode-relay）的地址。';
+
+  @override
+  String get mobileRelayInUse => '正在使用';
+
+  @override
+  String get mobileRelayMoveUp => '上移';
+
+  @override
+  String get mobileRelayMoveDown => '下移';
+
+  @override
+  String get mobileRelayRemove => '移除';
+
+  @override
+  String get mobileRelayAdd => '添加中继';
+
+  @override
+  String get mobileRelayAddPick => '选择…';
 
   @override
   String get mobileRelayMode => '方式';
@@ -9105,11 +9278,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mobileRelayModeAutoDescription => '使用 BaoCode 的中继，自动选最近的一台。';
 
   @override
-  String get mobileRelayModePinned => '手动指定';
+  String get mobileRelayModePinned => '按顺序';
 
   @override
   String get mobileRelayModePinnedDescription =>
-      '只用你指定的一台：BaoCode 的某一台，或自定义地址。';
+      '用你列出的中继，从上往下：一台连不上时换下一台，前面的恢复后再换回去。可以是 BaoCode 的，也可以是自定义地址。';
 
   @override
   String get mobileRelayModeDirect => '仅直连';
@@ -9162,6 +9335,79 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsSectionStash => 'Stash';
+
+  @override
+  String get settingsSectionBuiltinCore => '内置内核';
+
+  @override
+  String get settingsBuiltinCoreKeywords => '内置内核 系统提示词 提示词 指令 prompt';
+
+  @override
+  String get builtinCoreSettingsTitle => '内置内核';
+
+  @override
+  String get builtinCoreSettingsDescription =>
+      '自定义 BaoCode 内置内核使用的系统提示词。修改仅对新对话生效，Bot 对话仍使用各自的提示词。';
+
+  @override
+  String get builtinCoreSystemPromptGroup => '系统提示词';
+
+  @override
+  String get builtinCoreSystemPromptMode => '模式';
+
+  @override
+  String builtinCoreSystemPromptModeLabel(String mode) {
+    return '系统提示词：$mode';
+  }
+
+  @override
+  String get builtinCoreModeDefault => '默认';
+
+  @override
+  String get builtinCoreModeAppend => '追加到默认';
+
+  @override
+  String get builtinCoreModeReplace => '替换默认';
+
+  @override
+  String get builtinCoreModeDefaultDetail => '使用 BaoCode 默认的核心指令。';
+
+  @override
+  String get builtinCoreModeAppendDetail => '保留默认核心指令，在末尾追加自定义内容。';
+
+  @override
+  String get builtinCoreModeReplaceDetail =>
+      '替换默认核心指令，仍保留自动记忆、输出风格、CLAUDE.md 和格式约定。';
+
+  @override
+  String get builtinCoreAppendLabel => '追加指令';
+
+  @override
+  String get builtinCoreAppendPlaceholder => '填写要追加到默认系统提示词末尾的指令…';
+
+  @override
+  String get builtinCoreReplaceLabel => '自定义核心指令';
+
+  @override
+  String get builtinCoreReplacePlaceholder => '填写用于替换默认核心指令的系统提示词…';
+
+  @override
+  String get builtinCoreLoadDefault => '载入默认原文';
+
+  @override
+  String get builtinCoreResetDefault => '恢复默认';
+
+  @override
+  String get builtinCoreDefaultPromptTitle => '默认系统提示词';
+
+  @override
+  String get builtinCoreDefaultPromptDescription => '未替换时内置内核使用的默认核心指令，可供参考。';
+
+  @override
+  String get builtinCoreCopyDefault => '复制';
+
+  @override
+  String get builtinCoreCopiedDefault => '已复制';
 
   @override
   String get settingsSectionCustomize => '自定义';
@@ -10207,6 +10453,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserSettingsStatus => '状态';
 
   @override
+  String get browserSettingsStatusDescription =>
+      'agent 使用标着「使用中」的浏览器；选另一个即可切换。';
+
+  @override
   String get browserSettingsNotInstalled => '还没有浏览器连接过';
 
   @override
@@ -10240,6 +10490,20 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String browserSettingsExtensionVersion(String version) {
     return '扩展版本 $version';
+  }
+
+  @override
+  String get browserSettingsUse => '使用这个浏览器';
+
+  @override
+  String get browserSettingsUsing => '使用中';
+
+  @override
+  String get browserSettingsChosenMissing => '所选的浏览器没有连接';
+
+  @override
+  String browserSettingsChosenMissingDescription(String path, String browser) {
+    return '$path：它重新连上之前，agent 先用 $browser。';
   }
 
   @override
@@ -13779,7 +14043,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get generalSettingsSessionToolsDescription =>
-      'Agent 能列出你的其他对话、在不唤醒的情况下查看进展、给它们派活（没在运行的会恢复，正忙的会排队）并等待结果。适合用一个对话统筹其他对话；改动后新启动的 Agent 才有。';
+      'Agent 能列出你的其他对话、在不唤醒的情况下查看进展、开新对话或给已有对话派活（需要时放进单独的 worktree），对方做完、出错或等你回答时会自动回报；也能停下它们、查看改了哪些文件。适合用一个对话统筹其他对话。关掉后 Agent 看不到也不能操作其他对话，已派出的也不再回报。';
 
   @override
   String get generalSettingsCommandLine => '命令行';
@@ -14034,5 +14298,24 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String modelsGatewayError(String error) {
     return '网关错误：$error';
+  }
+
+  @override
+  String remoteBrowserSaveTitle(String host) {
+    return '保存到 $host';
+  }
+
+  @override
+  String get remoteBrowserSaveAction => '另存为';
+
+  @override
+  String get remoteBrowserSaveName => '保存为：';
+
+  @override
+  String get remoteBrowserSave => '保存';
+
+  @override
+  String remoteBrowserReplace(String name) {
+    return '“$name”已存在，要替换它吗？';
   }
 }

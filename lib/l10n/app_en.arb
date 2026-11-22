@@ -688,6 +688,14 @@
   "quickOpenSearchingFiles": "Searching files…",
   "quickOpenNoFiles": "No files in this project",
   "quickOpenNoMatchingResults": "No matching results",
+  "quickOpenTooManyFiles": "Only the first {count} files are searched: this project has more",
+  "@quickOpenTooManyFiles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "quickOpenRecentlyUsed": "recently used",
   "@quickOpenRecentlyUsed": {
     "description": "Command palette group label."
@@ -815,6 +823,26 @@
     "description": "A browser step's verb while it runs (see browserStepDone).",
     "placeholders": {"action": {"type": "String"}}
   },
+  "sessionStepDone": "{action, select, new{Started} send{Handed work to} wait{Waited for} read{Read} stop{Stopped} changes{Checked the changes of} list{Listed the conversations} models{Checked the models} other{Coordinated}}",
+  "@sessionStepDone": {
+    "description": "A coordinating step's verb once done, by the session tool it called; the conversation's title follows.",
+    "placeholders": {"action": {"type": "String"}}
+  },
+  "sessionStepRunning": "{action, select, new{Starting} send{Handing work to} wait{Waiting for} read{Reading} stop{Stopping} changes{Checking the changes of} list{Listing the conversations} models{Checking the models} other{Coordinating}}",
+  "@sessionStepRunning": {
+    "description": "A coordinating step's verb while it runs (see sessionStepDone).",
+    "placeholders": {"action": {"type": "String"}}
+  },
+  "sessionOpen": "Open the conversation",
+  "sessionStatus": "{status, select, running{Working} waiting{Waiting on you} done{Done} failed{Failed} other{}}",
+  "@sessionStatus": {
+    "description": "How a conversation handed work stands, in the strip over the composer.",
+    "placeholders": {"status": {"type": "String"}}
+  },
+  "sessionAnswer": "Answer",
+  "@sessionAnswer": {"description": "Goes to a conversation that waits on the user, to answer it there."},
+  "sessionShowMore": "Show more",
+  "sessionShowLess": "Show less",
   "sidePanelPlan": "Plan",
   "@sidePanelPlan": {
     "description": "The side panel's plan page: the plan the agent wrote in plan mode, shown while there is one."
@@ -1711,6 +1739,10 @@
   "@turnCopy": {
     "description": "Hint of the button at the end of a finished turn that copies its answer."
   },
+  "turnFork": "Fork from here",
+  "@turnFork": {
+    "description": "Hint of the button at the end of a finished turn that copies the conversation up to there into a new one."
+  },
   "turnCopied": "Copied",
   "turnSpeed": "{speed} tok/s",
   "@turnSpeed": {
@@ -1826,6 +1858,18 @@
     "description": "Shown in an earlier conversation while it is read, e.g. from a remote project's host."
   },
   "activityCompacting": "Compacting conversation",
+  "noticeCompacted": "Conversation compacted",
+  "noticeCompactedAuto": "Conversation compacted automatically",
+  "noticeCompactedTooLong": "Conversation compacted early: the provider refused it as too long for the model",
+  "@noticeCompactedTooLong": {
+    "description": "The divider of a compaction forced by the API refusing the request as longer than the model's context, before the context set was full."
+  },
+  "noticeCompactedTooLongWindow": "Conversation compacted early: the provider refused it as too long for the model, which takes less than the {window} context set",
+  "@noticeCompactedTooLongWindow": {"placeholders": {"window": {"type": "String"}}},
+  "noticeCompactedTokens": "{tokens} tokens",
+  "@noticeCompactedTokens": {"placeholders": {"tokens": {"type": "String"}}},
+  "noticeCompactedFromTo": "{before} → {after} tokens",
+  "@noticeCompactedFromTo": {"placeholders": {"before": {"type": "String"}, "after": {"type": "String"}}},
   "activityPlanning": "Planning next move",
   "activityMusings": "Pondering\nNoodling\nPercolating\nCogitating\nSimmering\nMarinating\nTinkering\nGrokking\nMulling it over\nConnecting the dots\nChasing a hunch\nBrewing a plan\nHatching a plan\nWeighing the options\nUntangling threads\nHerding tokens\nSummoning context\nAsking the rubber duck\nReading the tea leaves\nSketching on a napkin\nDoodling in the margins\nSquinting at the diff\nCounting parentheses\nBefriending the compiler\nNegotiating with types\nWrangling edge cases\nTracing the stack\nFlipping through the docs\nSpelunking the codebase\nLining up the ducks\nShaking the magic 8-ball\nWarming up the neurons\nFolding thoughts\nBinding the monad\nAsking the oracle\nStirring the pot\nPolishing the plan",
   "@activityMusings": {
@@ -2267,6 +2311,10 @@
   "queuedEdit": "Take back to edit",
   "queuedSendNow": "Stop the agent and send this now",
   "queuedRemove": "Remove from the queue",
+  "replySuggestionHint": "Click to put it in the input, double-click to send it",
+  "@replySuggestionHint": {
+    "description": "Hover of a reply the agent suggests, over the composer."
+  },
   "stopConfirmMessage": "Stop the agent?",
   "stopConfirmDetail": "{count, plural, =1{The task running in the background will stop too.} other{The {count} tasks running in the background will stop too.}}",
   "@stopConfirmDetail": {
@@ -2685,11 +2733,11 @@
   "@generalSettingsQueuedDuringTurn": {
     "description": "Queued messages choice: the agent reads it in the turn running, between its tool calls, as Claude Code does in its own terminal."
   },
-  "generalSettingsPromptSuggestions": "Suggest Next Prompt",
+  "generalSettingsPromptSuggestions": "Suggest Replies",
   "@generalSettingsPromptSuggestions": {
-    "description": "Settings → General switch: whether Claude Code suggests the next prompt in the composer after each turn."
+    "description": "Settings → General switch: whether the agent suggests, at the end of each turn, what the user might send next, shown over the composer."
   },
-  "generalSettingsPromptSuggestionsDescription": "After each turn, a greyed-out suggestion for your next message, taken with Tab. Each one is an extra request with the whole conversation; turn it off to save tokens. Applies from the next message; Claude Code only.",
+  "generalSettingsPromptSuggestionsDescription": "After each turn, two or three things you might send next, over the composer: click one to put it in the input and edit it, double-click to send it as it is; Tab in an empty input takes the first. The agent writes them at the end of its reply, with no extra request. Applies from the next message.",
   "generalSettingsCommitAttributionLabel": "Commit Attribution: {name}",
   "@generalSettingsCommitAttributionLabel": {
     "description": "The commit attribution dropdown, as read out: its setting and the choice in effect.",
@@ -3611,6 +3659,50 @@
   },
   "langRunning": "{id} is running",
   "@langRunning": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "langError": "{id} reported an error",
+  "@langError": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "langWarning": "{id} reported a warning",
+  "@langWarning": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "langClickForDetails": "Click for log and settings",
+  "langViewLog": "View Log",
+  "langOpenLspSettings": "Open LSP Settings",
+  "langServerLogLabel": "LSP Log",
+  "langNoLogOutput": "No log output from {id} yet.",
+  "@langNoLogOutput": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "langServerInitializing": "{id} is still initializing (click the status bar for details)",
+  "@langServerInitializing": {
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "langServerImportError": "{id} failed to load the project (click the status bar for details)",
+  "@langServerImportError": {
     "placeholders": {
       "id": {
         "type": "String"
@@ -4922,6 +5014,7 @@
   },
   "modelsAccounts": "Accounts",
   "modelsAccountsDescription": "Sign in with ChatGPT to use Codex models on your plan's quota. With several accounts, requests are spread across them by the load balancing below, and one out of quota gives way to the next.",
+  "modelsAccountsDescriptionAntigravity": "Sign in with Google to use Antigravity's models (Gemini, Claude) on your plan's quota, always on BaoCode's own core. Each group of models has a quota of its own: an account out of one gives way to the next for those models alone. Google may suspend an account it sees used outside Antigravity: use one you can afford to lose.",
   "modelsAccountsNone": "No account yet",
   "modelsAccountCount": "{count, plural, =0{no accounts} =1{1 account} other{{count} accounts}}",
   "@modelsAccountCount": {
@@ -5083,7 +5176,7 @@
   },
   "quotaBarNone": "No account can be used",
   "quotaBarThisChat": "This chat",
-  "quotaBarRefresh": "Refresh Quota",
+  "quotaBarRefresh": "Refresh Quota Data",
   "modelsQuotaResetsIn": "resets in {time}",
   "@modelsQuotaResetsIn": {
     "placeholders": {
@@ -5135,6 +5228,7 @@
   "modelsBalanceMostRemaining": "Most Remaining",
   "modelsBalanceMostRemainingDescription": "Each new conversation goes to the account with the most quota left.",
   "modelsAccountPortBusy": "Port 1455, which sign-in comes back to, is used by another program (a proxy in Docker, or the Codex CLI signing in). Sign in in the browser all the same: the page it ends on will fail to load or show something else. Copy that page's full address and paste it below.",
+  "modelsAccountPortBusyAntigravity": "Port 51121, which sign-in comes back to, is used by another program (Antigravity itself, or a proxy signing in). Sign in in the browser all the same: the page it ends on will fail to load or show something else. Copy that page's full address and paste it below.",
   "modelsAccountCallback": "Address after sign-in",
   "modelsAccountCallbackDetail": "If the browser does not come back by itself, paste the address it ended on.",
   "modelsProtocolAnthropic": "Anthropic-compatible",
@@ -5280,8 +5374,6 @@
   "modelsPreserveThinkingDescription": "Replays the model's reasoning (reasoning_content) in later requests, as DeepSeek and others want.",
   "modelsPromptCacheKey": "Prompt Cache Key",
   "modelsPromptCacheKeyDescription": "Sends each conversation's own prompt_cache_key, so the upstream (or a relay in front of several) routes its requests to where the earlier ones are cached. Turn off for an upstream that rejects the field.",
-  "modelsCodexVersion": "Codex Version",
-  "modelsCodexVersionDescription": "The Codex CLI version requests are made as. The backend only lists models that version supports, so if new models are missing, enter a newer version and refresh the model list. Leave empty to use the app's default.",
   "modelsEnv": "Extra Environment",
   "modelsEnvDescription": "One KEY=VALUE a line, given to Claude Code after the settings above.",
   "modelsHeaders": "Custom Headers",
@@ -5394,16 +5486,25 @@
   "modelsImageNone": "None turned on",
   "modelsSave": "Save",
   "modelsManage": "Manage Models…",
-  "modelsSwitchTitle": "Switch to {name}?",
-  "@modelsSwitchTitle": {
+  "modelsFallbackHint": "{picked} flagged a message, so Claude Code answers on {fallback} instead. Switch back from the menu.",
+  "@modelsFallbackHint": {
+    "placeholders": {
+      "picked": {
+        "type": "String"
+      },
+      "fallback": {
+        "type": "String"
+      }
+    }
+  },
+  "modelsFallbackSwitchBack": "Switch Back to {name}",
+  "@modelsFallbackSwitchBack": {
     "placeholders": {
       "name": {
         "type": "String"
       }
     }
   },
-  "modelsSwitchDetail": "Claude Code restarts on the other upstream and resumes this conversation (--resume). Its history is sent to the new model as it is; some upstreams take it slower the first time. A reply still running stops when you send the next message.",
-  "modelsSwitchConfirm": "Switch",
   "modelsAuxiliary": "Auxiliary Model",
   "modelsAuxiliaryDescription": "Used for auxiliary work, such as generating conversation titles and commit messages. Automatic: the session's model (for commit messages, new sessions' default); an upstream's by its Haiku tier.",
   "modelsAuxiliaryAuto": "Automatic",
@@ -5737,7 +5838,7 @@
     }
   },
   "appearanceSettingsMinimap": "Conversation Minimap",
-  "appearanceSettingsMinimapDescription": "A minimap of the whole conversation at the left of its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.",
+  "appearanceSettingsMinimapDescription": "A minimap of the whole conversation beside its column, where you are in it shown as you scroll; click or drag it to get somewhere. It stands in for the scrollbar, and is not shown in a window too narrow for it. Off: the scrollbar.",
   "appearanceSettingsWindowBlur": "Native Window Blur",
   "appearanceSettingsWindowBlurDescription": "The system's blur under the windows (macOS's sidebar material, Windows 11's acrylic): what is behind them shows through the sidebar and the conversation. Off: the windows are opaque.",
   "appearanceSettingsSidebarTimes": "Times in the Sidebar",
@@ -5766,6 +5867,18 @@
   "minimapElasticitySubtle": "Subtle",
   "minimapElasticityMedium": "Medium",
   "minimapElasticityBouncy": "Bouncy",
+  "appearanceSettingsMinimapSide": "Minimap Position",
+  "appearanceSettingsMinimapSideDescription": "Which side of the conversation's column the minimap is on. At the right it takes the scrollbar's place, below the side panel's buttons.",
+  "appearanceSettingsMinimapSideLabel": "Minimap position: {side}",
+  "@appearanceSettingsMinimapSideLabel": {
+    "placeholders": {
+      "side": {
+        "type": "String"
+      }
+    }
+  },
+  "minimapSideLeft": "Left",
+  "minimapSideRight": "Right",
   "appearanceSettingsCodeFont": "Code Font",
   "appearanceSettingsCodeFontDescription": "The font code is drawn in: in the editor, the terminal, the chat and the previews. Family names in order, separated by commas, or a preset.",
   "appearanceSettingsCodeFontDefault": "Default",
@@ -5872,6 +5985,14 @@
       }
     }
   },
+  "remoteConnectionLost": "The connection to {host} is lost, and being tried again by itself. What you send waits until it is back",
+  "@remoteConnectionLost": {
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
   "remoteRetry": "Retry",
   "remoteSignInTitle": "Sign in to {host}",
   "@remoteSignInTitle": {
@@ -5957,6 +6078,18 @@
   },
   "remoteStatusFailed": "{kind}: {host} (disconnected)",
   "@remoteStatusFailed": {
+    "placeholders": {
+      "kind": {
+        "type": "String",
+        "description": "How the host is reached: SSH, or WSL for a WSL distribution."
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteStatusDown": "{kind}: {host} (disconnected, retrying...)",
+  "@remoteStatusDown": {
     "placeholders": {
       "kind": {
         "type": "String",
@@ -6653,6 +6786,7 @@
   "sidebarHostConnected": "Connected",
   "sidebarHostConnecting": "Connecting...",
   "sidebarHostDisconnected": "Disconnected",
+  "sidebarHostDown": "Disconnected, retrying...",
   "sidebarHostIdle": "Not connected",
   "sidebarDisconnectHost": "Disconnect",
   "sidebarRemoveHost": "Remove Host",
@@ -6791,15 +6925,20 @@
   "mobileStatusDenied": "On, but the relay turned this computer away: {reason}",
   "@mobileStatusDenied": {"placeholders": {"reason": {"type": "String"}}},
   "mobileRelayInvalid": "Not a relay address; one looks like https://relay.example.com",
-  "mobileRelayPinned": "Relay Used",
   "mobileRelayCustom": "Custom",
   "mobileRelayCustomAddress": "Custom Address",
   "mobileRelayCustomDescription": "The address of a relay you run yourself (baocode-relay).",
+  "mobileRelayInUse": "In use",
+  "mobileRelayMoveUp": "Move Up",
+  "mobileRelayMoveDown": "Move Down",
+  "mobileRelayRemove": "Remove",
+  "mobileRelayAdd": "Add Relay",
+  "mobileRelayAddPick": "Choose…",
   "mobileRelayMode": "How",
   "mobileRelayModeAuto": "Automatic",
   "mobileRelayModeAutoDescription": "BaoCode's relays, the nearest that answers.",
-  "mobileRelayModePinned": "Pick One",
-  "mobileRelayModePinnedDescription": "Only the one picked: one of BaoCode's, or a custom address.",
+  "mobileRelayModePinned": "Your List",
+  "mobileRelayModePinnedDescription": "The relays you list, in order: the next when one cannot be reached, and back to an earlier one once it can. BaoCode's, or custom addresses.",
   "mobileRelayModeDirect": "Direct Only",
   "mobileRelayModeDirectDescription": "No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.",
   "mobileDirectPort": "Direct Port",
@@ -6817,6 +6956,36 @@
   "mobileLegacyPhone": "Needs pairing again: paired before the connection was rebuilt",
   "mobileLegacyRepair": "Pair Again",
   "settingsSectionStash": "Stash",
+  "settingsSectionBuiltinCore": "Built-in Core",
+  "settingsBuiltinCoreKeywords": "builtin core system prompt instructions agent",
+  "builtinCoreSettingsTitle": "Built-in Core",
+  "builtinCoreSettingsDescription": "Customize the system prompt used by BaoCode's built-in core. Changes apply to new conversations; bots keep their own prompts.",
+  "builtinCoreSystemPromptGroup": "System Prompt",
+  "builtinCoreSystemPromptMode": "Mode",
+  "builtinCoreSystemPromptModeLabel": "System Prompt: {mode}",
+  "@builtinCoreSystemPromptModeLabel": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "builtinCoreModeDefault": "Default",
+  "builtinCoreModeAppend": "Append to Default",
+  "builtinCoreModeReplace": "Replace Default",
+  "builtinCoreModeDefaultDetail": "Uses BaoCode's default core instructions.",
+  "builtinCoreModeAppendDetail": "Keeps the default core instructions and appends your text at the end.",
+  "builtinCoreModeReplaceDetail": "Replaces the default core instructions while keeping auto memory, output style, CLAUDE.md, and formatting rules.",
+  "builtinCoreAppendLabel": "Appended Instructions",
+  "builtinCoreAppendPlaceholder": "Write instructions to append to the default system prompt…",
+  "builtinCoreReplaceLabel": "Custom Core Instructions",
+  "builtinCoreReplacePlaceholder": "Write the system prompt that replaces the default core instructions…",
+  "builtinCoreLoadDefault": "Load Default",
+  "builtinCoreResetDefault": "Reset to Default",
+  "builtinCoreDefaultPromptTitle": "Default System Prompt",
+  "builtinCoreDefaultPromptDescription": "The built-in core instructions used when no replacement is set, for reference.",
+  "builtinCoreCopyDefault": "Copy",
+  "builtinCoreCopiedDefault": "Copied",
   "settingsSectionCustomize": "Customize",
   "settingsCustomizeKeywords": "skills subagents rules commands agents claude memory hooks mcp plugins",
   "stashTitle": "Stash",
@@ -7530,6 +7699,7 @@
   "browserSettingsEnabled": "Let Agents Use the Browser",
   "browserSettingsEnabledDescription": "When off, agents have no browser tools and the extension disconnects.",
   "browserSettingsStatus": "Status",
+  "browserSettingsStatusDescription": "Agents use the browser marked In Use; choose another to switch.",
   "browserSettingsNotInstalled": "No browser has connected yet",
   "browserSettingsNotInstalledDescription": "Install the extension either way below, then open the browser: it connects automatically.",
   "browserSettingsNotRunning": "No browser connected",
@@ -7542,6 +7712,11 @@
   "@browserSettingsIncompatible": {"description": "A browser connected whose extension BaoCode cannot use: one too old, or newer than the app.", "placeholders": {"browser": {"type": "String"}}},
   "browserSettingsExtensionVersion": "Extension {version}",
   "@browserSettingsExtensionVersion": {"description": "The version of BaoCode's extension in a connected browser.", "placeholders": {"version": {"type": "String"}}},
+  "browserSettingsUse": "Use This Browser",
+  "browserSettingsUsing": "In Use",
+  "browserSettingsChosenMissing": "The browser chosen is not connected",
+  "browserSettingsChosenMissingDescription": "{path}: agents use {browser} until it connects again.",
+  "@browserSettingsChosenMissingDescription": {"description": "Under browserSettingsChosenMissing: the chosen browser's executable, and the connected one used meanwhile.", "placeholders": {"path": {"type": "String"}, "browser": {"type": "String"}}},
   "browserSettingsExtensionOld": "The extension is out of date. From the store, it updates automatically, or click Update in chrome://extensions; installed manually, download the zip again, replace the folder's contents and click reload.",
   "browserSettingsAppOld": "The extension is newer than this BaoCode. Update BaoCode.",
   "browserSettingsNoFileAccess": "File access is off",
@@ -9063,7 +9238,7 @@
   "settingsTransferFailed": "Not done: {error}",
   "@settingsTransferFailed": {"placeholders": {"error": {"type": "String"}}},
   "generalSettingsSessionTools": "Agents can coordinate other conversations",
-  "generalSettingsSessionToolsDescription": "An agent can list your other conversations, read where they stand without waking them, hand them work (resumed if stopped, queued if busy) and wait for them. For one conversation that coordinates the others; agents started after the change have it.",
+  "generalSettingsSessionToolsDescription": "An agent can list your other conversations, read where they stand without waking them, start new ones or hand work to others (in a worktree of their own if need be), and hears back by itself when each is done, fails or waits on you; it can also stop them and see which files they changed. For one conversation that coordinates the others. Off, agents neither see nor act on other conversations, and those handed work no longer report back.",
   "generalSettingsCommandLine": "Command Line",
   "baoBashRecommended": "BaoCode Bash (recommended)",
   "baoBashDescription": "A complete bash for agents on Windows: rg, grep, sed, awk, find, jq, tar and some 80 other common commands built in, no Git for Windows needed, and C:\\ and /c/ paths alike. Both the built-in core and Claude Code's run their agents' commands with it.",
@@ -9196,5 +9371,12 @@
   "modelsGatewayCopyAddress": "Copy Address",
   "modelsGatewayApply": "Save and Apply",
   "modelsGatewayError": "Gateway error: {error}",
-  "@modelsGatewayError": {"placeholders": {"error": {"type": "String"}}}
+  "@modelsGatewayError": {"placeholders": {"error": {"type": "String"}}},
+  "remoteBrowserSaveTitle": "Save to {host}",
+  "@remoteBrowserSaveTitle": {"placeholders": {"host": {"type": "String"}}},
+  "remoteBrowserSaveAction": "Save As",
+  "remoteBrowserSaveName": "Save As:",
+  "remoteBrowserSave": "Save",
+  "remoteBrowserReplace": "“{name}” already exists. Replace it?",
+  "@remoteBrowserReplace": {"placeholders": {"name": {"type": "String"}}}
 }

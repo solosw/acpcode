@@ -14,6 +14,7 @@ import '../bots/bots.dart';
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 import '../chat/composer/composer_files.dart' show fileReferenceText;
+import '../chat/composer/composer_images.dart' show compactImage;
 import '../chat/composer/paste_store.dart';
 import '../chat/composer/remote_drops.dart';
 import '../chat/panels/context_usage_panel.dart' show ContextUsagePanel;
@@ -25,9 +26,11 @@ import '../kernel/agent_kernel.dart' show KernelChoiceKind;
 import '../kernel/kernel_types.dart';
 import '../remote/project_host.dart';
 import '../remote/ssh_host.dart';
+import '../workspace/session_tools.dart';
 import '../workspace/workspace.dart';
 import 'chat_codec.dart';
 import 'interaction_codec.dart';
+import 'link_quota.dart';
 
 /// A project's files, on its host, and how it spells their paths.
 typedef ProjectFiles = ({IdeFileService files, p.Context paths});
@@ -82,6 +85,7 @@ class WorkspaceBridge {
     this.uploadsOf = phoneUploadsOf,
     this.customizations,
     this.bots,
+    this.quota,
     this.throttle = const Duration(milliseconds: 150),
     this.outputEvery = const Duration(milliseconds: 500),
   });
@@ -119,6 +123,9 @@ class WorkspaceBridge {
 
   /// The user's bots; none told without.
   final Bots? bots;
+
+  /// The conversations' quota; none told without.
+  final LinkQuota? quota;
 
   /// How often a phone hears of changes at most: a turn's text streams in
   /// many more times than that.
@@ -194,6 +201,15 @@ class WorkspaceBridge {
 
   static String idOf(AgentThread thread) =>
       _ids[thread] ??= thread.id ?? 'new-$_run-${_nextId++}';
+
+  /// A conversation's id ([SessionTools.idOf]: its session's, kept across
+  /// runs) as the phones know it ([idOf]): a new agent's, given here, until
+  /// the run ends.
+  String _phoneSession(String id) =>
+      switch (SessionTools.threadOf(workspace, id)) {
+        final thread? => idOf(thread),
+        null => id,
+      };
 
   /// The index of [thread]'s user message that [params] names by its
   /// `index` (counted from the phone's first item, as its updates are).
@@ -467,6 +483,7 @@ class WorkspaceBridge {
   Future<Object?> _send(Map<String, Object?> params) async {
     final text = (params['text'] as String? ?? '').trim();
     if (text.isEmpty && _images(params['images']).isEmpty) return null;
+    final images = await _compacted(params['images']);
     final AgentThread thread;
     var notes = const <String>[];
     if (params['bot'] case final Object id) {
@@ -492,7 +509,7 @@ class WorkspaceBridge {
       throw const LinkRemoteException('busy', 'The agent is at work');
     }
     session.send(
-      _message(thread, params),
+      _message(thread, params, images),
       now: params['now'] == true,
       from: _from(thread),
       notes: notes,
@@ -520,6 +537,8 @@ class WorkspaceBridge {
           throttle: throttle,
           window: params['window'] as int?,
           pathOf: (full) => _phonePath(thread.project, full),
+          sessionOf: _phoneSession,
+          quota: quota,
         );
         return follow.start(
           have: [
@@ -536,6 +555,10 @@ class WorkspaceBridge {
           );
         }
         return follow.earlier(params['count'] as int? ?? 50);
+      case LinkMethods.quota:
+        final thread = _thread(params['session']);
+        await quota?.refresh(thread.session);
+        return null;
       case LinkMethods.close:
         if (params['session'] case final String id) {
           _follows.remove(id)?.dispose();
@@ -562,7 +585,8 @@ class WorkspaceBridge {
       case LinkMethods.edit:
         final thread = _thread(params['session']);
         final index = _messageAt(thread, params);
-        final message = _message(thread, params);
+        final images = await _compacted(params['images']);
+        final message = _message(thread, params, images);
         if (message.isEmpty) return null;
         thread.session.editMessage(
           index,
@@ -850,19 +874,29 @@ class WorkspaceBridge {
         if (key != null) {
           if (_taken[key] case final taken?) return taken;
         }
-        final answer = Future<Object?>.value({
-          'seq': _groups().send(
-            group.id,
-            text: text,
-            images: images,
-            ref: (params['ref'] as num?)?.toInt(),
-          ),
-        });
-        if (key != null) {
-          _taken[key] = answer;
-          if (_taken.length > _takenKept) _taken.remove(_taken.keys.first);
+        // Kept before its pictures are made smaller: one sent again
+        // meanwhile is answered as it, not taken twice.
+        final answer = () async {
+          final compacted = await Future.wait(images.map(compactImage));
+          return <String, Object?>{
+            'seq': _groups().send(
+              group.id,
+              text: text,
+              images: compacted,
+              ref: (params['ref'] as num?)?.toInt(),
+            ),
+          };
+        }();
+        if (key == null) return answer;
+        _taken[key] = answer;
+        if (_taken.length > _takenKept) _taken.remove(_taken.keys.first);
+        try {
+          return await answer;
+        } on Object {
+          // Not taken: it may be sent again.
+          _taken.remove(key);
+          rethrow;
         }
-        return answer;
       case LinkMethods.groupImage:
         final image = _groups().image(
           _group(params['group']).id,
@@ -914,9 +948,12 @@ class WorkspaceBridge {
   /// composer would send it to [thread]: its files named by their paths as
   /// the agent finds them, its pictures numbered on from the
   /// conversation's and named in the text.
-  ComposerMessage _message(AgentThread thread, Map<String, Object?> params) {
+  ComposerMessage _message(
+    AgentThread thread,
+    Map<String, Object?> params,
+    List<ImageAttachment> images,
+  ) {
     var text = (params['text'] as String? ?? '').trim();
-    final images = _images(params['images']);
     final named = [
       for (final mention in (params['mentions'] as List?) ?? const [])
         if (mention is String && mention.isNotEmpty) mention,
@@ -954,7 +991,18 @@ class WorkspaceBridge {
   Future<Map<String, Object?>> _readImage(Project project, String path) async {
     await _reach(project);
     final (:files, :paths) = _filesOf(project);
-    final candidates = _candidates(project, path);
+    final candidates = [
+      ..._candidates(project, path),
+      // A workspace's own folder too, not one of its roots: a picture an
+      // agent working there made (a screenshot) and showed, named by the
+      // phone from the project's path, as it names any file under that.
+      if (workspace.workspaceAt(project.path) != null &&
+          !paths.isAbsolute(path) &&
+          path.isNotEmpty)
+        if (paths.normalize(paths.join(project.root, path)) case final full
+            when paths.isWithin(project.root, full))
+          full,
+    ];
     final type = switch (paths.extension(path).toLowerCase()) {
       '.png' => 'image/png',
       '.jpg' || '.jpeg' => 'image/jpeg',
@@ -1076,6 +1124,11 @@ class WorkspaceBridge {
     }
     throw const LinkRemoteException('bad', 'Not a picture, or too large');
   }
+
+  /// [json]'s pictures ([_images]), an opaque PNG (a phone's screenshot,
+  /// which its picker keeps PNG) as JPEG ([compactImage]).
+  static Future<List<ImageAttachment>> _compacted(Object? json) =>
+      Future.wait(_images(json).map(compactImage));
 
   static ImageAttachment? _image(String data, String type, String? name) {
     try {
@@ -1397,7 +1450,9 @@ class _Follow {
     required this.peer,
     required this.throttle,
     required this.pathOf,
+    required this.sessionOf,
     this.window,
+    this.quota,
   });
 
   final String id;
@@ -1412,7 +1467,9 @@ class _Follow {
     peer: peer,
     throttle: throttle,
     pathOf: pathOf,
+    sessionOf: sessionOf,
     window: window,
+    quota: quota,
   );
 
   /// How many of the last items the phone follows at first, if it pages
@@ -1422,6 +1479,15 @@ class _Follow {
   /// A changed file's path as the phone names it in the project; null for
   /// one outside it, given as it is.
   final String? Function(String full) pathOf;
+
+  /// A conversation's id as the phone knows it, for one an item names.
+  final String Function(String id) sessionOf;
+
+  /// Its quota, told as it changes.
+  final LinkQuota? quota;
+
+  Map<String, Object?> _encode(ChatItem item) =>
+      ChatCodec.encode(item, session: sessionOf);
 
   /// The session's index of the phone's first item: 0 unless it has a
   /// [window].
@@ -1467,12 +1533,15 @@ class _Follow {
     session
       ..attach()
       ..addListener(_changed);
+    if (quota case final quota?) {
+      quota.changes.addListener(_changed);
+      // Not known, or old: nothing on the desktop may be asking now.
+      unawaited(quota.refresh(session, force: false).catchError((_) {}));
+    }
     if (_had(have) case (:final from, :final same)) {
       _from = from;
       _sent = [for (var i = from; i < from + same; i++) session.itemAt(i)];
-      _sentJson = [
-        for (final item in _sent) jsonEncode(ChatCodec.encode(item)),
-      ];
+      _sentJson = [for (final item in _sent) jsonEncode(_encode(item))];
       _restSent = null;
       if (_update() case final update?) {
         return _slimmer.encode(update, full: true);
@@ -1492,7 +1561,7 @@ class _Follow {
     final lowest = math.max(0, total - have.length - (window ?? 0) - 200);
     final digests = <int, String>{};
     String digestAt(int i) =>
-        digests[i] ??= linkDigest(ChatCodec.encode(session.itemAt(i)));
+        digests[i] ??= linkDigest(_encode(session.itemAt(i)));
     ({int from, int same})? best;
     for (var from = total - 1; from >= lowest; from--) {
       if (digestAt(from) != have.first) continue;
@@ -1545,7 +1614,7 @@ class _Follow {
       // afresh), is what was sent.
       while (start < _sent.length && start < count) {
         if (!identical(_sent[start], items[start])) {
-          final json = encoded[start] = ChatCodec.encode(items[start]);
+          final json = encoded[start] = _encode(items[start]);
           if (jsonEncode(json) != _sentJson[start]) break;
         }
         start++;
@@ -1563,6 +1632,7 @@ class _Follow {
         : _from > 0 || session.hasEarlierHistory || session.loadingEarlier;
     final goal = _goal(session.goal);
     final context = _context(session.context);
+    final quota = this.quota?.of(session);
     final restText = jsonEncode([
       earlier,
       goal,
@@ -1572,6 +1642,7 @@ class _Follow {
       [for (final choice in choices) choice.toJson()],
       changes,
       [for (final task in tasks) task.toJson()],
+      quota,
     ]);
     if (!full &&
         start == count &&
@@ -1580,8 +1651,7 @@ class _Follow {
       return null;
     }
     final json = [
-      for (var i = start; i < count; i++)
-        encoded[i] ?? ChatCodec.encode(items[i]),
+      for (var i = start; i < count; i++) encoded[i] ?? _encode(items[i]),
     ];
     _wasFull = full;
     _before = !full && start < count && start < _sentJson.length
@@ -1606,6 +1676,7 @@ class _Follow {
       earlier: earlier,
       goal: goal,
       context: context,
+      quota: quota,
     );
   }
 
@@ -1666,7 +1737,7 @@ class _Follow {
     _syncFrom();
     final n = math.min(math.max(count, 0), _from);
     final items = [for (var i = _from - n; i < _from; i++) session.itemAt(i)];
-    final json = [for (final item in items) ChatCodec.encode(item)];
+    final json = [for (final item in items) _encode(item)];
     _sent = [...items, ..._sent];
     _sentJson = [for (final item in json) jsonEncode(item), ..._sentJson];
     _from -= n;
@@ -1750,6 +1821,7 @@ class _Follow {
     _disposed = true;
     _timer?.cancel();
     session.removeListener(_changed);
+    quota?.changes.removeListener(_changed);
     session.detach();
   }
 }

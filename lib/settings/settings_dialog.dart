@@ -30,6 +30,7 @@ enum SettingsSection {
   appearance,
   models,
   agents,
+  builtinCore,
   usage,
   network,
   ssh,
@@ -53,6 +54,7 @@ enum SettingsCategory {
     SettingsSection.appearance,
     SettingsSection.models,
     SettingsSection.agents,
+    SettingsSection.builtinCore,
     SettingsSection.usage,
     SettingsSection.network,
     SettingsSection.ssh,
@@ -247,6 +249,7 @@ class SettingsDialogState extends State<SettingsDialog> {
     SettingsSection.models =>
       ChannelSetup.channelBuild ? Codicons.person : Codicons.sparkle,
     SettingsSection.agents => Codicons.hubot,
+    SettingsSection.builtinCore => Codicons.chip,
     SettingsSection.usage => SvgIcons.usage,
     SettingsSection.network => Codicons.radioTower,
     SettingsSection.ssh => Codicons.remote,
@@ -281,6 +284,7 @@ class SettingsDialogState extends State<SettingsDialog> {
             ? l10n.channelAccountTitle
             : l10n.settingsSectionModels,
       SettingsSection.agents => 'Agents',
+      SettingsSection.builtinCore => l10n.settingsSectionBuiltinCore,
       SettingsSection.usage => l10n.settingsSectionUsage,
       SettingsSection.network => l10n.settingsSectionNetwork,
       SettingsSection.ssh => l10n.settingsSectionSsh,
@@ -302,6 +306,7 @@ class SettingsDialogState extends State<SettingsDialog> {
   static String keywords(BuildContext context, SettingsSection section) =>
       switch (section) {
         SettingsSection.appearance => context.l10n.settingsAppearanceKeywords,
+        SettingsSection.builtinCore => context.l10n.settingsBuiltinCoreKeywords,
         SettingsSection.usage => context.l10n.ustatKeywords,
         SettingsSection.network => context.l10n.settingsNetworkKeywords,
         SettingsSection.ssh => context.l10n.settingsSshKeywords,

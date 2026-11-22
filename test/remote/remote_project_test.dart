@@ -217,6 +217,35 @@ void main() {
       await until(() => host.state == SshHostState.connected);
     });
 
+    test('lost for a while: down, not still connecting; back: not', () async {
+      final host = SshHost(
+        'dev',
+        connect: connector.call,
+        maxBackoff: const Duration(milliseconds: 1),
+        downAfter: const Duration(milliseconds: 100),
+      );
+      addTearDown(host.close);
+      await host.ready;
+      expect(host.down, isFalse);
+      connector.failure = const SshConnectException(
+        SshFailure.unreachable,
+        'The host could not be reached.',
+      );
+      await connector.links.single.drop();
+      await until(() => host.state == SshHostState.reconnecting);
+      // Lost a moment: just being made again.
+      expect(host.down, isFalse);
+      var told = false;
+      host.addListener(() => told |= host.down);
+      await until(() => host.down);
+      expect(told, isTrue, reason: 'listeners are told it is down');
+      expect(host.state, SshHostState.reconnecting);
+
+      connector.failure = null;
+      await until(() => host.state == SshHostState.connected);
+      expect(host.down, isFalse);
+    });
+
     test('a project\'s sessions are listed once its host is reached', () async {
       final mock = MockKernels.claudeCode;
       final workspace = Workspace(
@@ -291,6 +320,48 @@ void main() {
       await tester.pump();
       expect(
         find.text('https://dl.baocode.dev/x.gz: HTTP 404'),
+        findsOneWidget,
+      );
+
+      connector.failure = null;
+      await tester.tap(find.text('Retry'));
+      await tester.runAsync(
+        () => until(() => hosts['dev'].state == SshHostState.connected),
+      );
+      await tester.pump();
+      expect(find.byType(HealthBanner), findsNothing);
+    });
+
+    testWidgets('one lost for a while is said over the chat, though tried '
+        'again by itself', (tester) async {
+      hosts = SshHosts.instance = SshHosts(
+        connect: connector.call,
+        downAfter: const Duration(milliseconds: 100),
+      );
+      final location = RemoteLocation.of('dev', root);
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: SshHostBanner(location: location)),
+        ),
+      );
+      await tester.runAsync(() => hosts['dev'].ready);
+      connector.failure = const SshConnectException(
+        SshFailure.unreachable,
+        'The host could not be reached.',
+      );
+      await tester.runAsync(() async {
+        await connector.links.single.drop();
+        await until(() => hosts['dev'].state == SshHostState.reconnecting);
+      });
+      await tester.pump();
+      expect(find.byType(HealthBanner), findsNothing);
+
+      await tester.runAsync(() => until(() => hosts['dev'].down));
+      await tester.pump();
+      expect(
+        find.textContaining('The connection to dev is lost'),
         findsOneWidget,
       );
 
@@ -1479,6 +1550,38 @@ printf '%s\n' "$line"
       model.select(null);
       // Nothing selected: the folder it is in.
       expect(model.target, root);
+    });
+
+    test('saving: files listed beside the folders, one clicked its name '
+        'taken; where to save, the name where it is', () async {
+      Directory(p.join(root, 'src')).createSync();
+      File(p.join(root, 'notes.md')).writeAsStringSync('');
+      final model = RemoteBrowserModel(
+        RemoteBrowseRequest(
+          host: 'dev',
+          saveName: 'Untitled-1',
+          directory: root,
+          connect: hosts['dev'].reconnect,
+        ),
+      );
+      addTearDown(model.dispose);
+      await model.connect();
+      expect(model.directory, root);
+      expect(model.visible.map((e) => e.name), ['src', 'notes.md']);
+      expect(model.name, 'Untitled-1');
+      expect(model.target, p.join(root, 'Untitled-1'));
+
+      // A folder selected keeps the name; a file gives its own.
+      model.select('src');
+      expect(model.name, 'Untitled-1');
+      model.select('notes.md');
+      expect(model.name, 'notes.md');
+      expect(model.entryNamed('notes.md')?.isDirectory, isFalse);
+      expect(model.entryNamed('src')?.isDirectory, isTrue);
+      expect(model.entryNamed('new.md'), isNull);
+
+      model.name = '  ';
+      expect(model.target, isNull);
     });
 
     test('recent locations: the latest first, each once, so many kept', () {

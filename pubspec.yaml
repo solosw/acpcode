@@ -88,6 +88,7 @@ dependencies:
   docx_file_viewer: ^1.0.5
   archive: ^4.0.9
   xml: ^7.0.1
+  image: ^4.13.1
 
 dev_dependencies:
   flutter_test:

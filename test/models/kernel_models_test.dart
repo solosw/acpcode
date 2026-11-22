@@ -36,6 +36,19 @@ const _other = ModelProvider(
   models: [ProviderModel(id: 'm')],
 );
 
+/// Two models on the same window: a switch between them restarts
+/// nothing on its own.
+const _twins = ModelProvider(
+  id: 'tw',
+  name: 'Twins',
+  protocol: ProviderProtocol.openaiChat,
+  baseUrl: 'https://tw.example.com/v1',
+  models: [
+    ProviderModel(id: 'a', contextWindow: 200000),
+    ProviderModel(id: 'b', contextWindow: 200000),
+  ],
+);
+
 const _fastGateway = ModelProvider(
   id: 'fast',
   name: 'Fast Gateway',
@@ -61,7 +74,11 @@ const _codex = ModelProvider(
   List<FakeCli> clis,
   List<(String, String)> environments,
 })
-start(ModelProviders providers, Map<String, String> settings) {
+start(
+  ModelProviders providers,
+  Map<String, String> settings, {
+  Set<String> refused = const {},
+}) {
   final launches = <ClaudeLaunch>[];
   final clis = <FakeCli>[];
   final environments = <(String, String)>[];
@@ -70,14 +87,14 @@ start(ModelProviders providers, Map<String, String> settings) {
     KernelContext(cwd: '/p', settings: settings),
     start: (launch) async {
       launches.add(launch);
-      final cli = FakeCli();
+      final cli = FakeCli(refused: refused);
       clis.add(cli);
       return cli;
     },
     providers: providers,
     providerEnvironment: (provider, model) async {
       environments.add((provider.id, model));
-      return {'ANTHROPIC_BASE_URL': 'http://proxy/${provider.id}'};
+      return {'ANTHROPIC_BASE_URL': 'http://127.0.0.1:12345/p/${provider.id}'};
     },
   );
   return (
@@ -97,6 +114,15 @@ void main() {
 
   test('a session on a provider\'s model starts on it, its effort after '
       'the model and compacting within its window', () async {
+    await providers.save(
+      const ModelProvider(
+        id: 'ag',
+        name: 'Antigravity',
+        protocol: ProviderProtocol.antigravity,
+        accounts: [ProviderAccount(id: 'test')],
+        models: [ProviderModel(id: 'gemini')],
+      ),
+    );
     final (:kernel, :launches, clis: _, :environments) = start(providers, {
       'model': '@gw/gpt-5',
       'effort': 'high',
@@ -108,7 +134,7 @@ void main() {
     // The CLI takes 200K for a model it does not know: told its window.
     expect(launch.env, {
       'CLAUDE_CODE_MAX_CONTEXT_TOKENS': '400000',
-      'ANTHROPIC_BASE_URL': 'http://proxy/gw',
+      'ANTHROPIC_BASE_URL': 'http://127.0.0.1:12345/p/gw',
     });
     expect(launch.autocompact, 400000);
     // Through the proxy: not Claude Code's own effort.
@@ -130,8 +156,13 @@ void main() {
     // swap them for one of Claude's (#219).
     expect(
       launch.settings['availableModels'],
-      containsAll([...options, 'haiku']),
+      containsAll([...options, 'haiku', '@gw/gpt-5', '@gw/plain', '@other/m']),
     );
+    expect(launch.allowlist, isNot(contains('@gw/off')));
+    expect(launch.allowlist, isNot(contains('@ag/gemini')));
+    expect(options, isNot(contains('@gw/gpt-5')));
+    expect(options, isNot(contains('@gw/plain')));
+    expect(options, isNot(contains('@other/m')));
     kernel.dispose();
   });
 
@@ -455,6 +486,47 @@ void main() {
     kernel.dispose();
   });
 
+  test('a model the CLI refuses stays the one before only until the next '
+      'message, which starts it again on the one picked', () async {
+    final (:kernel, :launches, :clis, environments: _) = start(
+      ModelProviders.memory(providers: [_twins]),
+      {'model': '@tw/a'},
+      refused: {'set_model'},
+    );
+    kernel.prepare();
+    await pumpEventQueue();
+    kernel.model.select('@tw/b');
+    await pumpEventQueue();
+    expect(clis.single.requests('set_model'), hasLength(1));
+    expect(launches, hasLength(1));
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    expect(launches, hasLength(2));
+    expect(launches.last.model, startsWith('b'));
+    expect(
+      launches.last.settings['availableModels'],
+      contains(launches.last.model),
+    );
+    kernel.dispose();
+  });
+
+  test('a model the CLI takes is not started again for', () async {
+    final (:kernel, :launches, :clis, environments: _) = start(
+      ModelProviders.memory(providers: [_twins]),
+      {'model': '@tw/a'},
+    );
+    kernel.prepare();
+    await pumpEventQueue();
+    kernel.model.select('@tw/b');
+    await pumpEventQueue();
+    expect(clis.single.requests('set_model').single['model'], startsWith('b'));
+    await pumpEventQueue();
+    kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+    await pumpEventQueue();
+    expect(launches, hasLength(1));
+    kernel.dispose();
+  });
+
   test('a provider\'s model is on its own context until one is picked '
       'for it, not on another model\'s (#914)', () async {
     final (:kernel, :launches, clis: _, environments: _) = start(providers, {
@@ -605,7 +677,7 @@ void main() {
       expect(launches.last.model, 'm');
       expect(launches.last.env, {
         'CLAUDE_CODE_MAX_CONTEXT_TOKENS': '200000',
-        'ANTHROPIC_BASE_URL': 'http://proxy/other',
+        'ANTHROPIC_BASE_URL': 'http://127.0.0.1:12345/p/other',
       });
 
       // Back to Claude Code as set up: nothing injected.

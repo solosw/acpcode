@@ -33,6 +33,7 @@ import 'pages/about_page.dart';
 import 'pages/accounts_page.dart';
 import 'pages/appearance_page.dart';
 import 'pages/browser_page.dart';
+import 'pages/builtin_core_page.dart';
 import 'pages/channel_account_page.dart';
 import 'pages/customize_page.dart';
 import 'pages/data_dir_page.dart';
@@ -208,6 +209,8 @@ class AppSettings {
               ?project.host,
           }.toList()..sort(),
         );
+      case SettingsSection.builtinCore:
+        return BuiltinCoreSettingsPage(settings: files?.settings);
       case SettingsSection.usage:
         return UsageSettingsPage(workspace: workspace);
       case SettingsSection.network:

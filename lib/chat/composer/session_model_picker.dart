@@ -3,11 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../channel/channel_setup.dart' show ChannelSetup;
-import '../../ide/ide_dialog.dart';
 import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../l10n/l10n.dart';
-import '../../models/model_provider.dart' show parseModelRef;
+import '../../models/model_provider.dart' show ProviderProtocol, parseModelRef;
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart' show codexService;
 import '../../models/model_welcome.dart';
@@ -47,39 +46,27 @@ class SessionModelPicker extends StatelessWidget {
 
   /// The model with its settings, e.g. "Opus · 1M · High": the context
   /// only when it is not the standard one; its upstream before it only
-  /// when another upstream has a model of its name.
-  String _label(KernelOption model, List<KernelOption> options) => [
-    if (model.group case final group?
-        when options.any(
-          (other) => other.label == model.label && other.group?.id != group.id,
-        ))
-      group.label,
-    model.label,
+  /// when another upstream has a model of its name. The one answering in
+  /// its place ([fallback]) in its stead.
+  String _label(
+    KernelOption model,
+    List<KernelOption> options, {
+    String? fallback,
+  }) => [
+    if (fallback == null)
+      if (model.group case final group?
+          when options.any(
+            (other) =>
+                other.label == model.label && other.group?.id != group.id,
+          ))
+        group.label,
+    fallback ?? model.label,
     for (final setting in session.modelSettings(model.id))
       if (setting.selected case final selected?
           when setting.kind != KernelChoiceKind.context ||
               selected != setting.options.first)
         selected.label,
   ].join(' · ');
-
-  /// Runs [pick], which switches to [option]: once confirmed, if that
-  /// restarts the agent on another upstream mid-conversation.
-  Future<void> _switch(
-    BuildContext context,
-    KernelOption option,
-    VoidCallback pick,
-  ) async {
-    if (!session.switchRestarts(option.id)) return pick();
-    final l10n = context.l10n;
-    final choice = await showIdeDialog(
-      context,
-      message: l10n.modelsSwitchTitle(option.group?.label ?? option.label),
-      detail: l10n.modelsSwitchDetail,
-      buttons: [l10n.modelsSwitchConfirm],
-      type: IdeDialogType.question,
-    );
-    if (choice == 0 && context.mounted) pick();
-  }
 
   /// Beside a model of the account's plan, last: whether an agent stopped
   /// at its usage limit goes on by itself once it resets. Not where it
@@ -108,7 +95,10 @@ class SessionModelPicker extends StatelessWidget {
   ModelSettingChoice? _autoResetCredits(BuildContext context, String model) {
     final providers = ModelProviders.current;
     final provider = providers.provider(parseModelRef(model)?.provider);
-    if (provider == null || !provider.protocol.usesAccounts) return null;
+    // Reset credits are ChatGPT's.
+    if (provider == null || provider.protocol != ProviderProtocol.codex) {
+      return null;
+    }
     final on = KernelOption(
       'on',
       context.l10n.autoResetCreditsToggle,
@@ -154,32 +144,36 @@ class SessionModelPicker extends StatelessWidget {
         onTap: () => unawaited(showModelWelcome(context)),
       );
     }
+    // Another answering in the picked one's place: its name, cautioned,
+    // the picked one a click away.
+    final fallback = session.fallbackModel;
+    final picked = model.selected.label;
     return ComposerPicker(
       key: pickerKey,
       options: model.options,
       selected: model.selected,
-      label: _label(model.selected, model.options),
+      label: _label(model.selected, model.options, fallback: fallback),
+      foreground: fallback == null ? null : AppColors.caution,
       // Each its name alone, one line; its maker's logo and its upstream's
       // heading tell the rest.
       describes: false,
       settingsOf: (option) => [
-        for (final setting in session.modelSettings(option.id))
-          ModelSettingChoice(
-            kind: setting.kind,
-            options: setting.options,
-            selected: setting.selected,
-            toggle: setting.toggle,
-            onSelected: (choice) => unawaited(
-              _switch(context, option, () => setting.onSelected(choice)),
-            ),
-          ),
+        ...session.modelSettings(option.id),
         ?_resumeAfterLimit(context, option.id),
         ?_autoResetCredits(context, option.id),
       ],
-      tooltip: tooltip,
+      tooltip: fallback == null
+          ? tooltip
+          : l10n.modelsFallbackHint(picked, fallback),
       menuWidth: 260,
       searchPlaceholder: l10n.modelsSearch,
       footers: [
+        if (fallback != null)
+          (
+            label: l10n.modelsFallbackSwitchBack(picked),
+            icon: Icons.undo_rounded,
+            onTap: session.endModelFallback,
+          ),
         if (SettingsOpener.maybeOf(context) case final open?)
           (
             label: ChannelSetup.channelBuild
@@ -191,8 +185,7 @@ class SessionModelPicker extends StatelessWidget {
       ],
       tapRegionGroupId: tapRegionGroupId,
       focusNode: focusNode,
-      onSelected: (option) =>
-          unawaited(_switch(context, option, () => model.onSelected(option))),
+      onSelected: model.onSelected,
     );
   }
 }

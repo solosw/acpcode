@@ -5,6 +5,7 @@
 library;
 
 import '../icons/project_icon.dart';
+import 'magpie.dart';
 
 /// How an upstream is spoken to.
 enum ProviderProtocol {
@@ -19,7 +20,12 @@ enum ProviderProtocol {
 
   /// ChatGPT's Codex backend, signed in with ChatGPT accounts (OAuth), not
   /// a key: through the local proxy, as Responses.
-  codex('codex');
+  codex('codex'),
+
+  /// Google's Antigravity, signed in with Google accounts (OAuth), not a
+  /// key: through the local proxy, as Gemini's Code Assist; on BaoCode's
+  /// own core only.
+  antigravity('antigravity');
 
   const ProviderProtocol(this.id);
 
@@ -31,7 +37,7 @@ enum ProviderProtocol {
 
   /// Signed in to with accounts ([ModelProvider.accounts]), not a key and
   /// a base URL.
-  bool get usesAccounts => this == codex;
+  bool get usesAccounts => this == codex || this == antigravity;
 
   /// Those a model may be spoken to at instead of its upstream's
   /// ([ProviderModel.protocol]): at the same base URL and key, so not
@@ -252,10 +258,16 @@ class ProviderModel {
   }
 
   /// The contexts offered in the picker, smallest first: [initialContext]
-  /// among them.
+  /// among them, in place of one shown as the same (a 1,048,576 window
+  /// and the 1M offered would both be `1M`).
   List<int> get contextOptions {
-    final offered = {...(contexts ?? defaultContexts), initialContext}.toList()
-      ..sort();
+    final initial = initialContext;
+    final shown = formatTokens(initial);
+    final offered = {
+      for (final tokens in contexts ?? defaultContexts)
+        if (formatTokens(tokens) != shown) tokens,
+      initial,
+    }.toList()..sort();
     return offered;
   }
 
@@ -499,7 +511,8 @@ class ProviderRoles {
   int get hashCode => Object.hashAll(_keys.map((key) => this[key]));
 }
 
-/// An account an upstream is signed in to with ([ProviderProtocol.codex]):
+/// An account an upstream is signed in to with ([ProviderProtocol.codex],
+/// [ProviderProtocol.antigravity]):
 /// what is shown of it, kept in settings.json; its refresh token in the
 /// keychain, under [ModelProvider.accountRefFor].
 class ProviderAccount {
@@ -518,7 +531,8 @@ class ProviderAccount {
   /// The plan it had as it signed in (`plus`, `pro`, `team`…).
   final String? plan;
 
-  /// The ChatGPT workspace its requests are made in.
+  /// The ChatGPT workspace its requests are made in; Antigravity's, the
+  /// Google Cloud project.
   final String? accountId;
 
   /// Taken in turn with the others; off, left out.
@@ -623,7 +637,6 @@ class ModelProvider {
     this.balance = AccountBalance.roundRobin,
     this.autoResetCredits = false,
     this.resetCreditsFiveHours = false,
-    this.clientVersion,
     this.icon,
     this.follows,
   });
@@ -691,10 +704,6 @@ class ModelProvider {
   final bool autoResetCredits;
   final bool resetCreditsFiveHours;
 
-  /// Codex: the Codex CLI's version it speaks as (`0.159.0`), for models
-  /// the backend offers only to a newer one; the app's when null.
-  final String? clientVersion;
-
   /// What the picker heads its models with, picked in the icon picker
   /// (the site's icon among its choices); its maker's logo, as its base URL
   /// says, when null ([ModelBrand.ofProvider]).
@@ -707,10 +716,6 @@ class ModelProvider {
   /// Whether it follows magpie's gateway (lib/models/magpie.dart).
   bool get followsMagpie => follows == 'magpie';
 
-  /// Whether [text] can be a [clientVersion]: digits, letters, `.+-`.
-  static bool isClientVersion(String text) =>
-      RegExp(r'^[0-9A-Za-z][0-9A-Za-z.+-]*$').hasMatch(text);
-
   /// Where its key is kept in the keychain.
   String get keyRef => keyRefFor(id);
 
@@ -721,9 +726,11 @@ class ModelProvider {
       'provider.$id.$accountId';
 
   /// The host its base URL names (else its endpoint's, or its models'),
-  /// for the list; ChatGPT's for Codex.
+  /// for the list; ChatGPT's for Codex, Antigravity's for it.
   String get host => protocol == ProviderProtocol.codex
       ? 'chatgpt.com'
+      : protocol == ProviderProtocol.antigravity
+      ? 'antigravity.google'
       : [baseUrl, ?endpointUrl, ?modelsUrl]
                 .map((url) => Uri.tryParse(url.trim())?.host ?? '')
                 .where((host) => host.isNotEmpty)
@@ -809,9 +816,23 @@ class ModelProvider {
   static final _sorted = Expando<List<ProviderModel>>();
   static final _enabled = Expando<List<ProviderModel>>();
   static final _labels = Expando<Map<String, String>>();
+  static final _byId = Expando<Map<String, ProviderModel>>();
+  static final _byAlias = Expando<Map<String, ProviderModel>>();
 
+  /// Its model [id]; for magpie's, also one kept by its real id that a
+  /// session or setting still names by its old alias ([Magpie.alias]).
+  /// Looked up for every event of a conversation, of every one replayed:
+  /// the aliases, hashed one by one, are worked out once.
   ProviderModel? model(String id) =>
-      models.where((model) => model.id == id).firstOrNull;
+      (_byId[this] ??= {
+        for (final model in models.reversed) model.id: model,
+      })[id] ??
+      (followsMagpie && Magpie.isAlias(id)
+          ? (_byAlias[this] ??= {
+              for (final model in models.reversed)
+                Magpie.alias(model.id): model,
+            })[id]
+          : null);
 
   /// How [model] is spoken to: at its own endpoint, if it has one, else
   /// as the upstream is. A ChatGPT (Codex) upstream's all go as it does.
@@ -888,7 +909,6 @@ class ModelProvider {
     AccountBalance? balance,
     bool? autoResetCredits,
     bool? resetCreditsFiveHours,
-    String? Function()? clientVersion,
     ProjectIcon? Function()? icon,
   }) => ModelProvider(
     id: id,
@@ -911,7 +931,6 @@ class ModelProvider {
     balance: balance ?? this.balance,
     autoResetCredits: autoResetCredits ?? this.autoResetCredits,
     resetCreditsFiveHours: resetCreditsFiveHours ?? this.resetCreditsFiveHours,
-    clientVersion: clientVersion == null ? this.clientVersion : clientVersion(),
     icon: icon == null ? this.icon : icon(),
     follows: follows,
   );
@@ -957,7 +976,6 @@ class ModelProvider {
     if (balance != AccountBalance.roundRobin) 'balance': balance.id,
     if (autoResetCredits) 'autoResetCredits': true,
     if (resetCreditsFiveHours) 'resetCreditsFiveHours': true,
-    'clientVersion': ?clientVersion,
     'icon': ?icon?.toJson(),
     'follows': ?follows,
   };
@@ -1003,11 +1021,6 @@ class ModelProvider {
       balance: AccountBalance.parse(json['balance']),
       autoResetCredits: json['autoResetCredits'] == true,
       resetCreditsFiveHours: json['resetCreditsFiveHours'] == true,
-      clientVersion: switch (json['clientVersion']) {
-        final String version when isClientVersion(version.trim()) =>
-          version.trim(),
-        _ => null,
-      },
       icon: ProjectIcon.fromJson(json['icon']),
       follows: switch (json['follows']) {
         final String app when app.isNotEmpty => app,

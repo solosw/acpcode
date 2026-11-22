@@ -1,19 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
-import '../../base/list_selection.dart';
-import '../../base/smooth_scroll.dart';
 import '../../theme/app_theme.dart';
-import 'finite_selection_edges.dart';
 import 'hover_builder.dart';
 import 'hover_scrollbar.dart';
 import 'image_thumbnails.dart' show PreviewClick, PreviewPressScope;
-import 'own_selection.dart';
 import 'scroll_edge_fade.dart';
 import 'shimmer_text.dart';
 import 'wheel_latch.dart';
+import '../selection/chat_selection.dart';
 
 /// Header of a step the agent took, e.g. "Ran  Check the Flutter version":
 /// what it did, then what on, muted. While it is [running] the whole line
@@ -138,7 +134,7 @@ class StepHeader extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon case final icon?) ...[
-              SelectionContainer.disabled(child: icon),
+              ChatUnselectable(child: icon),
               const SizedBox(width: 5),
             ],
             // Shrinks in a narrow window rather than overflow.
@@ -149,7 +145,7 @@ class StepHeader extends StatelessWidget {
             ],
             if (open != null && hovered) ...[
               const SizedBox(width: 2),
-              SelectionContainer.disabled(
+              ChatUnselectable(
                 child: Icon(
                   Icons.chevron_right_rounded,
                   size: 16,
@@ -161,7 +157,7 @@ class StepHeader extends StatelessWidget {
               const SizedBox(width: 2),
               // Comes and goes with the hover: kept out of the selection,
               // which would otherwise re-resolve its edges each time.
-              SelectionContainer.disabled(child: _chevron(hovered)),
+              ChatUnselectable(child: _chevron(hovered)),
             ],
           ],
         ),
@@ -300,8 +296,8 @@ class StepBody extends StatefulWidget {
 }
 
 class _StepBodyState extends State<StepBody> {
-  final _controller = SmoothScrollController();
-  final _scrollbarContent = GlobalKey();
+  // Following the output, it holds still under a press that selects.
+  final _controller = HeldTailScrollController();
 
   @override
   void didUpdateWidget(StepBody old) {
@@ -341,24 +337,13 @@ class _StepBodyState extends State<StepBody> {
     final StepBody(:child, :maxHeight, :padding, :overlay, :header) = widget;
     // The line between the sidebar and the conversation.
     final line = AppColors.partBorder;
-    // The selection's ends kept as points in the content, not the scroll
-    // view's own: under UI zoom those land away from the pointer once
-    // scrolled (see [ListSelection]).
-    Widget scroll = ListSelection(
+    Widget scroll = SingleChildScrollView(
       controller: _controller,
-      child: SingleChildScrollView(
-        controller: _controller,
-        reverse: widget.followEnd,
-        padding: padding,
-        child: ListSelectionItem(
-          index: 0,
-          child: FiniteSelectionEdges(
-            child: WheelLatch(
-              keep: widget.keepWheel,
-              child: SizedBox(width: double.infinity, child: child),
-            ),
-          ),
-        ),
+      reverse: widget.followEnd,
+      padding: padding,
+      child: WheelLatch(
+        keep: widget.keepWheel,
+        child: SizedBox(width: double.infinity, child: child),
       ),
     );
     if (widget.fadeEdges) {
@@ -369,28 +354,10 @@ class _StepBodyState extends State<StepBody> {
         ConstrainedBox(
           constraints: BoxConstraints(maxHeight: maxHeight),
           child: widget.scrollbar
-              ? Listener(
-                  onPointerDown: (event) {
-                    final paint = _scrollbarContent.currentContext
-                        ?.findAncestorRenderObjectOfType<RenderCustomPaint>();
-                    final painter = paint?.foregroundPainter;
-                    if (paint != null &&
-                        painter is ScrollbarPainter &&
-                        painter.hitTestInteractive(
-                          paint.globalToLocal(event.position),
-                          event.kind,
-                        )) {
-                      OwnSelection.takePress(event);
-                    }
-                  },
-                  child: Scrollbar(
-                    controller: _controller,
-                    thumbVisibility: hovered,
-                    child: Builder(
-                      key: _scrollbarContent,
-                      builder: (_) => scroll,
-                    ),
-                  ),
+              ? Scrollbar(
+                  controller: _controller,
+                  thumbVisibility: hovered,
+                  child: scroll,
                 )
               : scroll,
         ),

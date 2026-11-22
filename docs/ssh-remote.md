@@ -307,7 +307,7 @@ Windows 上，WSL 发行版也当成一台主机，主机名 `wsl+<发行版>`�
 
 | 内核 | 行为 |
 |---|---|
-| 自动（默认；`~/.ssh/config` 里的和手输的主机也是它） | 先按 CLI 启动；远端没装（`ClaudeNotInstalled`）就改用内置内核。用的是 Claude Code 自己的模型（没有上游）时内置内核跑不了，照旧自动安装 CLI |
+| 自动（默认；`~/.ssh/config` 里的和手输的主机也是它） | 先按 CLI 启动；远端没装（`ClaudeNotInstalled`）就改用内置内核。**从不安装 CLI**：用的是 Claude Code 自己的模型（没有上游）而远端又没装时，报 `ClaudeNoModel` 让用户去配模型；要用 Claude 订阅就把这台服务器的内核改成 CLI |
 | 内置 | 服务端跑内置内核（`core: builtin`）；没有上游时报 `ClaudeNoModel`，让用户去配模型 |
 | Claude Code CLI | 只用 CLI，远端没装就自动安装（6.2） |
 
@@ -326,7 +326,7 @@ Haiku（起标题、提交信息）走同一套，只是不触发安装。改了
 
 ### 6.2 自动安装（像 VS Code 扩展那样）
 
-开始对话时，如果远端上面三处都没有，服务端会抛出 `ClaudeNotInstalled`，应用随即自动安装（`installRemoteClaude`），装完重新启动对话。用户什么都不用做。
+内核选的是 CLI 时，开始对话时如果远端上面三处都没有，服务端会抛出 `ClaudeNotInstalled`，应用随即自动安装（`installRemoteClaude`），装完重新启动对话。用户什么都不用做。
 
 1. **远端自己下载**（`claude/install`，进度以流返回）：
    - 读 `https://downloads.claude.ai/claude-code-releases/stable` 得到版本号；
@@ -438,7 +438,7 @@ dart run tool/build_remote_server.dart --all        # 七份没编全就失败�
 - macOS 版是 `dart compile exe` 自带的 ad hoc 签名（linker-signed），Apple silicon 上能直接运行；经 ssh 的 stdin 写进去的文件没有隔离属性（quarantine），Gatekeeper 不拦，不需要 Developer ID 签名和公证。
 - `VERSION` 的哈希覆盖这次编出来的所有二进制。
 
-另外还会生成每份 gzip 后的 `baocode-server-<平台>.gz`（约 3.1–3.3 MB，原文件约 8 MB），以及 `servers.json`：按平台名写明每个 `.gz` 的下载地址 `https://github.com/solosw/baocode/releases/download/v<营销版本>/baocode-server-<平台>.gz`、大小和 SHA-256。没编的平台不写进去。旧格式的 `servers.json`（键只有架构 `x64`、`arm64`）按 Linux 读。
+另外还会生成每份 gzip 后的 `baocode-server-<平台>.gz`（约 3.1–3.3 MB，原文件约 8 MB），以及 `servers.json`：按平台名写明每个 `.gz` 的下载地址 `https://dl.baocode.dev/releases/remote/<VERSION>/<文件>`、大小和 SHA-256。没编的平台不写进去。旧格式的 `servers.json`（键只有架构 `x64`、`arm64`）按 Linux 读。
 
 ### 9.2 应用在哪里找服务端
 
@@ -461,15 +461,9 @@ dart run tool/build_remote_server.dart --all        # 七份没编全就失败�
 安装包**不带服务端二进制**，只带 `VERSION` 和 `servers.json`。七个二进制合起来有几十 MB，大多数用户不连远程，而每台主机只需要其中一个平台。
 
 - **打包**：`tool/build_macos.dart` 和 `tool/build_windows.dart` 先编译到 `build/remote/`（CI 里由单独的 `remote` 任务在 macOS 机器上把四份都编一次，在那台 Mac 上直接跑一遍两份 macOS 版（`tool/test_remote_server_macos.sh`，Intel 版经 Rosetta），再由 `remote-linux` 任务在 Docker 里的几个 Linux 发行版上各跑一遍 `tool/test_remote_server.sh`，两个打包脚本带 `--remote-built` 直接用它），再只把 `VERSION`、`servers.json` 放进 `BaoCode.app/Contents/Resources/remote/`（Windows 是 `<bundle>\remote\`），`.gz` 放到 `build/installers/remote/<VERSION>/`。
-- **发布**：Release 工作流把 `baocode-server-<平台>.gz` 和安装包一起上传到 `https://github.com/solosw/baocode/releases/download/v<营销版本>/`。`servers.json` 里的地址指向这里。重新发布同一个版本标签会替换这些文件；已经装过这个构建的主机不会再下载。
+- **单独发布**：推一个 `server-*` 标签，CI（`remote.yml`）编译、测试并上传到 `releases/remote/<VERSION>/`，更新 `releases/remote/latest.json`；本机打包时用 `--remote-release [VERSION]` 带上这份的 `servers.json`，不在本机编译（docs/release.md 第 3 节）。
+- **发布**：把 `build/installers/remote/<VERSION>/` 里的 `.gz` 上传到 `https://dl.baocode.dev/releases/remote/<VERSION>/`。**要在安装包发出去之前上传**，否则这个版本连不了远程（CI 会按这个顺序传，见 docs/release.md）。旧版本的目录要一直保留，因为装着旧版的用户还要下载。
 - **下载**：第一次连某个平台的主机时，应用下载对应的 `.gz`，按 `servers.json` 校验大小和 SHA-256，存到数据目录的 `cache/remote-server/<VERSION>/`，之后照旧经 ssh 推送到主机（第 4 节第 4 步）。远端主机不需要能上网。下载完会删掉其他版本的缓存；同时连多台同平台的主机只下载一次。
-- **下载失败时手动安装**：报错详情里有完整地址。从 [GitHub Releases](https://github.com/solosw/baocode/releases) 下载对应的 `baocode-server-<平台>.gz`（Linux x64 是 `baocode-server-linux-x64.gz`），原样放到本机数据目录的 `cache/remote-server/<VERSION>/baocode-server-<平台>.gz`。`<VERSION>` 是应用里 `remote/VERSION` 的内容（带构建哈希，不是只有 `1.0.4`）。macOS 数据目录默认是 `~/Library/Application Support/BaoCode`。也可以直接在远端放好可执行文件，应用发现已存在就不会再下载或上传：
-
-  ```sh
-  mkdir -p ~/.baocode-server/<VERSION>
-  gunzip -c baocode-server-linux-x64.gz > ~/.baocode-server/<VERSION>/baocode-server
-  chmod 755 ~/.baocode-server/<VERSION>/baocode-server
-  ```
 - **安全**：`servers.json` 在安装包里，跟着应用一起签名，所以下载到的只能是这个版本编出来的那份；被替换的文件校验不过，连接报 `server` 失败。
 - 下载失败或校验不过，连接失败，报错里带着下载地址；下次连接重试。
 
@@ -526,7 +520,7 @@ flutter analyze
 
 | 现象 / 报错 | 原因 | 处理 |
 | --- | --- | --- |
-| The BaoCode server for Linux x64（或 macOS arm64 等）could not be downloaded（详情里是 HTTP 404） | 这个构建的服务端没有上传到 GitHub Release。常见于本机打包的应用：`servers.json` 里的地址对不上已发布的文件 | 从 https://github.com/solosw/baocode/releases 下载对应的 `baocode-server-<平台>.gz`，放到数据目录的 `cache/remote-server/<VERSION>/`（`<VERSION>` 见应用里的 `remote/VERSION`）。或者在远端手动安装，见 9.3 |
+| The BaoCode server for Linux x64（或 macOS arm64 等）could not be downloaded（详情里是 HTTP 404） | 这个构建的服务端没有上传到 dl.baocode.dev。常见于本机打包的应用：每次构建的 `VERSION` 都不同，CI 发布的那份对不上 | 推一个 `server-*` 标签发布服务端，打包时加 `--remote-release`；或把打包时 `build/installers/remote/<VERSION>/` 里的 `.gz` 上传到 `dl.baocode.dev/releases/remote/<VERSION>/`；只在本机用的话，也可以把它们放进数据目录的 `cache/remote-server/<VERSION>/`。或者改装 CI 发布的版本 |
 | No ssh here | 本机没有 `ssh`（Windows 安装包自带一份，开发时才会遇到） | 安装 OpenSSH 客户端；Windows 上在“可选功能”里安装 |
 | 认证失败（authentication） | 密码不对、取消了登录，或密钥没加载 | 失败页点“编辑”改密码或换私钥；或把密钥加到 ssh-agent，或在 `~/.ssh/config` 里写 `IdentityFile` |
 | 主机密钥未知（hostKey） | 用户的 ssh 配置写了 `StrictHostKeyChecking yes` | 先在终端里 `ssh <主机>` 一次，接受密钥 |
@@ -613,7 +607,7 @@ flutter analyze
 2. **服务端只支持 glibc**：`dart compile exe` 编出的 Linux 二进制在 Alpine 这类 musl 系统上跑不了。Claude Code 本身有 musl 版本，已经能正确选择。
 3. **旧版本服务端不会自动清理**：`~/.baocode-server/<旧VERSION>/` 会一直留着，每个约几十 MB。可以在连接成功后删掉其他版本的目录。
 4. **Haiku 不会触发 Claude 自动安装**：远端没有 claude 时，标题和提交信息会失败，等到第一次对话装好后才正常。
-5. **自动安装没有开关**：远端没有 claude 时总是自动装。如果有用户不希望自动下载，需要加一个设置项。
+5. **自动安装只在内核选 CLI 时发生**：选“自动”或“内置”都不会往远端装 claude。
 6. **Windows 客户端的密码登录还没在 Windows 上实测**：`askpass.cmd` 经 PowerShell 回传密码，依赖 Win32-OpenSSH 8.4 及以上按 `SSH_ASKPASS_REQUIRE=force` 调用它；系统的低于 8.4 时用安装包自带的 OpenSSH。要确认的有：能否运行 `.cmd`、用户名带空格的临时目录、运行时是否闪出控制台窗口、自带 ssh 的跳板机 `ProxyCommand`（带引号的路径）能否运行。
 7. **启动时会连接所有远程项目的主机**（因为要读会话列表）。主机很多或很慢时，可以改成在展开项目时再连接。
 8. **macOS 打包这一步还没实际跑过**，签名和公证也还没做（见 `tool/build_macos.dart` 里的 TODO）。

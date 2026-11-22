@@ -31,6 +31,7 @@ import 'chat_grid.dart';
 import 'editor_launcher.dart';
 import 'preference_store.dart';
 import 'project_workspace.dart';
+import 'temp_folder_stub.dart' if (dart.library.io) 'temp_folder_io.dart';
 
 /// The arrangement of the project and its conversation in the window.
 enum WorkspaceLayout { chat, ide }
@@ -656,6 +657,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         _save();
       }
       unawaited(_listKept(project));
+    } else if (inTempFolder(path) && !_folders.contains(path)) {
+      // Kept by Claude Code but off the sidebar until opened (see
+      // [isHidden]): opened now.
+      _folders.add(path);
+      _save();
+      notifyListeners();
     }
     return project;
   }
@@ -1369,6 +1376,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The mode, model, context and effort a new agent starts with: the
   /// last ones picked.
   Map<String, String> get _preferredSettings => Map.unmodifiable(_settings);
+
+  /// The model a new agent starts on: Settings → Models' pick, else the
+  /// one last picked; null for its kernel's own.
+  String? get newAgentModel =>
+      ModelProviders.current.defaultModel ??
+      _settings[KernelChoiceKind.model.name];
   final Map<String, String> _settings = {};
 
   /// Language servers the Fast Ide is not to recommend installing again.
@@ -1587,7 +1600,23 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   final Map<String, DateTime> _hiddenProjects = {};
 
   bool isHidden(Project project) =>
-      _hiddenProjects.containsKey(project.path) || isAppFolder(project.path);
+      _hiddenProjects.containsKey(project.path) ||
+      isAppFolder(project.path) ||
+      _isUnopenedTemp(project.path);
+
+  /// Whether [path] is in the system's temporary folder and was never
+  /// opened here, nor sent anything from here: an agent's clone to run
+  /// other agents in with `claude -p`, say, whose sessions are no
+  /// conversations of the user's.
+  bool _isUnopenedTemp(String path) =>
+      !_folders.contains(path) &&
+      !_workspaces.containsKey(path) &&
+      inTempFolder(path);
+
+  /// Whether a path is in the system's temporary folder (see
+  /// [isTempFolder]); tests, whose projects are in `/tmp`, have none.
+  @visibleForTesting
+  static bool Function(String path) inTempFolder = isTempFolder;
 
   /// The setup of agents in a folder the app keeps for itself, by its path;
   /// null for a project's (see [AgentSetup]). Set, those folders' agents
@@ -1707,6 +1736,17 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// by [projectSort] the others, their latest agent's first or as the user
   /// dragged them (those not dragged yet, e.g. new, before).
   List<Project> get sidebarProjects {
+    if (_sidebarProjects case final projects?) return projects;
+    // Asked of each of the sidebar's groups as it builds, and of each key:
+    // ordered once for the work at hand, again after it (a project's
+    // activity, a bot's folder change without a notice) or a change.
+    scheduleMicrotask(() => _sidebarProjects = null);
+    return _sidebarProjects = List.unmodifiable(_orderSidebarProjects());
+  }
+
+  List<Project>? _sidebarProjects;
+
+  List<Project> _orderSidebarProjects() {
     final shown = [
       for (final project in _projects)
         if (!isHidden(project)) project,
@@ -1814,12 +1854,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The SSH host whose projects and agents the sidebar lists; null for
   /// this machine's (and while there is no host to switch to, or it lists
   /// all of them, [sidebarAllHosts]).
-  String? get sidebarHost =>
-      !sidebarAllHosts &&
-          _sidebarHost != null &&
-          sshHosts.contains(_sidebarHost)
-      ? _sidebarHost
-      : null;
+  String? get sidebarHost => switch (_sidebarHost) {
+    final host? when !sidebarAllHosts && _isSshHost(host) => host,
+    _ => null,
+  };
   String? _sidebarHost;
   set sidebarHost(String? host) {
     if (host == _sidebarHost && !_sidebarAll) return;
@@ -1831,8 +1869,20 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Whether the sidebar lists the projects and agents of this machine and
   /// of every SSH host together (while there are hosts).
-  bool get sidebarAllHosts => _sidebarAll && sshHosts.isNotEmpty;
+  bool get sidebarAllHosts => _sidebarAll && _isSshHost(null);
   bool _sidebarAll = false;
+
+  /// Whether [host] is among [sshHosts] (any is, for null), without
+  /// ordering the sidebar's projects: the sidebar asks it of each agent it
+  /// lists ([listsHost]), on every key the window resolves.
+  bool _isSshHost(String? host) =>
+      (host == null ? _sshHosts.isNotEmpty : _sshHosts.contains(host)) ||
+      _projects.any(
+        (project) =>
+            project.host != null &&
+            (host == null || project.host == host) &&
+            !isHidden(project),
+      );
   set sidebarAllHosts(bool all) {
     if (all == _sidebarAll) return;
     _sidebarAll = all;
@@ -2578,7 +2628,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// takes them once it is, until then the catalog lists the old title.
   final Map<String, String> _names = {};
 
-  /// Folders opened where no kernel keeps a session yet.
+  /// Folders opened where no kernel keeps a session yet; those in the
+  /// system's temporary folder opened here, sessions kept there or not.
   final List<String> _folders = [];
 
   /// Forgets what was kept for sessions and folders the catalogs no longer
@@ -2594,7 +2645,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _archived.retainAll(titles.keys);
     // A name the catalog lists is the CLI's now.
     _names.removeWhere((id, name) => titles[id] == null || titles[id] == name);
-    _folders.removeWhere(listed.contains);
+    // Not one in the temporary folder: listed only for being kept here
+    // (see [isHidden]).
+    _folders.removeWhere(
+      (path) => listed.contains(path) && !inTempFolder(path),
+    );
     final paths = {for (final project in _projects) project.path};
     bool gone(String group) =>
         group.startsWith(projectGroup('')) &&
@@ -3338,7 +3393,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (thread._wantsTitle) _askTitle(thread);
     }
     // Sent something: its folder is a project now, if it was not.
-    if (!_isUntouched(thread) && !_projects.contains(thread.project)) {
+    if (!_isUntouched(thread) &&
+        (!_projects.contains(thread.project) ||
+            _isUnopenedTemp(thread.project.path))) {
       _listProject(thread.project);
     }
     if (_ideChatsUnkept.contains(thread) && thread.id != null) {
@@ -3607,6 +3664,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// closed or given its id.
   @override
   void notifyListeners() {
+    _sidebarProjects = null;
     if (_chatViewRestored && jsonEncode(_chatView) != _chatViewSaved) {
       _save();
     }
@@ -3943,14 +4001,18 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Copies [thread]'s conversation into a new agent of its project (see
   /// [ChatSession.fork]): listed, with [thread]'s settings, not shown. Null
   /// when it could not be (its conversation says why). [message], when not
-  /// empty, is sent there once what it copied is read (`/fork …`).
+  /// empty, is sent there once what it copied is read (`/fork …`). Up to
+  /// the user's message [before] (by its id) when given: a fork from the
+  /// turn before it.
   Future<AgentThread?> fork(
     AgentThread thread, {
     ComposerMessage? message,
+    String? before,
   }) async {
     final forked = await _fork(
       thread,
       '${thread.localizedTitle(l10n())} (fork)',
+      before: before,
     );
     if (forked != null && message != null && !message.isEmpty) {
       unawaited(_sendOnceRead(forked, message));
@@ -3972,9 +4034,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   }
 
   /// [fork], the copy titled [title].
-  Future<AgentThread?> _fork(AgentThread thread, String title) async {
+  Future<AgentThread?> _fork(
+    AgentThread thread,
+    String title, {
+    String? before,
+  }) async {
     final session = thread.session;
-    final record = await session.fork(title: title);
+    final record = await session.fork(title: title, before: before);
     if (record == null || _disposed) return null;
     final settings = {
       for (final kind in KernelChoiceKind.values)
