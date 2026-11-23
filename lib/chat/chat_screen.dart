@@ -1020,12 +1020,18 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   Future<String?> _commandFile(String name) {
-    final find = widget.commandFile;
-    if (find == null || widget.fileLinks == null) return Future.value();
+    if (widget.fileLinks == null) return Future.value();
     if (!identical(_session.commands, _commandFilesOf)) {
       _commandFilesOf = _session.commands;
       _commandFiles.clear();
     }
+    for (final command in _session.commands) {
+      if (command.name == name && command.filePath != null) {
+        return Future.value(command.filePath);
+      }
+    }
+    final find = widget.commandFile;
+    if (find == null) return Future.value();
     return _commandFiles[name] ??= () async {
       try {
         return await find(name);

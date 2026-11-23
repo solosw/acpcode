@@ -5,6 +5,7 @@ import 'acp/acp_agent.dart';
 import 'acp/acp_catalog.dart';
 import 'acp/acp_kernel.dart';
 import 'acp/acp_mcp.dart';
+import 'acp/acp_skills.dart';
 import 'claude_code/claude_code_kernel.dart';
 import '../remote/remote_claude.dart';
 import '../remote/remote_location.dart';
@@ -50,6 +51,16 @@ abstract final class KernelRegistry {
         loadMcpServers: (context, capabilities) => loadAcpMcpServers(
           context,
           capabilities,
+          environment: config
+              .forHost(
+                context.cwd == null
+                    ? null
+                    : RemoteLocation.hostOf(context.cwd!),
+              )
+              .environment,
+        ),
+        loadSkills: (context) => loadAcpSkills(
+          context,
           environment: config
               .forHost(
                 context.cwd == null

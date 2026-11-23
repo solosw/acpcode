@@ -8,6 +8,7 @@ import '../../ide/file_service.dart';
 import '../../remote/remote_location.dart';
 import '../../remote/ssh_host.dart';
 import '../agent_kernel.dart';
+import '../claude_code/claude_core_setting.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../output_meter.dart';
@@ -15,6 +16,8 @@ import 'acp_catalog.dart';
 import 'acp_config_option.dart';
 import 'acp_files.dart';
 import 'acp_mcp.dart';
+import 'acp_skills.dart';
+import 'acp_system_prompt.dart';
 import 'acp_transport.dart';
 import 'acp_terminal.dart';
 
@@ -37,8 +40,11 @@ class AcpKernel
     this._transportFactory, {
     this._catalog,
     this._loadMcpServers,
+    this._loadSkills,
+    CoreSystemPrompt Function()? systemPrompt,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now,
+  }) : _coreSystemPrompt = systemPrompt ?? (() => CoreSystemPrompt.current()),
+       _clock = clock ?? DateTime.now,
        _meter = OutputMeter(clock: clock) {
     _live.add(this);
   }
@@ -67,8 +73,16 @@ class AcpKernel
   /// Local session index for this agent; null in tests that omit it.
   final AcpCatalog? _catalog;
   final AcpMcpLoader? _loadMcpServers;
+  final AcpSkillsLoader? _loadSkills;
+  final CoreSystemPrompt Function() _coreSystemPrompt;
   AcpMcpServers _mcp = const AcpMcpServers();
   bool _mcpClosed = false;
+  AcpSkills _baocodeSkills = const AcpSkills();
+  AcpSystemPromptCapabilities _systemPromptCapabilities =
+      const AcpSystemPromptCapabilities();
+  AcpSystemPromptResolution _systemPrompt = const AcpSystemPromptResolution();
+  AcpSkillPromptCapabilities _skillPromptCapabilities =
+      const AcpSkillPromptCapabilities();
   AcpTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Timer? _receiveTimer;
@@ -149,6 +163,7 @@ class AcpKernel
   int _terminalCancelEpoch = 0;
   final Set<String> _todoToolIds = {};
   final List<KernelOption> _modeOptions = [];
+  List<AcpAdvertisedCommand> _agentCommands = const [];
   List<KernelCommand> _commands = const [];
 
   bool _hasConfigOptions = false;
@@ -264,6 +279,9 @@ class AcpKernel
         'clientInfo': {'name': 'BaoCode', 'version': '1.0.0'},
         'clientCapabilities': <String, Object?>{
           'subagents': <String, Object?>{},
+          'session': <String, Object?>{
+            'commands': <String, Object?>{'skill': <String, Object?>{}},
+          },
           if (_files != null)
             'fs': {'readTextFile': true, 'writeTextFile': true},
           if (_terminals != null) 'terminal': true,
@@ -273,9 +291,30 @@ class AcpKernel
         },
       });
       if (obsolete()) return;
+      final agentCapabilities = _jsonMap(
+        initialized['agentCapabilities'],
+      )?.cast<String, Object?>();
+      _systemPromptCapabilities = AcpSystemPromptCapabilities.parse(
+        agentCapabilities,
+      );
+      _skillPromptCapabilities = AcpSkillPromptCapabilities.parse(
+        agentCapabilities,
+      );
+      final skills = _loadSkills == null
+          ? const AcpSkills()
+          : await _loadSkills(_context);
+      if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+      _baocodeSkills = skills;
+      _rebuildCommands();
+      _systemPrompt = resolveAcpSystemPrompt(
+        capabilities: _systemPromptCapabilities,
+        corePrompt: _coreSystemPrompt(),
+        workspace: _context.workspace?.call(),
+        skillsSection: _baocodeSkills.systemPromptSection(),
+      );
       final capabilities =
           _jsonMap(
-            _jsonMap(initialized['agentCapabilities'])?['mcpCapabilities'],
+            agentCapabilities?['mcpCapabilities'],
           )?.cast<String, Object?>() ??
           const <String, Object?>{};
       final mcp =
@@ -310,6 +349,15 @@ class AcpKernel
           ),
         );
       }
+      for (final (index, warning) in _systemPrompt.warnings.indexed) {
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'acp_prompt_warning_$index',
+            NoticeItem(NoticeKind.warning, warning),
+          ),
+        );
+      }
       if (obsolete()) return;
       _starting = false;
       _health = KernelHealth.ready;
@@ -337,11 +385,13 @@ class AcpKernel
         'sessionId': retainedId,
         'cwd': _agentCwd(_context.cwd ?? resume?.cwd),
         'mcpServers': _mcp.servers,
+        'systemPrompt': ?_systemPrompt.param,
       });
     } else {
       session = await _request('session/new', {
         'cwd': _agentCwd(_context.cwd),
         'mcpServers': _mcp.servers,
+        'systemPrompt': ?_systemPrompt.param,
       });
       _sessionId = session['sessionId'] as String?;
     }
@@ -548,9 +598,12 @@ class AcpKernel
       if (loadsHistory) _replaying = true;
       final response = _request('session/prompt', {
         'sessionId': sessionId,
-        'prompt': [
-          {'type': 'text', 'text': turn.text},
-        ],
+        'prompt': buildAcpPromptBlocks(
+          turn.text,
+          agentCommands: _agentCommands,
+          baocodeSkills: _baocodeSkills,
+          capabilities: _skillPromptCapabilities,
+        ),
       });
       // Send Now may have been picked while the agent was still starting.
       // Cancel only after it has the prompt, and wait for that prompt to end.
@@ -705,17 +758,41 @@ class AcpKernel
 
   void _setCommands(Object? raw) {
     if (raw is! List) return;
-    _commands = [
-      for (final item in raw)
-        if (item is Map && item['name'] is String)
-          KernelCommand(
-            (item['name'] as String).replaceFirst(RegExp(r'^/'), ''),
-            item['description'] as String? ?? 'ACP command',
-            Icons.code_rounded,
-            argumentHint: (item['input'] as Map?)?['hint'] as String? ?? '',
-          ),
-    ];
+    _agentCommands = AcpAdvertisedCommand.parseList(raw);
+    _rebuildCommands();
     emitInfoChanged();
+  }
+
+  void _rebuildCommands() {
+    final agentNames = <String>{};
+    final merged = <KernelCommand>[];
+    for (final command in _agentCommands) {
+      agentNames.add(command.name);
+      merged.add(
+        KernelCommand(
+          command.name,
+          command.description,
+          command.isSkill ? Icons.bolt_rounded : Icons.code_rounded,
+          argumentHint: command.argumentHint,
+          isSkill: command.isSkill,
+          filePath: command.filePath ?? _baocodeSkills.byName(command.name)?.path,
+        ),
+      );
+    }
+    for (final skill in _baocodeSkills.skills) {
+      if (!skill.userInvocable || agentNames.contains(skill.name)) continue;
+      merged.add(
+        KernelCommand(
+          skill.name,
+          skill.description.isEmpty ? 'BaoCode skill' : skill.description,
+          Icons.bolt_rounded,
+          argumentHint: skill.argumentHint,
+          isSkill: true,
+          filePath: skill.path,
+        ),
+      );
+    }
+    _commands = merged;
   }
 
   @override
@@ -2644,6 +2721,10 @@ class AcpKernel
     _subscription = null;
     _closeMcp();
     _mcp = const AcpMcpServers();
+    _baocodeSkills = const AcpSkills();
+    _systemPromptCapabilities = const AcpSystemPromptCapabilities();
+    _systemPrompt = const AcpSystemPromptResolution();
+    _skillPromptCapabilities = const AcpSkillPromptCapabilities();
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('ACP connection closed'));

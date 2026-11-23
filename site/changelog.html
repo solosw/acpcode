@@ -29,6 +29,17 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.3">
+    <h2 class="plain"><a href="#v2.0.3">2.0.3</a></h2>
+    <p>This release adds ACP system prompt customization and Skills support, wired to BaoCode's Built-in Core prompt and Skills while staying compatible with ACP v1 agents.</p>
+    <p>New</p>
+    <ul>
+    <li>Negotiate ACP <code>systemPrompt</code> (<code>append</code> and <code>mode.override</code>) on <code>session/new</code> and <code>session/load</code>, forwarding Settings → Built-in Core system prompt settings and workspace/bot instructions with clear warnings when an agent does not support them.</li>
+    <li>Support ACP v2 structured <code>skill</code> commands and <code>skill</code> prompt blocks (including inline references when advertised), falling back to plain text automatically on ACP v1 agents.</li>
+    <li>Load enabled BaoCode Skills from <code>~/.claude/skills</code> and <code>&lt;project&gt;/.claude/skills</code> on both local and SSH hosts, respecting Settings → Customize switches, injecting a model-invocable skills catalog into <code>systemPrompt</code>, expanding <code>/skill-name</code> invocations for v1 and v2 agents, and opening <code>SKILL.md</code> from command tags.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.2">
     <h2 class="plain"><a href="#v2.0.2">2.0.2</a></h2>
     <p>This release fixes file tracking in SSH ACP conversations and UTF-16 text being rejected as binary.</p>

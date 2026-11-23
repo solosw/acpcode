@@ -285,6 +285,9 @@ void main() {
       final params = initialize['params'] as Map;
       expect(params['clientCapabilities'], {
         'subagents': <String, Object?>{},
+        'session': {
+          'commands': {'skill': <String, Object?>{}},
+        },
         '_meta': {'subagent-transcript': true},
       });
 

@@ -73,13 +73,15 @@ class KernelOptionGroup {
   int get hashCode => Object.hash(id, label, warning);
 }
 
-/// A `/command` a kernel understands.
+/// A `/command` or skill a kernel understands.
 class KernelCommand {
   const KernelCommand(
     this.name,
     this.description,
     this.icon, {
     this.argumentHint = '',
+    this.isSkill = false,
+    this.filePath,
   });
 
   final String name;
@@ -88,6 +90,13 @@ class KernelCommand {
 
   /// What may follow it, e.g. `[low|medium|high]`.
   final String argumentHint;
+
+  /// Whether this entry is a skill (e.g. ACP `skill` command or BaoCode skill).
+  final bool isSkill;
+
+  /// Optional path to the backing definition file (e.g. `SKILL.md`) on the
+  /// agent's host.
+  final String? filePath;
 }
 
 /// A file the kernel offers for an `@mention`, relative to the project.

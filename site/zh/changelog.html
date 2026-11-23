@@ -29,6 +29,17 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.3">
+    <h2 class="plain"><a href="#v2.0.3">2.0.3</a></h2>
+    <p>这一版为 ACP 接入系统提示词自定义与 Skills 支持，对接 BaoCode 内置内核提示词与本地/SSH Skills，并保持对现有 ACP v1 Agent 的兼容。</p>
+    <p>新功能</p>
+    <ul>
+    <li>在 <code>session/new</code> 与 <code>session/load</code> 中接入 ACP <code>systemPrompt</code>（支持 <code>append</code> 与 <code>mode.override</code> 能力协商），自动同步「设置 → 内置内核」的系统提示词配置以及工作区/Bot 指令；Agent 不支持时安全跳过并给出提示。</li>
+    <li>支持 ACP v2 结构化 <code>skill</code> 命令项与 <code>skill</code> 提示词块（包含行内引用能力），面对 ACP v1 Agent 时自动兼容回退为纯文本。</li>
+    <li>自动加载本机与 SSH 远端 <code>~/.claude/skills</code> 和 <code>&lt;project&gt;/.claude/skills</code> 中启用的 BaoCode Skills（遵循「设置 → 自定义」开关与项目优先规则），支持向 <code>systemPrompt</code> 注入 Skills 目录、在 v1/v2 Agent 中通过 <code>/skill-name</code> 展开执行，并支持从命令标签直接打开 <code>SKILL.md</code>。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.2">
     <h2 class="plain"><a href="#v2.0.2">2.0.2</a></h2>
     <p>这一版修复 SSH 远程 ACP 对话中的文件变更追踪，以及 UTF-16 文本被误判为二进制的问题。</p>
