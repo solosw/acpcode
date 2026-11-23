@@ -313,6 +313,12 @@ abstract interface class EditWatch {
   Future<void> afterEdit(String path);
 }
 
+/// Establishes the workspace baseline before a kernel dispatches each turn,
+/// including queued messages and commands that can write files directly.
+abstract interface class TurnWatch {
+  Future<void> beforeTurn();
+}
+
 /// A kernel that tells an [EditWatch] of its edits, before and after each:
 /// set before it starts.
 abstract interface class WatchesEdits {

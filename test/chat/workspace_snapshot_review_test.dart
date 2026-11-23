@@ -6,6 +6,8 @@ import 'dart:typed_data';
 
 import 'package:bao_remote/local.dart' show BlobReviewStore;
 import 'package:bao_remote/src/review/git_review_store.dart';
+import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/kernel/kernel_event.dart' show FileEdited, FileSnapshot;
 import 'package:baocode/chat/review/change_review.dart';
 import 'package:baocode/chat/review/review_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +54,70 @@ void main() {
         harness = null;
         temp.deleteSync(recursive: true);
       });
+
+      test(
+        'path hints survive missing files, reload and undo until kept',
+        () async {
+          final outside = p.join(temp.path, 'deleted.txt');
+          File(outside).writeAsStringSync('original deleted content');
+          File(outside).deleteSync();
+          review.reportEdit(
+            FileEdited(
+              1,
+              FileChange(path: outside, added: 0, removed: 0, tracked: false),
+              after: const FileSnapshot.unknown(),
+            ),
+          );
+          await review.look();
+          expect(review.changes.single.path, outside);
+          expect(review.changes.single.tracked, isFalse);
+          expect(review.original(outside), isNull);
+          review.dispose();
+          review = await ChangeReview.resume(
+            store,
+            'snapshot-session',
+            root: root,
+          );
+          await review.look();
+          expect(review.changes.single.path, outside);
+          await review.undoAll();
+          expect(File(outside).existsSync(), isFalse);
+          expect(review.changes.single.path, outside);
+          await review.keep([outside]);
+          await review.look();
+          expect(review.changes, isEmpty);
+        },
+      );
+
+      test(
+        'path hints before and after observation preserve safe snapshot Undo',
+        () async {
+          write('hinted.txt', 'before');
+          await review.begin();
+          write('hinted.txt', 'after');
+          void hint(int seq) => review.reportEdit(
+            FileEdited(
+              seq,
+              FileChange(
+                path: at('hinted.txt'),
+                added: 0,
+                removed: 0,
+                tracked: false,
+              ),
+              after: const FileSnapshot.unknown(),
+            ),
+          );
+          hint(1);
+          await review.observe();
+          hint(2);
+          await review.look();
+          expect(review.changes.single.tracked, isTrue);
+          expect(await review.original(at('hinted.txt'))!(), 'before');
+          await review.undoAll();
+          expect(read('hinted.txt'), 'before');
+          expect(review.changes, isEmpty);
+        },
+      );
 
       test('discovers modifications, creations and deletions without any kernel events or project Git repository', () async {
         write('edit.txt', 'before\n');

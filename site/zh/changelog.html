@@ -29,6 +29,18 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.2">
+    <h2 class="plain"><a href="#v2.0.2">2.0.2</a></h2>
+    <p>这一版修复 SSH 远程 ACP 对话中的文件变更追踪，以及 UTF-16 文本被误判为二进制的问题。</p>
+    <p>修复</p>
+    <ul>
+    <li>ACP 每轮实际执行前等待文件快照就绪，覆盖首次发送、排队消息和 slash 命令，避免快速写入被漏记。</li>
+    <li>ACP 编辑工具成功上报的 diff 会进入对话文件变更列表；子 Agent 延迟完成仍归属原轮次，重连重复事件不会重新列出已保留的文件。</li>
+    <li>工作区外文件的变更提示在轮次结束和恢复会话后保留。没有可靠原文的文件只列出，不提供撤销。</li>
+    <li>本地和 SSH 编辑器可识别带 BOM 的 UTF-16 LE/BE 文本，保存时保留原编码、BOM 和换行格式。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.1">
     <h2 class="plain"><a href="#v2.0.1">2.0.1</a></h2>
     <p>这一版扩展了对话协作，新增 Antigravity 模型上游，并改善了 SSH 和浏览器工具的连接稳定性。</p>

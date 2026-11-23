@@ -107,18 +107,19 @@ class LocalFiles {
         } finally {
           await handle.close();
         }
-        final text = force
-            ? utf8.decode(bytes, allowMalformed: true)
-            : _decode(path, bytes);
+        final encoding = _encodingOf(bytes);
+        final text = _decode(path, bytes, force: force);
         _snapshots[_key(path)] = _FileSnapshot(
           resolved,
           bytes,
           text,
           RegExp(r'\r\n|\n|\r').firstMatch(text)?.group(0) ?? '\n',
-          bytes.length >= 3 &&
-              bytes[0] == 0xef &&
-              bytes[1] == 0xbb &&
-              bytes[2] == 0xbf,
+          encoding != _TextEncoding.utf8 ||
+              (bytes.length >= 3 &&
+                  bytes[0] == 0xef &&
+                  bytes[1] == 0xbb &&
+                  bytes[2] == 0xbf),
+          encoding: encoding,
           forced: force,
         );
         return text;
@@ -140,10 +141,7 @@ class LocalFiles {
         // line endings emitted by the editor.
         final bytes = _lf(text) == _lf(snapshot.text)
             ? snapshot.bytes
-            : Uint8List.fromList([
-                if (snapshot.hasBom) ...[0xef, 0xbb, 0xbf],
-                ...utf8.encode(_lf(text).replaceAll('\n', snapshot.lineEnding)),
-              ]);
+            : _encode(text, snapshot);
         if (!snapshot.forced) {
           _checkSize(path, bytes.length);
           _decode(path, bytes);
@@ -172,6 +170,7 @@ class LocalFiles {
             text,
             snapshot.lineEnding,
             snapshot.hasBom,
+            encoding: snapshot.encoding,
             forced: snapshot.forced,
           );
         } finally {
@@ -339,16 +338,66 @@ class LocalFiles {
     if (length > limit) throw IdeFileTooLargeException(path, length);
   }
 
-  /// [bytes] as text. Binary, as VS Code has it, is a NUL byte or what is
-  /// not UTF-8; other control characters, such as a log's ANSI colour
-  /// escapes, are text.
-  static String _decode(String path, List<int> bytes) {
-    if (bytes.contains(0)) throw IdeBinaryFileException(path);
-    try {
-      return utf8.decode(bytes, allowMalformed: false);
-    } on FormatException {
-      throw IdeBinaryFileException(path);
+  static _TextEncoding _encodingOf(List<int> bytes) {
+    if (bytes.length >= 2) {
+      if (bytes[0] == 0xff && bytes[1] == 0xfe) return _TextEncoding.utf16le;
+      if (bytes[0] == 0xfe && bytes[1] == 0xff) return _TextEncoding.utf16be;
     }
+    return _TextEncoding.utf8;
+  }
+
+  /// Decode the BOM before testing for binary NULs: UTF-16 text contains
+  /// zero bytes even for ordinary ASCII. Reject malformed text unless forced.
+  static String _decode(String path, List<int> bytes, {bool force = false}) {
+    final encoding = _encodingOf(bytes);
+    if (encoding == _TextEncoding.utf8) {
+      if (!force && bytes.contains(0)) throw IdeBinaryFileException(path);
+      try {
+        return utf8.decode(bytes, allowMalformed: force);
+      } on FormatException {
+        throw IdeBinaryFileException(path);
+      }
+    }
+    if (!force && bytes.length.isOdd) throw IdeBinaryFileException(path);
+    final bigEndian = encoding == _TextEncoding.utf16be;
+    final units = <int>[
+      for (var i = 2; i + 1 < bytes.length; i += 2)
+        bigEndian ? bytes[i] << 8 | bytes[i + 1] : bytes[i + 1] << 8 | bytes[i],
+      if (bytes.length.isOdd) 0xfffd,
+    ];
+    for (var i = 0; i < units.length; i++) {
+      final unit = units[i];
+      if (!force && unit == 0) throw IdeBinaryFileException(path);
+      if (unit < 0xd800 || unit > 0xdfff) continue;
+      if (unit <= 0xdbff &&
+          i + 1 < units.length &&
+          units[i + 1] >= 0xdc00 &&
+          units[i + 1] <= 0xdfff) {
+        i++;
+      } else if (force) {
+        units[i] = 0xfffd;
+      } else {
+        throw IdeBinaryFileException(path);
+      }
+    }
+    return String.fromCharCodes(units);
+  }
+
+  static Uint8List _encode(String text, _FileSnapshot snapshot) {
+    final content = _lf(text)
+        .replaceAll(String.fromCharCode(10), snapshot.lineEnding);
+    if (snapshot.encoding == _TextEncoding.utf8) {
+      return Uint8List.fromList([
+        if (snapshot.hasBom) ...[0xef, 0xbb, 0xbf],
+        ...utf8.encode(content),
+      ]);
+    }
+    final bigEndian = snapshot.encoding == _TextEncoding.utf16be;
+    return Uint8List.fromList([
+      ...bigEndian ? [0xfe, 0xff] : [0xff, 0xfe],
+      for (final unit in content.codeUnits)
+        ...bigEndian ? [unit >> 8, unit & 255] : [unit & 255, unit >> 8],
+    ]);
   }
 
   static bool _sameBytes(List<int> a, List<int> b) {
@@ -360,6 +409,8 @@ class LocalFiles {
   }
 }
 
+enum _TextEncoding { utf8, utf16le, utf16be }
+
 class _FileSnapshot {
   const _FileSnapshot(
     this.path,
@@ -367,6 +418,7 @@ class _FileSnapshot {
     this.text,
     this.lineEnding,
     this.hasBom, {
+    this.encoding = _TextEncoding.utf8,
     this.forced = false,
   });
 
@@ -375,6 +427,7 @@ class _FileSnapshot {
   final String text;
   final String lineEnding;
   final bool hasBom;
+  final _TextEncoding encoding;
 
   /// Opened anyway: saved without the binary and size checks.
   final bool forced;

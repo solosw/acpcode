@@ -20,9 +20,10 @@ abstract interface class IdeFileService {
 
   Future<List<IdeFile>> list(String directory);
 
-  /// The file's text. Throws [IdeBinaryFileException] or
+  /// The file's UTF-8 text, or UTF-16 text identified by a byte order mark.
+  /// Throws [IdeBinaryFileException] or
   /// [IdeFileTooLargeException] for what the editor does not show unless
-  /// [force]d (VS Code's Open Anyway): then malformed UTF-8 is replaced
+  /// [force]d (VS Code's Open Anyway): then malformed text is replaced
   /// and the size limit is raised.
   Future<String> read(String path, {bool force = false});
 

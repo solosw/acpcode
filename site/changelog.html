@@ -29,6 +29,18 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.2">
+    <h2 class="plain"><a href="#v2.0.2">2.0.2</a></h2>
+    <p>This release fixes file tracking in SSH ACP conversations and UTF-16 text being rejected as binary.</p>
+    <p>Fixed</p>
+    <ul>
+    <li>Wait for workspace snapshots before each ACP prompt, including the first message, queued messages and slash commands, so fast writes are not missed.</li>
+    <li>Include successful ACP tool diffs in the conversation file list. Late subagent completions keep their original turn, and duplicate events after reconnect do not restore changes already kept.</li>
+    <li>Preserve file hints outside the workspace across turn completion and conversation resume. Files without a reliable original are listed without Undo.</li>
+    <li>Open BOM-marked UTF-16 LE/BE text in local and SSH editors, preserving its encoding, BOM and line endings when saved.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.1">
     <h2 class="plain"><a href="#v2.0.1">2.0.1</a></h2>
     <p>This release expands conversation coordination, adds Antigravity as a model provider, and improves SSH and browser tool reliability.</p>

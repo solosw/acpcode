@@ -233,6 +233,10 @@ class ChangeReview extends ChangeNotifier {
   /// known), by absolute path: listed, to be kept.
   final Map<String, FileChange> _unseen = {};
 
+  // A path hint has no before/after checkpoint: absence alone cannot prove
+  // nothing is left of the change. Keep these hints until the user accepts.
+  final Set<String> _hints = {};
+
   /// Live reads that failed: unlike an unknown edit event, the missing interval
   /// cannot be filled in safely by a later workspace snapshot.
   final Set<String> _unreadable = {};
@@ -565,7 +569,19 @@ class ChangeReview extends ChangeNotifier {
     final snapshot = _reportedAfter;
     unawaited(
       _enqueue(() async {
-        if (_unreadable.contains(key) ||
+        // A tool diff can identify a path without supplying a byte checkpoint.
+        // Keep safe snapshots already captured by polling or fs/write intact.
+        if (!change.tracked && snapshot != null && !snapshot.known) {
+          if (!_entries.containsKey(key)) {
+            _hints.add(key);
+            _unseen[key] = FileChange(
+              path: key,
+              added: change.added,
+              removed: change.removed,
+              tracked: false,
+            );
+          }
+        } else if (_unreadable.contains(key) ||
             (snapshot != null && !snapshot.known)) {
           _entries.remove(key);
           _unseen[key] = FileChange(
@@ -715,6 +731,7 @@ class ChangeReview extends ChangeNotifier {
         // Those it cannot undo that are gone since (a script the agent wrote
         // and deleted): nothing is left of them to keep.
         for (final path in [..._unseen.keys]) {
+          if (_hints.contains(path)) continue;
           final found = await _readFile(path);
           if (found != null && found.blob == null) {
             _unseen.remove(path);
@@ -740,6 +757,7 @@ class ChangeReview extends ChangeNotifier {
 
   /// [changes] anew, with their line counts.
   Future<void> _refresh() async {
+    _hints.removeWhere((path) => !_unseen.containsKey(path));
     _entries.removeWhere((_, entry) => !entry.pending && entry.writing == 0);
     final listed = <FileChange>[];
     for (final path in _entries.keys.toList()..sort()) {
@@ -779,6 +797,7 @@ class ChangeReview extends ChangeNotifier {
     final kept = [for (final path in paths) _key(path)];
     return _enqueue(() async {
       for (final path in kept) {
+        _hints.remove(path);
         _unseen.remove(path);
         _unreadable.remove(path);
         _entries.remove(path);
@@ -790,6 +809,7 @@ class ChangeReview extends ChangeNotifier {
 
   Future<void> keepAll() => _enqueue(() async {
     _unseen.clear();
+    _hints.clear();
     _unreadable.clear();
     _entries.removeWhere((_, entry) => entry.writing == 0);
     await _refresh();
@@ -1106,6 +1126,7 @@ class ChangeReview extends ChangeNotifier {
                   'added': change.added,
                   'removed': change.removed,
                   if (_unreadable.contains(change.path)) 'unreadable': true,
+                  if (_hints.contains(change.path)) 'hint': true,
                 },
             ],
             'turns': [
@@ -1188,6 +1209,7 @@ class ChangeReview extends ChangeNotifier {
               tracked: false,
             );
             if (change case {'unreadable': true}) _unreadable.add(path);
+            if (change case {'hint': true}) _hints.add(path);
           }
         }
       }
@@ -1210,6 +1232,7 @@ class ChangeReview extends ChangeNotifier {
       // Begun anew.
       _entries.clear();
       _unseen.clear();
+      _hints.clear();
       _unreadable.clear();
       _turns.clear();
     }

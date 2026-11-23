@@ -118,6 +118,13 @@ class AcpKernel
   final Set<String> _configRequests = {};
   final Map<String, String> _messages = {};
   final Map<String, ToolCallItem> _tools = {};
+
+  // ACP Diff content is a UI description, not a byte/mode checkpoint. Keep
+  // proposals until success and report paths without inventing Undo originals.
+  final _toolDiffs = <String, Map<String, Map<String, Object?>>>{};
+  final _toolTurns = <String, String?>{};
+  final _reportedToolDiffs = <String>{};
+  final _fsWrittenText = <String, ({String text, String? turn})>{};
   final Map<String, KernelTask> _tasks = {};
   final _agents = <String, _AcpSubagent>{};
   final _toolParents = <String, String>{};
@@ -500,6 +507,11 @@ class AcpKernel
         final changes = _configChanges;
         await changes;
         if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+        if (_editWatch case final TurnWatch watch) {
+          await watch.beforeTurn();
+          if (obsolete() || _health.status == KernelHealthStatus.failed) return;
+        }
+        // A settings picker can change while the remote baseline is opening.
         if (identical(changes, _configChanges)) break;
       }
       final sessionId = _sessionId!;
@@ -1070,6 +1082,7 @@ class AcpKernel
             await files.write(path, content, expectedText: original ?? '');
             final after = await files.read(path);
             if (current()) {
+              _fsWrittenText[path] = (text: after, turn: turn);
               // Report while the edit watch is still open: its exact byte/mode
               // checkpoints take precedence over protocol text snapshots.
               emit(
@@ -1803,6 +1816,7 @@ class AcpKernel
       details: details,
     );
     _tools[id] = item;
+    _toolDiffUpdate(id, update, toolStatus, previous: previous);
     if (parentId != null) _toolParents[id] = parentId;
     if (kind == ToolKind.agent || _agents.containsKey(id)) {
       final agent = _ensureAgent(id, parentId: parentId);
@@ -1855,6 +1869,115 @@ class AcpKernel
       summary: kind == ToolKind.command ? item.output : title,
     );
     emit(TasksReported(nextSeq, _tasks.values.toList()));
+  }
+
+  /// A completed tool's diff identifies a file even when the agent wrote it
+  /// itself (outside the workspace snapshots, or through an ignored path).
+  /// Its display text is not proof of the entire original file, so these are
+  /// non-destructive hints: existing review checkpoints always take precedence.
+  void _toolDiffUpdate(
+    String id,
+    Map<String, Object?> update,
+    ToolStatus status, {
+    required ToolCallItem? previous,
+  }) {
+    if (_replaying ||
+        _retainedLoad ||
+        _disposed ||
+        (update['toolCallId'] is! String && update['id'] is! String)) {
+      return;
+    }
+    // Completion can arrive after its parent turn ended or another began.
+    // Only a fresh tool_call (not a status patch) may deliberately reuse a
+    // finished id in another turn. Child ids have already been namespaced.
+    if (update['sessionUpdate'] == 'tool_call' &&
+        status == ToolStatus.running &&
+        previous != null &&
+        previous.status != ToolStatus.running &&
+        _turnId != null &&
+        _toolTurns.containsKey(id) &&
+        _toolTurns[id] != _turnId) {
+      _toolTurns[id] = _turnId;
+      _toolDiffs.remove(id);
+    } else {
+      // A tool only seen in history has no live owner. Never adopt the turn
+      // currently running merely because its old completion was delivered now.
+      _toolTurns.putIfAbsent(id, () => previous == null ? _turnId : null);
+    }
+    if (status == ToolStatus.failed || status == ToolStatus.denied) {
+      _toolDiffs.remove(id);
+      return;
+    }
+    final content = update['content'];
+    if (content is List) {
+      for (final block in content) {
+        if (block is! Map ||
+            block['type'] != 'diff' ||
+            block['path'] is! String ||
+            block['newText'] is! String ||
+            (block['oldText'] != null && block['oldText'] is! String)) {
+          continue;
+        }
+        final diff = <String, Object?>{
+          'path': block['path'],
+          'oldText': block['oldText'],
+          'newText': block['newText'],
+        };
+        (_toolDiffs[id] ??= {})[jsonEncode(diff)] = diff;
+      }
+    }
+    if (status != ToolStatus.succeeded) return;
+    final diffs = _toolDiffs.remove(id);
+    if (diffs == null) return;
+    final location = _context.cwd ?? _context.resume?.cwd;
+    if (location == null) return;
+    final paths = RemoteLocation.pathsOf(location);
+    final generation = _startGeneration;
+    final turn = _toolTurns[id];
+    for (final diff in diffs.values) {
+      final rawPath = diff['path'] as String;
+      if (rawPath.contains('\u0000') || !paths.isAbsolute(rawPath)) continue;
+      // Serialize behind client filesystem writes: their precise checkpoint and
+      // result must be reported first if this is merely their tool UI update.
+      _fileRequests++;
+      _fileOperations = _fileOperations.then((_) async {
+        try {
+          if (_disposed || generation != _startGeneration) return;
+          var path = paths.normalize(rawPath);
+          try {
+            path = await resolveAcpFilePath(location, path);
+          } on Object {
+            // A missing/unreadable target can still be listed without Undo.
+          }
+          if (_disposed || generation != _startGeneration) return;
+          final signature = jsonEncode([
+            id,
+            turn,
+            path,
+            diff['oldText'],
+            diff['newText'],
+          ]);
+          if (!_reportedToolDiffs.add(signature)) return;
+          final written = _fsWrittenText[path];
+          if (written != null &&
+              written.turn == turn &&
+              written.text == diff['newText']) {
+            return;
+          }
+          emit(
+            FileEdited(
+              nextSeq,
+              FileChange(path: path, added: 0, removed: 0, tracked: false),
+              turnId: turn,
+              after: const FileSnapshot.unknown(),
+            ),
+          );
+        } finally {
+          _fileRequests--;
+          if (!_disposed && _released) scheduleMicrotask(_releaseIfIdle);
+        }
+      });
+    }
   }
 
   /// Both the current subagent RFD and the older Codex/AIR draft declare
@@ -2535,10 +2658,14 @@ class AcpKernel
     _configChanges = Future.value();
     _closeAssistantStream();
     _messages.clear();
+    _toolDiffs.clear();
+    _fsWrittenText.clear();
     // The transcript survives idle release/reconnect. Keep its child routing
     // and patch stores too: a retained session/load is deliberately not replayed.
     if (!_everLoaded) {
       _tools.clear();
+      _toolTurns.clear();
+      _reportedToolDiffs.clear();
       _agents.clear();
       _toolParents.clear();
       _childSessions.clear();

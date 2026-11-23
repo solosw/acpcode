@@ -1344,7 +1344,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         if (from != null) ..._suggestionNotes(),
       ],
     );
-    if (!isStreaming) {
+    // ACP waits for its baseline at actual dispatch, including queued turns.
+    if (!isStreaming && _kernel is! AcpKernel) {
       _startReview();
       unawaited(_activeReview?.begin(roots: _reviewRoots));
     }
@@ -1526,7 +1527,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
 /// What [session]'s agent tells of its edits as it makes them, for the
 /// review of its changes (opened for them, where it was not yet).
-class _ReviewWatch implements EditWatch {
+class _ReviewWatch implements EditWatch, TurnWatch {
   _ReviewWatch(this.session);
 
   final ChatSession session;
@@ -1535,6 +1536,13 @@ class _ReviewWatch implements EditWatch {
     final review = await session._startReview();
     review?.session = session.sessionId;
     return review;
+  }
+
+  @override
+  Future<void> beforeTurn() async {
+    final review = await _review();
+    if (session._disposed) return;
+    await review?.begin(roots: session._reviewRoots);
   }
 
   @override

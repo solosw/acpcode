@@ -44,6 +44,12 @@ class _Transport extends MockAcpTransport {
         'method': method,
         'params': params,
       });
+  void update(Map<String, Object?> update, {String session = _sessionId}) =>
+      _messages.add({
+        'jsonrpc': '2.0',
+        'method': 'session/update',
+        'params': {'sessionId': session, 'update': update},
+      });
   void Function()? onLoad;
   bool holdPrompt = false;
 
@@ -119,7 +125,7 @@ class _Harness {
   late final AcpKernel kernel;
   late final ChatSession session;
   late final StreamSubscription<KernelEvent> subscription;
-  final transport = _Transport();
+  var transport = _Transport();
   final events = <KernelEvent>[];
   int _nextId = 1000;
   String get outside => p.join(temp.path, 'outside.txt');
@@ -179,6 +185,50 @@ class _GateReview extends ChangeReview {
     entered.complete();
     await proceed.future;
   }
+}
+
+// Real remote review/file RPC, with an ACP process that writes its own files.
+Future<_Harness> _remoteHarness(Directory temp, {SessionRecord? resume}) async {
+  final data = Directory(p.join(temp.path, 'server'))..createSync();
+  final connector = MemoryConnector(data.path);
+  final previous = SshHosts.instance;
+  SshHosts.instance = SshHosts(connect: connector.call);
+  addTearDown(() async {
+    await SshHosts.instance.closeAll();
+    SshHosts.instance = previous;
+  });
+  final client = await SshHosts.instance['dev'].ready;
+  return _Harness(
+    temp,
+    location: 'ssh://dev${p.join(temp.path, 'project')}',
+    store: (await client.openReview())!,
+    resume: resume,
+  );
+}
+
+Map<String, Object?> _diff(String path, String? before, String after) => {
+  'type': 'diff',
+  'path': path,
+  'oldText': before,
+  'newText': after,
+};
+
+void _tool(
+  _Harness h,
+  String id, {
+  String? status,
+  List<Object?>? content,
+  String session = _sessionId,
+}) => h.transport.update({
+  'sessionUpdate': 'tool_call_update',
+  'toolCallId': id,
+  'status': ?status,
+  'content': ?content,
+}, session: session);
+
+Future<void> _diffsDone(_Harness h) async {
+  await until(() => !h.kernel.hasPendingEdits);
+  await h.review.observe();
 }
 
 void main() {
@@ -417,6 +467,408 @@ void main() {
     await h.write(created, 'new\n');
     await h.review.undoAll();
     expect(File(created).existsSync(), isFalse);
+  }, skip: Platform.isWindows);
+
+  test(
+    'SSH tool diffs are listed only after completion without guessed Undo',
+    () async {
+      final h = await _remoteHarness(temp);
+      await h.start();
+      File(h.outside).writeAsStringSync('before\n');
+      _tool(
+        h,
+        'edit',
+        status: 'pending',
+        content: [_diff(h.outside, 'before\n', 'after\n')],
+      );
+      await _diffsDone(h);
+      expect(h.session.fileChanges, isEmpty);
+      File(h.outside).writeAsStringSync('after\n');
+      _tool(h, 'edit', status: 'completed');
+      await _diffsDone(h);
+      expect(h.session.fileChanges.single.path, h.outside);
+      expect(h.session.fileChanges.single.tracked, isFalse);
+      final edit = h.events.whereType<FileEdited>().single;
+      expect(edit.original, isNull);
+      expect(edit.after!.known, isFalse);
+      await h.review.undoAll();
+      expect(File(h.outside).readAsStringSync(), 'after\n');
+    },
+    skip: Platform.isWindows,
+  );
+
+  test(
+    'SSH outside deletion hint remains listed after the turn ends',
+    () async {
+      final h = await _remoteHarness(temp);
+      await h.start();
+      File(h.outside).writeAsStringSync('deleted original');
+      h.transport.holdPrompt = true;
+      h.session.send(const ComposerMessage(text: 'delete outside file'));
+      await until(
+        () => h.transport.written.any((m) => m['method'] == 'session/prompt'),
+      );
+      File(h.outside).deleteSync();
+      _tool(
+        h,
+        'delete',
+        status: 'completed',
+        content: [_diff(h.outside, 'deleted original', '')],
+      );
+      await _diffsDone(h);
+      h.transport.completePrompt();
+      await until(() => h.events.whereType<TurnEnded>().isNotEmpty);
+      await h.review.look();
+      expect(h.session.fileChanges.single.path, h.outside);
+      expect(h.session.fileChanges.single.tracked, isFalse);
+      await h.review.undoAll();
+      expect(File(h.outside).existsSync(), isFalse);
+      expect(h.session.fileChanges.single.path, h.outside);
+      await h.review.keepAll();
+      expect(h.session.fileChanges, isEmpty);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test('SSH completed diff fragments and missing targets are hints, never file originals', () async {
+    final h = await _remoteHarness(temp);
+    await h.start();
+    File(h.outside).writeAsStringSync('header\nnew fragment\nfooter\n');
+    final missing = p.join(temp.path, 'unreadable', 'file.txt');
+    _tool(
+      h,
+      'fragment',
+      status: 'completed',
+      content: [
+        _diff(h.outside, 'old fragment', 'new fragment'),
+        _diff(missing, null, 'proposed creation'),
+      ],
+    );
+    await _diffsDone(h);
+    expect(
+      h.session.fileChanges.map((change) => change.path),
+      unorderedEquals([h.outside, missing]),
+    );
+    expect(h.session.fileChanges.every((change) => !change.tracked), isTrue);
+    expect(
+      h.events.whereType<FileEdited>().every((edit) => edit.original == null),
+      isTrue,
+    );
+    await h.review.undoAll();
+    expect(
+      File(h.outside).readAsStringSync(),
+      'header\nnew fragment\nfooter\n',
+    );
+    expect(File(missing).existsSync(), isFalse);
+  }, skip: Platform.isWindows);
+
+  test('SSH diff completion patches deduplicate canonical paths and ignore failed proposals', () async {
+    final h = await _remoteHarness(temp);
+    await h.start();
+    File(h.outside).writeAsStringSync('after\n');
+    final alias = p.join(temp.path, 'alias.txt');
+    Link(alias).createSync(h.outside);
+    final block = _diff(h.outside, 'before\n', 'after\n');
+    _tool(h, 'edit', status: 'completed');
+    _tool(h, 'edit', content: [block]);
+    _tool(h, 'edit', status: 'completed', content: [block]);
+    _tool(h, 'edit', content: [_diff(alias, 'before\n', 'after\n')]);
+    _tool(
+      h,
+      'failed',
+      status: 'pending',
+      content: [_diff(p.join(temp.path, 'failed.txt'), 'before', 'after')],
+    );
+    _tool(h, 'failed', status: 'failed');
+    _tool(h, 'failed', status: 'completed');
+    h.transport.update({
+      'sessionUpdate': 'tool_call_update',
+      'status': 'completed',
+      'content': [_diff('/no-tool-id', null, 'text')],
+    });
+    _tool(
+      h,
+      'invalid',
+      status: 'completed',
+      content: [_diff('relative.txt', null, 'text')],
+    );
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(1));
+    expect(h.session.fileChanges.single.path, h.outside);
+  }, skip: Platform.isWindows);
+
+  test(
+    'SSH fs checkpoint survives full and fragment diff UI updates',
+    () async {
+      final h = await _remoteHarness(temp);
+      await h.start();
+      final bytes = [0xef, 0xbb, 0xbf, ...utf8.encode('before\r\n')];
+      File(h.outside).writeAsBytesSync(bytes);
+      await h.write(h.outside, 'after\n');
+      _tool(
+        h,
+        'fs-edit',
+        status: 'completed',
+        content: [
+          _diff(
+            h.outside,
+            'before',
+            utf8.decode(h.events.whereType<FileEdited>().single.after!.bytes!),
+          ),
+        ],
+      );
+      await _diffsDone(h);
+      expect(h.events.whereType<FileEdited>(), hasLength(1));
+      _tool(
+        h,
+        'fs-fragment',
+        status: 'completed',
+        content: [_diff(h.outside, 'before', 'after')],
+      );
+      await _diffsDone(h);
+      expect(h.events.whereType<FileEdited>(), hasLength(2));
+      expect(h.session.fileChanges.single.tracked, isTrue);
+      await h.review.undoAll();
+      expect(File(h.outside).readAsBytesSync(), bytes);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test('SSH declared child diff tool IDs are isolated and unknown sessions ignored', () async {
+    final h = await _remoteHarness(temp);
+    await h.start();
+    File(h.outside).writeAsStringSync('after\n');
+    final block = _diff(h.outside, 'before\n', 'after\n');
+    for (final child in ['first', 'second']) {
+      h.transport.update({
+        'sessionUpdate': 'subagent_update',
+        'sessionId': child,
+      });
+      _tool(h, 'edit', status: 'pending', content: [block], session: child);
+      _tool(h, 'edit', status: 'completed', session: child);
+    }
+    _tool(h, 'edit', status: 'completed', content: [block], session: 'unknown');
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(2));
+    expect(h.session.fileChanges.single.path, h.outside);
+  }, skip: Platform.isWindows);
+
+  test(
+    'SSH initial replay never caches a diff for a later live completion',
+    () async {
+      final h = await _remoteHarness(
+        temp,
+        resume: SessionRecord(
+          id: _sessionId,
+          title: 'resume',
+          updatedAt: DateTime(2026),
+          cwd: p.join(temp.path, 'project'),
+        ),
+      );
+      File(h.outside).writeAsStringSync('after\n');
+      h.transport.onLoad = () {
+        _tool(
+          h,
+          'history-pending',
+          status: 'pending',
+          content: [_diff(h.outside, 'before\n', 'after\n')],
+        );
+        _tool(
+          h,
+          'history-complete',
+          status: 'completed',
+          content: [_diff(h.outside, 'before\n', 'after\n')],
+        );
+      };
+      await h.start();
+      _tool(h, 'history-pending', status: 'completed');
+      await _diffsDone(h);
+      expect(h.events.whereType<FileEdited>(), isEmpty);
+      expect(h.session.fileChanges, isEmpty);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test('SSH idle release clears proposals and retained load cannot reintroduce diffs', () async {
+    final h = await _remoteHarness(
+      temp,
+      resume: SessionRecord(
+        id: _sessionId,
+        title: 'resume',
+        updatedAt: DateTime(2026),
+        cwd: p.join(temp.path, 'project'),
+      ),
+    );
+    await h.start();
+    File(h.outside).writeAsStringSync('after\n');
+    final block = _diff(h.outside, 'before\n', 'after\n');
+    _tool(h, 'stale', status: 'pending', content: [block]);
+    h.kernel.release();
+    await until(() => h.kernel.health.status == KernelHealthStatus.idle);
+    await h.kernel.stopped;
+    h.transport = _Transport()
+      ..onLoad = () {
+        _tool(h, 'retained', status: 'pending', content: [block]);
+        _tool(h, 'retained-completed', status: 'completed', content: [block]);
+      };
+    h.kernel.prepare();
+    await until(() => h.kernel.health.status == KernelHealthStatus.ready);
+    _tool(h, 'stale', status: 'completed');
+    _tool(h, 'retained', status: 'completed');
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), isEmpty);
+    expect(h.session.fileChanges, isEmpty);
+    _tool(h, 'live', status: 'completed', content: [block]);
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(1));
+    await h.review.keepAll();
+    expect(h.session.fileChanges, isEmpty);
+    h.kernel.release();
+    await until(() => h.kernel.health.status == KernelHealthStatus.idle);
+    await h.kernel.stopped;
+    h.transport = _Transport();
+    h.kernel.prepare();
+    await until(() => h.kernel.health.status == KernelHealthStatus.ready);
+    _tool(h, 'live', status: 'completed', content: [block]);
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(1));
+    expect(h.session.fileChanges, isEmpty);
+  }, skip: Platform.isWindows);
+
+  test(
+    'SSH late child and completed-only tool diffs retain their original turn',
+    () async {
+      final h = await _remoteHarness(temp);
+      await h.start();
+      h.transport.holdPrompt = true;
+      h.session.send(const ComposerMessage(text: 'first'));
+      await until(() => h.events.whereType<TurnStarted>().length == 1);
+      final first = h.events.whereType<TurnStarted>().single.turnId;
+      h.transport.update({
+        'sessionUpdate': 'subagent_update',
+        'sessionId': 'child',
+      });
+      _tool(
+        h,
+        'edit',
+        status: 'pending',
+        content: [_diff(h.outside, 'before', 'after')],
+        session: 'child',
+      );
+      _tool(h, 'parent-edit', status: 'in_progress');
+      h.transport.completePrompt();
+      await until(() => h.events.whereType<TurnEnded>().length == 1);
+      h.session.send(const ComposerMessage(text: 'second'));
+      await until(() => h.events.whereType<TurnStarted>().length == 2);
+      File(h.outside).writeAsStringSync('after');
+      final other = p.join(temp.path, 'other.txt');
+      File(other).writeAsStringSync('other after');
+      _tool(h, 'edit', status: 'completed', session: 'child');
+      _tool(
+        h,
+        'parent-edit',
+        status: 'completed',
+        content: [_diff(other, 'other before', 'other after')],
+      );
+      await _diffsDone(h);
+      final edits = h.events.whereType<FileEdited>().toList();
+      expect(edits, hasLength(2));
+      expect(edits.map((edit) => edit.turnId), [first, first]);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test('SSH asynchronous path resolution cannot move a completed diff to the next turn', () async {
+    final h = await _remoteHarness(temp);
+    await h.start();
+    h.transport.holdPrompt = true;
+    h.session.send(const ComposerMessage(text: 'first'));
+    await until(() => h.events.whereType<TurnStarted>().length == 1);
+    final first = h.events.whereType<TurnStarted>().single.turnId;
+    final gate = _GateWatch(h.review);
+    h.kernel.editWatch = gate;
+    final heldWrite = h.request('fs/write_text_file', {
+      'path': p.join(temp.path, 'held.txt'),
+      'content': 'held write',
+    });
+    await gate.entered.future;
+    File(h.outside).writeAsStringSync('after');
+    _tool(
+      h,
+      'queued-path',
+      status: 'completed',
+      content: [_diff(h.outside, 'before', 'after')],
+    );
+    h.transport.completePrompt();
+    await until(() => h.events.whereType<TurnEnded>().length == 1);
+    h.session.send(const ComposerMessage(text: 'second'));
+    await until(() => h.events.whereType<TurnStarted>().length == 2);
+    gate.proceed.complete();
+    expect((await h.response(heldWrite))['error'], isNull);
+    await _diffsDone(h);
+    final diff = h.events.whereType<FileEdited>().singleWhere(
+      (edit) => edit.change.path == h.outside,
+    );
+    expect(diff.turnId, first);
+  }, skip: Platform.isWindows);
+
+  test(
+    'SSH tool completion after the parent turn ends keeps its non-null owner',
+    () async {
+      final h = await _remoteHarness(temp);
+      await h.start();
+      h.transport.holdPrompt = true;
+      h.session.send(const ComposerMessage(text: 'parent'));
+      await until(() => h.events.whereType<TurnStarted>().length == 1);
+      final first = h.events.whereType<TurnStarted>().single.turnId;
+      _tool(h, 'late', status: 'pending');
+      h.transport.completePrompt();
+      await until(() => h.events.whereType<TurnEnded>().length == 1);
+      File(h.outside).writeAsStringSync('after');
+      _tool(
+        h,
+        'late',
+        status: 'completed',
+        content: [_diff(h.outside, 'before', 'after')],
+      );
+      await _diffsDone(h);
+      expect(h.events.whereType<FileEdited>().single.turnId, first);
+    },
+    skip: Platform.isWindows,
+  );
+
+  test('SSH only a new tool_call in a new turn allows an explicitly reused tool ID', () async {
+    final h = await _remoteHarness(temp);
+    await h.start();
+    h.transport.holdPrompt = true;
+    h.session.send(const ComposerMessage(text: 'first'));
+    await until(() => h.events.whereType<TurnStarted>().length == 1);
+    File(h.outside).writeAsStringSync('after');
+    final block = _diff(h.outside, 'before', 'after');
+    _tool(h, 'reused', status: 'completed', content: [block]);
+    await _diffsDone(h);
+    await h.review.keepAll();
+    h.transport.completePrompt();
+    await until(() => h.events.whereType<TurnEnded>().length == 1);
+    h.session.send(const ComposerMessage(text: 'second'));
+    await until(() => h.events.whereType<TurnStarted>().length == 2);
+    final second = h.events.whereType<TurnStarted>().last.turnId;
+    _tool(h, 'reused', status: 'pending', content: [block]);
+    _tool(h, 'reused', status: 'completed');
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(1));
+    expect(h.session.fileChanges, isEmpty);
+    h.transport.update({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'reused',
+      'status': 'pending',
+      'content': [block],
+    });
+    _tool(h, 'reused', status: 'completed');
+    await _diffsDone(h);
+    expect(h.events.whereType<FileEdited>(), hasLength(2));
+    expect(h.events.whereType<FileEdited>().last.turnId, second);
+    expect(h.session.fileChanges.single.path, h.outside);
   }, skip: Platform.isWindows);
 
   test(
