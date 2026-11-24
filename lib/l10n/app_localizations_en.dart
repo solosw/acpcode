@@ -224,13 +224,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsFolderHint =>
-      'Browse folders on the selected host, or enter its path manually.';
+      'Choose a rules directory on the server or enter its path.';
+
+  @override
+  String get agentsServer => 'Server';
+
+  @override
+  String get agentsNoServers =>
+      'Add a server in SSH settings to configure an agent command.';
 
   @override
   String get agentsConnection => 'Connection';
 
   @override
-  String get agentsCustomizations => 'Skills & Rules';
+  String get agentsCustomizations => 'Rules';
 
   @override
   String get agentsRequired => 'Name and command are required.';
@@ -277,7 +284,43 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsRegistryDescription =>
-      'Discover agents from the official ACP Registry. The target needs Node.js/npm for npm agents, or uv for Python agents. System runtimes and login credentials are not installed automatically.';
+      'Browse the official ACP Registry or enter your own registry JSON. npm agents require Node.js and npm, and Python agents require uv on the machine that runs them.';
+
+  @override
+  String get agentsRegistryPasteJson => 'Enter registry JSON';
+
+  @override
+  String get agentsRegistryBrowse => 'Browse official registry';
+
+  @override
+  String get agentsRegistryJsonHint =>
+      'Paste or write an ACP agent entry, an array of entries, or a registry document with an \"agents\" array.';
+
+  @override
+  String get agentsRegistryPreviewJson => 'Preview entries';
+
+  @override
+  String get agentsRegistryJsonInvalid => 'Could not read the registry JSON.';
+
+  @override
+  String get agentsRegistryJsonEmpty =>
+      'The registry JSON contains no agent entries.';
+
+  @override
+  String get agentsRegistryPlatformDownloads =>
+      'BaoCode downloads builds for every available platform and copies the matching build if the connected server needs it.';
+
+  @override
+  String get agentsRegistryCommandHint =>
+      'Leave blank to use the registry command.';
+
+  @override
+  String get agentsRegistryArgumentsHint =>
+      'Enter a JSON array of extra arguments for the registry command.';
+
+  @override
+  String get agentsRegistryRunner =>
+      'This agent uses a package runner. The server fetches the package the first time it needs it.';
 
   @override
   String get agentsRegistryTrust =>
@@ -293,8 +336,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get agentsRetry => 'Retry';
 
   @override
-  String get agentsUnsupported =>
-      'No supported distribution for this platform.';
+  String get agentsUnsupported => 'No supported distribution in this entry.';
 
   @override
   String get agentsNoResults => 'No matching agents';
@@ -314,7 +356,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsRegistryUnavailable =>
-      'Could not load the ACP Registry. Retry or configure an agent manually.';
+      'Could not load the ACP Registry. Retry or paste registry JSON.';
 
   @override
   String get documentPreviewLegacyFormat =>

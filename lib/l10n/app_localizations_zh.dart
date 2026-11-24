@@ -214,13 +214,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentsClearFolder => '清空目录';
 
   @override
-  String get agentsFolderHint => '浏览所选主机上的文件夹，也可手动输入该主机上的路径。';
+  String get agentsFolderHint => '选择服务器上的规则目录，或直接输入路径。';
+
+  @override
+  String get agentsServer => '服务器';
+
+  @override
+  String get agentsNoServers => '请先在 SSH 设置中添加服务器，再配置 Agent 命令。';
 
   @override
   String get agentsConnection => '连接配置';
 
   @override
-  String get agentsCustomizations => 'Skills 与 Rules';
+  String get agentsCustomizations => '规则';
 
   @override
   String get agentsRequired => '名称和启动命令不能为空。';
@@ -265,7 +271,39 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get agentsRegistryDescription =>
-      '从 ACP 官方公共注册表发现 Agent。安装目标需已有 Node.js/npm（npm 类型）或 uv（Python 类型），不会自动安装系统运行时或配置登录凭据。';
+      '浏览 ACP 官方注册表，或输入自定义注册表 JSON。运行 npm Agent 的机器需安装 Node.js 和 npm，运行 Python Agent 的机器需安装 uv。';
+
+  @override
+  String get agentsRegistryPasteJson => '输入注册表 JSON';
+
+  @override
+  String get agentsRegistryBrowse => '浏览官方注册表';
+
+  @override
+  String get agentsRegistryJsonHint =>
+      '粘贴或编写单个 ACP Agent 条目、条目数组，或包含 \"agents\" 数组的注册表文档。';
+
+  @override
+  String get agentsRegistryPreviewJson => '预览条目';
+
+  @override
+  String get agentsRegistryJsonInvalid => '无法读取注册表 JSON。';
+
+  @override
+  String get agentsRegistryJsonEmpty => '注册表 JSON 中没有 Agent 条目。';
+
+  @override
+  String get agentsRegistryPlatformDownloads =>
+      'BaoCode 下载注册表提供的所有平台构建。连接服务器时，如果缺少匹配的版本，就自动复制过去。';
+
+  @override
+  String get agentsRegistryCommandHint => '留空时使用注册表中的启动命令。';
+
+  @override
+  String get agentsRegistryArgumentsHint => '以 JSON 数组填写追加到注册表启动命令的参数。';
+
+  @override
+  String get agentsRegistryRunner => '此 Agent 通过包管理工具发布，由服务器在首次需要时获取。';
 
   @override
   String get agentsRegistryTrust =>
@@ -281,7 +319,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentsRetry => '重试';
 
   @override
-  String get agentsUnsupported => '此平台没有受支持的安装方式。';
+  String get agentsUnsupported => '此条目没有受支持的安装方式。';
 
   @override
   String get agentsNoResults => '没有匹配的 Agent';
@@ -299,7 +337,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get agentsVersion => '版本';
 
   @override
-  String get agentsRegistryUnavailable => '无法加载 ACP 注册表，请重试或手动配置 Agent。';
+  String get agentsRegistryUnavailable => '无法加载 ACP 注册表。请重试，或粘贴注册表 JSON。';
 
   @override
   String get documentPreviewLegacyFormat =>

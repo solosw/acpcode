@@ -59,11 +59,47 @@ class AcpRegistryEntry {
     ]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
-  AcpInstallPlan? planFor(String platform) {
+  /// Accepts a single agent, an array, or an ACP registry document.
+  static List<AcpRegistryEntry> parseImport(Object? value) {
+    final entries = switch (value) {
+      {'agents': final List agents} => agents,
+      final List agents => agents,
+      final Map agent => [agent],
+      _ => throw const FormatException('Expected ACP agent JSON'),
+    };
+    final parsed = parse({'agents': entries});
+    if (parsed.length != entries.length ||
+        parsed.map((agent) => agent.id).toSet().length != parsed.length ||
+        parsed.any(
+          (agent) => agent.runnerPlan == null && agent.binaryPlans.isEmpty,
+        )) {
+      throw const FormatException(
+        'Invalid, duplicate, or unsupported ACP agent entry',
+      );
+    }
+    return parsed;
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'name': name,
+    'description': description,
+    'version': version,
+    'distribution': distribution,
+  };
+
+  List<AcpInstallPlan> get binaryPlans => [
+    if (distribution['binary'] case final Map platforms)
+      for (final target in platforms.keys.whereType<String>())
+        ?binaryPlanFor(target),
+  ];
+
+  AcpInstallPlan? get runnerPlan {
     for (final kind in ['npx', 'uvx']) {
       if (distribution[kind] case final Map recipe) {
         final package = recipe['package'];
         if (package is! String ||
+            package.startsWith('-') ||
             !RegExp(
               r'^(?:@[a-zA-Z0-9_.-]+/)?[a-zA-Z0-9_.-]+(?:@|==)[a-zA-Z0-9_.+-]+$',
             ).hasMatch(package)) {
@@ -79,6 +115,13 @@ class AcpRegistryEntry {
         );
       }
     }
+    return null;
+  }
+
+  AcpInstallPlan? planFor(String platform) =>
+      runnerPlan ?? binaryPlanFor(platform);
+
+  AcpInstallPlan? binaryPlanFor(String platform) {
     if (distribution['binary'] case final Map platforms) {
       if (platforms[platform] case final Map recipe) {
         final archive = Uri.tryParse(
@@ -100,6 +143,8 @@ class AcpRegistryEntry {
         }
         return AcpInstallPlan(
           kind: 'binary',
+          platform: platform,
+          version: version,
           source: archive.toString(),
           command: cmd,
           arguments: _args(recipe),
@@ -115,6 +160,9 @@ class AcpRegistryEntry {
     final path = command.replaceAll('\\', '/');
     return !p.posix.isAbsolute(path) &&
         !p.windows.isAbsolute(path) &&
+        !path.contains(':') &&
+        !path.contains(String.fromCharCode(0)) &&
+        p.posix.normalize(path) != '.' &&
         !path.split('/').contains('..');
   }
 
@@ -129,6 +177,8 @@ class AcpRegistryEntry {
   };
 }
 
+String _hash(List<int> bytes) => sha256.convert(bytes).toString();
+
 class AcpInstallPlan {
   const AcpInstallPlan({
     required this.kind,
@@ -137,6 +187,8 @@ class AcpInstallPlan {
     required this.arguments,
     this.environment = const {},
     this.sha256,
+    this.platform,
+    this.version,
   });
   final String kind;
   final String source;
@@ -144,6 +196,12 @@ class AcpInstallPlan {
   final List<String> arguments;
   final Map<String, String> environment;
   final String? sha256;
+  final String? platform;
+  final String? version;
+
+  String get cacheKey => _hash(
+    utf8.encode(jsonEncode([platform, version, source, sha256, command])),
+  );
 
   String get launchPreview => '$command ${arguments.map(jsonEncode).join(' ')}';
 }
@@ -208,6 +266,45 @@ class AcpRegistry {
     } finally {
       client.close(force: true);
     }
+  }
+
+  Directory get cacheDirectory =>
+      Directory(p.join(DataDirectory.current.path, 'acp-agent-packages'));
+
+  File cachedBinary(AcpInstallPlan plan) =>
+      File(p.join(cacheDirectory.path, plan.cacheKey));
+
+  /// Fetch every published binary without executing it. Runner-only recipes
+  /// have no per-platform archives; preparation belongs to the server.
+  Future<AcpAgentConfig> cache(AcpRegistryEntry entry) async {
+    final validated = AcpRegistryEntry.parseImport(entry.toJson()).single;
+    for (final plan in validated.binaryPlans) {
+      final file = cachedBinary(plan);
+      if (await file.exists() &&
+          (plan.sha256 == null ||
+              (await sha256.bind(file.openRead()).first).toString() ==
+                  plan.sha256!.toLowerCase())) {
+        continue;
+      }
+      final bytes = await downloadBinary(plan);
+      await cacheDirectory.create(recursive: true);
+      final staging = await cacheDirectory.createTemp('download-');
+      try {
+        final package = await File(p.join(staging.path, 'package'))
+            .writeAsBytes(bytes);
+        await package.rename(file.path);
+      } finally {
+        await staging.delete(recursive: true);
+      }
+    }
+    return AcpAgentConfig(
+      id: validated.id,
+      label: validated.name,
+      command: '',
+      description: validated.description,
+      hostScoped: true,
+      registry: validated,
+    );
   }
 
   /// Package runners cache the pinned distribution without starting the agent.
@@ -285,11 +382,14 @@ class AcpRegistry {
   Future<Uint8List> downloadBinary(AcpInstallPlan plan) async {
     final uri = Uri.parse(plan.source);
     final bytes = await download(uri, 256 << 20);
-    if (plan.sha256 != null &&
-        sha256.convert(bytes).toString() != plan.sha256!.toLowerCase()) {
+    verifyBinary(plan, bytes);
+    return bytes;
+  }
+
+  void verifyBinary(AcpInstallPlan plan, Uint8List bytes) {
+    if (plan.sha256 != null && _hash(bytes) != plan.sha256!.toLowerCase()) {
       throw const FormatException('Agent download SHA-256 mismatch');
     }
-    return bytes;
   }
 
   /// Downloads and verifies a build for any target, without executing it.
@@ -299,10 +399,41 @@ class AcpRegistry {
     Uint8List? bytes,
   }) async {
     bytes ??= await downloadBinary(plan);
-    final uri = Uri.parse(plan.source);
-    if (uri.path.endsWith('.zip')) return extractZip(bytes, directory.path);
-    if (uri.path.endsWith('.tar.gz') || uri.path.endsWith('.tgz')) {
+    final path = Uri.parse(plan.source).path.toLowerCase();
+    final data = ByteData.sublistView(bytes);
+    final magic = data.lengthInBytes >= 4 ? data.getUint32(0) : 0;
+    if (path.endsWith('.zip') || magic == 0x504b0304) {
+      return extractZip(bytes, directory.path);
+    }
+    if (path.endsWith('.tar.gz') ||
+        path.endsWith('.tgz') ||
+        magic >> 16 == 0x1f8b) {
       return extractTar(gzip.decode(bytes), directory.path);
+    }
+    if (path.endsWith('.tar')) return extractTar(bytes, directory.path);
+    // Some registry URLs deliver the executable directly (ELF, Mach-O, PE).
+    if (const {
+          0x7f454c46,
+          0xfeedface,
+          0xfeedfacf,
+          0xcefaedfe,
+          0xcffaedfe,
+          0xcafebabe,
+          0xcafebabf,
+        }.contains(magic) ||
+        magic >> 16 == 0x4d5a) {
+      if (!AcpRegistryEntry._relativeCommand(plan.command)) {
+        throw const FormatException('Invalid agent executable');
+      }
+      final executable = File(
+        p.normalize(p.join(directory.path, plan.command.replaceAll('\\', '/'))),
+      );
+      if (!p.isWithin(directory.path, executable.path)) {
+        throw const FormatException('Invalid agent executable');
+      }
+      await executable.parent.create(recursive: true);
+      await executable.writeAsBytes(bytes);
+      return [executable.path];
     }
     throw const FormatException('Unsupported agent archive format');
   }

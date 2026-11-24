@@ -103,6 +103,7 @@ import 'platform/open_requests.dart';
 import 'platform/shell_command.dart';
 import 'remote/project_host.dart';
 import 'remote/remote_claude.dart';
+import 'remote/remote_acp_registry.dart';
 import 'remote/ssh_host.dart';
 import 'remote/ssh_host_settings.dart';
 import 'search/claude_conversation_search.dart';
@@ -240,6 +241,18 @@ Future<void> main(List<String> arguments) async {
       for (final agent in acpAgents.agents) KernelRegistry.acp(agent),
     ]);
   }
+  SshHosts.instance.onConnect = (host, client) {
+    final agents = acpAgents?.agents;
+    if (agents != null) {
+      unawaited(
+        RemoteAcpRegistry(client).sync(
+          agents,
+          host,
+          onError: (error) => debugPrint('ACP deployment on $host: $error'),
+        ),
+      );
+    }
+  };
   // The agents to go on once the usage limit resets, kept beside
   // state.json: one due while the app was closed goes on as it opens.
   if (!kIsWeb) {

@@ -9,6 +9,8 @@ import 'dart:convert';
 import 'package:bao_remote/client.dart';
 
 import '../kernel/acp/acp_transport.dart';
+import '../kernel/acp_registry.dart';
+import 'remote_acp_registry.dart';
 import '../kernel/acp/acp_process_shutdown.dart';
 import '../kernel/acp/acp_transport_io.dart';
 import 'remote_location.dart';
@@ -21,6 +23,7 @@ import 'ssh_host.dart';
 /// command is resolved on that host's login PATH.
 Future<AcpTransport> startAcpAgent(
   String command, {
+  AcpRegistryEntry? registry,
   List<String> arguments = const [],
   String? location,
   Map<String, String>? environment,
@@ -41,6 +44,7 @@ Future<AcpTransport> startAcpAgent(
     cwd: RemoteLocation.pathOf(location!),
     environment: environment,
     login: true,
+    registry: registry,
   );
 }
 
@@ -73,9 +77,10 @@ class RemoteAcpTransport implements AcpTransport {
     String? cwd,
     Map<String, String>? environment,
     bool login = true,
+    AcpRegistryEntry? registry,
   }) async {
-    final executable = command.trim();
-    if (executable.isEmpty) {
+    var executable = command.trim();
+    if (registry == null && executable.isEmpty) {
       throw StateError('ACP command is empty');
     }
     final RemoteClient client;
@@ -87,6 +92,12 @@ class RemoteAcpTransport implements AcpTransport {
       throw StateError('Could not connect to ${host.host}: $error');
     }
     try {
+      if (registry != null) {
+        final resolved = await RemoteAcpRegistry(client).resolve(registry);
+        executable = resolved.command;
+        arguments = [...resolved.arguments, ...arguments];
+        environment = {...resolved.environment, ...?environment};
+      }
       final process = await client.start(
         executable,
         arguments,
@@ -98,9 +109,9 @@ class RemoteAcpTransport implements AcpTransport {
     } on RpcClosed {
       throw StateError('The connection to ${host.host} was lost');
     } on Object catch (error) {
+      final agent = executable.isEmpty ? registry?.name : executable;
       throw StateError(
-        'Cannot start ACP agent "$executable" on ${host.host}. '
-        'Use a command on that host, or an absolute path there. $error',
+        'Cannot start ACP agent "$agent" on ${host.host}: $error',
       );
     }
   }

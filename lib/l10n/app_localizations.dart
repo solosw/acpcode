@@ -497,8 +497,20 @@ abstract class AppLocalizations {
   /// No description provided for @agentsFolderHint.
   ///
   /// In en, this message translates to:
-  /// **'Browse folders on the selected host, or enter its path manually.'**
+  /// **'Choose a rules directory on the server or enter its path.'**
   String get agentsFolderHint;
+
+  /// No description provided for @agentsServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Server'**
+  String get agentsServer;
+
+  /// No description provided for @agentsNoServers.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a server in SSH settings to configure an agent command.'**
+  String get agentsNoServers;
 
   /// No description provided for @agentsConnection.
   ///
@@ -509,7 +521,7 @@ abstract class AppLocalizations {
   /// No description provided for @agentsCustomizations.
   ///
   /// In en, this message translates to:
-  /// **'Skills & Rules'**
+  /// **'Rules'**
   String get agentsCustomizations;
 
   /// No description provided for @agentsRequired.
@@ -593,8 +605,68 @@ abstract class AppLocalizations {
   /// No description provided for @agentsRegistryDescription.
   ///
   /// In en, this message translates to:
-  /// **'Discover agents from the official ACP Registry. The target needs Node.js/npm for npm agents, or uv for Python agents. System runtimes and login credentials are not installed automatically.'**
+  /// **'Browse the official ACP Registry or enter your own registry JSON. npm agents require Node.js and npm, and Python agents require uv on the machine that runs them.'**
   String get agentsRegistryDescription;
+
+  /// No description provided for @agentsRegistryPasteJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter registry JSON'**
+  String get agentsRegistryPasteJson;
+
+  /// No description provided for @agentsRegistryBrowse.
+  ///
+  /// In en, this message translates to:
+  /// **'Browse official registry'**
+  String get agentsRegistryBrowse;
+
+  /// No description provided for @agentsRegistryJsonHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste or write an ACP agent entry, an array of entries, or a registry document with an \"agents\" array.'**
+  String get agentsRegistryJsonHint;
+
+  /// No description provided for @agentsRegistryPreviewJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview entries'**
+  String get agentsRegistryPreviewJson;
+
+  /// No description provided for @agentsRegistryJsonInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read the registry JSON.'**
+  String get agentsRegistryJsonInvalid;
+
+  /// No description provided for @agentsRegistryJsonEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'The registry JSON contains no agent entries.'**
+  String get agentsRegistryJsonEmpty;
+
+  /// No description provided for @agentsRegistryPlatformDownloads.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode downloads builds for every available platform and copies the matching build if the connected server needs it.'**
+  String get agentsRegistryPlatformDownloads;
+
+  /// No description provided for @agentsRegistryCommandHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave blank to use the registry command.'**
+  String get agentsRegistryCommandHint;
+
+  /// No description provided for @agentsRegistryArgumentsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a JSON array of extra arguments for the registry command.'**
+  String get agentsRegistryArgumentsHint;
+
+  /// No description provided for @agentsRegistryRunner.
+  ///
+  /// In en, this message translates to:
+  /// **'This agent uses a package runner. The server fetches the package the first time it needs it.'**
+  String get agentsRegistryRunner;
 
   /// No description provided for @agentsRegistryTrust.
   ///
@@ -623,7 +695,7 @@ abstract class AppLocalizations {
   /// No description provided for @agentsUnsupported.
   ///
   /// In en, this message translates to:
-  /// **'No supported distribution for this platform.'**
+  /// **'No supported distribution in this entry.'**
   String get agentsUnsupported;
 
   /// No description provided for @agentsNoResults.
@@ -659,7 +731,7 @@ abstract class AppLocalizations {
   /// No description provided for @agentsRegistryUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'Could not load the ACP Registry. Retry or configure an agent manually.'**
+  /// **'Could not load the ACP Registry. Retry or paste registry JSON.'**
   String get agentsRegistryUnavailable;
 
   /// No description provided for @documentPreviewLegacyFormat.

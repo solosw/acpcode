@@ -9,12 +9,11 @@ import '../../ide/ide_input.dart';
 import '../../kernel/acp/acp_agent.dart';
 import '../../kernel/acp_registry.dart';
 import '../../l10n/l10n.dart';
-import '../../remote/remote_acp_registry.dart';
-import 'agent_remote_folder_dialog.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import 'agent_customization_copy.dart';
 import 'agent_registry_picker.dart';
+import 'agent_remote_folder_dialog.dart';
 import 'settings_widgets.dart';
 
 class AgentEditDialog extends StatefulWidget {
@@ -22,24 +21,20 @@ class AgentEditDialog extends StatefulWidget {
     super.key,
     this.agent,
     required this.onSave,
-    required this.pickDirectory,
-    required this.customizations,
-    required this.registry,
     this.hosts = const [],
     this.initialHost = '',
-    this.connectRegistry = RemoteAcpRegistry.connect,
     this.pickRemoteDirectory = showAgentRemoteFolderDialog,
+    required this.customizations,
+    required this.registry,
   });
 
   final AcpAgentConfig? agent;
   final Future<void> Function(AcpAgentConfig) onSave;
-  final Future<String?> Function() pickDirectory;
-  final CustomizationStore customizations;
   final List<String> hosts;
-  final AcpRegistry registry;
   final String initialHost;
-  final Future<AcpRegistry> Function(String, AcpRegistry, bool) connectRegistry;
   final Future<String?> Function(BuildContext, String) pickRemoteDirectory;
+  final CustomizationStore customizations;
+  final AcpRegistry registry;
 
   @override
   State<AgentEditDialog> createState() => _AgentEditDialogState();
@@ -50,45 +45,59 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   final _command = TextEditingController();
   final _arguments = TextEditingController(text: '[]');
   final _environment = TextEditingController();
-  final _skills = TextEditingController();
   final _rules = TextEditingController();
+  late AcpAgentConfig _config =
+      widget.agent ?? const AcpAgentConfig(id: '', label: '', command: '');
   final _drafts = <String, AcpAgentConfig>{};
-  String _target = '';
+  late final List<String> _hosts;
+  String? _host;
   bool _registry = false;
   bool _busy = false;
   bool _dirty = false;
   String? _error;
-  String _description = 'Agent Client Protocol agent';
 
   @override
   void initState() {
     super.initState();
-    if (widget.agent case final agent?) {
-      _drafts[''] = agent;
-      _drafts.addAll(agent.hostConfigurations);
-      _label.text = agent.label;
-      _description = agent.description;
-    }
-    _target = widget.initialHost;
-    _fill(
-      _drafts[_target] ??
-          AcpAgentConfig(
-            id: '',
-            label: '',
-            command: '',
-            description: _description,
-          ),
-    );
+    _drafts.addAll(_config.hostConfigurations);
+    _hosts = {
+      ...widget.hosts,
+      ..._drafts.keys,
+      if (widget.initialHost.isNotEmpty) widget.initialHost,
+    }.where((host) => host.isNotEmpty).toList();
+    _host = _hosts.contains(widget.initialHost)
+        ? widget.initialHost
+        : _drafts.keys.firstOrNull ?? _hosts.firstOrNull;
+    _label.text = _config.label;
+    _fill(_drafts[_host]);
   }
 
-  void _fill(AcpAgentConfig agent) {
+  void _fill(AcpAgentConfig? agent) {
+    _command.text = agent?.command ?? '';
+    _arguments.text = jsonEncode(agent?.arguments ?? const []);
+    _environment.text = formatEnvironment(agent?.environment ?? const {});
+    _rules.text = agent?.rulesDirectory ?? '';
+  }
+
+  void _installed(AcpAgentConfig agent) => setState(() {
     if (_label.text.isEmpty) _label.text = agent.label;
-    _command.text = agent.command;
-    _arguments.text = jsonEncode(agent.arguments);
-    _environment.text = formatEnvironment(agent.environment);
-    _skills.text = agent.skillsDirectory;
-    _rules.text = agent.rulesDirectory;
-    _description = agent.description;
+    _config = agent.copyWith(id: _config.id);
+    _registry = false;
+    _dirty = true;
+    _error = null;
+  });
+
+  void _selectHost(String? host) {
+    try {
+      _saveDraft();
+      setState(() {
+        _host = host;
+        _fill(_drafts[host]);
+        _error = null;
+      });
+    } on FormatException catch (error) {
+      setState(() => _error = error.message);
+    }
   }
 
   @override
@@ -98,7 +107,6 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
       _command,
       _arguments,
       _environment,
-      _skills,
       _rules,
     ]) {
       controller.dispose();
@@ -112,11 +120,11 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   });
 
   Future<void> _pick(TextEditingController controller) async {
+    final host = _host;
+    if (host == null) return;
     try {
-      final directory = _target.isEmpty
-          ? await widget.pickDirectory()
-          : await widget.pickRemoteDirectory(context, _target);
-      if (!mounted || directory == null) return;
+      final directory = await widget.pickRemoteDirectory(context, host);
+      if (!mounted || directory == null || _host != host) return;
       controller.text = directory;
       _changed(directory);
     } catch (error) {
@@ -124,17 +132,10 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
     }
   }
 
-  Future<void> _save() async {
-    if (_busy) return;
+  void _saveDraft() {
+    final host = _host;
+    if (host == null) return;
     final l10n = context.l10n;
-    if (_label.text.trim().isEmpty ||
-        (_command.text.trim().isEmpty &&
-            !_drafts.entries.any(
-              (e) => e.key != _target && e.value.command.isNotEmpty,
-            ))) {
-      setState(() => _error = l10n.agentsRequired);
-      return;
-    }
     final List<String> arguments;
     try {
       final parsed = jsonDecode(
@@ -144,9 +145,8 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
         throw const FormatException();
       }
       arguments = parsed.cast<String>();
-    } catch (_) {
-      setState(() => _error = l10n.agentsInvalidArguments);
-      return;
+    } on FormatException {
+      throw FormatException(l10n.agentsInvalidArguments);
     }
     if (_environment.text
         .split('\n')
@@ -156,26 +156,55 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
               (!line.contains('=') ||
                   line.substring(0, line.indexOf('=')).trim().isEmpty),
         )) {
-      setState(() => _error = l10n.agentsInvalidEnvironment);
+      throw FormatException(l10n.agentsInvalidEnvironment);
+    }
+    final command = _command.text.trim();
+    final rules = _rules.text.trim();
+    final previous = _drafts[host];
+    final environment =
+        _environment.text ==
+            formatEnvironment(previous?.environment ?? const {})
+        ? previous?.environment ?? const <String, String>{}
+        : parseEnvironment(_environment.text);
+    final hasOptions =
+        arguments.isNotEmpty || environment.isNotEmpty || rules.isNotEmpty;
+    if (command.isEmpty && hasOptions && _config.registry == null) {
+      throw FormatException(l10n.agentsRequired);
+    }
+    if (command.isEmpty && !hasOptions) {
+      _drafts.remove(host);
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+    _drafts[host] = AcpAgentConfig(
+      id: _config.id,
+      label: _label.text.trim(),
+      command: command,
+      arguments: arguments,
+      environment: environment,
+      rulesDirectory: rules,
+      skillsDirectory: previous?.skillsDirectory ?? '',
+    );
+  }
+
+  Future<void> _save() async {
+    if (_busy) return;
     try {
+      _saveDraft();
+      if (_label.text.trim().isEmpty ||
+          (_config.command.isEmpty &&
+              _config.registry == null &&
+              _drafts.isEmpty)) {
+        throw FormatException(context.l10n.agentsRequired);
+      }
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
       await widget.onSave(
-        _assemble(
-          AcpAgentConfig(
-            id: widget.agent?.id ?? '',
-            label: _label.text.trim(),
-            command: _command.text.trim(),
-            arguments: arguments,
-            environment: parseEnvironment(_environment.text),
-            description: _description,
-            skillsDirectory: _skills.text.trim(),
-            rulesDirectory: _rules.text.trim(),
-          ),
+        _config.copyWith(
+          label: _label.text.trim(),
+          hostScoped: _config.hostScoped || _drafts.isNotEmpty,
+          hostConfigurations: Map.of(_drafts),
         ),
       );
       if (mounted) Navigator.pop(context);
@@ -183,93 +212,9 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = '$error';
+          _error = error is FormatException ? error.message : '$error';
         });
       }
-    }
-  }
-
-  AcpAgentConfig _assemble(AcpAgentConfig current) {
-    _drafts[_target] = current;
-    for (final entry in _drafts.entries) {
-      final config = entry.value;
-      if (config.command.isEmpty &&
-          (config.arguments.isNotEmpty ||
-              config.environment.isNotEmpty ||
-              config.skillsDirectory.isNotEmpty ||
-              config.rulesDirectory.isNotEmpty)) {
-        final host = entry.key.isEmpty
-            ? context.l10n.agentsLocalTarget
-            : entry.key;
-        throw FormatException('$host: ${context.l10n.agentsRequired}');
-      }
-    }
-    final local = _drafts[''];
-    return AcpAgentConfig(
-      id: widget.agent?.id ?? '',
-      label: _label.text.trim(),
-      description: _description,
-      command: local?.command ?? '',
-      arguments: local?.arguments ?? const [],
-      environment: local?.environment ?? const {},
-      skillsDirectory: local?.skillsDirectory ?? '',
-      rulesDirectory: local?.rulesDirectory ?? '',
-      hostScoped:
-          widget.agent?.hostScoped == true ||
-          widget.agent == null ||
-          _drafts.entries.any(
-            (e) => e.key.isNotEmpty && e.value.command.isNotEmpty,
-          ),
-      hostConfigurations: {
-        for (final e in _drafts.entries)
-          if (e.key.isNotEmpty && e.value.command.isNotEmpty) e.key: e.value,
-      },
-    );
-  }
-
-  void _selectTarget(String target) {
-    try {
-      final parsed = jsonDecode(
-        _arguments.text.trim().isEmpty ? '[]' : _arguments.text,
-      );
-      if (parsed is! List || parsed.any((v) => v is! String)) {
-        throw FormatException(context.l10n.agentsInvalidArguments);
-      }
-      if (_environment.text
-          .split('\n')
-          .any(
-            (line) =>
-                line.trim().isNotEmpty &&
-                (!line.contains('=') ||
-                    line.substring(0, line.indexOf('=')).trim().isEmpty),
-          )) {
-        throw FormatException(context.l10n.agentsInvalidEnvironment);
-      }
-      _drafts[_target] = AcpAgentConfig(
-        id: widget.agent?.id ?? '',
-        label: _label.text,
-        command: _command.text.trim(),
-        arguments: parsed.cast<String>(),
-        environment: parseEnvironment(_environment.text),
-        description: _description,
-        skillsDirectory: _skills.text.trim(),
-        rulesDirectory: _rules.text.trim(),
-      );
-      setState(() {
-        _target = target;
-        _fill(
-          _drafts[target] ??
-              AcpAgentConfig(
-                id: '',
-                label: _label.text,
-                command: '',
-                description: _description,
-              ),
-        );
-        _error = null;
-      });
-    } catch (error) {
-      setState(() => _error = '$error');
     }
   }
 
@@ -390,82 +335,33 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                     ),
                   ],
                 ),
-                if ({
-                  ...widget.hosts,
-                  ...?widget.agent?.hostConfigurations.keys,
-                  widget.initialHost,
-                }.any((h) => h.isNotEmpty)) ...[
-                  const SizedBox(height: 12),
-                  Text(l10n.agentsInstallTarget, style: SettingsText.label),
-                  DropdownButton<String>(
-                    key: const ValueKey('agent-target'),
-                    value: _target,
-                    isExpanded: true,
-                    items: [
-                      DropdownMenuItem(
-                        value: '',
-                        child: Text(l10n.agentsLocalTarget),
-                      ),
-                      for (final host in {
-                        ...widget.hosts,
-                        ...?widget.agent?.hostConfigurations.keys,
-                        widget.initialHost,
-                      }.where((h) => h.isNotEmpty))
-                        DropdownMenuItem(
-                          value: host,
-                          child: Text(
-                            'SSH: $host',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: _busy
-                        ? null
-                        : (host) => _selectTarget(host ?? ''),
-                  ),
-                  Text(
-                    l10n.agentsHostIsolation,
-                    style: SettingsText.description,
-                  ),
-                ],
-                ...[
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      IdeButton(
-                        label: l10n.agentsCustom,
-                        secondary: _registry,
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() => _registry = false),
-                      ),
-                      IdeButton(
-                        label: l10n.agentsRegistry,
-                        secondary: !_registry,
-                        onPressed: _busy
-                            ? null
-                            : () => setState(() => _registry = true),
-                      ),
-                    ],
-                  ),
-                ],
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    IdeButton(
+                      label: l10n.agentsCustom,
+                      secondary: _registry,
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() => _registry = false),
+                    ),
+                    IdeButton(
+                      label: l10n.agentsRegistry,
+                      secondary: !_registry,
+                      onPressed: _busy
+                          ? null
+                          : () => setState(() => _registry = true),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 20),
                 Flexible(
                   child: _registry
                       ? AgentRegistryPicker(
-                          key: ValueKey(_target),
-                          host: _target,
-                          connectRegistry: widget.connectRegistry,
                           registry: widget.registry,
                           onBusy: (busy) => setState(() => _busy = busy),
-                          onInstalled: (agent) => setState(() {
-                            _fill(agent);
-                            _drafts[_target] = agent;
-                            _registry = false;
-                            _dirty = true;
-                            _error = null;
-                          }),
+                          onInstalled: _installed,
                         )
                       : SingleChildScrollView(
                           child: Column(
@@ -477,61 +373,87 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                               ),
                               const SizedBox(height: 14),
                               _field(l10n.agentsName, _label, 'agent-name'),
-                              _field(
-                                l10n.agentsCommand,
-                                _command,
-                                'agent-command',
-                              ),
-                              _field(
-                                l10n.agentsArguments,
-                                _arguments,
-                                'agent-arguments',
-                                hint: l10n.agentsArgumentsHint,
-                              ),
-                              _field(
-                                l10n.agentsEnvironment,
-                                _environment,
-                                'agent-environment',
-                                hint: l10n.agentsEnvironmentHint,
-                                lines: 2,
-                              ),
-                              const Divider(),
-                              const SizedBox(height: 12),
-                              Text(
-                                l10n.agentsCustomizations,
-                                style: SettingsText.heading,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                l10n.agentsFolderHint,
-                                style: SettingsText.description,
-                              ),
-                              const SizedBox(height: 14),
-                              _directory(
-                                l10n.agentsSkills,
-                                _skills,
-                                'agent-skills',
-                              ),
-                              _directory(
-                                l10n.agentsRules,
-                                _rules,
-                                'agent-rules',
-                              ),
-                              if (widget.agent case final agent?)
-                                AgentCustomizationCopy(
-                                  agent: _target.isEmpty
-                                      ? agent
-                                      : (agent.hostConfigurations[_target] ??
-                                            const AcpAgentConfig(
-                                              id: '',
-                                              label: '',
-                                              command: '',
-                                            )),
-                                  fixedHost: _target,
-                                  store: widget.customizations,
-                                  hosts: widget.hosts,
-                                  enabled: !_dirty && !_busy,
+                              if (_config.registry case final entry?)
+                                Text(
+                                  '${l10n.agentsRegistry} · ${entry.name} ${entry.version}',
+                                  style: SettingsText.description,
                                 ),
+                              if (_hosts.isEmpty)
+                                Text(
+                                  l10n.agentsNoServers,
+                                  style: SettingsText.description,
+                                )
+                              else ...[
+                                Text(
+                                  l10n.agentsServer,
+                                  style: SettingsText.label,
+                                ),
+                                DropdownButton<String>(
+                                  key: const ValueKey('agent-server'),
+                                  isExpanded: true,
+                                  value: _host,
+                                  items: [
+                                    for (final host in _hosts)
+                                      DropdownMenuItem(
+                                        value: host,
+                                        child: Text(host),
+                                      ),
+                                  ],
+                                  onChanged: _busy ? null : _selectHost,
+                                ),
+                                const SizedBox(height: 12),
+                                _field(
+                                  l10n.agentsCommand,
+                                  _command,
+                                  'agent-command',
+                                  hint: _config.registry == null
+                                      ? null
+                                      : l10n.agentsRegistryCommandHint,
+                                ),
+                                _field(
+                                  l10n.agentsArguments,
+                                  _arguments,
+                                  'agent-arguments',
+                                  hint:
+                                      _config.registry != null &&
+                                          _command.text.trim().isEmpty
+                                      ? l10n.agentsRegistryArgumentsHint
+                                      : l10n.agentsArgumentsHint,
+                                ),
+                                _field(
+                                  l10n.agentsEnvironment,
+                                  _environment,
+                                  'agent-environment',
+                                  hint: l10n.agentsEnvironmentHint,
+                                  lines: 2,
+                                ),
+                                const Divider(),
+                                const SizedBox(height: 12),
+                                Text(
+                                  l10n.agentsCustomizations,
+                                  style: SettingsText.heading,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  l10n.agentsFolderHint,
+                                  style: SettingsText.description,
+                                ),
+                                const SizedBox(height: 14),
+                                _directory(
+                                  l10n.agentsRules,
+                                  _rules,
+                                  'agent-rules',
+                                ),
+                                if (widget.agent?.hostConfigurations[_host]
+                                    case final agent?)
+                                  AgentCustomizationCopy(
+                                    key: ValueKey(_host),
+                                    host: _host,
+                                    agent: agent,
+                                    store: widget.customizations,
+                                    enabled: !_dirty && !_busy,
+                                  ),
+                              ],
                             ],
                           ),
                         ),

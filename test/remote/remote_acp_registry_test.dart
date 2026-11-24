@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:bao_remote/client.dart';
 import 'package:baocode/kernel/acp_registry.dart';
+import 'package:baocode/remote/ssh_host.dart';
 import 'package:baocode/network/network_proxy_io.dart';
 import 'package:baocode/network/proxy_settings.dart';
 import 'package:baocode/remote/remote_acp_registry.dart';
@@ -72,6 +73,16 @@ class _Client extends RemoteClient {
 }
 
 class _Binary extends AcpRegistry {
+  _Binary({this.testCache});
+  final Directory? testCache;
+
+  @override
+  Directory get cacheDirectory => testCache ?? super.cacheDirectory;
+
+  @override
+  Future<Uint8List> downloadBinary(AcpInstallPlan plan) async =>
+      Uint8List.fromList([1, 2, 3]);
+
   final plans = <AcpInstallPlan>[];
   bool missingCommand = false;
   @override
@@ -192,6 +203,103 @@ void main() {
         throwsStateError,
       );
       expect(client.calls, hasLength(1));
+    },
+  );
+
+  test('selects Windows and musl builds using the server hello', () {
+    final client = _Client(harness.client);
+    final hello = client.hello!.toJson();
+    final registry = RemoteAcpRegistry(client);
+    const entry = AcpRegistryEntry(
+      id: 'platforms',
+      name: 'Platforms',
+      description: '',
+      version: '1',
+      distribution: {
+        'binary': {
+          'windows-aarch64': {
+            'archive': 'https://example.com/windows.zip',
+            'cmd': './agent.exe',
+          },
+          'linux-x86_64-musl': {
+            'archive': 'https://example.com/musl.tgz',
+            'cmd': './agent',
+          },
+          'linux-x86_64': {
+            'archive': 'https://example.com/gnu.tgz',
+            'cmd': './agent',
+          },
+        },
+      },
+    );
+    for (final pair in const [
+      (RemotePlatform('win', 'arm64'), 'windows-aarch64'),
+      (RemotePlatform('linux', 'x64', libc: 'musl'), 'linux-x86_64-musl'),
+      (RemotePlatform('linux', 'x64', libc: 'gnu'), 'linux-x86_64'),
+    ]) {
+      client.hello = RemoteHello.fromJson({
+        ...hello,
+        'platform': pair.$1.toJson(),
+      });
+      expect(registry.launchPlan(entry)?.platform, pair.$2);
+    }
+  });
+
+  test(
+    'SSH connection deploys the matching cached build and launch reuses it',
+    () async {
+      final cache = await Directory.systemTemp.createTemp(
+        'acp-package-cache-test-',
+      );
+      addTearDown(() => cache.delete(recursive: true));
+      final local = _Binary(testCache: cache);
+      final connector = MemoryConnector(harness.dataDir.path);
+      final hosts = SshHosts(connect: connector.call);
+      addTearDown(hosts.closeAll);
+      final target = RemoteAcpRegistry(harness.client).platform;
+      final entry = AcpRegistryEntry(
+        id: 'synced-agent',
+        name: 'Synced',
+        description: '',
+        version: '1',
+        distribution: {
+          'binary': {
+            target: {
+              'archive': 'https://example.com/remote.tgz',
+              'cmd': './agent',
+            },
+            'windows-x86_64': {
+              'archive': 'https://example.com/other.zip',
+              'cmd': './agent.exe',
+            },
+          },
+        },
+      );
+      final config = await local.cache(entry);
+      final synced = Completer<void>();
+      hosts.onConnect = (host, client) {
+        final registry = RemoteAcpRegistry(client, local: local);
+        synced.complete(
+          registry.sync([config], host, onError: (error) => fail('$error')),
+        );
+      };
+      final client = await hosts['dev'].ready;
+      final registry = RemoteAcpRegistry(client, local: local);
+      final running = await registry.resolve(entry);
+      await synced.future;
+      expect(local.plans.map((plan) => plan.platform), [target]);
+      expect(
+        await File(running.command).readAsString(),
+        contains('remote-binary'),
+      );
+      expect((await registry.resolve(entry)).command, running.command);
+      expect(local.plans, hasLength(1));
+      await File(running.command).delete();
+      final repaired = await registry.resolve(entry);
+      expect(repaired.command, isNot(running.command));
+      expect(await File(repaired.command).exists(), isTrue);
+      expect((await registry.resolve(entry)).command, repaired.command);
+      expect(local.plans, hasLength(2));
     },
   );
 

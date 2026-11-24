@@ -49,8 +49,8 @@ import 'pages/ssh_page.dart';
 import 'pages/stash_hotkey_field.dart';
 import 'pages/stash_page.dart';
 import 'pages/updates_page.dart';
-import '../remote/ssh_host_settings.dart';
 import '../remote/ssh_host.dart';
+import '../remote/ssh_host_settings.dart';
 import 'settings_dialog.dart';
 import 'user_settings.dart';
 
@@ -201,7 +201,7 @@ class AppSettings {
           agents: acpAgents,
           customizations: customizations,
           initialHost: workspace?.current?.project.host ?? '',
-          hosts: {
+          hosts: <String>{
             ...SshHostSettings.instance.targets,
             ...SshHosts.instance.savedServers().keys,
             for (final host in SshHosts.instance.hosts) host.host,

@@ -29,6 +29,17 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.5">
+    <h2 class="plain"><a href="#v2.0.5">2.0.5</a></h2>
+    <p>This release reworks ACP agent settings around servers and makes registry agents ready on every connected host.</p>
+    <p>Changed</p>
+    <ul>
+    <li>Configure each ACP agent per SSH server. The &quot;This machine&quot; option and the skills folder setting are gone; command, arguments, environment and rules folder are saved for each server.</li>
+    <li>Installing an agent from the ACP Registry downloads its builds for every published platform. When BaoCode connects to a server, it checks for the matching build and copies it over if it is missing.</li>
+    <li>Add your own agents by entering registry JSON: a single agent entry, a list of entries, or a full registry document. Entries are checked and previewed before they are saved.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.3">
     <h2 class="plain"><a href="#v2.0.3">2.0.3</a></h2>
     <p>This release adds ACP system prompt customization and Skills support, wired to BaoCode's Built-in Core prompt and Skills while staying compatible with ACP v1 agents.</p>

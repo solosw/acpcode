@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:baocode/customize/customization_store.dart';
@@ -11,7 +12,7 @@ import 'package:baocode/settings/pages/agent_registry_picker.dart';
 import 'package:baocode/settings/pages/agents_page.dart';
 import 'package:baocode/settings/user_settings.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -30,7 +31,7 @@ class _Registry extends AcpRegistry {
   int installs = 0;
   bool failLoad = false;
   bool failInstall = false;
-  String launchCommand = 'npx';
+  AcpRegistryEntry? lastInstalled;
   String targetPlatform = 'darwin-aarch64';
   Completer<AcpAgentConfig>? pending;
 
@@ -54,15 +55,16 @@ class _Registry extends AcpRegistry {
   }
 
   @override
-  Future<AcpAgentConfig> install(AcpRegistryEntry entry) async {
+  Future<AcpAgentConfig> cache(AcpRegistryEntry entry) async {
     installs++;
+    lastInstalled = entry;
     if (failInstall) throw StateError('npm is missing');
     return pending?.future ??
         AcpAgentConfig(
-          id: 'codex-acp',
-          label: 'Codex',
-          command: launchCommand,
-          arguments: ['-y', '@agentclientprotocol/codex-acp@2.5.0'],
+          id: entry.id,
+          label: entry.name,
+          command: '',
+          registry: entry,
         );
   }
 }
@@ -74,6 +76,7 @@ Finder _input(String key) => find.descendant(
 Finder _button(String label) => find.widgetWithText(IdeButton, label).last;
 
 Future<void> _tap(WidgetTester tester, String label) async {
+  await tester.pump();
   await tester.ensureVisible(_button(label));
   await tester.tap(_button(label));
   await tester.pumpAndSettle();
@@ -99,10 +102,8 @@ void main() {
 
   Future<void> pumpPage(
     WidgetTester tester, {
-    Future<String?> Function()? pickDirectory,
     List<String> hosts = const [],
     String initialHost = '',
-    Future<AcpRegistry> Function(String, AcpRegistry, bool)? connectRegistry,
     Future<String?> Function(BuildContext, String)? pickRemoteDirectory,
   }) async {
     tester.view.physicalSize = const Size(1000, 1000);
@@ -114,10 +115,8 @@ void main() {
           body: AgentsSettingsPage(
             agents: agents,
             registry: registry,
-            pickDirectory: pickDirectory,
             hosts: hosts,
             initialHost: initialHost,
-            connectRegistry: connectRegistry ?? (_, _, _) async => registry,
             pickRemoteDirectory: pickRemoteDirectory ?? (_, _) async => null,
             customizations: CustomizationStore(
               configDir: p.join(temporary.path, '.claude'),
@@ -160,15 +159,18 @@ void main() {
   );
 
   testWidgets(
-    'validates form and saves arguments, environment and native folder picks',
+    'validates and saves command, arguments, environment and rules per server',
     (tester) async {
-      final choices = <String?>[
-        p.join(temporary.path, 'my skills'),
-        null,
-        p.join(temporary.path, 'my rules'),
-      ];
+      final choices = [p.join(temporary.path, 'my rules'), null];
       var picks = 0;
-      await pumpPage(tester, pickDirectory: () async => choices[picks++]);
+      await pumpPage(
+        tester,
+        hosts: ['dev', 'prod'],
+        pickRemoteDirectory: (_, host) async {
+          expect(host, 'dev');
+          return choices[picks++];
+        },
+      );
       await _tap(tester, 'Add agent');
       await _tap(tester, 'Save');
       expect(find.text('Name and command are required.'), findsOneWidget);
@@ -194,57 +196,40 @@ void main() {
         _input('agent-environment'),
         'KEY=hello world\nTOKEN=a=b',
       );
-      for (final key in ['agent-skills', 'agent-skills', 'agent-rules']) {
-        final button = find.byKey(ValueKey('$key-browse'));
+      expect(_input('agent-skills'), findsNothing);
+      final button = find.byKey(const ValueKey('agent-rules-browse'));
+      for (var i = 0; i < choices.length; i++) {
         await tester.ensureVisible(button);
         await tester.tap(button);
         await tester.pumpAndSettle();
       }
-      expect(picks, 3);
+      expect(picks, 2);
+      final server = find.byKey(const ValueKey('agent-server'));
+      await tester.ensureVisible(server);
+      await tester.tap(server);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('prod').last);
+      await tester.pumpAndSettle();
       expect(
-        tester.widget<EditableText>(_input('agent-skills')).controller.text,
-        choices[0],
+        tester.widget<EditableText>(_input('agent-command')).controller.text,
+        isEmpty,
       );
+      await tester.enterText(_input('agent-command'), 'production-agent');
       await save(tester);
-      final agent = agents.agents.single;
+      final config = agents.agents.single;
+      final agent = config.forHost('dev');
       expect(agent.arguments, ['--profile', 'profile with spaces']);
       expect(agent.environment, {'KEY': 'hello world', 'TOKEN': 'a=b'});
-      expect(agent.skillsDirectory, choices[0]);
-      expect(agent.rulesDirectory, choices[2]);
+      expect(agent.skillsDirectory, isEmpty);
+      expect(agent.rulesDirectory, choices.first);
+      expect(config.hostScoped, isTrue);
+      expect(agent.command, 'example');
+      expect(config.forHost('prod').command, 'production-agent');
+      expect(() => config.forHost(null), throwsStateError);
       expect(find.byType(EditableText), findsNothing);
       expect(registry.installs, 0);
     },
   );
-
-  testWidgets('default folder button invokes desktop native picker channel', (
-    tester,
-  ) async {
-    final methods = <String>[];
-    const channel = MethodChannel('baocode/window');
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
-      call,
-    ) async {
-      methods.add(call.method);
-      return '/chosen/skills';
-    });
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        channel,
-        null,
-      ),
-    );
-    await pumpPage(tester);
-    await _tap(tester, 'Add agent');
-    final button = find.byKey(const ValueKey('agent-skills-browse'));
-    await tester.ensureVisible(button);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(methods, ['pickDirectory']);
-    expect(
-      tester.widget<EditableText>(_input('agent-skills')).controller.text,
-      '/chosen/skills',
-    );
-  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets(
     'edit preserves id; cancel preserves saved values; delete needs confirmation',
@@ -315,17 +300,11 @@ void main() {
       await _tap(tester, 'Install and configure');
       await _tap(tester, 'Install and configure');
       expect(registry.installs, 1);
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        'npx',
-      );
-      expect(
-        tester.widget<EditableText>(_input('agent-arguments')).controller.text,
-        '["-y","@agentclientprotocol/codex-acp@2.5.0"]',
-      );
+      expect(_input('agent-command'), findsNothing);
       expect(agents.agents, isEmpty); // Installation does not implicitly save.
       await save(tester);
       expect(agents.agents.single.label, 'Codex');
+      expect(agents.agents.single.registry?.id, _entry.id);
     },
   );
 
@@ -367,7 +346,7 @@ void main() {
   testWidgets('manual form and registry fit a smaller desktop window', (
     tester,
   ) async {
-    await pumpPage(tester);
+    await pumpPage(tester, hosts: ['dev']);
     tester.view.physicalSize = const Size(520, 680);
     await tester.pumpAndSettle();
     await _tap(tester, 'Add agent');
@@ -381,193 +360,178 @@ void main() {
     await _tap(tester, 'Cancel');
   });
 
-  testWidgets(
-    'remote install targets its host and selected network without altering local config',
-    (tester) async {
-      await tester.runAsync(
-        () => agents.add(
-          const AcpAgentConfig(
-            id: 'existing',
-            label: 'Existing',
-            command: '/local/agent',
-            environment: {'TOKEN': 'local-only'},
-            hostScoped: true,
-          ),
+  testWidgets('editing preserves legacy host configurations and skills', (
+    tester,
+  ) async {
+    await tester.runAsync(
+      () => agents.add(
+        const AcpAgentConfig(
+          id: 'legacy',
+          label: 'SSH Agent',
+          command: '',
+          skillsDirectory: '/local/old-skills',
+          hostScoped: true,
+          hostConfigurations: {
+            'dev': AcpAgentConfig(
+              id: 'legacy',
+              label: 'SSH Agent',
+              command: '/srv/bin/agent',
+              arguments: ['--profile', 'dev build'],
+              environment: {'TOKEN': 'remote-only'},
+              skillsDirectory: '/srv/skills',
+              rulesDirectory: '/srv/rules',
+            ),
+          },
         ),
-      );
-      final remote = _Registry()
-        ..launchCommand = '/srv/bin/agent'
-        ..targetPlatform = 'linux-aarch64';
-      final choices = <bool>[];
-      await pumpPage(
-        tester,
-        hosts: ['dev'],
-        connectRegistry: (host, local, network) async {
-          expect(host, 'dev');
-          choices.add(network);
-          return remote;
-        },
-      );
-      tester.view.physicalSize = const Size(520, 680);
-      await tester.pumpAndSettle();
-      await _tap(tester, 'Edit agent');
-      tester
-          .widget<DropdownButton<String>>(
-            find.byKey(const ValueKey('agent-target')),
-          )
-          .onChanged!('dev');
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        isEmpty,
-      );
-      expect(
-        tester
-            .widget<EditableText>(_input('agent-environment'))
-            .controller
-            .text,
-        isEmpty,
-      );
-      await _tap(tester, 'ACP Registry');
-      expect(tester.takeException(), isNull);
-      tester
-          .widget<DropdownButton<bool>>(
-            find.byKey(const ValueKey('agent-install-network')),
-          )
-          .onChanged!(false);
-      await tester.pumpAndSettle();
-      final item = find.byKey(const ValueKey('registry-codex-acp'));
-      await tester.ensureVisible(item);
-      await tester.tap(item);
-      await tester.pumpAndSettle();
-      await _tap(tester, 'Install and configure');
-      expect(
-        find.textContaining('Configuration / installation target: dev'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Use server network'), findsWidgets);
-      await _tap(tester, 'Cancel');
-      expect(remote.installs, 0);
-      await _tap(tester, 'Install and configure');
-      await _tap(tester, 'Install and configure');
-      expect(remote.installs, 1);
-      expect(registry.installs, 0);
-      expect(choices.last, isFalse);
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        '/srv/bin/agent',
-      );
-      expect(tester.takeException(), isNull);
-      tester
-          .widget<DropdownButton<String>>(
-            find.byKey(const ValueKey('agent-target')),
-          )
-          .onChanged!('');
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        '/local/agent',
-      );
-      expect(
-        tester
-            .widget<EditableText>(_input('agent-environment'))
-            .controller
-            .text,
-        'TOKEN=local-only',
-      );
-      tester
-          .widget<DropdownButton<String>>(
-            find.byKey(const ValueKey('agent-target')),
-          )
-          .onChanged!('dev');
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        '/srv/bin/agent',
-      );
-      await save(tester);
-      final saved = agents.agents.single;
-      expect(saved.id, 'existing');
-      expect(saved.command, '/local/agent');
-      expect(saved.environment, {'TOKEN': 'local-only'});
-      expect(saved.forHost('dev').command, '/srv/bin/agent');
-      expect(saved.forHost('dev').environment, isEmpty);
-      expect(() => saved.forHost('other'), throwsStateError);
-    },
-  );
+      ),
+    );
+    await pumpPage(tester, hosts: ['dev'], initialHost: 'dev');
+    await _tap(tester, 'Edit agent');
+    expect(find.byKey(const ValueKey('agent-server')), findsOneWidget);
+    expect(find.text('This machine'), findsNothing);
+    expect(find.text('Preview skills copy'), findsNothing);
+    expect(
+      tester.widget<EditableText>(_input('agent-command')).controller.text,
+      '/srv/bin/agent',
+    );
+    await tester.enterText(_input('agent-name'), 'Renamed');
+    await save(tester);
+    final saved = agents.agents.single;
+    expect(saved.id, 'legacy');
+    expect(saved.label, 'Renamed');
+    expect(saved.hostScoped, isTrue);
+    expect(saved.skillsDirectory, '/local/old-skills');
+    final remote = saved.forHost('dev');
+    expect(remote.command, '/srv/bin/agent');
+    expect(remote.arguments, ['--profile', 'dev build']);
+    expect(remote.environment, {'TOKEN': 'remote-only'});
+    expect(remote.skillsDirectory, '/srv/skills');
+    expect(remote.rulesDirectory, '/srv/rules');
+    expect(() => saved.forHost('other'), throwsStateError);
+  });
 
-  testWidgets(
-    'remote folders never invoke native local picker; cancellation keeps path',
-    (tester) async {
-      var nativeCalls = 0;
-      var remoteCalls = 0;
-      await pumpPage(
-        tester,
-        hosts: ['dev'],
-        initialHost: 'dev',
-        pickDirectory: () async {
-          nativeCalls++;
-          return '/wrong-host';
-        },
-        pickRemoteDirectory: (_, host) async {
-          expect(host, 'dev');
-          remoteCalls++;
-          return remoteCalls == 1 ? '/srv/skills' : null;
-        },
-      );
-      await _tap(tester, 'Add agent');
-      await tester.enterText(_input('agent-name'), 'Remote only');
-      await tester.enterText(_input('agent-command'), '/srv/agent');
-      final skills = find.byKey(const ValueKey('agent-skills-browse'));
-      await tester.ensureVisible(skills);
-      await tester.tap(skills);
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-skills')).controller.text,
-        '/srv/skills',
-      );
-      await tester.enterText(_input('agent-rules'), '/srv/existing-rules');
-      final rules = find.byKey(const ValueKey('agent-rules-browse'));
-      await tester.ensureVisible(rules);
-      await tester.tap(rules);
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-rules')).controller.text,
-        '/srv/existing-rules',
-      );
-      expect(nativeCalls, 0);
-      await save(tester);
-      final saved = agents.agents.single;
-      expect(saved.command, isEmpty);
-      expect(saved.forHost('dev').rulesDirectory, '/srv/existing-rules');
-      expect(() => saved.forHost(null), throwsStateError);
-    },
-  );
+  testWidgets('JSON import recovers from errors and works offline', (
+    tester,
+  ) async {
+    registry.failLoad = true;
+    await pumpPage(tester, hosts: ['dev']);
+    await _tap(tester, 'Add agent');
+    await _tap(tester, 'ACP Registry');
+    await _tap(tester, 'Enter registry JSON');
+    final json = _input('registry-json');
+    await tester.enterText(json, '{');
+    await _tap(tester, 'Preview entries');
+    expect(
+      find.textContaining('Could not read the registry JSON.'),
+      findsOneWidget,
+    );
+    expect(registry.installs, 0);
 
-  testWidgets(
-    'SSH connection failure can retry and never invokes local installer',
-    (tester) async {
-      var failConnection = true;
-      await pumpPage(
-        tester,
-        hosts: ['dev'],
-        initialHost: 'dev',
-        connectRegistry: (_, _, _) async {
-          if (failConnection) throw StateError('SSH connection lost');
-          return registry;
-        },
-      );
-      await _tap(tester, 'Add agent');
-      await _tap(tester, 'ACP Registry');
-      expect(find.textContaining('SSH connection lost'), findsOneWidget);
-      expect(registry.installs, 0);
-      failConnection = false;
-      await _tap(tester, 'Retry');
-      expect(find.byKey(const ValueKey('registry-codex-acp')), findsOneWidget);
-      await _tap(tester, 'Cancel');
-      expect(agents.agents, isEmpty);
-    },
-  );
+    const entry = {
+      'id': 'typed-agent',
+      'name': 'Typed Agent',
+      'version': '1.0.0',
+      'distribution': {
+        'npx': {'package': 'typed-agent@1.0.0'},
+      },
+    };
+    await tester.enterText(json, jsonEncode(entry));
+    await _tap(tester, 'Preview entries');
+    expect(
+      find.textContaining('Could not read the registry JSON.'),
+      findsNothing,
+    );
+    expect(find.textContaining('typed-agent@1.0.0'), findsAtLeastNWidgets(1));
+    await tester.enterText(json, jsonEncode([entry]));
+    await tester.pump();
+    expect(
+      find.widgetWithText(IdeButton, 'Install and configure'),
+      findsNothing,
+    );
+    await _tap(tester, 'Preview entries');
+    await _tap(tester, 'Install and configure');
+    await _tap(tester, 'Install and configure');
+    expect(registry.installs, 1);
+    expect(registry.lastInstalled?.id, 'typed-agent');
+    await tester.enterText(_input('agent-environment'), 'TOKEN=server-only');
+    await tester.enterText(_input('agent-arguments'), '["--extra"]');
+    await save(tester);
+    expect(agents.agents.single.label, 'Typed Agent');
+    expect(agents.agents.single.registry?.id, 'typed-agent');
+    final remote = agents.agents.single.forHost('dev');
+    expect(remote.registry?.id, 'typed-agent');
+    expect(remote.environment, {'TOKEN': 'server-only'});
+    expect(remote.arguments, ['--extra']);
+  });
+
+  testWidgets('registry document lets users select a remote-only binary', (
+    tester,
+  ) async {
+    await pumpPage(tester);
+    await _tap(tester, 'Add agent');
+    await _tap(tester, 'ACP Registry');
+    await _tap(tester, 'Enter registry JSON');
+    await tester.enterText(
+      _input('registry-json'),
+      jsonEncode({
+        'agents': [
+          {
+            'id': 'another',
+            'name': 'Another Agent',
+            'version': '1.0.0',
+            'distribution': {
+              'npx': {'package': 'another@1.0.0'},
+            },
+          },
+          {
+            'id': 'remote-binary',
+            'name': 'Remote Binary',
+            'version': '1.0.0',
+            'distribution': {
+              'binary': {
+                'linux-x86_64': {
+                  'archive': 'https://example.com/remote-linux.tar.gz',
+                  'cmd': './remote',
+                },
+                'windows-x86_64': {
+                  'archive': 'https://example.com/remote-windows.zip',
+                  'cmd': './remote.exe',
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    await _tap(tester, 'Preview entries');
+    expect(
+      find.widgetWithText(IdeButton, 'Install and configure'),
+      findsNothing,
+    );
+    final tile = find.byKey(const ValueKey('registry-remote-binary'));
+    await tester.ensureVisible(tile);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Source: https://example.com/remote-linux.tar.gz'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Source: https://example.com/remote-windows.zip'),
+      findsOneWidget,
+    );
+    await _tap(tester, 'Install and configure');
+    await _tap(tester, 'Install and configure');
+    expect(registry.lastInstalled?.id, 'remote-binary');
+    await save(tester);
+    expect(agents.agents.single.command, isEmpty);
+    expect(agents.agents.single.registry?.id, 'remote-binary');
+    await _tap(tester, 'Edit agent');
+    await tester.enterText(_input('agent-name'), 'Remote Renamed');
+    await save(tester);
+    expect(agents.agents.single.label, 'Remote Renamed');
+    expect(agents.agents.single.registry?.id, 'remote-binary');
+  });
 
   testWidgets('installation cannot be dismissed while it is running', (
     tester,

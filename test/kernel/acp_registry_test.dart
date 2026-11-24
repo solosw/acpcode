@@ -13,6 +13,10 @@ class _Registry extends AcpRegistry {
   final downloads = <Uri>[];
   Uint8List bytes = Uint8List(0);
   Object? failure;
+  Directory? testCache;
+
+  @override
+  Directory get cacheDirectory => testCache ?? super.cacheDirectory;
 
   @override
   String get platform => 'darwin-aarch64';
@@ -68,6 +72,62 @@ void main() {
     });
     expect(entries.map((entry) => entry.id), ['a', 'z']);
     expect(() => AcpRegistryEntry.parse([]), throwsFormatException);
+  });
+
+  test('caches every platform archive and reuses the cache', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'acp-packages-test-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final registry = _Registry()..testCache = directory;
+    registry.bytes = _tar('agent', 'binary');
+    final entry = _entry({
+      'binary': {
+        'linux-aarch64': {
+          'archive': 'https://example.com/linux.tgz',
+          'cmd': './agent',
+        },
+        'windows-x86_64': {
+          'archive': 'https://example.com/windows.zip',
+          'cmd': './agent.exe',
+        },
+      },
+    });
+    final agent = await registry.cache(entry);
+    expect(agent.registry?.id, entry.id);
+    expect(agent.command, isEmpty);
+    expect(registry.downloads.map((uri) => uri.path), [
+      '/linux.tgz',
+      '/windows.zip',
+    ]);
+    for (final plan in entry.binaryPlans) {
+      expect(await registry.cachedBinary(plan).readAsBytes(), registry.bytes);
+    }
+    await registry.cache(entry);
+    expect(registry.downloads, hasLength(2));
+    expect(registry.commands, isEmpty);
+  });
+
+  test('unpacks opaque registry URLs and direct binaries', () async {
+    final directory = await Directory.systemTemp.createTemp('acp-raw-test-');
+    addTearDown(() => directory.delete(recursive: true));
+    final registry = _Registry();
+    const plan = AcpInstallPlan(
+      kind: 'binary',
+      source: 'https://example.com/download',
+      command: './agent',
+      arguments: [],
+    );
+    await registry.unpackBinary(
+      plan,
+      directory,
+      bytes: _tar('agent', 'tar fixture'),
+    );
+    final output = File(p.join(directory.path, 'agent'));
+    expect(await output.readAsString(), 'tar fixture');
+    final raw = Uint8List.fromList([0x7f, 0x45, 0x4c, 0x46, 1, 2, 3]);
+    await registry.unpackBinary(plan, directory, bytes: raw);
+    expect(await output.readAsBytes(), raw);
   });
 
   test('npx keeps scoped pinned package, arguments and environment', () async {

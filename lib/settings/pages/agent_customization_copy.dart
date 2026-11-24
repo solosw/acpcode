@@ -17,62 +17,52 @@ class AgentCustomizationCopy extends StatefulWidget {
     super.key,
     required this.agent,
     required this.store,
-    this.hosts = const [],
     this.enabled = true,
-    this.fixedHost,
+    this.host,
   });
 
   final AcpAgentConfig agent;
   final CustomizationStore store;
-  final List<String> hosts;
   final bool enabled;
-  final String? fixedHost;
+  final String? host;
 
   @override
   State<AgentCustomizationCopy> createState() => _AgentCustomizationCopyState();
 }
 
 class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
-  late String _host = widget.fixedHost ?? '';
   bool _busy = false;
   String? _status;
 
   @override
   void didUpdateWidget(AgentCustomizationCopy oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.fixedHost case final host?) {
-      _host = host;
-    } else if (_host.isNotEmpty && !widget.hosts.contains(_host)) {
-      _host = '';
-    }
-    if (oldWidget.agent.skillsDirectory != widget.agent.skillsDirectory ||
-        oldWidget.agent.rulesDirectory != widget.agent.rulesDirectory) {
+    if (oldWidget.agent.rulesDirectory != widget.agent.rulesDirectory) {
       _status = null;
     }
   }
 
-  Future<void> _preview(CustomizationKind kind) async {
-    final directory = kind == CustomizationKind.skills
-        ? widget.agent.skillsDirectory
-        : widget.agent.rulesDirectory;
-    final selectedHost = _host;
+  Future<void> _preview() async {
+    final directory = widget.agent.rulesDirectory;
+    final host = widget.host;
     setState(() {
       _busy = true;
       _status = null;
     });
     try {
-      final store = selectedHost.isEmpty
-          ? widget.store
-          : CustomizationStore(
-              disk: RemoteCustomizationDisk(SshHosts.instance[selectedHost]),
-            );
-      final copier = CustomizationDirectoryCopy(store);
-      final plan = await copier.preview(kind, directory);
+      final copier = CustomizationDirectoryCopy(
+        host == null
+            ? widget.store
+            : CustomizationStore(
+                disk: RemoteCustomizationDisk(SshHosts.instance[host]),
+              ),
+      );
+      final plan = await copier.preview(CustomizationKind.rules, directory);
       if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Copy user ${kind.name}'),
+          title: const Text('Copy user rules'),
           content: SizedBox(
             width: 640,
             child: SingleChildScrollView(
@@ -81,7 +71,6 @@ class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   SelectableText(
-                    'Host: ${selectedHost.isEmpty ? "This machine" : selectedHost}\n'
                     'Source: ${plan.sourceRoot}\nTarget: ${plan.targetRoot}',
                   ),
                   const SizedBox(height: 12),
@@ -106,7 +95,7 @@ class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
                   const SizedBox(height: 8),
                   const Text(
                     'Existing unowned or externally modified files are never '
-                    'overwritten. Stale files are kept. Nothing is uploaded between hosts.',
+                    'overwritten. Stale files are kept.',
                   ),
                   if (plan.hasConflicts)
                     const Text(
@@ -131,19 +120,16 @@ class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
         ),
       );
       if (!mounted || confirmed != true) return;
-      final currentDirectory = kind == CustomizationKind.skills
-          ? widget.agent.skillsDirectory
-          : widget.agent.rulesDirectory;
       if (!widget.enabled ||
-          currentDirectory != directory ||
-          _host != selectedHost) {
+          widget.host != host ||
+          widget.agent.rulesDirectory != directory) {
         throw StateError('Settings changed; preview again before copying');
       }
       await copier.apply(plan);
       if (mounted) {
         setState(
           () => _status =
-              'Copied user ${kind.name} on ${selectedHost.isEmpty ? "this machine" : selectedHost}. '
+              'Copied user rules to ${host ?? 'this machine'}. '
               'Start a new agent session if needed. Loading depends on the agent.',
         );
       }
@@ -162,59 +148,28 @@ class _AgentCustomizationCopyState extends State<AgentCustomizationCopy> {
 
   @override
   Widget build(BuildContext context) => SettingsRow(
-    label: 'Copy customizations',
+    label: 'Copy rules',
     below: [
       const Text(
-        'Manual copy only. Blank destinations disable copying. Skills include '
-        'all resources. Rules include the rules folder contents and user CLAUDE.md '
-        '(as CLAUDE.md), unchanged. Confirm that the agent reads this layout; '
-        'copying does not guarantee loading. Rule conditions and relative '
-        'references are not rewritten.',
+        'Copy the user rules folder and user CLAUDE.md to the rules directory. Check that the agent reads this layout.',
       ),
-      if (widget.fixedHost == null && widget.hosts.isNotEmpty)
-        DropdownButton<String>(
-          value: _host,
-          isExpanded: true,
-          items: [
-            const DropdownMenuItem(value: '', child: Text('This machine')),
-            for (final host in widget.hosts)
-              DropdownMenuItem(value: host, child: Text('SSH: $host')),
-          ],
-          onChanged: _busy
-              ? null
-              : (host) => setState(() {
-                  _host = host ?? '';
-                  _status = null;
-                }),
-        ),
       if (!widget.enabled)
         const Text('Save the agent settings before previewing.'),
       const SizedBox(height: 8),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final kind in [
-            CustomizationKind.skills,
-            CustomizationKind.rules,
-          ])
-            IdeButton(
-              label: 'Preview ${kind.name} copy',
-              secondary: true,
-              onPressed:
-                  !widget.enabled ||
-                      _busy ||
-                      (kind == CustomizationKind.skills
-                              ? widget.agent.skillsDirectory
-                              : widget.agent.rulesDirectory)
-                          .trim()
-                          .isEmpty
-                  ? null
-                  : () => unawaited(_preview(kind)),
-            ),
-        ],
+      Align(
+        alignment: Alignment.centerLeft,
+        child: IdeButton(
+          label: 'Preview rules copy',
+          secondary: true,
+          onPressed:
+              !widget.enabled ||
+                  _busy ||
+                  widget.agent.rulesDirectory.trim().isEmpty
+              ? null
+              : () => unawaited(_preview()),
+        ),
       ),
-      if (_busy) const Text('Preparing or copying customizations…'),
+      if (_busy) const Text('Preparing or copying rules…'),
       if (_status case final status?) SelectableText(status),
     ],
   );

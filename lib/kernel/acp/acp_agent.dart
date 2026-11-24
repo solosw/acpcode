@@ -1,5 +1,8 @@
 import '../../remote/remote_acp.dart';
+import '../../remote/remote_acp_registry.dart';
+import '../../remote/ssh_host.dart';
 import '../../remote/remote_location.dart';
+import '../acp_registry.dart';
 import 'acp_transport.dart';
 
 /// Configuration for one ACP agent executable.
@@ -14,6 +17,7 @@ class AcpAgentConfig {
     this.skillsDirectory = '',
     this.rulesDirectory = '',
     this.hostScoped = false,
+    this.registry,
     this.hostConfigurations = const {},
   });
 
@@ -31,11 +35,40 @@ class AcpAgentConfig {
   /// New configurations never reuse a local executable or credentials remotely.
   /// Legacy entries retain their original cross-host behavior until scoped.
   final bool hostScoped;
+  final AcpRegistryEntry? registry;
   final Map<String, AcpAgentConfig> hostConfigurations;
+
+  AcpAgentConfig copyWith({
+    String? id,
+    String? label,
+    String? rulesDirectory,
+    bool? hostScoped,
+    Map<String, AcpAgentConfig>? hostConfigurations,
+    AcpRegistryEntry? registry,
+  }) => AcpAgentConfig(
+    id: id ?? this.id,
+    label: label ?? this.label,
+    command: command,
+    arguments: arguments,
+    environment: environment,
+    description: description,
+    skillsDirectory: skillsDirectory,
+    rulesDirectory: rulesDirectory ?? this.rulesDirectory,
+    hostScoped: hostScoped ?? this.hostScoped,
+    hostConfigurations: hostConfigurations ?? this.hostConfigurations,
+    registry: registry ?? this.registry,
+  );
 
   AcpAgentConfig forHost(String? host) {
     if (host != null && host.isNotEmpty) {
-      if (hostConfigurations[host] case final config?) return config;
+      if (hostConfigurations[host] case final config?) {
+        return config.command.isEmpty &&
+                config.registry == null &&
+                registry != null
+            ? config.copyWith(registry: registry)
+            : config;
+      }
+      if (registry != null) return this;
       if (hostScoped || hostConfigurations.isNotEmpty) {
         throw StateError(
           'ACP agent "$label" is not configured on $host. '
@@ -52,6 +85,15 @@ class AcpAgentConfig {
     return this;
   }
 
+  Future<Map<String, String>> environmentAt(String? location) async {
+    final host = location == null ? null : RemoteLocation.hostOf(location);
+    final config = forHost(host);
+    if (host == null || config.registry == null) return config.environment;
+    final client = await SshHosts.instance[host].ready;
+    final plan = RemoteAcpRegistry(client).launchPlan(config.registry!);
+    return {...?plan?.environment, ...config.environment};
+  }
+
   /// On the project's host: this machine, or the remote one an `ssh://`
   /// project names. Slash commands come from that process.
   AcpTransportFactory get transport => (context) async {
@@ -61,6 +103,7 @@ class AcpAgentConfig {
     final config = forHost(host);
     return startAcpAgent(
       config.command,
+      registry: config.registry,
       arguments: config.arguments,
       location: context.cwd,
       environment: config.environment.isEmpty ? null : config.environment,

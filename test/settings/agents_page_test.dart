@@ -20,11 +20,11 @@ void main() {
     temporary = Directory.systemTemp.createTempSync('baocode-copy-widget-');
     final root = temporary.resolveSymbolicLinksSync();
     config = p.join(root, '.claude');
-    target = p.join(root, 'agent', 'skills');
+    target = p.join(root, 'agent', 'rules');
     store = CustomizationStore(configDir: config, homeDir: root);
-    final file = File(p.join(config, 'skills', 'test', 'SKILL.md'));
+    final file = File(p.join(config, 'rules', 'test', 'policy.md'));
     file.parent.createSync(recursive: true);
-    file.writeAsStringSync('Skill');
+    file.writeAsStringSync('Rule');
   });
   tearDown(() => temporary.deleteSync(recursive: true));
 
@@ -44,10 +44,9 @@ void main() {
               id: 'test',
               label: 'Test',
               command: 'agent',
-              skillsDirectory: directory ?? target,
+              rulesDirectory: directory ?? target,
             ),
             store: store,
-            hosts: const ['dev'],
             enabled: enabled,
           ),
         ),
@@ -78,14 +77,11 @@ void main() {
   ) async {
     await pumpCopy(tester);
     expect(Directory(target).existsSync(), isFalse);
-    final dropdown = tester.widget<DropdownButton<String>>(
-      find.byType(DropdownButton<String>),
-    );
-    expect(dropdown.value, ''); // Never implicitly copy onto an SSH host.
+    expect(find.byType(DropdownButton<String>), findsNothing);
     await actAndWait(
       tester,
-      () => tester.tap(find.text('Preview skills copy')),
-      () => find.text('Copy user skills').evaluate().isNotEmpty,
+      () => tester.tap(find.text('Preview rules copy')),
+      () => find.text('Copy user rules').evaluate().isNotEmpty,
     );
     expect(Directory(target).existsSync(), isFalse);
     await actAndWait(
@@ -94,7 +90,7 @@ void main() {
       () =>
           tester
               .widget<IdeButton>(
-                find.widgetWithText(IdeButton, 'Preview skills copy'),
+                find.widgetWithText(IdeButton, 'Preview rules copy'),
               )
               .onPressed !=
           null,
@@ -102,34 +98,34 @@ void main() {
     expect(Directory(target).existsSync(), isFalse);
     await actAndWait(
       tester,
-      () => tester.tap(find.text('Preview skills copy')),
-      () => find.text('Copy user skills').evaluate().isNotEmpty,
+      () => tester.tap(find.text('Preview rules copy')),
+      () => find.text('Copy user rules').evaluate().isNotEmpty,
     );
     await actAndWait(
       tester,
       () => tester.tap(find.text('Copy')),
       () => find
-          .textContaining('Copied user skills on this machine.')
+          .textContaining('Copied user rules to this machine.')
           .evaluate()
           .isNotEmpty,
     );
     expect(
-      File(p.join(target, 'test', 'SKILL.md')).readAsStringSync(),
-      'Skill',
+      File(p.join(target, 'test', 'policy.md')).readAsStringSync(),
+      'Rule',
     );
   });
 
   testWidgets('existing files show conflicts and disable confirmation', (
     tester,
   ) async {
-    final existing = File(p.join(target, 'test', 'SKILL.md'));
+    final existing = File(p.join(target, 'test', 'policy.md'));
     existing.parent.createSync(recursive: true);
     existing.writeAsStringSync('Existing');
     await pumpCopy(tester);
     await actAndWait(
       tester,
-      () => tester.tap(find.text('Preview skills copy')),
-      () => find.text('Copy user skills').evaluate().isNotEmpty,
+      () => tester.tap(find.text('Preview rules copy')),
+      () => find.text('Copy user rules').evaluate().isNotEmpty,
     );
     expect(find.textContaining('conflict: test'), findsOneWidget);
     expect(
@@ -145,7 +141,7 @@ void main() {
       () =>
           tester
               .widget<IdeButton>(
-                find.widgetWithText(IdeButton, 'Preview skills copy'),
+                find.widgetWithText(IdeButton, 'Preview rules copy'),
               )
               .onPressed !=
           null,
@@ -159,7 +155,7 @@ void main() {
     expect(
       tester
           .widget<IdeButton>(
-            find.widgetWithText(IdeButton, 'Preview skills copy'),
+            find.widgetWithText(IdeButton, 'Preview rules copy'),
           )
           .onPressed,
       isNull,
@@ -168,7 +164,7 @@ void main() {
     expect(
       tester
           .widget<IdeButton>(
-            find.widgetWithText(IdeButton, 'Preview skills copy'),
+            find.widgetWithText(IdeButton, 'Preview rules copy'),
           )
           .onPressed,
       isNull,
@@ -190,8 +186,15 @@ void main() {
           const AcpAgentConfig(
             id: 'test',
             label: 'Test',
-            command: 'agent',
-            arguments: ['--profile', 'profile with spaces'],
+            command: '',
+            hostConfigurations: {
+              'dev': AcpAgentConfig(
+                id: 'test',
+                label: 'Test',
+                command: 'agent',
+                arguments: ['--profile', 'profile with spaces'],
+              ),
+            },
           ),
         ),
       );
@@ -210,26 +213,19 @@ void main() {
       await tester.tap(find.text('Edit agent'));
       await tester.pumpAndSettle();
       final inputs = find.byType(EditableText);
-      expect(inputs, findsNWidgets(6));
+      expect(inputs, findsNWidgets(5));
       await tester.enterText(inputs.at(4), target);
-      await tester.enterText(
-        inputs.at(5),
-        p.join(temporary.path, 'agent', 'rules'),
-      );
       await tester.ensureVisible(find.text('Save'));
       await actAndWait(
         tester,
         () => tester.tap(find.text('Save')),
-        () => agents.agents.single.skillsDirectory == target,
+        () => agents.agents.single.forHost('dev').rulesDirectory == target,
       );
-      expect(agents.agents.single.arguments, [
+      expect(agents.agents.single.forHost('dev').arguments, [
         '--profile',
         'profile with spaces',
       ]);
-      expect(
-        agents.agents.single.rulesDirectory,
-        p.join(temporary.path, 'agent', 'rules'),
-      );
+      expect(agents.agents.single.forHost('dev').rulesDirectory, target);
       expect(Directory(target).existsSync(), isFalse); // Saving isn't copying.
       await tester.pumpWidget(const SizedBox.shrink());
     },

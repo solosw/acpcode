@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:bao_remote/client.dart';
 import 'package:path/path.dart' as p;
@@ -83,6 +85,7 @@ class RemoteAcpRegistry extends AcpRegistry {
     final os = switch (target.os) {
       'darwin' => 'darwin',
       'linux' => 'linux',
+      'win' => 'windows',
       _ => 'unsupported',
     };
     final arch = switch (target.arch) {
@@ -90,7 +93,8 @@ class RemoteAcpRegistry extends AcpRegistry {
       'x64' => 'x86_64',
       _ => 'unsupported',
     };
-    return '$os-$arch';
+    final suffix = os == 'linux' && target.libc == 'musl' ? '-musl' : '';
+    return '$os-$arch$suffix';
   }
 
   @override
@@ -162,120 +166,230 @@ class RemoteAcpRegistry extends AcpRegistry {
     }
   }
 
+  // In-flight uploads are shared by connection prefetch and agent launch.
+  static final _pending = Expando<Map<String, Future<String>>>();
+
+  AcpInstallPlan? binaryFor(AcpRegistryEntry entry) =>
+      entry.binaryPlanFor(platform);
+
+  Future<void> sync(
+    Iterable<AcpAgentConfig> agents,
+    String host, {
+    required void Function(Object) onError,
+  }) async {
+    for (final agent in agents) {
+      final override = agent.hostConfigurations[host];
+      final entry =
+          override?.registry ??
+          (override == null || override.command.isEmpty
+              ? agent.registry
+              : null);
+      if (entry == null) continue;
+      try {
+        if (binaryFor(entry) case final plan?) await deploy(entry, plan);
+      } on Object catch (error) {
+        onError(error);
+      }
+    }
+  }
+
+  AcpInstallPlan? launchPlan(AcpRegistryEntry entry) =>
+      binaryFor(entry) ?? entry.runnerPlan;
+
+  Future<AcpAgentConfig> resolve(AcpRegistryEntry entry) async {
+    final plan = launchPlan(entry);
+    if (plan == null) throw UnsupportedError('No ACP build for $platform');
+    final command = plan.kind == 'binary'
+        ? await deploy(entry, plan)
+        : plan.command;
+    return AcpAgentConfig(
+      id: entry.id,
+      label: entry.name,
+      command: command,
+      arguments: plan.arguments,
+      environment: plan.environment,
+      description: entry.description,
+    );
+  }
+
+  Future<String> deploy(AcpRegistryEntry entry, AcpInstallPlan plan) async {
+    final pending = _pending[client] ??= {};
+    final key = '${entry.id}/${plan.cacheKey}';
+    if (pending[key] case final upload?) return upload;
+    final upload = _deploy(entry, plan);
+    pending[key] = upload;
+    try {
+      return await upload;
+    } finally {
+      pending.remove(key);
+    }
+  }
+
+  Future<String> _deploy(AcpRegistryEntry entry, AcpInstallPlan plan) async {
+    final root = _root(entry);
+    var destination = _paths.join(root, plan.cacheKey);
+    for (var attempt = 1; ; attempt++) {
+      final command = _commandAt(destination, plan);
+      if (await client.stat(command) == 'file') return command;
+      if (await client.stat(destination) == null) break;
+      // Recover a build partially removed outside BaoCode without deleting it.
+      destination = _paths.join(root, '${plan.cacheKey}-$attempt');
+    }
+    final cache = local.cachedBinary(plan);
+    if (!await cache.exists()) {
+      throw StateError(
+        'Missing ACP package for $platform. Download it again in Settings → Agents.',
+      );
+    }
+    final bytes = await cache.readAsBytes();
+    local.verifyBinary(plan, bytes);
+    return _upload(root, plan, bytes: bytes, destination: destination);
+  }
+
+  bool get _windows => _hello.platform.os == 'win';
+  p.Context get _paths => _windows ? p.windows : p.posix;
+
+  String _root(AcpRegistryEntry entry) {
+    if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(entry.id)) {
+      throw const FormatException('Invalid agent id');
+    }
+    if (!_paths.isAbsolute(_hello.dataDir)) {
+      throw StateError('Remote server has no absolute data directory');
+    }
+    return _paths.join(_hello.dataDir, 'acp-agents', entry.id);
+  }
+
+  String _commandAt(String directory, AcpInstallPlan plan) => _paths.joinAll([
+    directory,
+    ...plan.command.replaceAll('\\', '/').split('/'),
+  ]);
+
   @override
-  Future<String> installBinary(
-    AcpRegistryEntry entry,
-    AcpInstallPlan plan,
-  ) async {
-    // Download and inspect locally for the REMOTE architecture. Never execute
-    // the remote build here. Upload regular files only, preserving executables.
+  Future<String> installBinary(AcpRegistryEntry entry, AcpInstallPlan plan) =>
+      _upload(_root(entry), plan);
+
+  Future<void> _mkdir(String path) async {
+    if (await client.stat(path) == 'directory') return;
+    try {
+      await client.create(_hello.dataDir, path, directory: true);
+    } catch (_) {
+      if (await client.stat(path) != 'directory') rethrow;
+    }
+  }
+
+  Future<String> _upload(
+    String root,
+    AcpInstallPlan plan, {
+    Uint8List? bytes,
+    String? destination,
+  }) async {
+    // Inspect and unpack on the client; never execute a foreign build here.
     final staging = await Directory.systemTemp.createTemp(
       'baocode-acp-upload-',
     );
-    String? installed;
+    final nonce = Random.secure().nextInt(1 << 32).toRadixString(16);
+    final temporary = _paths.join(root, 'install-$nonce');
+    final dataDir = _hello.dataDir;
+    var cleanup = false;
     try {
-      final executables = await local.unpackBinary(plan, staging);
+      final executables = await local.unpackBinary(plan, staging, bytes: bytes);
       final command = p.join(staging.path, plan.command.replaceAll('\\', '/'));
       final resolved = await File(command).resolveSymbolicLinks();
       if (!p.isWithin(await staging.resolveSymbolicLinks(), resolved) ||
           !await File(command).exists()) {
         throw const FormatException('Invalid agent executable');
       }
-      final dataDir = _hello.dataDir;
-      if (!p.posix.isAbsolute(dataDir)) {
-        throw StateError('Remote server has no absolute data directory');
+      await _mkdir(_paths.dirname(root));
+      await _mkdir(root);
+      await client.create(dataDir, temporary, directory: true);
+      cleanup = true;
+      if (!_windows) await _run('chmod', ['700', temporary]);
+      final executablePaths = {...executables, p.normalize(command), resolved};
+      final directories = <String>{temporary};
+      Future<void> ensureParent(String path) async {
+        if (directories.contains(path)) return;
+        await ensureParent(_paths.dirname(path));
+        await _mkdir(path);
+        directories.add(path);
       }
-      final root = p.posix.join(dataDir, 'acp-agents', entry.id);
-      await _run('mkdir', ['-p', '--', root]);
-      // mktemp creates a private unique directory; existing installs stay intact.
-      final temp = await client.run('mktemp', [
-        '-d',
-        p.posix.join(root, 'install-XXXXXXXX'),
-      ]);
-      if (temp.exitCode != 0) {
-        throw StateError('Could not create remote installation directory');
-      }
-      final destination = temp.stdout.trim();
-      if (!p.posix.isWithin(root, destination) ||
-          p.posix.dirname(destination) != root) {
-        throw StateError('Invalid remote installation directory');
-      }
-      installed = destination;
-      final executablePaths = {...executables, command, resolved};
+
       await for (final entity in staging.list(
         recursive: true,
         followLinks: false,
       )) {
-        final relative = p
-            .relative(entity.path, from: staging.path)
-            .split(p.separator)
-            .join('/');
-        final target = p.posix.join(destination, relative);
-        if (entity is Link) {
-          // Registry archives may have internal links. Recreate only checked,
-          // relative links within this install; never dereference during upload.
-          final link = await entity.target();
-          final normalized = link.replaceAll('\\', '/');
-          if (p.posix.isAbsolute(normalized) ||
+        final relative = p.split(p.relative(entity.path, from: staging.path));
+        if (_windows &&
+            relative.any(
+              (part) =>
+                  part.contains('\\') ||
+                  part.contains(':') ||
+                  part.endsWith('.') ||
+                  part.endsWith(' '),
+            )) {
+          throw const FormatException('Invalid Windows archive path');
+        }
+        final target = _paths.joinAll([temporary, ...relative]);
+        if (!_paths.isWithin(temporary, target)) {
+          throw const FormatException('Archive file escapes installation');
+        }
+        if (entity is Directory) {
+          await ensureParent(target);
+        } else if (entity is Link) {
+          final link = (await entity.target()).replaceAll('\\', '/');
+          if (_windows ||
+              p.posix.isAbsolute(link) ||
               !p.posix.isWithin(
-                destination,
-                p.posix.normalize(
-                  p.posix.join(p.posix.dirname(target), normalized),
-                ),
+                temporary,
+                p.posix.normalize(p.posix.join(p.posix.dirname(target), link)),
               )) {
-            throw const FormatException('Archive link escapes installation');
+            throw const FormatException('Unsupported link in agent archive');
           }
-          await _run('mkdir', ['-p', '--', p.posix.dirname(target)]);
-          await _run('ln', ['-s', '--', normalized, target]);
-        } else if (entity is Directory) {
-          await _run('mkdir', ['-p', '--', target]);
+          await ensureParent(_paths.dirname(target));
+          await _run('ln', ['-s', '--', link, target]);
         } else if (entity is File) {
-          await _run('mkdir', ['-p', '--', p.posix.dirname(target)]);
-          // File RPC bounds a message's size. Split using the existing streamed
-          // process stdin instead of sending a potentially huge JSON message.
-          final process = await client.start('sh', [
-            '-c',
-            r'umask 077; cat > "$1"',
-            'bao-acp',
-            target,
-          ]);
-          final out = process.stdout.drain<void>();
-          final err = process.stderr.drain<void>();
+          await ensureParent(_paths.dirname(target));
+          // Offset-checked chunks keep the RPC bounded on all platforms.
+          await client.writeBytes(dataDir, target, const []);
+          final file = await entity.open();
           try {
-            await for (final bytes in entity.openRead()) {
-              process.write(bytes);
+            var offset = 0;
+            while (true) {
+              final chunk = await file.read(1 << 20);
+              if (chunk.isEmpty) break;
+              await client.appendBytes(dataDir, target, offset, chunk);
+              offset += chunk.length;
             }
-            await process.closeStdin().timeout(const Duration(seconds: 15));
-            if (await process.exitCode.timeout(const Duration(minutes: 5)) !=
-                0) {
-              throw StateError('Could not upload remote agent file');
-            }
-            await Future.wait([out, err]);
-          } catch (_) {
-            process.kill(force: true);
-            rethrow;
+          } finally {
+            await file.close();
           }
-          if (executablePaths.contains(entity.path)) {
+          if (!_windows && executablePaths.contains(entity.path)) {
             await _run('chmod', ['700', target]);
           }
         }
       }
-      final executable = p.posix.join(
-        destination,
-        plan.command.replaceAll('\\', '/'),
-      );
-      await _run('chmod', ['700', executable]);
+      final commandAtStage = _commandAt(temporary, plan);
+      if (!_windows) await _run('chmod', ['700', commandAtStage]);
+      if (destination == null) {
+        cleanup = false;
+        return commandAtStage;
+      }
+      final executable = _commandAt(destination, plan);
+      // Publish only a complete directory. A concurrent app may have won.
+      try {
+        await client.rename(dataDir, temporary, destination);
+        cleanup = false;
+      } catch (_) {
+        if (await client.stat(executable) != 'file') rethrow;
+      }
       return executable;
-    } catch (_) {
-      if (installed != null) {
+    } finally {
+      if (cleanup) {
         try {
-          await _run('rm', ['-rf', '--', installed]);
+          await client.delete(dataDir, temporary);
         } on Object {
-          /* Disconnected: never touch another host. */
+          // The connection may have closed during transfer.
         }
       }
-      rethrow;
-    } finally {
       await staging.delete(recursive: true);
     }
   }

@@ -10,9 +10,7 @@ import '../../kernel/acp_agents.dart';
 import '../../kernel/acp_registry.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/codicons.dart';
-import '../../workspace/window_controls.dart';
 import 'agent_edit_dialog.dart';
-import '../../remote/remote_acp_registry.dart';
 import 'agent_remote_folder_dialog.dart';
 import 'settings_widgets.dart';
 
@@ -24,20 +22,16 @@ class AgentsSettingsPage extends StatelessWidget {
     required this.agents,
     this.customizations,
     this.hosts = const [],
-    this.pickDirectory,
     this.registry = const AcpRegistry(),
     this.initialHost = '',
-    this.connectRegistry = RemoteAcpRegistry.connect,
     this.pickRemoteDirectory = showAgentRemoteFolderDialog,
   });
 
   final AcpAgents agents;
   final CustomizationStore? customizations;
-  final List<String> hosts;
-  final Future<String?> Function()? pickDirectory;
   final AcpRegistry registry;
+  final List<String> hosts;
   final String initialHost;
-  final Future<AcpRegistry> Function(String, AcpRegistry, bool) connectRegistry;
   final Future<String?> Function(BuildContext, String) pickRemoteDirectory;
 
   Future<void> _edit(BuildContext context, [AcpAgentConfig? agent]) =>
@@ -47,27 +41,12 @@ class AgentsSettingsPage extends StatelessWidget {
         builder: (_) => AgentEditDialog(
           agent: agent,
           customizations: customizations ?? CustomizationStore(),
+          registry: registry,
           hosts: hosts,
           initialHost: initialHost,
-          connectRegistry: connectRegistry,
           pickRemoteDirectory: pickRemoteDirectory,
-          registry: registry,
-          pickDirectory: pickDirectory ?? WindowControls.pickDirectory,
           onSave: (updated) => agent == null
-              ? agents.add(
-                  AcpAgentConfig(
-                    id: agents.newId(updated.label),
-                    label: updated.label,
-                    command: updated.command,
-                    arguments: updated.arguments,
-                    environment: updated.environment,
-                    description: updated.description,
-                    skillsDirectory: updated.skillsDirectory,
-                    rulesDirectory: updated.rulesDirectory,
-                    hostScoped: updated.hostScoped,
-                    hostConfigurations: updated.hostConfigurations,
-                  ),
-                )
+              ? agents.add(updated.copyWith(id: agents.newId(updated.label)))
               : agents.save([
                   for (final item in agents.agents)
                     item.id == agent.id ? updated : item,
@@ -132,8 +111,8 @@ class AgentsSettingsPage extends StatelessWidget {
                   below: [
                     Text(
                       [
-                        if (agent.command.isNotEmpty)
-                          [agent.command, ...agent.arguments].join(' '),
+                        if (agent.registry case final entry?)
+                          '${l10n.agentsRegistry} · ${entry.version}',
                         for (final host in agent.hostConfigurations.keys)
                           'SSH: $host',
                       ].join(' · '),

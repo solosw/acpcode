@@ -70,6 +70,7 @@ class SshHost extends ChangeNotifier implements ProjectHost {
     this.maxBackoff = _max,
     this.downAfter = _downAfter,
     this.onCode,
+    this.onConnect,
   });
 
   static const _max = Duration(minutes: 1);
@@ -133,6 +134,7 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   /// Opens what the `code` command was given in a terminal of the host's
   /// (see [RemoteClient.onCode]), asking [client] of its paths.
   final SshCodeHandler? onCode;
+  final void Function(String host, RemoteClient client)? onConnect;
 
   SshHostState get state => _state;
   SshHostState _state = SshHostState.idle;
@@ -254,6 +256,7 @@ class SshHost extends ChangeNotifier implements ProjectHost {
       unawaited(_changes?.cancel());
       _changes = connection.changes.listen((_) => _linkChanged(connection));
       unawaited(connection.done.then((_) => _lost(connection)));
+      onConnect?.call(host, connection.client);
       if (wasLost) _reconnected.add(connection.client);
       return connection.client;
     } on Object catch (error) {
@@ -321,9 +324,11 @@ class SshHost extends ChangeNotifier implements ProjectHost {
       return;
     }
     if (connection.linked) {
+      final restored = _state != SshHostState.connected;
       _error = null;
       _retryAt = null;
       _set(SshHostState.connected);
+      if (restored) onConnect?.call(host, connection.client);
     } else if (connection.stalled) {
       _error = connection.lastError;
       _retryAt = null;
@@ -420,6 +425,7 @@ class SshHosts extends ChangeNotifier {
   /// Opens what the `code` command was given in the hosts' terminals (the
   /// app's windows do, see AppWindows.handleRemoteCode).
   SshCodeHandler? onCode;
+  void Function(String host, RemoteClient client)? onConnect;
 
   /// What `ssh` asks while signing in to the hosts.
   final SshPasswords passwords;
@@ -531,6 +537,7 @@ class SshHosts extends ChangeNotifier {
       host,
       connect: _connectTo,
       downAfter: downAfter,
+      onConnect: (host, client) => onConnect?.call(host, client),
       onCode: (host, client, cwd, args) async {
         final open = onCode;
         return open == null

@@ -29,6 +29,17 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.5">
+    <h2 class="plain"><a href="#v2.0.5">2.0.5</a></h2>
+    <p>这一版按服务器重新整理了 ACP Agent 设置，注册表安装的 Agent 会在连接的每台服务器上自动就绪。</p>
+    <p>改进</p>
+    <ul>
+    <li>ACP Agent 改为按 SSH 服务器配置。移除了「本机」选项和 Skill 目录设置，命令、参数、环境变量和规则目录分别保存在各台服务器下。</li>
+    <li>从 ACP 注册表安装 Agent 时，会下载所有已发布平台的构建。连接服务器时，BaoCode 会检查是否已有匹配的版本，没有就自动复制过去。</li>
+    <li>可以输入注册表 JSON 自行添加 Agent，支持单个条目、条目数组或完整注册表文档。保存前会校验并预览。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.3">
     <h2 class="plain"><a href="#v2.0.3">2.0.3</a></h2>
     <p>这一版为 ACP 接入系统提示词自定义与 Skills 支持，对接 BaoCode 内置内核提示词与本地/SSH Skills，并保持对现有 ACP v1 Agent 的兼容。</p>
