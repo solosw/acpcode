@@ -29,6 +29,17 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.6">
+    <h2 class="plain"><a href="#v2.0.6">2.0.6</a></h2>
+    <p>This release lets agents create scheduled tasks through BaoCode MCP.</p>
+    <p>Changed</p>
+    <ul>
+    <li>Create recurring tasks for local or SSH projects without specifying an agent or model.</li>
+    <li>Run a shell script on schedule to check for a new Gitea commit, start an agent only when needed, or deploy directly.</li>
+    <li>Choose a Claude Code or ACP agent by name or ID with session_new, or omit the agent to use the default.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.5">
     <h2 class="plain"><a href="#v2.0.5">2.0.5</a></h2>
     <p>This release reworks ACP agent settings around servers and makes registry agents ready on every connected host.</p>

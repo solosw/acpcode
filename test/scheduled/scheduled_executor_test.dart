@@ -220,4 +220,92 @@ void main() {
       session.detach();
     },
   );
+
+  group('start script', () {
+    ScheduledTask scripted(String prompt) => ScheduledTask(
+      id: 'script',
+      name: 'Watch',
+      prompt: prompt,
+      script: 'check-for-work',
+      kernel: 'custom-acp',
+      project: '/tmp/scheduled-project',
+      schedule: TaskSchedule(hour: 9, minute: 0, days: {1}),
+    );
+
+    test(
+      'output starts the selected ACP agent with the prompt and output',
+      () async {
+        final created = <TaskTestKernel>[];
+        final workspace = Workspace(
+          projects: const [Project('Project', '/tmp/scheduled-project')],
+          kernels: [
+            taskDescriptor(created),
+            taskDescriptor(created, id: 'custom-acp'),
+          ],
+        );
+        addTearDown(workspace.dispose);
+        final calls = <(String, String)>[];
+        final executor = ScheduledExecutor(
+          workspace,
+          runScript: (script, location) async {
+            calls.add((script, location));
+            return (exitCode: 0, stdout: 'Issue #7 is open\n', stderr: '');
+          },
+        );
+        await executor.execute(scripted('Triage this:'), () {});
+        expect(calls, [('check-for-work', '/tmp/scheduled-project')]);
+        expect(created.single.descriptor.id, 'custom-acp');
+        expect(
+          created.single.sent.single.text,
+          'Triage this:\n\nIssue #7 is open',
+        );
+      },
+    );
+
+    test('empty output skips the run; a failure is an error', () async {
+      final created = <TaskTestKernel>[];
+      final workspace = Workspace(
+        kernels: [taskDescriptor(created, id: 'custom-acp')],
+      );
+      addTearDown(workspace.dispose);
+      var result = (exitCode: 0, stdout: '  \n', stderr: '');
+      final executor = ScheduledExecutor(
+        workspace,
+        runScript: (_, _) async => result,
+      );
+      await executor.execute(scripted(''), () {});
+      expect(created, isEmpty);
+      expect(workspace.threads, isEmpty);
+      result = (exitCode: 3, stdout: '', stderr: 'no token');
+      await expectLater(
+        executor.execute(scripted(''), () {}),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'Task script exited 3: no token',
+          ),
+        ),
+      );
+      expect(created, isEmpty);
+    });
+
+    test('runs locally in the project folder and keeps legacy JSON', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'scheduled-script-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final root = directory.resolveSymbolicLinksSync();
+      final result = await runTaskScript(
+        Platform.isWindows ? 'cd' : 'pwd',
+        root,
+      );
+      expect(result.exitCode, 0);
+      expect(result.stdout.trim(), root);
+      final json = scripted('').toJson();
+      expect(ScheduledTask.fromJson(json)?.script, 'check-for-work');
+      expect(ScheduledTask.fromJson({...json}..remove('script')), isNull);
+      expect(task().toJson().containsKey('script'), isFalse);
+    });
+  });
 }

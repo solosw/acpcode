@@ -380,6 +380,18 @@ abstract class AppLocalizations {
   /// **'Supports the agent’s skills, file paths and slash commands.'**
   String get scheduledPromptHint;
 
+  /// No description provided for @scheduledScript.
+  ///
+  /// In en, this message translates to:
+  /// **'Start script (optional)'**
+  String get scheduledScript;
+
+  /// No description provided for @scheduledScriptHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Runs in the project folder, on its host, before each run. Its output is sent to the agent after the prompt. No output skips the run; a failing script records an error.'**
+  String get scheduledScriptHint;
+
   /// No description provided for @scheduledSave.
   ///
   /// In en, this message translates to:

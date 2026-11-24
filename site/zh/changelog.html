@@ -29,6 +29,17 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.6">
+    <h2 class="plain"><a href="#v2.0.6">2.0.6</a></h2>
+    <p>这一版支持通过 BaoCode MCP 创建定时任务。</p>
+    <p>改进</p>
+    <ul>
+    <li>可以为本地或 SSH 项目创建周期任务，无需传入 Agent 或模型。</li>
+    <li>定时运行 Shell 脚本，例如检查 Gitea 是否有新提交，只在有更新时启动 Agent，或由脚本直接部署。</li>
+    <li>session_new 支持按名称或 ID 选择 Claude Code 或 ACP Agent；不传 Agent 时沿用默认设置。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.5">
     <h2 class="plain"><a href="#v2.0.5">2.0.5</a></h2>
     <p>这一版按服务器重新整理了 ACP Agent 设置，注册表安装的 Agent 会在连接的每台服务器上自动就绪。</p>

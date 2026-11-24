@@ -15,6 +15,7 @@ import 'base/mouse_navigation.dart';
 import 'platform/sleep_prevention.dart';
 import 'scheduled/scheduled_executor.dart';
 import 'scheduled/scheduled_tasks_view.dart';
+import 'scheduled/scheduled_tools.dart';
 import 'scheduled/task_scheduler.dart';
 import 'workspace/preference_store.dart';
 import 'browser/browser_bridge.dart';
@@ -963,6 +964,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    if (_taskScheduler != null) ScheduledTools.unregister();
     _taskScheduler?.dispose();
     unawaited(_sleepPrevention?.dispose());
     _sessionLinks.dispose();
@@ -1472,7 +1474,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Future<void> _startTaskScheduler() async {
     await _workspace.loaded;
     if (!mounted) return;
-    await _taskScheduler?.load();
+    final scheduler = _taskScheduler;
+    if (scheduler == null) return;
+    await scheduler.load();
+    if (mounted) ScheduledTools.register(_workspace, scheduler);
   }
 
   void _showScheduledTasks() {

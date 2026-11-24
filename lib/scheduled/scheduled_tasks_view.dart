@@ -210,7 +210,9 @@ class _ScheduledTasksViewState extends State<ScheduledTasksView> {
                                   '${task.kernel} · ${task.worktree ?? task.project}',
                                 ),
                                 Text(
-                                  task.prompt,
+                                  task.script.isEmpty
+                                      ? task.prompt
+                                      : '\$ ${task.script}',
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -288,6 +290,7 @@ class _TaskEditor extends StatefulWidget {
 class _TaskEditorState extends State<_TaskEditor> {
   late final _name = TextEditingController(text: widget.task?.name ?? '');
   late final _prompt = TextEditingController(text: widget.task?.prompt ?? '');
+  late final _script = TextEditingController(text: widget.task?.script ?? '');
   late String _kernel =
       widget.task?.kernel ?? widget.workspace.kernels.first.id;
   late String? _project =
@@ -515,7 +518,7 @@ class _TaskEditorState extends State<_TaskEditor> {
         _loading ||
         _picking ||
         schedule == null ||
-        _prompt.text.trim().isEmpty ||
+        !_hasMessage ||
         _project == null) {
       return;
     }
@@ -535,9 +538,14 @@ class _TaskEditorState extends State<_TaskEditor> {
         ScheduledTask(
           id: widget.task?.id ?? ChatSession.newTurnId(),
           name: _name.text.trim().isEmpty
-              ? _prompt.text.trim().split('\n').first
+              ? (_prompt.text.trim().isEmpty
+                        ? _script.text.trim()
+                        : _prompt.text.trim())
+                    .split('\n')
+                    .first
               : _name.text.trim(),
           prompt: _prompt.text.trim(),
+          script: _script.text.trim(),
           kernel: _kernel,
           project: _project!,
           worktree: _newWorktree ? null : _worktree,
@@ -559,6 +567,9 @@ class _TaskEditorState extends State<_TaskEditor> {
       if (mounted) setState(() => _saving = false);
     }
   }
+
+  bool get _hasMessage =>
+      _prompt.text.trim().isNotEmpty || _script.text.trim().isNotEmpty;
 
   Widget _field(String label, Widget child) => Padding(
     padding: const EdgeInsets.only(bottom: 16),
@@ -1041,6 +1052,21 @@ class _TaskEditorState extends State<_TaskEditor> {
         ),
         const SizedBox(height: 8),
         Text(l10n.scheduledPromptHint),
+        const SizedBox(height: 12),
+        TextField(
+          key: const ValueKey('scheduled-script'),
+          controller: _script,
+          minLines: 2,
+          maxLines: 4,
+          onChanged: (_) => setState(() {}),
+          style: const TextStyle(fontFamily: 'monospace'),
+          decoration: InputDecoration(
+            labelText: l10n.scheduledScript,
+            helperText: l10n.scheduledScriptHint,
+            helperMaxLines: 3,
+            border: const OutlineInputBorder(),
+          ),
+        ),
       ],
     );
     return Column(
@@ -1104,7 +1130,7 @@ class _TaskEditorState extends State<_TaskEditor> {
                         _error != null ||
                         _preview == null ||
                         schedule == null ||
-                        _prompt.text.trim().isEmpty
+                        !_hasMessage
                     ? null
                     : _save,
                 child: Text(l10n.scheduledSave),
@@ -1123,6 +1149,7 @@ class _TaskEditorState extends State<_TaskEditor> {
     _disposePreview();
     _name.dispose();
     _prompt.dispose();
+    _script.dispose();
     _interval.dispose();
     _cron.dispose();
     super.dispose();

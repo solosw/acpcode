@@ -156,6 +156,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get scheduledPromptHint => '支持智能体已有的技能、文件路径和斜杠命令。';
 
   @override
+  String get scheduledScript => '启动脚本（可选）';
+
+  @override
+  String get scheduledScriptHint =>
+      '每次运行前在项目所在主机的项目目录中执行。脚本输出会接在提示词后发给智能体；没有输出则跳过本次运行，脚本失败会记录错误。';
+
+  @override
   String get scheduledSave => '保存任务';
 
   @override

@@ -34,6 +34,24 @@ void main() {
       },
     ),
   );
+  late KernelDescriptor other;
+  other = KernelDescriptor(
+    id: 'custom-acp',
+    label: 'Custom ACP',
+    icon: Icons.hub_rounded,
+    description: '',
+    create: (context) => ClaudeCodeKernel(
+      other,
+      context,
+      start: (launch) async {
+        launches.add(launch);
+        return _OwnSession(
+          await MockClaudeCodeTransport.start(launch),
+          launch.resume ?? 'session-${launches.length}',
+        );
+      },
+    ),
+  );
   late Workspace workspace;
   late String app;
   var on = true;
@@ -46,7 +64,10 @@ void main() {
     app = Directory.systemTemp
         .createTempSync('session-tools')
         .resolveSymbolicLinksSync();
-    workspace = Workspace(kernels: [kernel], projects: [Project('app', app)]);
+    workspace = Workspace(
+      kernels: [kernel, other],
+      projects: [Project('app', app)],
+    );
     SessionTools.register(workspace);
   });
 
@@ -341,6 +362,40 @@ void main() {
     await until(() => !tests.session.isStreaming);
     await Future<void>.delayed(const Duration(milliseconds: 300));
     expect(fromAgents(boss), hasLength(1));
+  });
+
+  test('session_new starts the agent named, by id or name; '
+      'an unknown one is refused with those there are', () async {
+    final boss = await lead();
+    expect(
+      await call('session_new', {'text': 'x', 'agent': 'nope'}, from: boss.id),
+      allOf(contains('No agent "nope"'), contains('custom-acp (Custom ACP)')),
+    );
+    final byId = started(
+      await call('session_new', {
+        'text': 'a look (quick)',
+        'agent': 'custom-acp',
+      }, from: boss.id),
+    );
+    expect(byId.kernel.id, 'custom-acp');
+    final byName = started(
+      await call('session_new', {
+        'text': 'another look (quick)',
+        'agent': 'claude code',
+      }, from: boss.id),
+    );
+    expect(byName.kernel.id, 'claude-code');
+    expect(
+      await call('session_models', const {}, from: boss.id),
+      allOf(
+        contains('custom-acp | Custom ACP'),
+        contains(
+          'claude-code | Claude Code | new conversations start on it | you are on it',
+        ),
+      ),
+    );
+    await settle(byId);
+    await settle(byName);
   });
 
   test('a model picked by its id, another refused with those there are; '

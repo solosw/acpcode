@@ -128,6 +128,7 @@ class ScheduledTask {
     required this.id,
     required this.name,
     required this.prompt,
+    this.script = '',
     required this.kernel,
     required this.project,
     required this.schedule,
@@ -146,6 +147,10 @@ class ScheduledTask {
   final String id;
   final String name;
   final String prompt;
+
+  /// A shell command run before each occurrence. When set, its standard
+  /// output is the message; empty output skips the occurrence.
+  final String script;
   final String kernel;
   final String project;
   final String? worktree;
@@ -164,6 +169,7 @@ class ScheduledTask {
     'id': id,
     'name': name,
     'prompt': prompt,
+    if (script.isNotEmpty) 'script': script,
     'kernel': kernel,
     'project': project,
     'settings': settings,
@@ -192,13 +198,17 @@ class ScheduledTask {
     }
     final project = raw['project'] as String;
     final prompt = raw['prompt'] as String;
-    if (project.isEmpty || prompt.trim().isEmpty) return null;
+    final script = raw['script'] is String ? raw['script'] as String : '';
+    if (project.isEmpty || (prompt.trim().isEmpty && script.trim().isEmpty)) {
+      return null;
+    }
     String? text(String key) => raw[key] is String ? raw[key] as String : null;
     DateTime? time(String key) => DateTime.tryParse(text(key) ?? '');
     return ScheduledTask(
       id: raw['id'] as String,
       name: raw['name'] as String,
       prompt: prompt,
+      script: script,
       kernel: raw['kernel'] as String,
       project: project,
       schedule: schedule,

@@ -161,6 +161,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Supports the agent’s skills, file paths and slash commands.';
 
   @override
+  String get scheduledScript => 'Start script (optional)';
+
+  @override
+  String get scheduledScriptHint =>
+      'Runs in the project folder, on its host, before each run. Its output is sent to the agent after the prompt. No output skips the run; a failing script records an error.';
+
+  @override
   String get scheduledSave => 'Save task';
 
   @override

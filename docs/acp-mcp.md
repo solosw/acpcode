@@ -119,3 +119,11 @@ SSH 工作区的远程用户和项目 MCP 仍在远端解析和运行。开启 S
 
 安装新版应用后重连 SSH，再新建或重启 ACP 会话即可使用。该桥接不安装
 浏览器内核、扩展或其他 MCP，也不改变 Agent 自己已有的配置加载方式。
+
+## 会话工具与 ACP
+
+开启「设置 → 通用」中的会话工具后，`baocode` MCP 的 `session_*` 工具对
+ACP Agent 同样可用，因为它们与浏览器工具走同一个 MCP 服务器。
+`session_new` 可以用 `agent` 参数指定新对话的 Agent，填 id 或名称都可以，
+例如 `claude-code` 或已配置的 ACP Agent。`session_models` 会列出可选的
+Agent 和模型。不填 `agent` 时，使用用户设置的默认 Agent。

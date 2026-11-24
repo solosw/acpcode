@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -153,10 +155,60 @@ Future<void> applyTaskSettings(
   }
 }
 
+/// What a task's start script printed and how it ended.
+typedef TaskScriptResult = ({int exitCode, String stdout, String stderr});
+
+typedef TaskScriptRunner = Future<TaskScriptResult> Function(
+  String script,
+  String location,
+);
+
+/// Runs [script] with the shell of [location]'s host, in that folder.
+Future<TaskScriptResult> runTaskScript(String script, String location) async {
+  final host = RemoteLocation.hostOf(location);
+  final cwd = RemoteLocation.pathOf(location);
+  if (host != null) {
+    final client = await SshHosts.instance[host].ready;
+    final windows = client.hello?.platform.os == 'win';
+    final result = await client
+        .run(
+          windows ? 'cmd.exe' : 'sh',
+          windows ? ['/d', '/s', '/c', script] : ['-c', script],
+          cwd: cwd,
+        )
+        .timeout(const Duration(minutes: 10));
+    return (
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    );
+  }
+  final process = await Process.start(
+    Platform.isWindows ? 'cmd.exe' : '/bin/sh',
+    Platform.isWindows ? ['/d', '/s', '/c', script] : ['-c', script],
+    workingDirectory: cwd,
+  );
+  await process.stdin.close();
+  final stdout = process.stdout
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .join();
+  final stderr = process.stderr
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .join();
+  try {
+    final code = await process.exitCode.timeout(const Duration(minutes: 10));
+    return (exitCode: code, stdout: await stdout, stderr: await stderr);
+  } on TimeoutException {
+    process.kill();
+    throw StateError('Task script timed out after 10 minutes');
+  }
+}
+
 /// An adapter to Workspace/ChatSession, not another execution engine.
 class ScheduledExecutor {
-  ScheduledExecutor(this.workspace);
+  ScheduledExecutor(this.workspace, {this.runScript = runTaskScript});
   final Workspace workspace;
+  final TaskScriptRunner runScript;
   final Set<AgentThread> _claimed = {};
 
   Future<void> execute(ScheduledTask task, VoidCallback checkpoint) async {
@@ -183,6 +235,8 @@ class ScheduledExecutor {
       await git.addWorktree(path, newBranch: branch);
       location = RemoteLocation.of(RemoteLocation.hostOf(task.project), path);
     }
+    final prompt = await _message(task, location);
+    if (prompt == null) return;
     final thread = await workspace.scheduledAgent(
       location: location,
       kernelId: task.kernel,
@@ -222,7 +276,7 @@ class ScheduledExecutor {
         () => session.lastTurnEndSeq > ended,
         timeout: null,
       );
-      session.send(ComposerMessage(text: task.prompt));
+      session.send(ComposerMessage(text: prompt));
       await finished;
       remember();
     } finally {
@@ -230,5 +284,24 @@ class ScheduledExecutor {
       session.detach();
       _claimed.remove(thread);
     }
+  }
+
+  /// The script runs where the agent will. No output: nothing to do now.
+  Future<String?> _message(ScheduledTask task, String location) async {
+    if (task.script.trim().isEmpty) return task.prompt;
+    final result = await runScript(task.script, location);
+    if (result.exitCode != 0) {
+      var detail =
+          (result.stderr.trim().isEmpty ? result.stdout : result.stderr).trim();
+      if (detail.length > 2000) detail = detail.substring(0, 2000);
+      throw StateError(
+        'Task script exited ${result.exitCode}'
+        '${detail.isEmpty ? '' : ': $detail'}',
+      );
+    }
+    final output = result.stdout.trim();
+    if (output.isEmpty) return null;
+    final prompt = task.prompt.trim();
+    return prompt.isEmpty ? output : '$prompt\n\n$output';
   }
 }

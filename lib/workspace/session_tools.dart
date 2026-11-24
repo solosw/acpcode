@@ -7,7 +7,7 @@ import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 import '../ide/git/git_checkout.dart' show ideSanitizeBranchName;
 import '../ide/git/git_service.dart';
-import '../kernel/agent_kernel.dart' show KernelChoiceKind;
+import '../kernel/agent_kernel.dart' show KernelChoiceKind, KernelDescriptor;
 import '../kernel/claude_code/claude_sdk_tools.dart';
 import '../kernel/kernel_types.dart';
 import '../remote/project_host.dart';
@@ -344,7 +344,9 @@ abstract final class SessionTools {
             "from the user: in a project of theirs (this one's if none), "
             'with their approvals as yours are, on the model given '
             "(session_models lists them) or else the user's default for new "
-            'conversations. It reports back to you by '
+            'conversations, and on the agent given (Claude Code or a '
+            "configured ACP agent; session_models lists them) or else the "
+            "user's default. It reports back to you by "
             'itself once it is done, fails or waits on the user. Only for '
             'work the user has you hand out.',
         {
@@ -364,6 +366,13 @@ abstract final class SessionTools {
                 'default for new conversations if none. Pick one only for '
                 'a reason (the user asked, or the task is light or hard).',
           },
+          'agent': {
+            'type': 'string',
+            'description':
+                "The agent it runs on: its id or name, as session_models "
+                "lists them (claude-code, or an ACP agent's); the user's "
+                'default if none.',
+          },
           'worktree': {
             'type': 'string',
             'description':
@@ -378,11 +387,21 @@ abstract final class SessionTools {
           final project = projectNamed(input['project'], call);
           final caller = _callerOf(workspace, call);
           // Checked before anything is made.
-          final model = switch (input['model']) {
-            final String name when name.trim().isNotEmpty => _modelNamed(
-              caller?.session.models?.options ?? const [],
+          final kernel = switch (input['agent']) {
+            final String name when name.trim().isNotEmpty => _agentNamed(
+              workspace,
               name.trim(),
             ),
+            _ => null,
+          };
+          final model = switch (input['model']) {
+            final String name
+                when name.trim().isNotEmpty &&
+                    (kernel == null || kernel.id == caller?.kernel.id) =>
+              _modelNamed(
+                caller?.session.models?.options ?? const [],
+                name.trim(),
+              ),
             _ => null,
           };
           final worktree = switch (input['worktree']) {
@@ -390,14 +409,19 @@ abstract final class SessionTools {
               await _newWorktree(workspace, project, branch.trim()),
             _ => null,
           };
-          final thread = workspace.startAgent(project);
+          final thread = workspace.startAgent(project, kernel: kernel);
           final session = thread.session;
           if (model != null) {
             _select(session.models, model.id);
+          } else if (input['model'] case final String name
+              when name.trim().isNotEmpty) {
+            // Another agent's models are known once it reports them.
+            _selectWhenReady(session, name.trim());
           }
           // A bot's leave (all, with no one at the computer) not passed on:
           // the user's default for new conversations.
-          if (_botAt(call.cwd) == null) {
+          if (_botAt(call.cwd) == null &&
+              (kernel == null || kernel.id == caller?.kernel.id)) {
             if (caller?.session.selected(KernelChoiceKind.permission)
                 case final permission?) {
               _select(session.permissions, permission);
@@ -498,13 +522,24 @@ abstract final class SessionTools {
         'The models a conversation can be on, as the user picks them in '
             'BaoCode (by upstream): id | name, and which new conversations '
             'start on and which you are on. For session_new and '
-            "session_send's model.",
+            "session_send's model. The agents a conversation can run on "
+            "too (id | name), for session_new's agent.",
         const {},
         (input, call) async {
           final caller = _callerOf(workspace, call);
+          final fallback = workspace.preferredKernel.id;
+          final agents = [
+            'Agents:',
+            for (final kernel in workspace.kernels)
+              '  ${kernel.id} | ${kernel.label}'
+                  '${kernel.id == fallback ? ' | new conversations start on it' : ''}'
+                  '${kernel.id == caller?.kernel.id ? ' | you are on it' : ''}',
+          ];
           final options =
               caller?.session.models?.options ?? const <KernelOption>[];
-          if (options.isEmpty) return 'No models known yet.';
+          if (options.isEmpty) {
+            return [...agents, 'No models known yet.'].join('\n');
+          }
           final mine = caller?.session.selected(KernelChoiceKind.model);
           final fresh = workspace.newAgentModel;
           final lines = <String>[];
@@ -521,7 +556,7 @@ abstract final class SessionTools {
               '${option.id == mine ? ' | you are on it' : ''}',
             );
           }
-          return lines.join('\n');
+          return [...agents, 'Models:', ...lines].join('\n');
         },
       ),
       tool(
@@ -763,6 +798,35 @@ abstract final class SessionTools {
   }
 
   static final _started = RegExp(r'^Started: (\S+)');
+
+  /// The agent [name] is: a kernel's id or its name.
+  static KernelDescriptor _agentNamed(Workspace workspace, String name) {
+    final wanted = name.toLowerCase();
+    final kernels = workspace.kernels;
+    return kernels.where((k) => k.id.toLowerCase() == wanted).firstOrNull ??
+        kernels.where((k) => k.label.toLowerCase() == wanted).firstOrNull ??
+        (throw ArgumentError(
+          'No agent "$name". Agents: '
+          '${kernels.map((k) => '${k.id} (${k.label})').join(', ')}',
+        ));
+  }
+
+  /// Picks [name] once [session]'s agent has said what models it has.
+  static void _selectWhenReady(ChatSession session, String name) {
+    void pick() {
+      final options = session.models?.options ?? const <KernelOption>[];
+      if (options.isEmpty) return;
+      session.removeListener(pick);
+      final wanted = name.toLowerCase();
+      final option =
+          options.where((o) => o.id.toLowerCase() == wanted).firstOrNull ??
+          options.where((o) => o.label.toLowerCase() == wanted).firstOrNull;
+      if (option != null) _select(session.models, option.id);
+    }
+
+    session.addListener(pick);
+    pick();
+  }
 
   static KernelOption _modelNamed(List<KernelOption> options, String name) {
     final wanted = name.toLowerCase();

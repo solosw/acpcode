@@ -48,6 +48,8 @@
   "scheduledName": "Name (optional)",
   "scheduledPrompt": "Prompt",
   "scheduledPromptHint": "Supports the agent’s skills, file paths and slash commands.",
+  "scheduledScript": "Start script (optional)",
+  "scheduledScriptHint": "Runs in the project folder, on its host, before each run. Its output is sent to the agent after the prompt. No output skips the run; a failing script records an error.",
   "scheduledSave": "Save task",
   "scheduledRuntimeHint": "Scheduled on this computer. Keep the app running; missed runs are skipped. Busy conversations are not interrupted.",
   "agentsDescription": "Manage your Agent Client Protocol connections.",
