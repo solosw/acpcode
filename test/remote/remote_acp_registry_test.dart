@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bao_remote/client.dart';
+import 'package:baocode/kernel/acp/acp_agent.dart';
 import 'package:baocode/kernel/acp_registry.dart';
 import 'package:baocode/remote/ssh_host.dart';
 import 'package:baocode/network/network_proxy_io.dart';
@@ -80,8 +81,10 @@ class _Binary extends AcpRegistry {
   Directory get cacheDirectory => testCache ?? super.cacheDirectory;
 
   @override
-  Future<Uint8List> downloadBinary(AcpInstallPlan plan) async =>
-      Uint8List.fromList([1, 2, 3]);
+  Future<Uint8List> downloadBinary(
+    AcpInstallPlan plan, {
+    void Function(int, int?)? onProgress,
+  }) async => Uint8List.fromList([1, 2, 3]);
 
   final plans = <AcpInstallPlan>[];
   bool missingCommand = false;
@@ -266,7 +269,7 @@ void main() {
           'binary': {
             target: {
               'archive': 'https://example.com/remote.tgz',
-              'cmd': './agent',
+              'cmd': 'agent',
             },
             'windows-x86_64': {
               'archive': 'https://example.com/other.zip',
@@ -292,6 +295,16 @@ void main() {
         await File(running.command).readAsString(),
         contains('remote-binary'),
       );
+      expect(p.isAbsolute(running.command), isTrue);
+      final project = await Directory(p.join(harness.dataDir.path, 'project'))
+          .create();
+      final result = await client.run(
+        running.command,
+        running.arguments,
+        cwd: project.path,
+      );
+      expect(result.exitCode, 0);
+      expect(result.stdout.trim(), 'remote-binary');
       expect((await registry.resolve(entry)).command, running.command);
       expect(local.plans, hasLength(1));
       await File(running.command).delete();
@@ -302,6 +315,62 @@ void main() {
       expect(local.plans, hasLength(2));
     },
   );
+
+  test('runner sync copies versioned cache and launches offline', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'acp-runner-cache-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final local = _Binary(testCache: directory);
+    final registry = RemoteAcpRegistry(harness.client, local: local);
+
+    Future<String> syncVersion(String version) async {
+      final entry = AcpRegistryEntry(
+        id: _entry.id,
+        name: _entry.name,
+        description: _entry.description,
+        version: version,
+        distribution: _entry.distribution,
+      );
+      final plan = entry.runnerPlan!;
+      final cache = local.cachedRunner(plan);
+      await cache.create(recursive: true);
+      await Directory(p.join(cache.path, '_cacache')).create();
+      await File(p.join(cache.path, '_cacache', 'payload'))
+          .writeAsString(version);
+      await File(p.join(cache.path, AcpRegistry.runnerReady)).create();
+      await File(p.join(cache.path, 'native-only')).create();
+      await registry.sync(
+        [
+          AcpAgentConfig(
+            id: entry.id,
+            label: entry.name,
+            command: '',
+            registry: entry,
+          ),
+        ],
+        'dev',
+        onError: (error) => fail('$error'),
+      );
+      await cache.delete(recursive: true);
+      final result = await registry.resolve(entry);
+      expect(result.command, 'npx');
+      expect(result.arguments.first, '--offline');
+      final destination =
+          result.arguments[result.arguments.indexOf('--cache') + 1];
+      expect(
+        await File(p.join(destination, '_cacache', 'payload')).readAsString(),
+        version,
+      );
+      expect(await File(p.join(destination, 'native-only')).exists(), isFalse);
+      return destination;
+    }
+
+    final first = await syncVersion('1');
+    final second = await syncVersion('2');
+    expect(first, isNot(second));
+    expect(await Directory(first).exists(), isTrue);
+  });
 
   test(
     'binary chooses remote architecture, uploads privately, never launches it',

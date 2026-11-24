@@ -40,6 +40,8 @@ class AgentEditDialog extends StatefulWidget {
   State<AgentEditDialog> createState() => _AgentEditDialogState();
 }
 
+enum _AgentEditMode { configuration, registry, update }
+
 class _AgentEditDialogState extends State<AgentEditDialog> {
   final _label = TextEditingController();
   final _command = TextEditingController();
@@ -49,9 +51,8 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   late AcpAgentConfig _config =
       widget.agent ?? const AcpAgentConfig(id: '', label: '', command: '');
   final _drafts = <String, AcpAgentConfig>{};
-  late final List<String> _hosts;
-  String? _host;
-  bool _registry = false;
+  late final String? _host;
+  _AgentEditMode _mode = _AgentEditMode.configuration;
   bool _busy = false;
   bool _dirty = false;
   String? _error;
@@ -60,14 +61,11 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   void initState() {
     super.initState();
     _drafts.addAll(_config.hostConfigurations);
-    _hosts = {
-      ...widget.hosts,
-      ..._drafts.keys,
-      if (widget.initialHost.isNotEmpty) widget.initialHost,
-    }.where((host) => host.isNotEmpty).toList();
-    _host = _hosts.contains(widget.initialHost)
-        ? widget.initialHost
-        : _drafts.keys.firstOrNull ?? _hosts.firstOrNull;
+    final current = widget.initialHost;
+    _host = _drafts.containsKey(current)
+        ? current
+        : _drafts.keys.firstOrNull ??
+              (current.isNotEmpty ? current : widget.hosts.firstOrNull);
     _label.text = _config.label;
     _fill(_drafts[_host]);
   }
@@ -81,24 +79,16 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
 
   void _installed(AcpAgentConfig agent) => setState(() {
     if (_label.text.isEmpty) _label.text = agent.label;
-    _config = agent.copyWith(id: _config.id);
-    _registry = false;
+    _config = _mode == _AgentEditMode.update
+        ? _config.copyWith(
+            registry: agent.registry,
+            registryImported: agent.registryImported,
+          )
+        : agent.copyWith(id: _config.id);
+    _mode = _AgentEditMode.configuration;
     _dirty = true;
     _error = null;
   });
-
-  void _selectHost(String? host) {
-    try {
-      _saveDraft();
-      setState(() {
-        _host = host;
-        _fill(_drafts[host]);
-        _error = null;
-      });
-    } on FormatException catch (error) {
-      setState(() => _error = error.message);
-    }
-  }
 
   @override
   void dispose() {
@@ -124,7 +114,7 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
     if (host == null) return;
     try {
       final directory = await widget.pickRemoteDirectory(context, host);
-      if (!mounted || directory == null || _host != host) return;
+      if (!mounted || directory == null) return;
       controller.text = directory;
       _changed(directory);
     } catch (error) {
@@ -294,6 +284,7 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final configuring = _mode == _AgentEditMode.configuration;
     return PopScope(
       canPop: !_busy,
       child: Dialog(
@@ -341,25 +332,35 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                   children: [
                     IdeButton(
                       label: l10n.agentsCustom,
-                      secondary: _registry,
+                      secondary: !configuring,
                       onPressed: _busy
                           ? null
-                          : () => setState(() => _registry = false),
+                          : () => setState(
+                              () => _mode = _AgentEditMode.configuration,
+                            ),
                     ),
                     IdeButton(
                       label: l10n.agentsRegistry,
-                      secondary: !_registry,
+                      secondary: _mode != _AgentEditMode.registry,
                       onPressed: _busy
                           ? null
-                          : () => setState(() => _registry = true),
+                          : () =>
+                                setState(() => _mode = _AgentEditMode.registry),
                     ),
                   ],
                 ),
                 const SizedBox(height: 20),
                 Flexible(
-                  child: _registry
+                  child: !configuring
                       ? AgentRegistryPicker(
+                          key: ValueKey(_mode),
                           registry: widget.registry,
+                          currentEntry: _mode == _AgentEditMode.update
+                              ? _config.registry
+                              : null,
+                          currentEntryImported:
+                              _mode == _AgentEditMode.update &&
+                              _config.registryImported,
                           onBusy: (busy) => setState(() => _busy = busy),
                           onInstalled: _installed,
                         )
@@ -385,30 +386,28 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                                       : l10n.agentsRegistryPlatformDownloads,
                                   style: SettingsText.description,
                                 ),
-                              ] else if (_hosts.isEmpty)
+                                if (widget.agent != null) ...[
+                                  const SizedBox(height: 12),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: IdeButton(
+                                      label: l10n.agentsUpdate,
+                                      secondary: true,
+                                      onPressed: _busy
+                                          ? null
+                                          : () => setState(
+                                              () =>
+                                                  _mode = _AgentEditMode.update,
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ] else if (_host == null)
                                 Text(
                                   l10n.agentsNoServers,
                                   style: SettingsText.description,
                                 )
                               else ...[
-                                Text(
-                                  l10n.agentsServer,
-                                  style: SettingsText.label,
-                                ),
-                                DropdownButton<String>(
-                                  key: const ValueKey('agent-server'),
-                                  isExpanded: true,
-                                  value: _host,
-                                  items: [
-                                    for (final host in _hosts)
-                                      DropdownMenuItem(
-                                        value: host,
-                                        child: Text(host),
-                                      ),
-                                  ],
-                                  onChanged: _busy ? null : _selectHost,
-                                ),
-                                const SizedBox(height: 12),
                                 _field(
                                   l10n.agentsCommand,
                                   _command,
@@ -475,7 +474,7 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                       secondary: true,
                       onPressed: _busy ? null : () => Navigator.pop(context),
                     ),
-                    if (!_registry) ...[
+                    if (configuring) ...[
                       const SizedBox(width: 8),
                       IdeButton(
                         label: l10n.commonSave,

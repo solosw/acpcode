@@ -27,9 +27,15 @@ Future<AcpTransport> startAcpAgent(
   List<String> arguments = const [],
   String? location,
   Map<String, String>? environment,
-}) {
+}) async {
   final host = location == null ? null : RemoteLocation.hostOf(location);
   if (host == null) {
+    if (registry != null) {
+      final resolved = await const AcpRegistry().resolve(registry);
+      command = resolved.command;
+      arguments = [...resolved.arguments, ...arguments];
+      environment = {...resolved.environment, ...?environment};
+    }
     return StdioAcpTransport.start(
       command,
       arguments: arguments,

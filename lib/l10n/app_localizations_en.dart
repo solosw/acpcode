@@ -335,7 +335,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsRegistryRunner =>
-      'This agent uses a package runner. The server fetches the package the first time it needs it.';
+      'BaoCode prepares the package on this machine and copies the cache to the server when it is missing. The server uses its installed runtime to launch it offline.';
 
   @override
   String get agentsRegistryTrust =>
@@ -343,6 +343,30 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsInstall => 'Install and configure';
+
+  @override
+  String get agentsUpdate => 'Update agent';
+
+  @override
+  String get agentsRegistryDownloadAgain => 'Download current version';
+
+  @override
+  String get agentsRegistryNoUpdate =>
+      'The official registry has no newer package for this agent.';
+
+  @override
+  String get agentsRegistryUpdateJsonHint =>
+      'Edit the saved registry JSON or paste an updated entry with the same agent ID.';
+
+  @override
+  String get agentsRegistryUpdateIdMissing =>
+      'The registry JSON must include the agent being updated.';
+
+  @override
+  String get agentsRegistryDownloadingPackage => 'Downloading package';
+
+  @override
+  String get agentsRegistrySavingPackage => 'Saving package';
 
   @override
   String get agentsInstalling => 'Installing… Keep this window open.';

@@ -127,12 +127,13 @@ class AgentThread {
     required this._kernel,
     required this._open,
     required this.updatedAt,
-    this.record,
+    SessionRecord? record,
     this._title = '',
     this.pinned = false,
     this.archived = false,
     bool unread = false,
-  }) : _seenSeq = unread ? -1 : 0,
+  }) : _record = record,
+       _seenSeq = unread ? -1 : 0,
        _wantsTitle = record == null && _title.isEmpty;
 
   /// Its project: replaced by one of the new name when a workspace is
@@ -140,7 +141,8 @@ class AgentThread {
   Project project;
 
   /// The kept session it continues, if any.
-  final SessionRecord? record;
+  SessionRecord? get record => _record;
+  SessionRecord? _record;
 
   final KernelDescriptor _kernel;
   final ChatSession Function() _open;
@@ -456,7 +458,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (isHidden(project)) {
         _unlisted.add(folder);
       } else {
-        unawaited(_listKept(project));
+        unawaited(_listKept(project, discoverAcp: false));
       }
     }
     // Only once all were read: what one failed to list is not gone. Nor
@@ -479,6 +481,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     } else {
       notifyListeners();
     }
+    if (!_disposed) unawaited(_discoverAcpHistory());
   }
 
   Future<void>? _refreshing;
@@ -510,12 +513,92 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
             ..insert(0, project);
         }
         for (final session in record.sessions) {
-          if (_noteGoneOn(session)) goneOn = true;
+          if (_noteGoneOn(kernel, session)) goneOn = true;
           _addKept(kernel, project, session);
         }
       }
     }
     if (_threads.length != before || goneOn) notifyListeners();
+    _reloadGoneOn();
+    await _discoverAcpHistory();
+  }
+
+  Future<void>? _discoveringAcp;
+
+  Future<void> _discoverAcpHistory() =>
+      _discoveringAcp ??= _scanAcpHistory().whenComplete(() {
+        _discoveringAcp = null;
+      });
+
+  Future<void> _scanAcpHistory() async {
+    final remote = [
+      for (final project in _projects)
+        if (project.host != null && !isHidden(project)) project,
+    ];
+    for (final kernel in kernels) {
+      if (_disposed) return;
+      if (kernel.catalog case final AcpCatalog catalog) {
+        await _discoverAcp(kernel, catalog);
+        for (final project in remote) {
+          if (_disposed) return;
+          await _discoverAcp(kernel, catalog, project: project);
+        }
+      }
+    }
+  }
+
+  Future<void> _discoverAcp(
+    KernelDescriptor kernel,
+    AcpCatalog catalog, {
+    Project? project,
+  }) async {
+    if (project != null) {
+      if (isHidden(project)) return;
+      final host = project.host!;
+      // Refresh must not prompt for SSH credentials just to list history.
+      if (SshHosts.instance[host].state != SshHostState.connected) {
+        _listWhenReached(host, project);
+        return;
+      }
+    }
+    if (!await catalog.discover(location: project?.path) ||
+        _disposed ||
+        !kernels.contains(kernel)) {
+      return;
+    }
+    final records = await catalog.projects();
+    if (_disposed) return;
+    var changed = false;
+    final before = _threads.length;
+    for (final record in records) {
+      if (project == null
+          ? RemoteLocation.isRemote(record.path)
+          : record.path != project.path) {
+        continue;
+      }
+      final target = _project(record.path);
+      for (final session in record.sessions) {
+        if (_noteGoneOn(kernel, session)) changed = true;
+        final existing = _threads
+            .where(
+              (thread) =>
+                  _matchesHistory(thread, kernel, session) && !thread.isOpen,
+            )
+            .firstOrNull;
+        if (existing != null &&
+            (existing.record?.title != session.title ||
+                existing.updatedAt != session.updatedAt)) {
+          existing._record = session;
+          existing.updatedAt = session.updatedAt;
+          if (_names[session.id] == null && session.title.isNotEmpty) {
+            existing._title = session.title;
+          }
+          changed = true;
+        }
+        _addKept(kernel, target, session);
+      }
+    }
+    if (changed || before != _threads.length) notifyListeners();
     _reloadGoneOn();
   }
 
@@ -566,10 +649,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Notes the conversation of [record] that was talked in elsewhere since
   /// it was read here (see [AgentThread.goneOnElsewhere]); whether one
   /// newly was.
-  bool _noteGoneOn(SessionRecord record) {
+  bool _noteGoneOn(KernelDescriptor kernel, SessionRecord record) {
     var noted = false;
     for (final thread in _threads) {
-      if (thread.record?.id != record.id || thread._goneOnElsewhere) continue;
+      if (!_matchesHistory(thread, kernel, record) || thread._goneOnElsewhere) {
+        continue;
+      }
       final quiet = thread._quietSince;
       if (thread.isOpen &&
           quiet != null &&
@@ -669,7 +754,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Lists the sessions the kernels keep in [project]. Not waited for: to
   /// find them, Claude Code's are all read, which may take a while.
-  Future<void> _listKept(Project project) async {
+  Future<void> _listKept(Project project, {bool discoverAcp = true}) async {
     final before = _threads.length;
     for (final kernel in kernels) {
       final List<SessionRecord> sessions;
@@ -683,6 +768,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (_disposed) return;
       for (final session in sessions) {
         _addKept(kernel, project, session);
+      }
+      if (kernel.catalog case final AcpCatalog catalog
+          when discoverAcp && project.host != null) {
+        unawaited(_discoverAcp(kernel, catalog, project: project));
       }
     }
     if (_threads.length != before) notifyListeners();
@@ -753,18 +842,25 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
   }
 
+  static bool _matchesHistory(
+    AgentThread thread,
+    KernelDescriptor kernel,
+    SessionRecord record,
+  ) =>
+      thread.kernel.id == kernel.id &&
+      RemoteLocation.hostOf(thread.record?.cwd ?? thread.project.path) ==
+          RemoteLocation.hostOf(record.cwd) &&
+      (thread.record?.id == record.id ||
+          (thread.isOpen && thread.session.sessionId == record.id));
+
   void _addKept(
     KernelDescriptor kernel,
     Project project,
     SessionRecord session,
   ) {
-    if (_removed.contains(session.id)) return;
+    if (_removed.contains((kernel.id, project.host, session.id))) return;
     // Listed already, or it is an agent of this run.
-    if (_threads.any(
-      (thread) =>
-          thread.record?.id == session.id ||
-          (thread.isOpen && thread.session.sessionId == session.id),
-    )) {
+    if (_threads.any((thread) => _matchesHistory(thread, kernel, session))) {
       return;
     }
     final id = session.id;
@@ -773,34 +869,37 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         when session.updatedAt.isAfter(since)) {
       _unhide(project.path);
     }
-    _add(
-      AgentThread._(
-        project: project,
-        kernel: kernel,
-        record: session,
-        title:
-            _names[id] ??
-            (session.title.isEmpty ? l10n().agentImageUntitled : session.title),
-        updatedAt: session.updatedAt,
-        pinned: _pinned.contains(id),
-        archived: _archived.contains(id),
-        open: () => ChatSession(
+    late final AgentThread thread;
+    thread = AgentThread._(
+      project: project,
+      kernel: kernel,
+      record: session,
+      title:
+          _names[id] ??
+          (session.title.isEmpty ? l10n().agentImageUntitled : session.title),
+      updatedAt: session.updatedAt,
+      pinned: _pinned.contains(id),
+      archived: _archived.contains(id),
+      open: () {
+        final record = thread.record!;
+        return ChatSession(
           kernel: kernel,
           kernels: kernels,
           kernelContext: KernelContext(
-            cwd: session.cwd,
-            resume: session,
+            cwd: record.cwd,
+            resume: record,
             // As it was left, or as a new agent starts.
-            settings: _setUp(session.cwd, {
+            settings: _setUp(record.cwd, {
               ..._preferredSettings,
-              ...?_agentSettings[session.id],
+              ...?_agentSettings[record.id],
             }),
-            workspace: () => _kernelWorkspace(session.cwd),
+            workspace: () => _kernelWorkspace(record.cwd),
           ),
           historyCount: 0,
-        ),
-      ),
+        );
+      },
     );
+    _add(thread);
   }
 
   // --- Mock ------------------------------------------------------------------
@@ -3342,7 +3441,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Sessions taken off the list this run: a refresh does not bring them
   /// back.
-  final Set<String> _removed = {};
+  final _removed = <(String, String?, String)>{};
 
   final Map<AgentThread, VoidCallback> _listeners = {};
   final Map<AgentThread, _Snapshot> _snapshots = {};
@@ -3460,8 +3559,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     notifyListeners();
   }
 
-  /// ACP has no external session store: keep title and activity in its
-  /// local catalog so a restart can still list and [session/load] it.
+  /// Keep ACP title and activity in the local index even when the Agent
+  /// cannot list its sessions.
   void _rememberAcpSession(AgentThread thread) {
     final catalog = thread.kernel.catalog;
     if (catalog is! AcpCatalog) return;
@@ -4494,7 +4593,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final id =
         thread.record?.id ?? (thread.isOpen ? thread.session.sessionId : null);
     if (id != null) {
-      _removed.add(id);
+      _removed.add((thread.kernel.id, thread.project.host, id));
       _forgetDraft(id);
       resumes.remove(id);
       final kept = [_pinned.remove(id), _archived.remove(id)];
@@ -4521,7 +4620,16 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       stopped = thread.session.stopped;
     }
     if ((catalog, id) case (final catalog?, final id?)) {
-      unawaited(stopped.then((_) => catalog.delete(id)).catchError((_) {}));
+      final cwd = thread.record?.cwd ?? thread.project.path;
+      unawaited(
+        stopped
+            .then(
+              (_) => catalog is AcpCatalog
+                  ? catalog.delete(id, cwd: cwd)
+                  : catalog.delete(id),
+            )
+            .catchError((_) {}),
+      );
     }
     return true;
   }

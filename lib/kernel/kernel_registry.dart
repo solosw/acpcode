@@ -35,7 +35,7 @@ abstract final class KernelRegistry {
   /// Builds a descriptor for an externally configured ACP agent.
   static KernelDescriptor acp(AcpAgentConfig config) {
     late final KernelDescriptor descriptor;
-    final catalog = AcpCatalog(agentId: config.id);
+    final catalog = AcpCatalog(agentId: config.id, start: config.transport);
     descriptor = KernelDescriptor(
       id: config.id,
       label: config.label,

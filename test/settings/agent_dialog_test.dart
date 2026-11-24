@@ -32,8 +32,10 @@ class _Registry extends AcpRegistry {
   bool failLoad = false;
   bool failInstall = false;
   AcpRegistryEntry? lastInstalled;
+  AcpRegistryEntry offered = _entry;
   String targetPlatform = 'darwin-aarch64';
   Completer<AcpAgentConfig>? pending;
+  void Function(AcpInstallPlan, int?, int?)? reportProgress;
 
   @override
   String get platform => targetPlatform;
@@ -43,7 +45,7 @@ class _Registry extends AcpRegistry {
     loads++;
     if (failLoad) throw StateError('Registry unavailable');
     return [
-      _entry,
+      offered,
       const AcpRegistryEntry(
         id: 'unsupported',
         name: 'Other Agent',
@@ -55,9 +57,13 @@ class _Registry extends AcpRegistry {
   }
 
   @override
-  Future<AcpAgentConfig> cache(AcpRegistryEntry entry) async {
+  Future<AcpAgentConfig> cache(
+    AcpRegistryEntry entry, {
+    void Function(AcpInstallPlan, int?, int?)? onProgress,
+  }) async {
     installs++;
     lastInstalled = entry;
+    reportProgress = onProgress;
     if (failInstall) throw StateError('npm is missing');
     return pending?.future ??
         AcpAgentConfig(
@@ -158,78 +164,67 @@ void main() {
     },
   );
 
-  testWidgets(
-    'validates and saves command, arguments, environment and rules per server',
-    (tester) async {
-      final choices = [p.join(temporary.path, 'my rules'), null];
-      var picks = 0;
-      await pumpPage(
-        tester,
-        hosts: ['dev', 'prod'],
-        pickRemoteDirectory: (_, host) async {
-          expect(host, 'dev');
-          return choices[picks++];
-        },
-      );
-      await _tap(tester, 'Add agent');
-      await _tap(tester, 'Save');
-      expect(find.text('Name and command are required.'), findsOneWidget);
-      await tester.enterText(_input('agent-name'), 'Example');
-      await tester.enterText(_input('agent-command'), 'example');
-      await tester.enterText(_input('agent-arguments'), '[1]');
-      await _tap(tester, 'Save');
-      expect(
-        find.text('Arguments must be a JSON array of strings.'),
-        findsOneWidget,
-      );
-      await tester.enterText(
-        _input('agent-arguments'),
-        ' ["--profile", "profile with spaces"] ',
-      );
-      await tester.enterText(_input('agent-environment'), 'INVALID');
-      await _tap(tester, 'Save');
-      expect(
-        find.text('Use KEY=value on each non-empty environment line.'),
-        findsOneWidget,
-      );
-      await tester.enterText(
-        _input('agent-environment'),
-        'KEY=hello world\nTOKEN=a=b',
-      );
-      expect(_input('agent-skills'), findsNothing);
-      final button = find.byKey(const ValueKey('agent-rules-browse'));
-      for (var i = 0; i < choices.length; i++) {
-        await tester.ensureVisible(button);
-        await tester.tap(button);
-        await tester.pumpAndSettle();
-      }
-      expect(picks, 2);
-      final server = find.byKey(const ValueKey('agent-server'));
-      await tester.ensureVisible(server);
-      await tester.tap(server);
+  testWidgets('validates manual configuration without a server selector', (
+    tester,
+  ) async {
+    final choices = [p.join(temporary.path, 'my rules'), null];
+    var picks = 0;
+    await pumpPage(
+      tester,
+      hosts: ['dev', 'prod'],
+      pickRemoteDirectory: (_, host) async {
+        expect(host, 'dev');
+        return choices[picks++];
+      },
+    );
+    await _tap(tester, 'Add agent');
+    await _tap(tester, 'Save');
+    expect(find.text('Name and command are required.'), findsOneWidget);
+    await tester.enterText(_input('agent-name'), 'Example');
+    await tester.enterText(_input('agent-command'), 'example');
+    await tester.enterText(_input('agent-arguments'), '[1]');
+    await _tap(tester, 'Save');
+    expect(
+      find.text('Arguments must be a JSON array of strings.'),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      _input('agent-arguments'),
+      ' ["--profile", "profile with spaces"] ',
+    );
+    await tester.enterText(_input('agent-environment'), 'INVALID');
+    await _tap(tester, 'Save');
+    expect(
+      find.text('Use KEY=value on each non-empty environment line.'),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      _input('agent-environment'),
+      'KEY=hello world\nTOKEN=a=b',
+    );
+    expect(_input('agent-skills'), findsNothing);
+    final button = find.byKey(const ValueKey('agent-rules-browse'));
+    for (var i = 0; i < choices.length; i++) {
+      await tester.ensureVisible(button);
+      await tester.tap(button);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('prod').last);
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<EditableText>(_input('agent-command')).controller.text,
-        isEmpty,
-      );
-      await tester.enterText(_input('agent-command'), 'production-agent');
-      await save(tester);
-      final config = agents.agents.single;
-      final agent = config.forHost('dev');
-      expect(agent.arguments, ['--profile', 'profile with spaces']);
-      expect(agent.environment, {'KEY': 'hello world', 'TOKEN': 'a=b'});
-      expect(agent.skillsDirectory, isEmpty);
-      expect(agent.rulesDirectory, choices.first);
-      expect(config.hostScoped, isTrue);
-      expect(agent.command, 'example');
-      expect(config.forHost('prod').command, 'production-agent');
-      expect(() => config.forHost(null), throwsStateError);
-      expect(find.byType(EditableText), findsNothing);
-      expect(registry.installs, 0);
-    },
-  );
+    }
+    expect(picks, 2);
+    expect(find.byKey(const ValueKey('agent-server')), findsNothing);
+    await save(tester);
+    final config = agents.agents.single;
+    final agent = config.forHost('dev');
+    expect(agent.arguments, ['--profile', 'profile with spaces']);
+    expect(agent.environment, {'KEY': 'hello world', 'TOKEN': 'a=b'});
+    expect(agent.skillsDirectory, isEmpty);
+    expect(agent.rulesDirectory, choices.first);
+    expect(config.hostScoped, isTrue);
+    expect(agent.command, 'example');
+    expect(() => config.forHost('prod'), throwsStateError);
+    expect(() => config.forHost(null), throwsStateError);
+    expect(find.byType(EditableText), findsNothing);
+    expect(registry.installs, 0);
+  });
 
   testWidgets(
     'edit preserves id; cancel preserves saved values; delete needs confirmation',
@@ -307,6 +302,98 @@ void main() {
       expect(agents.agents.single.registry?.id, _entry.id);
     },
   );
+
+  testWidgets(
+    'editing offers the matching registry update and saves it explicitly',
+    (tester) async {
+      await tester.runAsync(
+        () => agents.add(
+          const AcpAgentConfig(
+            id: 'my-codex',
+            label: 'My Codex',
+            command: '',
+            hostScoped: true,
+            rulesDirectory: '/rules',
+            registry: _entry,
+          ),
+        ),
+      );
+      await pumpPage(tester);
+      await _tap(tester, 'Edit agent');
+      await _tap(tester, 'Update agent');
+      expect(find.textContaining('has no newer package'), findsOneWidget);
+      await _tap(tester, 'Download current version');
+      await _tap(tester, 'Download current version');
+      expect(registry.lastInstalled?.version, '2.5.0');
+      await save(tester);
+      expect(agents.agents.single.registry?.version, '2.5.0');
+      expect(agents.agents.single.registryImported, isFalse);
+      registry.installs = 0;
+
+      registry.offered = const AcpRegistryEntry(
+        id: 'codex-acp',
+        name: 'Codex',
+        description: 'Coding agent',
+        version: '2.6.0',
+        distribution: {
+          'npx': {'package': '@agentclientprotocol/codex-acp@2.6.0'},
+        },
+      );
+      await _tap(tester, 'Edit agent');
+      await _tap(tester, 'Update agent');
+      expect(find.text('Codex · 2.5.0 → 2.6.0'), findsOneWidget);
+      await _tap(tester, 'Update agent');
+      await _tap(tester, 'Cancel');
+      expect(registry.installs, 0);
+      await _tap(tester, 'Update agent');
+      await _tap(tester, 'Update agent');
+      expect(registry.lastInstalled?.version, '2.6.0');
+      expect(agents.agents.single.registry?.version, '2.5.0');
+      await save(tester);
+      final saved = agents.agents.single;
+      expect(saved.registry?.version, '2.6.0');
+      expect(saved.id, 'my-codex');
+      expect(saved.label, 'My Codex');
+      expect(saved.rulesDirectory, '/rules');
+      expect(saved.hostScoped, isTrue);
+    },
+  );
+
+  testWidgets('legacy imports missing from the catalog open saved JSON', (
+    tester,
+  ) async {
+    const entry = AcpRegistryEntry(
+      id: 'legacy-import',
+      name: 'Legacy Import',
+      description: '',
+      version: '1.0.0',
+      distribution: {
+        'npx': {'package': 'legacy-import@1.0.0'},
+      },
+    );
+    await tester.runAsync(
+      () => agents.add(
+        const AcpAgentConfig(
+          id: 'legacy-import',
+          label: 'Legacy Import',
+          command: '',
+          registry: entry,
+        ),
+      ),
+    );
+    expect(agents.agents.single.registryImported, isFalse);
+    await pumpPage(tester);
+    await _tap(tester, 'Edit agent');
+    await _tap(tester, 'Update agent');
+    expect(registry.loads, 1);
+    final field = tester.widget<EditableText>(_input('registry-json'));
+    expect(jsonDecode(field.controller.text), entry.toJson());
+    await _tap(tester, 'Preview entries');
+    await _tap(tester, 'Update agent');
+    await _tap(tester, 'Update agent');
+    await save(tester);
+    expect(agents.agents.single.registryImported, isTrue);
+  });
 
   testWidgets(
     'registry failures can retry and unsupported distributions cannot install',
@@ -387,7 +474,7 @@ void main() {
     );
     await pumpPage(tester, hosts: ['dev'], initialHost: 'dev');
     await _tap(tester, 'Edit agent');
-    expect(find.byKey(const ValueKey('agent-server')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-server')), findsNothing);
     expect(find.text('This machine'), findsNothing);
     expect(find.text('Preview skills copy'), findsNothing);
     expect(
@@ -556,17 +643,89 @@ void main() {
       find.text('Source: https://example.com/remote-windows.zip'),
       findsOneWidget,
     );
+    registry.pending = Completer<AcpAgentConfig>();
     await _tap(tester, 'Install and configure');
-    await _tap(tester, 'Install and configure');
-    expect(registry.lastInstalled?.id, 'remote-binary');
+    await tester.tap(_button('Install and configure'));
+    await tester.pump();
+    final entry = registry.lastInstalled!;
+    expect(entry.id, 'remote-binary');
+    registry.reportProgress!(entry.binaryPlans.first, 50, 100);
+    await tester.pump();
+    expect(
+      find.textContaining('Downloading package · linux-x86_64 · 1/2 · 50%'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
+          .value,
+      0.5,
+    );
+    registry.reportProgress!(entry.binaryPlans.last, 1 << 20, null);
+    await tester.pump();
+    expect(
+      find.textContaining('windows-x86_64 · 2/2 · 1.0 MiB'),
+      findsOneWidget,
+    );
+    registry.reportProgress!(entry.binaryPlans.last, null, null);
+    await tester.pump();
+    expect(find.textContaining('Saving package'), findsOneWidget);
+    registry.pending!.complete(
+      AcpAgentConfig(
+        id: entry.id,
+        label: entry.name,
+        command: '',
+        registry: entry,
+      ),
+    );
+    await tester.pumpAndSettle();
     await save(tester);
     expect(agents.agents.single.command, isEmpty);
     expect(agents.agents.single.registry?.id, 'remote-binary');
+    expect(agents.agents.single.registryImported, isTrue);
+    final loads = registry.loads;
+    registry.failLoad = true;
     await _tap(tester, 'Edit agent');
     await tester.enterText(_input('agent-name'), 'Remote Renamed');
+    await _tap(tester, 'Update agent');
+    expect(registry.loads, loads);
+    final input = _input('registry-json');
+    final savedJson = tester.widget<EditableText>(input).controller.text;
+    expect(jsonDecode(savedJson), entry.toJson());
+    await tester.enterText(input, jsonEncode(_entry.toJson()));
+    await _tap(tester, 'Preview entries');
+    expect(
+      find.textContaining('must include the agent being updated'),
+      findsOneWidget,
+    );
+    final next = jsonDecode(savedJson) as Map;
+    next['version'] = '2.0.0';
+    next['distribution']['binary']['linux-x86_64']['cmd'] = 'remote';
+    await tester.enterText(input, jsonEncode(next));
+    await _tap(tester, 'Preview entries');
+    registry.pending = null;
+    await _tap(tester, 'Update agent');
+    await _tap(tester, 'Update agent');
+    expect(agents.agents.single.registry?.version, '1.0.0');
     await save(tester);
     expect(agents.agents.single.label, 'Remote Renamed');
-    expect(agents.agents.single.registry?.id, 'remote-binary');
+    final updated = agents.agents.single.registry!;
+    expect(updated.id, 'remote-binary');
+    expect(updated.version, '2.0.0');
+    expect(updated.binaryPlanFor('linux-x86_64')?.command, 'remote');
+    final disk = jsonDecode(
+      File(p.join(temporary.path, 'settings.json')).readAsStringSync(),
+    ) as Map;
+    final stored = (disk[AcpAgents.settingKey] as List).single as Map;
+    expect(stored['registryImported'], isTrue);
+    expect(stored['registry'], next);
+    await _tap(tester, 'Edit agent');
+    await _tap(tester, 'Update agent');
+    expect(registry.loads, loads);
+    expect(
+      jsonDecode(tester.widget<EditableText>(input).controller.text),
+      next,
+    );
   });
 
   testWidgets('installation cannot be dismissed while it is running', (

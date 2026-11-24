@@ -319,7 +319,8 @@ class AppLocalizationsZh extends AppLocalizations {
       'BaoCode 下载注册表提供的所有平台构建。连接服务器时，如果缺少匹配的版本，就自动复制过去。';
 
   @override
-  String get agentsRegistryRunner => '此 Agent 通过包管理工具发布，由服务器在首次需要时获取。';
+  String get agentsRegistryRunner =>
+      'BaoCode 先在本机准备软件包，服务器缺少缓存时才复制过去，再用服务器上的运行时离线启动。';
 
   @override
   String get agentsRegistryTrust =>
@@ -327,6 +328,28 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get agentsInstall => '安装并配置';
+
+  @override
+  String get agentsUpdate => '更新 Agent';
+
+  @override
+  String get agentsRegistryDownloadAgain => '下载当前版本';
+
+  @override
+  String get agentsRegistryNoUpdate => '官方注册表暂无此 Agent 的更新。';
+
+  @override
+  String get agentsRegistryUpdateJsonHint =>
+      '编辑已保存的注册表 JSON，或粘贴 Agent ID 相同的新条目。';
+
+  @override
+  String get agentsRegistryUpdateIdMissing => '注册表 JSON 必须包含要更新的 Agent。';
+
+  @override
+  String get agentsRegistryDownloadingPackage => '正在下载软件包';
+
+  @override
+  String get agentsRegistrySavingPackage => '正在保存软件包';
 
   @override
   String get agentsInstalling => '正在安装…请保持此窗口打开。';

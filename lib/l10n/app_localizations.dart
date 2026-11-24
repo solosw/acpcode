@@ -695,7 +695,7 @@ abstract class AppLocalizations {
   /// No description provided for @agentsRegistryRunner.
   ///
   /// In en, this message translates to:
-  /// **'This agent uses a package runner. The server fetches the package the first time it needs it.'**
+  /// **'BaoCode prepares the package on this machine and copies the cache to the server when it is missing. The server uses its installed runtime to launch it offline.'**
   String get agentsRegistryRunner;
 
   /// No description provided for @agentsRegistryTrust.
@@ -709,6 +709,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Install and configure'**
   String get agentsInstall;
+
+  /// No description provided for @agentsUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'Update agent'**
+  String get agentsUpdate;
+
+  /// No description provided for @agentsRegistryDownloadAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Download current version'**
+  String get agentsRegistryDownloadAgain;
+
+  /// No description provided for @agentsRegistryNoUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'The official registry has no newer package for this agent.'**
+  String get agentsRegistryNoUpdate;
+
+  /// No description provided for @agentsRegistryUpdateJsonHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit the saved registry JSON or paste an updated entry with the same agent ID.'**
+  String get agentsRegistryUpdateJsonHint;
+
+  /// No description provided for @agentsRegistryUpdateIdMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'The registry JSON must include the agent being updated.'**
+  String get agentsRegistryUpdateIdMissing;
+
+  /// No description provided for @agentsRegistryDownloadingPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading package'**
+  String get agentsRegistryDownloadingPackage;
+
+  /// No description provided for @agentsRegistrySavingPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving package'**
+  String get agentsRegistrySavingPackage;
 
   /// No description provided for @agentsInstalling.
   ///

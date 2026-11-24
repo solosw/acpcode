@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert' show jsonEncode;
 import 'dart:ui' show AppExitResponse, AppExitType;
 
+import 'package:bao_remote/client.dart' show RemoteClient;
 import 'package:flutter/foundation.dart'
     show kDebugMode, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
@@ -241,7 +242,7 @@ Future<void> main(List<String> arguments) async {
       for (final agent in acpAgents.agents) KernelRegistry.acp(agent),
     ]);
   }
-  SshHosts.instance.onConnect = (host, client) {
+  void syncAcpAgents(String host, RemoteClient client) {
     final agents = acpAgents?.agents;
     if (agents != null) {
       unawaited(
@@ -252,7 +253,9 @@ Future<void> main(List<String> arguments) async {
         ),
       );
     }
-  };
+  }
+
+  SshHosts.instance.onConnect = syncAcpAgents;
   // The agents to go on once the usage limit resets, kept beside
   // state.json: one due while the app was closed goes on as it opens.
   if (!kIsWeb) {
@@ -286,6 +289,9 @@ Future<void> main(List<String> arguments) async {
       for (final agent in acpAgents!.agents) KernelRegistry.acp(agent),
     ]);
     workspace.refreshKernels(KernelRegistry.all);
+    for (final host in SshHosts.instance.hosts) {
+      if (host.client case final client?) syncAcpAgents(host.host, client);
+    }
   });
   // The conversations' titles and projects, kept with their calls.
   UsageLedger.titleOf = (session) => switch (workspace.threads

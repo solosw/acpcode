@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bao_remote/local.dart' show windowsExecutable;
+
 import '../claude_code/claude_environment.dart';
 import 'acp_transport.dart';
 import 'acp_process_shutdown.dart';
@@ -46,7 +48,9 @@ class StdioAcpTransport implements AcpTransport {
         ? null
         : workingDirectory;
     final env = await _environment(environment);
-    final resolved = await _resolve(executable, env['PATH']);
+    final resolved = Platform.isWindows
+        ? windowsExecutable(executable, env)
+        : await _resolve(executable, env['PATH']);
     try {
       final process = await Process.start(
         resolved,
@@ -70,6 +74,14 @@ class StdioAcpTransport implements AcpTransport {
     Map<String, String>? extra,
   ) async {
     final login = await ClaudeEnvironment.of();
+    if (Platform.isWindows) {
+      return {
+        for (final entry in login.entries) entry.key.toUpperCase(): entry.value,
+        if (extra != null)
+          for (final entry in extra.entries)
+            entry.key.toUpperCase(): entry.value,
+      };
+    }
     final values = Map<String, String>.of(login);
     final inherited = values['PATH'] ?? Platform.environment['PATH'];
     final home = values['HOME'] ?? Platform.environment['HOME'];

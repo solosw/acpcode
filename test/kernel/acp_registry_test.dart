@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:baocode/kernel/acp_registry.dart';
+import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/platform/data_dir.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,8 +23,13 @@ class _Registry extends AcpRegistry {
   String get platform => 'darwin-aarch64';
 
   @override
-  Future<Uint8List> download(Uri uri, int maxBytes) async {
+  Future<Uint8List> download(
+    Uri uri,
+    int maxBytes, {
+    void Function(int, int?)? onProgress,
+  }) async {
     downloads.add(uri);
+    onProgress?.call(bytes.length, bytes.length);
     return bytes;
   }
 
@@ -74,6 +80,45 @@ void main() {
     expect(() => AcpRegistryEntry.parse([]), throwsFormatException);
   });
 
+  test(
+    'registry prepares npm and uv before saving and reuses each cache',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'acp-runner-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final registry = _Registry()..testCache = directory;
+      for (final (kind, spec, tool) in const [
+        ('npx', 'sample@1.0.0', 'npm'),
+        ('uvx', 'sample==1.0.0', 'uv'),
+      ]) {
+        final entry = AcpRegistryEntry(
+          id: kind,
+          name: kind,
+          description: '',
+          version: '1',
+          distribution: {
+            kind: {'package': spec},
+          },
+        );
+        await registry.cache(entry);
+        final commands = registry.commands.length;
+        expect(registry.commands.last.$1, tool);
+        expect(
+          await File(
+            p.join(
+              registry.cachedRunner(entry.runnerPlan!).path,
+              AcpRegistry.runnerReady,
+            ),
+          ).exists(),
+          isTrue,
+        );
+        await registry.cache(entry);
+        expect(registry.commands, hasLength(commands));
+      }
+    },
+  );
+
   test('caches every platform archive and reuses the cache', () async {
     final directory = await Directory.systemTemp.createTemp(
       'acp-packages-test-',
@@ -93,7 +138,18 @@ void main() {
         },
       },
     });
-    final agent = await registry.cache(entry);
+    final progress = <(int?, int?)>[];
+    final agent = await registry.cache(
+      entry,
+      onProgress: (_, received, total) => progress.add((received, total)),
+    );
+    expect(progress, [
+      for (final _ in entry.binaryPlans) ...[
+        (0, null),
+        (registry.bytes.length, registry.bytes.length),
+        (null, null),
+      ],
+    ]);
     expect(agent.registry?.id, entry.id);
     expect(agent.command, isEmpty);
     expect(registry.downloads.map((uri) => uri.path), [
@@ -299,6 +355,58 @@ void main() {
       expect(registry.commands, isEmpty);
       expect(DataDirectory.items, contains('acp-agents'));
     });
+
+    test('launches cached archive commands from a local project', () async {
+      final registry = _Registry();
+      final platform = const AcpRegistry().platform;
+      final project = await Directory(p.join(temporary.path, 'project'))
+          .create();
+      for (final (command, path) in [
+        ('agent', 'agent'),
+        ('./bin/agent', 'bin/agent'),
+      ]) {
+        registry.bytes = _tar(path, r'''#!/bin/sh
+IFS= read -r request
+printf '{"cwd":"%s","argument":"%s","env":"%s"}\n' "$PWD" "$1" "$ACP_REGISTRY_TEST"
+IFS= read -r request
+''');
+        final entry = _entry({
+          'binary': {
+            platform: {
+              'archive': 'https://example.com/agent.tgz',
+              'cmd': command,
+              'args': ['acp argument'],
+              'env': {'ACP_REGISTRY_TEST': 'from recipe'},
+              'sha256': sha256.convert(registry.bytes).toString(),
+            },
+          },
+        });
+        final agent = await registry.cache(entry);
+        expect(await agent.environmentAt(project.path), {
+          'ACP_REGISTRY_TEST': 'from recipe',
+        });
+        final transport = await agent.transport(
+          KernelContext(cwd: project.path),
+        );
+        try {
+          final response = transport.messages.first;
+          transport.write({'method': 'initialize'});
+          expect(await response.timeout(const Duration(seconds: 5)), {
+            'cwd': project.resolveSymbolicLinksSync(),
+            'argument': 'acp argument',
+            'env': 'from recipe',
+          });
+        } finally {
+          await transport.close();
+        }
+        final executable = (await const AcpRegistry().resolve(entry)).command;
+        expect(p.isAbsolute(executable), isTrue);
+        expect(await File(executable).exists(), isTrue);
+        expect((await const AcpRegistry().resolve(entry)).command, executable);
+        expect(p.basename(executable), 'agent');
+      }
+      expect(registry.downloads, hasLength(2));
+    }, skip: Platform.isWindows);
 
     test('digest mismatch installs nothing', () async {
       final registry = _Registry()..bytes = _tar('agent', 'contents');

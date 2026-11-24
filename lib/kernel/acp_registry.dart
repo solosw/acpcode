@@ -108,6 +108,7 @@ class AcpRegistryEntry {
         final spec = kind == 'uvx' ? package.replaceFirst('@', '==') : package;
         return AcpInstallPlan(
           kind: kind,
+          version: version,
           source: spec,
           command: kind,
           arguments: [if (kind == 'npx') '-y', spec, ..._args(recipe)],
@@ -203,6 +204,26 @@ class AcpInstallPlan {
     utf8.encode(jsonEncode([platform, version, source, sha256, command])),
   );
 
+  List<String> offlineArguments(String directory) => [
+    '--offline',
+    if (kind == 'npx') ...[
+      '--cache',
+      directory,
+      '--ignore-scripts',
+    ] else ...[
+      '--cache-dir',
+      directory,
+      '--no-python-downloads',
+      '--link-mode',
+      'copy',
+    ],
+    ...arguments,
+  ];
+
+  String commandIn(String directory, p.Context paths) => paths.normalize(
+    paths.joinAll([directory, ...command.replaceAll('\\', '/').split('/')]),
+  );
+
   String get launchPreview => '$command ${arguments.map(jsonEncode).join(' ')}';
 }
 
@@ -224,7 +245,11 @@ class AcpRegistry {
     jsonDecode(utf8.decode(await download(Uri.parse(acpRegistryUrl), 8 << 20))),
   );
 
-  Future<Uint8List> download(Uri uri, int maxBytes) async {
+  Future<Uint8List> download(
+    Uri uri,
+    int maxBytes, {
+    void Function(int received, int? total)? onProgress,
+  }) async {
     if (uri.scheme != 'https') throw const FormatException('HTTPS required');
     final route = await currentProxyRoute();
     final client = HttpClient()
@@ -255,12 +280,19 @@ class AcpRegistry {
       if (response.contentLength > maxBytes) {
         throw const FormatException('Download exceeds size limit');
       }
+      final total =
+          response.contentLength > 0 &&
+              response.compressionState !=
+                  HttpClientResponseCompressionState.decompressed
+          ? response.contentLength
+          : null;
       final bytes = BytesBuilder(copy: false);
       await for (final chunk in response.timeout(const Duration(seconds: 30))) {
         bytes.add(chunk);
         if (bytes.length > maxBytes) {
           throw const FormatException('Download exceeds size limit');
         }
+        onProgress?.call(bytes.length, total);
       }
       return bytes.takeBytes();
     } finally {
@@ -274,9 +306,103 @@ class AcpRegistry {
   File cachedBinary(AcpInstallPlan plan) =>
       File(p.join(cacheDirectory.path, plan.cacheKey));
 
-  /// Fetch every published binary without executing it. Runner-only recipes
-  /// have no per-platform archives; preparation belongs to the server.
-  Future<AcpAgentConfig> cache(AcpRegistryEntry entry) async {
+  Directory cachedRunner(AcpInstallPlan plan) =>
+      Directory(p.join(cacheDirectory.path, 'runner-${plan.cacheKey}'));
+
+  static const runnerReady = '.baocode-ready';
+
+  /// Prepare runner packages locally and fetch every published binary.
+  /// The server can reconstruct a runner environment from the copied cache.
+  Future<void> cacheRunner(AcpInstallPlan plan) async {
+    final destination = cachedRunner(plan);
+    if (await File(p.join(destination.path, runnerReady)).exists()) return;
+    await cacheDirectory.create(recursive: true);
+    final staging = await cacheDirectory.createTemp('runner-');
+    try {
+      if (plan.kind == 'npx') {
+        for (final (os, cpu, libc) in const [
+          ('darwin', 'arm64', null),
+          ('darwin', 'x64', null),
+          ('linux', 'arm64', 'glibc'),
+          ('linux', 'x64', 'glibc'),
+          ('win32', 'arm64', null),
+          ('win32', 'x64', null),
+          ('linux', 'arm64', 'musl'),
+          ('linux', 'x64', 'musl'),
+        ]) {
+          final prefix = await Directory.systemTemp.createTemp(
+            'baocode-acp-npm-',
+          );
+          try {
+            await prepare('npm', [
+              'install',
+              '--prefix',
+              prefix.path,
+              '--cache',
+              staging.path,
+              '--os',
+              os,
+              '--cpu',
+              cpu,
+              if (libc != null) ...['--libc', libc],
+              '--ignore-scripts',
+              '--no-audit',
+              '--no-fund',
+              '--no-package-lock',
+              '--',
+              plan.source,
+            ]);
+          } finally {
+            await prefix.delete(recursive: true);
+          }
+        }
+        // npm exec also caches the package metadata used by offline npx.
+        await prepare('npm', [
+          'exec',
+          '--cache',
+          staging.path,
+          '--ignore-scripts',
+          '--yes',
+          '--package',
+          plan.source,
+          '--',
+          'node',
+          '-e',
+          'process.exit(0)',
+        ]);
+      } else {
+        await prepare('uv', [
+          '--cache-dir',
+          staging.path,
+          '--no-python-downloads',
+          'tool',
+          'run',
+          '--link-mode',
+          'copy',
+          '--from',
+          plan.source,
+          'python',
+          '-c',
+          'pass',
+        ]);
+      }
+      await File(p.join(staging.path, runnerReady)).create();
+      try {
+        await staging.rename(destination.path);
+      } on FileSystemException {
+        if (!await File(p.join(destination.path, runnerReady)).exists()) {
+          rethrow;
+        }
+      }
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
+    }
+  }
+
+  Future<AcpAgentConfig> cache(
+    AcpRegistryEntry entry, {
+    void Function(AcpInstallPlan plan, int? received, int? total)? onProgress,
+  }) async {
     final validated = AcpRegistryEntry.parseImport(entry.toJson()).single;
     for (final plan in validated.binaryPlans) {
       final file = cachedBinary(plan);
@@ -286,7 +412,14 @@ class AcpRegistry {
                   plan.sha256!.toLowerCase())) {
         continue;
       }
-      final bytes = await downloadBinary(plan);
+      onProgress?.call(plan, 0, null);
+      final bytes = await downloadBinary(
+        plan,
+        onProgress: onProgress == null
+            ? null
+            : (received, total) => onProgress(plan, received, total),
+      );
+      onProgress?.call(plan, null, null);
       await cacheDirectory.create(recursive: true);
       final staging = await cacheDirectory.createTemp('download-');
       try {
@@ -297,6 +430,10 @@ class AcpRegistry {
         await staging.delete(recursive: true);
       }
     }
+    if (validated.runnerPlan case final runner?) {
+      onProgress?.call(runner, 0, null);
+      await cacheRunner(runner);
+    }
     return AcpAgentConfig(
       id: validated.id,
       label: validated.name,
@@ -305,6 +442,37 @@ class AcpRegistry {
       hostScoped: true,
       registry: validated,
     );
+  }
+
+  AcpInstallPlan? launchPlan(AcpRegistryEntry entry) =>
+      entry.binaryPlanFor(platform) ?? entry.runnerPlan;
+
+  /// Resolves a saved registry entry using the cached package for the host.
+  Future<AcpAgentConfig> resolve(AcpRegistryEntry entry) async {
+    final plan = launchPlan(entry);
+    if (plan == null) throw UnsupportedError('No ACP build for $platform');
+    final installed = await deploy(entry, plan);
+    final binary = plan.kind == 'binary';
+    return AcpAgentConfig(
+      id: entry.id,
+      label: entry.name,
+      command: binary ? installed : plan.command,
+      arguments: binary ? plan.arguments : plan.offlineArguments(installed),
+      environment: plan.environment,
+      description: entry.description,
+    );
+  }
+
+  /// Returns a binary executable or an offline runner cache directory.
+  Future<String> deploy(AcpRegistryEntry entry, AcpInstallPlan plan) async {
+    if (plan.kind == 'binary') return _deployBinary(entry, plan);
+    final runner = cachedRunner(plan).absolute.path;
+    if (!await File(p.join(runner, runnerReady)).exists()) {
+      throw StateError(
+        'Missing local ACP package. Download it again in Settings → Agents.',
+      );
+    }
+    return runner;
   }
 
   /// Package runners cache the pinned distribution without starting the agent.
@@ -379,9 +547,12 @@ class AcpRegistry {
     }
   }
 
-  Future<Uint8List> downloadBinary(AcpInstallPlan plan) async {
+  Future<Uint8List> downloadBinary(
+    AcpInstallPlan plan, {
+    void Function(int received, int? total)? onProgress,
+  }) async {
     final uri = Uri.parse(plan.source);
-    final bytes = await download(uri, 256 << 20);
+    final bytes = await download(uri, 256 << 20, onProgress: onProgress);
     verifyBinary(plan, bytes);
     return bytes;
   }
@@ -425,9 +596,7 @@ class AcpRegistry {
       if (!AcpRegistryEntry._relativeCommand(plan.command)) {
         throw const FormatException('Invalid agent executable');
       }
-      final executable = File(
-        p.normalize(p.join(directory.path, plan.command.replaceAll('\\', '/'))),
-      );
+      final executable = File(plan.commandIn(directory.path, p.context));
       if (!p.isWithin(directory.path, executable.path)) {
         throw const FormatException('Invalid agent executable');
       }
@@ -438,38 +607,112 @@ class AcpRegistry {
     throw const FormatException('Unsupported agent archive format');
   }
 
+  static final _pendingDeployments = <String, Future<String>>{};
+
+  Directory _agentRoot(AcpRegistryEntry entry) {
+    if (!RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(entry.id)) {
+      throw const FormatException('Invalid agent id');
+    }
+    return Directory(
+      p.absolute(DataDirectory.current.path, 'acp-agents', entry.id),
+    );
+  }
+
+  Future<String> _deployBinary(
+    AcpRegistryEntry entry,
+    AcpInstallPlan plan,
+  ) async {
+    final root = _agentRoot(entry);
+    final destination = p.join(root.path, plan.cacheKey);
+    if (_pendingDeployments[destination] case final pending?) return pending;
+    final deployment = _unpackCachedBinary(root, destination, plan);
+    _pendingDeployments[destination] = deployment;
+    try {
+      return await deployment;
+    } finally {
+      _pendingDeployments.remove(destination);
+    }
+  }
+
+  Future<String> _unpackCachedBinary(
+    Directory root,
+    String destination,
+    AcpInstallPlan plan,
+  ) async {
+    var target = destination;
+    late File executable;
+    for (var attempt = 1; ; attempt++) {
+      executable = File(plan.commandIn(target, p.context));
+      if (await executable.exists()) return executable.path;
+      if (await FileSystemEntity.type(target) ==
+          FileSystemEntityType.notFound) {
+        break;
+      }
+      target = '$destination-$attempt';
+    }
+    final archive = cachedBinary(plan);
+    if (!await archive.exists()) {
+      throw StateError(
+        'Missing ACP package for $platform. Download it again in Settings → Agents.',
+      );
+    }
+    final bytes = await archive.readAsBytes();
+    verifyBinary(plan, bytes);
+    await root.create(recursive: true);
+    final staging = await root.createTemp('install-');
+    try {
+      await _unpackExecutable(plan, staging, bytes);
+      try {
+        await staging.rename(target);
+      } on FileSystemException {
+        if (!await executable.exists()) rethrow;
+      }
+      return executable.path;
+    } finally {
+      if (await staging.exists()) await staging.delete(recursive: true);
+    }
+  }
+
   Future<String> installBinary(
     AcpRegistryEntry entry,
     AcpInstallPlan plan,
   ) async {
+    final root = _agentRoot(entry);
     final bytes = await downloadBinary(plan);
-    final root = Directory(
-      p.join(DataDirectory.current.path, 'acp-agents', entry.id),
-    );
     await root.create(recursive: true);
     final directory = await root.createTemp('install-');
     try {
-      final executables = await unpackBinary(plan, directory, bytes: bytes);
-      final executable = File(
-        p.join(directory.path, plan.command.replaceAll('\\', '/')),
-      );
-      final resolved = await executable.resolveSymbolicLinks();
-      if (!p.isWithin(await directory.resolveSymbolicLinks(), resolved) ||
-          !await executable.exists()) {
-        throw const FormatException('Invalid agent executable');
-      }
-      if (!Platform.isWindows) {
-        for (final path in {...executables, resolved}) {
-          final result = await Process.run('chmod', ['+x', path]);
-          if (result.exitCode != 0) {
-            throw StateError('Could not make agent executable');
-          }
-        }
-      }
-      return executable.path;
+      return await _unpackExecutable(plan, directory, bytes);
     } catch (_) {
       await directory.delete(recursive: true);
       rethrow;
     }
+  }
+
+  Future<String> _unpackExecutable(
+    AcpInstallPlan plan,
+    Directory directory,
+    Uint8List bytes,
+  ) async {
+    final executables = await unpackBinary(plan, directory, bytes: bytes);
+    final executable = File(plan.commandIn(directory.path, p.context));
+    if (!await executable.exists()) {
+      throw FormatException(
+        'Agent executable ${plan.command} is missing from the archive',
+      );
+    }
+    final resolved = await executable.resolveSymbolicLinks();
+    if (!p.isWithin(await directory.resolveSymbolicLinks(), resolved)) {
+      throw const FormatException('Invalid agent executable');
+    }
+    if (!Platform.isWindows) {
+      for (final path in {...executables, resolved}) {
+        final result = await Process.run('chmod', ['+x', path]);
+        if (result.exitCode != 0) {
+          throw StateError('Could not make agent executable');
+        }
+      }
+    }
+    return executable.path;
   }
 }

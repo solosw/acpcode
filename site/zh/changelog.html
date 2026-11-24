@@ -29,6 +29,20 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.8">
+    <h2 class="plain"><a href="#v2.0.8">2.0.8</a></h2>
+    <p>BaoCode 现在可以发现已有的 ACP 会话，并在对应项目中打开。</p>
+    <p>新功能</p>
+    <ul>
+    <li>支持发现本机和已连接 SSH 项目中的 ACP 历史会话。打开会话即可加载记录，需 Agent 支持相应能力。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>ACP 安装包由本机下载。SSH 服务器缺少匹配的构建或缓存时，BaoCode 会上传；npm 和 uv 类型使用缓存离线启动。</li>
+    <li>更新自定义 ACP Agent 时直接编辑已保存的注册表 JSON。官方 Agent 没有新版时，可以重新下载当前版本。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.7">
     <h2 class="plain"><a href="#v2.0.7">2.0.7</a></h2>
     <p>ACP 注册表提供可直接编辑的 JSON 模板。</p>

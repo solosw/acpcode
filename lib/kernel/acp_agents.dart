@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../settings/user_settings.dart';
@@ -7,12 +9,14 @@ import 'acp_registry.dart';
 /// Persistent ACP agent configurations stored in settings.json.
 class AcpAgents extends ChangeNotifier {
   AcpAgents(this._settings) {
+    _snapshot = jsonEncode(_settings[settingKey]);
     _settings.addListener(_changed);
   }
 
   static const settingKey = 'agents.acp';
   final UserSettings _settings;
   List<AcpAgentConfig>? _cache;
+  late String _snapshot;
 
   List<AcpAgentConfig> get agents => _cache ??= [
     for (final value in switch (_settings[settingKey]) {
@@ -23,6 +27,9 @@ class AcpAgents extends ChangeNotifier {
   ];
 
   void _changed() {
+    final snapshot = jsonEncode(_settings[settingKey]);
+    if (_snapshot == snapshot) return;
+    _snapshot = snapshot;
     _cache = null;
     notifyListeners();
   }
@@ -63,6 +70,7 @@ class AcpAgents extends ChangeNotifier {
     command: value['command'] is String ? value['command'] as String : '',
     hostScoped: value['hostScoped'] == true,
     registry: _registry(value['registry']),
+    registryImported: value['registryImported'] == true,
     hostConfigurations: {
       if (!nested)
         if (value['hosts'] case final Map hosts)
@@ -110,6 +118,7 @@ class AcpAgents extends ChangeNotifier {
     'label': agent.label,
     'command': agent.command,
     if (agent.registry case final registry?) 'registry': registry.toJson(),
+    if (agent.registryImported) 'registryImported': true,
     if (agent.hostScoped) 'hostScoped': true,
     if (agent.hostConfigurations.isNotEmpty)
       'hosts': {

@@ -10,6 +10,7 @@ import '../../kernel/acp_registry.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
+import '../../update/version.dart';
 import 'settings_widgets.dart';
 
 class AgentRegistryPicker extends StatefulWidget {
@@ -18,9 +19,13 @@ class AgentRegistryPicker extends StatefulWidget {
     required this.registry,
     required this.onInstalled,
     required this.onBusy,
+    this.currentEntry,
+    this.currentEntryImported = false,
   });
 
   final AcpRegistry registry;
+  final AcpRegistryEntry? currentEntry;
+  final bool currentEntryImported;
   final ValueChanged<AcpAgentConfig> onInstalled;
   final ValueChanged<bool> onBusy;
 
@@ -30,7 +35,12 @@ class AgentRegistryPicker extends StatefulWidget {
 
 class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
   final _search = TextEditingController();
-  final _json = TextEditingController(text: _npmTemplate);
+  late final _json = TextEditingController(
+    text: widget.currentEntry == null
+        ? _npmTemplate
+        : const JsonEncoder.withIndent('  ')
+              .convert(widget.currentEntry!.toJson()),
+  );
   String _template = _npmTemplate;
   List<AcpRegistryEntry>? _entries;
   List<AcpRegistryEntry>? _imported;
@@ -39,12 +49,14 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
   String? _error;
   bool _importing = false;
   bool _busy = false;
+  ({AcpInstallPlan plan, int? received, int? total})? _download;
   bool _confirming = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    _importing = widget.currentEntryImported;
+    if (!_importing) unawaited(_load());
   }
 
   @override
@@ -61,7 +73,23 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
     });
     try {
       final entries = await widget.registry.load();
-      if (mounted) setState(() => _entries = entries);
+      final current = widget.currentEntry;
+      if (mounted) {
+        setState(() {
+          _entries = current == null
+              ? entries
+              : entries
+                    .where((entry) => entry.id == current.id)
+                    .take(1)
+                    .toList();
+          if (current != null && !_importing) {
+            _selected = _entries!.singleOrNull;
+            // Older imports did not record their source. If the saved agent
+            // is absent from the public catalog, edit its saved entry instead.
+            if (_selected == null) _importing = true;
+          }
+        });
+      }
     } catch (error) {
       if (mounted) setState(() => _loadError = '$error');
     }
@@ -69,7 +97,9 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
 
   void _switchSource() => setState(() {
     _importing = !_importing;
-    _selected = _importing && _imported?.length == 1 ? _imported!.single : null;
+    _selected = _importing
+        ? _imported?.singleOrNull
+        : (widget.currentEntry == null ? null : _entries?.singleOrNull);
     _search.clear();
     _error = null;
   });
@@ -112,8 +142,14 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
   void _previewImport() {
     final l10n = context.l10n;
     try {
-      final imported = AcpRegistryEntry.parseImport(jsonDecode(_json.text));
+      var imported = AcpRegistryEntry.parseImport(jsonDecode(_json.text));
       if (imported.isEmpty) throw FormatException(l10n.agentsRegistryJsonEmpty);
+      if (widget.currentEntry case final current?) {
+        imported = imported.where((entry) => entry.id == current.id).toList();
+        if (imported.isEmpty) {
+          throw FormatException(l10n.agentsRegistryUpdateIdMissing);
+        }
+      }
       setState(() {
         _imported = imported;
         _selected = imported.length == 1 ? imported.single : null;
@@ -133,9 +169,24 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
     return [?runner, ...entry.binaryPlans];
   }
 
+  bool _hasOfficialUpdate(AcpRegistryEntry entry, AcpRegistryEntry current) {
+    try {
+      final installed = AppVersion.tryParse(current.version);
+      final offered = AppVersion.tryParse(entry.version);
+      if (installed != null && offered != null && offered < installed) {
+        return false;
+      }
+    } on FormatException {
+      // A registry entry can use a version scheme other than semver.
+    }
+    return entry.version != current.version ||
+        jsonEncode(entry.distribution) != jsonEncode(current.distribution);
+  }
+
   Future<void> _install(
     AcpRegistryEntry entry,
     List<AcpInstallPlan> plans,
+    String actionLabel,
   ) async {
     if (_busy || _confirming) return;
     final l10n = context.l10n;
@@ -167,7 +218,7 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
             onPressed: () => Navigator.pop(context, false),
           ),
           IdeButton(
-            label: l10n.agentsInstall,
+            label: actionLabel,
             onPressed: () => Navigator.pop(context, true),
           ),
         ],
@@ -177,15 +228,25 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
     if (!mounted || confirmed != true) return;
     setState(() {
       _busy = true;
+      _download = null;
       _error = null;
     });
     widget.onBusy(true);
     try {
-      final config = await widget.registry.cache(entry);
+      final config = await widget.registry.cache(
+        entry,
+        onProgress: (plan, received, total) {
+          if (mounted) {
+            setState(() {
+              _download = (plan: plan, received: received, total: total);
+            });
+          }
+        },
+      );
       if (mounted) {
         setState(() => _busy = false);
         widget.onBusy(false);
-        widget.onInstalled(config);
+        widget.onInstalled(config.copyWith(registryImported: _importing));
       }
     } catch (error) {
       if (mounted) {
@@ -198,9 +259,47 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
     }
   }
 
+  Widget _installProgress(List<AcpInstallPlan> plans) {
+    final l10n = context.l10n;
+    final download = _download;
+    final received = download?.received;
+    final total = download?.total;
+    final fraction = received != null && total != null
+        ? (received / total).clamp(0.0, 1.0)
+        : null;
+    final binaries = plans.where((plan) => plan.kind == 'binary').toList();
+    final platform = download?.plan.platform;
+    final index = binaries.indexWhere((plan) => plan.platform == platform);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          [
+            if (download == null || download.plan.kind != 'binary')
+              l10n.agentsInstalling
+            else if (received == null)
+              l10n.agentsRegistrySavingPackage
+            else
+              l10n.agentsRegistryDownloadingPackage,
+            ?platform,
+            if (index >= 0) '${index + 1}/${binaries.length}',
+            if (fraction != null)
+              '${(fraction * 100).round()}%'
+            else if (received != null && received > 0)
+              '${(received / (1 << 20)).toStringAsFixed(1)} MiB',
+          ].join(' · '),
+          style: SettingsText.description,
+        ),
+        const SizedBox(height: 6),
+        LinearProgressIndicator(value: fraction),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
+    final current = widget.currentEntry;
     final entries = _importing ? _imported : _entries;
     final query = _search.text.trim().toLowerCase();
     final filtered = entries
@@ -210,48 +309,79 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
               .contains(query),
         )
         .toList();
-    final selected = _selected;
+    final offered = _selected;
+    final upToDate =
+        current != null &&
+        offered != null &&
+        !_importing &&
+        !_hasOfficialUpdate(offered, current);
+    final selected = upToDate ? current : offered;
     final plans = selected == null
         ? const <AcpInstallPlan>[]
         : _plans(selected);
+    final actionLabel = upToDate
+        ? l10n.agentsRegistryDownloadAgain
+        : current == null
+        ? l10n.agentsInstall
+        : l10n.agentsUpdate;
+    if (_busy && selected != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(selected.name, style: SettingsText.heading),
+          const SizedBox(height: 12),
+          _installProgress(plans),
+        ],
+      );
+    }
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: IdeButton(
-              label: _importing
-                  ? l10n.agentsRegistryBrowse
-                  : l10n.agentsRegistryPasteJson,
-              secondary: true,
-              onPressed: _busy ? null : _switchSource,
+          if (!widget.currentEntryImported) ...[
+            Align(
+              alignment: Alignment.centerRight,
+              child: IdeButton(
+                label: _importing
+                    ? l10n.agentsRegistryBrowse
+                    : l10n.agentsRegistryPasteJson,
+                secondary: true,
+                onPressed: _busy ? null : _switchSource,
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
+          ],
           if (_importing) ...[
-            Text(l10n.agentsRegistryJsonHint, style: SettingsText.description),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final (label, template) in [
-                  (l10n.agentsRegistryNpmTemplate, _npmTemplate),
-                  (l10n.agentsRegistryUvTemplate, _uvTemplate),
-                  (l10n.agentsRegistryBinaryTemplate, _binaryTemplate),
-                ])
-                  IdeButton(
-                    label: label,
-                    secondary: true,
-                    onPressed: _busy
-                        ? null
-                        : () => unawaited(_useTemplate(template)),
-                  ),
-              ],
+            Text(
+              current == null
+                  ? l10n.agentsRegistryJsonHint
+                  : l10n.agentsRegistryUpdateJsonHint,
+              style: SettingsText.description,
             ),
             const SizedBox(height: 8),
+            if (current == null) ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  for (final (label, template) in [
+                    (l10n.agentsRegistryNpmTemplate, _npmTemplate),
+                    (l10n.agentsRegistryUvTemplate, _uvTemplate),
+                    (l10n.agentsRegistryBinaryTemplate, _binaryTemplate),
+                  ])
+                    IdeButton(
+                      label: label,
+                      secondary: true,
+                      onPressed: _busy
+                          ? null
+                          : () => unawaited(_useTemplate(template)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
             ExcludeFocus(
               excluding: _busy,
               child: IgnorePointer(
@@ -278,17 +408,19 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
               ),
             ),
           ] else ...[
-            Text(
-              l10n.agentsRegistryDescription,
-              style: SettingsText.description,
-            ),
-            const SizedBox(height: 12),
-            IdeInputBox(
-              controller: _search,
-              placeholder: l10n.agentsSearch,
-              semanticsLabel: l10n.agentsSearch,
-              onChanged: (_) => setState(() {}),
-            ),
+            if (current == null) ...[
+              Text(
+                l10n.agentsRegistryDescription,
+                style: SettingsText.description,
+              ),
+              const SizedBox(height: 12),
+              IdeInputBox(
+                controller: _search,
+                placeholder: l10n.agentsSearch,
+                semanticsLabel: l10n.agentsSearch,
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
             if (entries == null && _loadError == null)
               const Padding(
                 padding: EdgeInsets.all(24),
@@ -306,7 +438,7 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
             ],
           ],
           const SizedBox(height: 12),
-          if (filtered != null)
+          if (filtered != null && current == null)
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 220),
               child: ListView(
@@ -354,14 +486,23 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
                     ),
                 ],
               ),
-            ),
+            )
+          else if (current != null && filtered?.isEmpty == true)
+            Text(l10n.agentsNoResults, style: SettingsText.description),
           if (selected != null) ...[
             const Divider(),
             Text(
-              '${selected.name} · ${selected.version}',
+              current == null || current.version == selected.version
+                  ? '${selected.name} · ${selected.version}'
+                  : '${selected.name} · ${current.version} → ${selected.version}',
               style: SettingsText.heading,
             ),
             const SizedBox(height: 6),
+            if (upToDate)
+              Text(
+                l10n.agentsRegistryNoUpdate,
+                style: SettingsText.description,
+              ),
             if (plans.isEmpty)
               Text(l10n.agentsUnsupported, style: SettingsText.description),
             if (plans.any((plan) => plan.kind == 'binary'))
@@ -381,11 +522,10 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
             Align(
               alignment: Alignment.centerRight,
               child: IdeButton(
-                label: _busy ? l10n.agentsInstalling : l10n.agentsInstall,
-                spinning: _busy,
-                onPressed: _busy || plans.isEmpty
+                label: actionLabel,
+                onPressed: plans.isEmpty
                     ? null
-                    : () => unawaited(_install(selected, plans)),
+                    : () => unawaited(_install(selected, plans, actionLabel)),
               ),
             ),
           ],

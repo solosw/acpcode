@@ -29,6 +29,20 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.8">
+    <h2 class="plain"><a href="#v2.0.8">2.0.8</a></h2>
+    <p>BaoCode can now discover existing ACP conversations and reopen them in the right project.</p>
+    <p>New</p>
+    <ul>
+    <li>Find past conversations from compatible ACP agents on this computer and connected SSH projects, then open them to load their history.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Download ACP packages locally and transfer missing builds or package caches to SSH servers. npm and uv agents use the transferred cache offline.</li>
+    <li>Update a custom ACP agent by editing its saved registry JSON. For an official agent with no newer version, you can download the current version again.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.7">
     <h2 class="plain"><a href="#v2.0.7">2.0.7</a></h2>
     <p>Configure ACP agents faster with ready-to-edit registry JSON templates.</p>

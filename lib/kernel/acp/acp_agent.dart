@@ -18,6 +18,7 @@ class AcpAgentConfig {
     this.rulesDirectory = '',
     this.hostScoped = false,
     this.registry,
+    this.registryImported = false,
     this.hostConfigurations = const {},
   });
 
@@ -36,6 +37,9 @@ class AcpAgentConfig {
   /// Legacy entries retain their original cross-host behavior until scoped.
   final bool hostScoped;
   final AcpRegistryEntry? registry;
+
+  /// Whether updates should edit the saved JSON instead of the public catalog.
+  final bool registryImported;
   final Map<String, AcpAgentConfig> hostConfigurations;
 
   AcpAgentConfig copyWith({
@@ -45,6 +49,7 @@ class AcpAgentConfig {
     bool? hostScoped,
     Map<String, AcpAgentConfig>? hostConfigurations,
     AcpRegistryEntry? registry,
+    bool? registryImported,
   }) => AcpAgentConfig(
     id: id ?? this.id,
     label: label ?? this.label,
@@ -57,6 +62,7 @@ class AcpAgentConfig {
     hostScoped: hostScoped ?? this.hostScoped,
     hostConfigurations: hostConfigurations ?? this.hostConfigurations,
     registry: registry ?? this.registry,
+    registryImported: registryImported ?? this.registryImported,
   );
 
   AcpAgentConfig forHost(String? host) {
@@ -76,7 +82,7 @@ class AcpAgentConfig {
         );
       }
     }
-    if (command.trim().isEmpty) {
+    if (registry == null && command.trim().isEmpty) {
       throw StateError(
         'ACP agent "$label" is not configured on this machine. '
         'Install or configure it in Settings → Agents.',
@@ -88,10 +94,15 @@ class AcpAgentConfig {
   Future<Map<String, String>> environmentAt(String? location) async {
     final host = location == null ? null : RemoteLocation.hostOf(location);
     final config = forHost(host);
-    if (host == null || config.registry == null) return config.environment;
-    final client = await SshHosts.instance[host].ready;
-    final plan = RemoteAcpRegistry(client).launchPlan(config.registry!);
-    return {...?plan?.environment, ...config.environment};
+    final entry = config.registry;
+    if (entry == null) return config.environment;
+    final installer = host == null
+        ? const AcpRegistry()
+        : RemoteAcpRegistry(await SshHosts.instance[host].ready);
+    return {
+      ...?installer.launchPlan(entry)?.environment,
+      ...config.environment,
+    };
   }
 
   /// On the project's host: this machine, or the remote one an `ssh://`
