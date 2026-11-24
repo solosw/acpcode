@@ -410,6 +410,35 @@ void main() {
     expect(() => saved.forHost('other'), throwsStateError);
   });
 
+  testWidgets('registry templates switch recipes without losing drafts', (
+    tester,
+  ) async {
+    await pumpPage(tester);
+    await _tap(tester, 'Add agent');
+    await _tap(tester, 'ACP Registry');
+    await _tap(tester, 'Enter registry JSON');
+    final input = _input('registry-json');
+    String text() => tester.widget<EditableText>(input).controller.text;
+    Map distribution() => (jsonDecode(text()) as Map)['distribution'] as Map;
+
+    expect(distribution(), contains('npx'));
+    await _tap(tester, 'uv template');
+    expect(distribution()['uvx']['package'], '<python-package>==1.0.0');
+    const draft = '{"id": "draft"}';
+    await tester.enterText(input, draft);
+    await _tap(tester, 'Executable archive template');
+    await _tap(tester, 'Cancel');
+    expect(text(), draft);
+    await _tap(tester, 'Executable archive template');
+    await _tap(tester, 'Replace draft');
+    final builds = distribution()['binary'] as Map;
+    expect(builds['linux-x86_64']['archive'], contains('.tar.gz'));
+    expect(builds['windows-x86_64']['cmd'], './my-agent.exe');
+    await _tap(tester, 'npm template');
+    expect(distribution(), contains('npx'));
+    expect(registry.installs, 0);
+  });
+
   testWidgets('JSON import recovers from errors and works offline', (
     tester,
   ) async {
@@ -419,7 +448,15 @@ void main() {
     await _tap(tester, 'ACP Registry');
     await _tap(tester, 'Enter registry JSON');
     final json = _input('registry-json');
+    final template = tester.widget<EditableText>(json).controller.text;
+    expect(jsonDecode(template), contains('distribution'));
+    expect(template, contains('<npm-package>'));
+    await _tap(tester, 'Preview entries');
+    expect(registry.installs, 0);
     await tester.enterText(json, '{');
+    await _tap(tester, 'Browse official registry');
+    await _tap(tester, 'Enter registry JSON');
+    expect(tester.widget<EditableText>(json).controller.text, '{');
     await _tap(tester, 'Preview entries');
     expect(
       find.textContaining('Could not read the registry JSON.'),
@@ -453,15 +490,14 @@ void main() {
     await _tap(tester, 'Install and configure');
     expect(registry.installs, 1);
     expect(registry.lastInstalled?.id, 'typed-agent');
-    await tester.enterText(_input('agent-environment'), 'TOKEN=server-only');
-    await tester.enterText(_input('agent-arguments'), '["--extra"]');
+    expect(find.byKey(const ValueKey('agent-server')), findsNothing);
+    expect(_input('agent-command'), findsNothing);
     await save(tester);
     expect(agents.agents.single.label, 'Typed Agent');
     expect(agents.agents.single.registry?.id, 'typed-agent');
     final remote = agents.agents.single.forHost('dev');
     expect(remote.registry?.id, 'typed-agent');
-    expect(remote.environment, {'TOKEN': 'server-only'});
-    expect(remote.arguments, ['--extra']);
+    expect(agents.agents.single.hostConfigurations, isEmpty);
   });
 
   testWidgets('registry document lets users select a remote-only binary', (

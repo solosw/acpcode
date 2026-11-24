@@ -635,8 +635,38 @@ abstract class AppLocalizations {
   /// No description provided for @agentsRegistryJsonHint.
   ///
   /// In en, this message translates to:
-  /// **'Paste or write an ACP agent entry, an array of entries, or a registry document with an \"agents\" array.'**
+  /// **'Choose a template and replace the placeholders, or paste your own registry JSON. For an archive, provide a direct HTTPS download link and the executable’s path inside the archive for each platform.'**
   String get agentsRegistryJsonHint;
+
+  /// No description provided for @agentsRegistryNpmTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'npm template'**
+  String get agentsRegistryNpmTemplate;
+
+  /// No description provided for @agentsRegistryUvTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'uv template'**
+  String get agentsRegistryUvTemplate;
+
+  /// No description provided for @agentsRegistryBinaryTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'Executable archive template'**
+  String get agentsRegistryBinaryTemplate;
+
+  /// No description provided for @agentsRegistryReplaceTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace the JSON draft with this template?'**
+  String get agentsRegistryReplaceTemplate;
+
+  /// No description provided for @agentsRegistryUseTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace draft'**
+  String get agentsRegistryUseTemplate;
 
   /// No description provided for @agentsRegistryPreviewJson.
   ///
@@ -661,18 +691,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'BaoCode downloads builds for every available platform and copies the matching build if the connected server needs it.'**
   String get agentsRegistryPlatformDownloads;
-
-  /// No description provided for @agentsRegistryCommandHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Leave blank to use the registry command.'**
-  String get agentsRegistryCommandHint;
-
-  /// No description provided for @agentsRegistryArgumentsHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Enter a JSON array of extra arguments for the registry command.'**
-  String get agentsRegistryArgumentsHint;
 
   /// No description provided for @agentsRegistryRunner.
   ///

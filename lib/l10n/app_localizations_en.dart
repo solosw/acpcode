@@ -301,7 +301,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsRegistryJsonHint =>
-      'Paste or write an ACP agent entry, an array of entries, or a registry document with an \"agents\" array.';
+      'Choose a template and replace the placeholders, or paste your own registry JSON. For an archive, provide a direct HTTPS download link and the executable’s path inside the archive for each platform.';
+
+  @override
+  String get agentsRegistryNpmTemplate => 'npm template';
+
+  @override
+  String get agentsRegistryUvTemplate => 'uv template';
+
+  @override
+  String get agentsRegistryBinaryTemplate => 'Executable archive template';
+
+  @override
+  String get agentsRegistryReplaceTemplate =>
+      'Replace the JSON draft with this template?';
+
+  @override
+  String get agentsRegistryUseTemplate => 'Replace draft';
 
   @override
   String get agentsRegistryPreviewJson => 'Preview entries';
@@ -316,14 +332,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get agentsRegistryPlatformDownloads =>
       'BaoCode downloads builds for every available platform and copies the matching build if the connected server needs it.';
-
-  @override
-  String get agentsRegistryCommandHint =>
-      'Leave blank to use the registry command.';
-
-  @override
-  String get agentsRegistryArgumentsHint =>
-      'Enter a JSON array of extra arguments for the registry command.';
 
   @override
   String get agentsRegistryRunner =>

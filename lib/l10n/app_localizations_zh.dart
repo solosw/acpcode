@@ -288,7 +288,22 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get agentsRegistryJsonHint =>
-      '粘贴或编写单个 ACP Agent 条目、条目数组，或包含 \"agents\" 数组的注册表文档。';
+      '选择模板后替换示例字段，也可以粘贴自己的注册表 JSON。使用压缩包时，按平台填写 HTTPS 下载直链和压缩包内的可执行文件路径。';
+
+  @override
+  String get agentsRegistryNpmTemplate => 'npm 模板';
+
+  @override
+  String get agentsRegistryUvTemplate => 'uv 模板';
+
+  @override
+  String get agentsRegistryBinaryTemplate => '可执行文件压缩包模板';
+
+  @override
+  String get agentsRegistryReplaceTemplate => '用此模板替换当前 JSON 草稿？';
+
+  @override
+  String get agentsRegistryUseTemplate => '替换草稿';
 
   @override
   String get agentsRegistryPreviewJson => '预览条目';
@@ -302,12 +317,6 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get agentsRegistryPlatformDownloads =>
       'BaoCode 下载注册表提供的所有平台构建。连接服务器时，如果缺少匹配的版本，就自动复制过去。';
-
-  @override
-  String get agentsRegistryCommandHint => '留空时使用注册表中的启动命令。';
-
-  @override
-  String get agentsRegistryArgumentsHint => '以 JSON 数组填写追加到注册表启动命令的参数。';
 
   @override
   String get agentsRegistryRunner => '此 Agent 通过包管理工具发布，由服务器在首次需要时获取。';

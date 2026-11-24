@@ -30,7 +30,8 @@ class AgentRegistryPicker extends StatefulWidget {
 
 class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
   final _search = TextEditingController();
-  final _json = TextEditingController();
+  final _json = TextEditingController(text: _npmTemplate);
+  String _template = _npmTemplate;
   List<AcpRegistryEntry>? _entries;
   List<AcpRegistryEntry>? _imported;
   AcpRegistryEntry? _selected;
@@ -72,6 +73,41 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
     _search.clear();
     _error = null;
   });
+
+  Future<void> _useTemplate(String template) async {
+    if (_json.text == template) return;
+    if (_json.text.trim().isNotEmpty && _json.text != _template) {
+      final l10n = context.l10n;
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.agentsRegistryReplaceTemplate),
+          actions: [
+            IdeButton(
+              label: l10n.commonCancel,
+              secondary: true,
+              onPressed: () => Navigator.pop(context, false),
+            ),
+            IdeButton(
+              label: l10n.agentsRegistryUseTemplate,
+              onPressed: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || replace != true) return;
+    }
+    setState(() {
+      _template = _json.text = template;
+      _resetPreview();
+    });
+  }
+
+  void _resetPreview() {
+    _imported = null;
+    _selected = null;
+    _error = null;
+  }
 
   void _previewImport() {
     final l10n = context.l10n;
@@ -197,6 +233,25 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
           if (_importing) ...[
             Text(l10n.agentsRegistryJsonHint, style: SettingsText.description),
             const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final (label, template) in [
+                  (l10n.agentsRegistryNpmTemplate, _npmTemplate),
+                  (l10n.agentsRegistryUvTemplate, _uvTemplate),
+                  (l10n.agentsRegistryBinaryTemplate, _binaryTemplate),
+                ])
+                  IdeButton(
+                    label: label,
+                    secondary: true,
+                    onPressed: _busy
+                        ? null
+                        : () => unawaited(_useTemplate(template)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
             ExcludeFocus(
               excluding: _busy,
               child: IgnorePointer(
@@ -205,14 +260,9 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
                   key: const ValueKey('registry-json'),
                   controller: _json,
                   semanticsLabel: l10n.agentsRegistryPasteJson,
-                  placeholder: _jsonExample,
                   minLines: 5,
                   maxLines: 7,
-                  onChanged: (_) => setState(() {
-                    _imported = null;
-                    _selected = null;
-                    _error = null;
-                  }),
+                  onChanged: (_) => setState(_resetPreview),
                 ),
               ),
             ),
@@ -354,10 +404,36 @@ class _AgentRegistryPickerState extends State<AgentRegistryPicker> {
   );
 }
 
-const _jsonExample =
-    '{\n'
-    '  "id": "my-agent", "name": "My Agent", "version": "1.0.0",\n'
-    '  "distribution": {\n'
-    '    "npx": {"package": "my-agent@1.0.0"}\n'
-    '  }\n'
-    '}';
+final _npmTemplate = _registryTemplate({
+  'npx': {'package': '<npm-package>@1.0.0', 'args': [], 'env': {}},
+});
+
+final _uvTemplate = _registryTemplate({
+  'uvx': {'package': '<python-package>==1.0.0', 'args': [], 'env': {}},
+});
+
+final _binaryTemplate = _registryTemplate({
+  'binary': {
+    'linux-x86_64': {
+      'archive': '<HTTPS link to the Linux .tar.gz>',
+      'cmd': './my-agent',
+      'args': [],
+      'env': {},
+    },
+    'windows-x86_64': {
+      'archive': '<HTTPS link to the Windows .zip>',
+      'cmd': './my-agent.exe',
+      'args': [],
+      'env': {},
+    },
+  },
+});
+
+String _registryTemplate(Map<String, Object?> distribution) =>
+    const JsonEncoder.withIndent('  ').convert({
+      'id': 'my-agent',
+      'name': 'My Agent',
+      'description': 'My ACP agent',
+      'version': '1.0.0',
+      'distribution': distribution,
+    });

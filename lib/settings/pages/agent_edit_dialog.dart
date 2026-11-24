@@ -189,7 +189,7 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
   Future<void> _save() async {
     if (_busy) return;
     try {
-      _saveDraft();
+      if (_config.registry == null) _saveDraft();
       if (_label.text.trim().isEmpty ||
           (_config.command.isEmpty &&
               _config.registry == null &&
@@ -373,12 +373,19 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                               ),
                               const SizedBox(height: 14),
                               _field(l10n.agentsName, _label, 'agent-name'),
-                              if (_config.registry case final entry?)
+                              if (_config.registry case final entry?) ...[
                                 Text(
                                   '${l10n.agentsRegistry} · ${entry.name} ${entry.version}',
+                                  style: SettingsText.label,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  entry.binaryPlans.isEmpty
+                                      ? l10n.agentsRegistryRunner
+                                      : l10n.agentsRegistryPlatformDownloads,
                                   style: SettingsText.description,
                                 ),
-                              if (_hosts.isEmpty)
+                              ] else if (_hosts.isEmpty)
                                 Text(
                                   l10n.agentsNoServers,
                                   style: SettingsText.description,
@@ -406,19 +413,12 @@ class _AgentEditDialogState extends State<AgentEditDialog> {
                                   l10n.agentsCommand,
                                   _command,
                                   'agent-command',
-                                  hint: _config.registry == null
-                                      ? null
-                                      : l10n.agentsRegistryCommandHint,
                                 ),
                                 _field(
                                   l10n.agentsArguments,
                                   _arguments,
                                   'agent-arguments',
-                                  hint:
-                                      _config.registry != null &&
-                                          _command.text.trim().isEmpty
-                                      ? l10n.agentsRegistryArgumentsHint
-                                      : l10n.agentsArgumentsHint,
+                                  hint: l10n.agentsArgumentsHint,
                                 ),
                                 _field(
                                   l10n.agentsEnvironment,
