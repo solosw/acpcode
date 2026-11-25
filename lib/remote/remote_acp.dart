@@ -99,7 +99,10 @@ class RemoteAcpTransport implements AcpTransport {
     }
     try {
       if (registry != null) {
-        final resolved = await RemoteAcpRegistry(client).resolve(registry);
+        final resolved = await RemoteAcpRegistry(
+          client,
+          host: host,
+        ).resolve(registry);
         executable = resolved.command;
         arguments = [...resolved.arguments, ...arguments];
         environment = {...resolved.environment, ...?environment};

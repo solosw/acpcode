@@ -18,7 +18,7 @@ import '../models/model_welcome.dart';
 import '../bash_exe/bao_bash.dart';
 import '../bash_exe/bao_bash_view.dart' show BaoBashHint;
 import '../remote/remote_location.dart';
-import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
+import '../remote/remote_status.dart' show AgentInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
 import '../stash/stash_store.dart';
 import '../theme/app_theme.dart';
@@ -1526,7 +1526,7 @@ class _ChatScreenState extends State<ChatScreen>
                 SshHostBanner(location: _session.kernelContext.cwd),
               // Claude Code being downloaded for this machine, or put on
               // a remote project's host.
-              ClaudeInstallBanner(location: _session.kernelContext.cwd),
+              AgentInstallBanner(location: _session.kernelContext.cwd),
               // Windows: BaoCode Bash recommended to whoever runs commands
               // in neither it nor Git Bash, for a project on this machine.
               if (BaoBash.current case final bash?

@@ -14571,6 +14571,23 @@ abstract class AppLocalizations {
   /// **'Sending Claude Code to {host}… {percent}%'**
   String remoteUploadingClaude(String host, int percent);
 
+  /// An ACP agent package is being copied from this machine to the remote host.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending {agent} to {host}… {percent}%'**
+  String remoteUploadingAcp(String agent, String host, int percent);
+
+  /// No description provided for @remoteStatusUploadingAcp.
+  ///
+  /// In en, this message translates to:
+  /// **'{kind}: {host} (sending {agent} {percent}%)'**
+  String remoteStatusUploadingAcp(
+    String kind,
+    String host,
+    String agent,
+    int percent,
+  );
+
   /// No description provided for @remoteStatusTooltip.
   ///
   /// In en, this message translates to:

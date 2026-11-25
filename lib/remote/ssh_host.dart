@@ -42,6 +42,19 @@ enum SshHostState {
   failed,
 }
 
+/// Bytes acknowledged by the remote server for one ACP package copy.
+class AcpUploadProgress {
+  const AcpUploadProgress(this.agent, this.sent, this.size);
+
+  final String agent;
+  final int sent;
+  final int size;
+
+  double get fraction =>
+      size == 0 ? 1 : (sent / size).clamp(0.0, 1.0).toDouble();
+  int get percent => size == 0 ? 100 : (sent * 100 ~/ size).clamp(0, 100);
+}
+
 /// Makes a connection to a host, saying how it goes.
 typedef SshConnector = Future<SshConnection> Function(
   SshTarget target, {
@@ -196,6 +209,21 @@ class SshHost extends ChangeNotifier implements ProjectHost {
   set installingClaude(ClaudeInstallProgress? progress) {
     _installingClaude = progress;
     notifyListeners();
+  }
+
+  final _acpUploads = <Object, AcpUploadProgress>{};
+
+  Iterable<AcpUploadProgress> get acpUploads => _acpUploads.values;
+
+  /// A copy owns its progress entry, including when another copy overlaps it.
+  void setAcpUpload(Object transfer, AcpUploadProgress? progress) {
+    final previous = _acpUploads[transfer];
+    if (progress == null) {
+      _acpUploads.remove(transfer);
+    } else {
+      _acpUploads[transfer] = progress;
+    }
+    if (previous?.percent != progress?.percent) notifyListeners();
   }
 
   /// Each connection made after a lost one: what ran over the old one

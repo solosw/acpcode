@@ -247,7 +247,7 @@ Future<void> main(List<String> arguments) async {
     final agents = acpAgents?.agents;
     if (agents != null) {
       unawaited(
-        RemoteAcpRegistry(client).sync(
+        RemoteAcpRegistry(client, host: SshHosts.instance[host]).sync(
           agents,
           host,
           onError: (error) => debugPrint('ACP deployment on $host: $error'),

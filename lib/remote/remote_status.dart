@@ -59,6 +59,17 @@ class SshStatusIndicator implements IdeRemoteIndicator {
         onTapRect: onChoose,
       );
     }
+    if (host.acpUploads.firstOrNull case final upload?
+        when host.state == SshHostState.connected) {
+      return IdeStatusBarItem(
+        l10n.remoteStatusUploadingAcp(kind, name, upload.agent, upload.percent),
+        icon: Codicons.sync,
+        tooltip: tooltip(
+          l10n.remoteUploadingAcp(upload.agent, name, upload.percent),
+        ),
+        onTapRect: onChoose,
+      );
+    }
     return switch (host.state) {
       SshHostState.connected => IdeStatusBarItem(
         l10n.remoteStatus(kind, name),
@@ -144,11 +155,10 @@ String claudeInstallText(
       : l10n.remoteInstallingClaudeProgress(host, percent);
 }
 
-/// Over the composer while Claude Code is being installed for the agent
-/// to start: on a remote project's host, or downloaded for this machine
-/// (see LocalClaude). Nothing otherwise.
-class ClaudeInstallBanner extends StatelessWidget {
-  const ClaudeInstallBanner({
+/// Over the composer while Claude Code is being installed or an ACP
+/// package is being copied to the project's host. Nothing otherwise.
+class AgentInstallBanner extends StatelessWidget {
+  const AgentInstallBanner({
     super.key,
     required this.location,
     this.hosts,
@@ -177,7 +187,7 @@ class ClaudeInstallBanner extends StatelessWidget {
             text: context.l10n.localDownloadingClaude(
               ((progress.fraction ?? 0) * 100).floor(),
             ),
-            progress: progress,
+            fraction: progress.fraction,
           ),
           null => const SizedBox.shrink(),
         },
@@ -186,22 +196,40 @@ class ClaudeInstallBanner extends StatelessWidget {
     final host = (hosts ?? SshHosts.instance)[name];
     return ListenableBuilder(
       listenable: host,
-      builder: (context, _) => switch (host.installingClaude) {
-        final progress? => _InstallCard(
-          text: claudeInstallText(context.l10n, name, progress),
-          progress: progress,
-        ),
-        null => const SizedBox.shrink(),
+      builder: (context, _) {
+        final claude = host.installingClaude;
+        if (claude == null && host.acpUploads.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (claude != null)
+              _InstallCard(
+                text: claudeInstallText(context.l10n, name, claude),
+                fraction: claude.fraction,
+              ),
+            for (final upload in host.acpUploads)
+              _InstallCard(
+                text: context.l10n.remoteUploadingAcp(
+                  upload.agent,
+                  RemoteLocation.hostName(name),
+                  upload.percent,
+                ),
+                fraction: upload.fraction,
+              ),
+          ],
+        );
       },
     );
   }
 }
 
 class _InstallCard extends StatelessWidget {
-  const _InstallCard({required this.text, required this.progress});
+  const _InstallCard({required this.text, required this.fraction});
 
   final String text;
-  final ClaudeInstallProgress progress;
+  final double? fraction;
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +256,7 @@ class _InstallCard extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(2),
                 child: LinearProgressIndicator(
-                  value: progress.fraction,
+                  value: fraction,
                   color: themeColors['progressBar.background'],
                   backgroundColor: themeColors['editorWidget.border'],
                 ),
