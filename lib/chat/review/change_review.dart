@@ -358,29 +358,31 @@ class ChangeReview extends ChangeNotifier {
   List<String>? _snapshotRoots;
 
   /// Keeps a baseline independently of the kernel's edit notifications.
-  Future<void> begin({Iterable<String>? roots}) => _enqueue(() async {
-    if (_store is! ReviewSnapshots) return;
-    if (roots != null) {
-      final distinct = roots.map(_key).toSet();
-      _snapshotRoots = [
-        for (final root in distinct)
-          if (!distinct.any((other) => _paths.isWithin(other, root))) root,
-      ];
-    }
-    for (final path in _entries.keys.toList()) {
-      final entry = _entries[path];
-      if (entry == null) continue;
-      final found = await _readFile(path);
-      if (found == null) continue;
-      final now = found.blob;
-      if (!_same(now, entry.after) && entry.writing == 0) {
-        await _rebase(entry, path);
-      }
-    }
-    await _scanSnapshots(agent: false);
-    await _refresh();
-    await _persist();
-  });
+  /// Set [retrySnapshot] only when the agent waits for this before it writes.
+  Future<void> begin({Iterable<String>? roots, bool retrySnapshot = false}) =>
+      _enqueue(() async {
+        if (_store is! ReviewSnapshots) return;
+        if (roots != null) {
+          final distinct = roots.map(_key).toSet();
+          _snapshotRoots = [
+            for (final root in distinct)
+              if (!distinct.any((other) => _paths.isWithin(other, root))) root,
+          ];
+        }
+        for (final path in _entries.keys.toList()) {
+          final entry = _entries[path];
+          if (entry == null) continue;
+          final found = await _readFile(path);
+          if (found == null) continue;
+          final now = found.blob;
+          if (!_same(now, entry.after) && entry.writing == 0) {
+            await _rebase(entry, path);
+          }
+        }
+        await _scanSnapshots(agent: false, retrySnapshot: retrySnapshot);
+        await _refresh();
+        await _persist();
+      });
 
   /// Discovers command, subagent and other writes by comparing private Git trees.
   Future<void> observe() => _enqueue(() async {
@@ -390,22 +392,36 @@ class ChangeReview extends ChangeNotifier {
     await _persist();
   });
 
-  Future<void> _scanSnapshots({required bool agent}) async {
+  Future<void> _scanSnapshots({
+    required bool agent,
+    bool retrySnapshot = false,
+  }) async {
     final store = _store;
     if (store is! ReviewSnapshots) return;
+    folders:
     for (final folder in _snapshotRoots ?? [root]) {
       final previous = _snapshots[folder];
-      final ReviewSnapshot? snapshot;
-      try {
-        snapshot = await (store as ReviewSnapshots).snapshot(
-          folder,
-          previous: previous,
-        );
-      } on ReviewUnavailable catch (error) {
-        // A failed baseline cannot be used to attribute later user writes.
-        if (!agent) _snapshots.remove(folder);
-        if (error.retryable) continue;
-        rethrow;
+      ReviewSnapshot? snapshot;
+      for (var attempt = 0; ; attempt++) {
+        try {
+          snapshot = await (store as ReviewSnapshots).snapshot(
+            folder,
+            previous: previous,
+          );
+          break;
+        } on ReviewUnavailable catch (error) {
+          if (!error.retryable) rethrow;
+          if (agent) continue folders;
+          // Retry the baseline while the agent has not started writing.
+          // Once it has, a successful scan is too late to recover the base.
+          if (retrySnapshot && attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+            if (_disposed) return;
+            continue;
+          }
+          _snapshots.remove(folder);
+          continue folders;
+        }
       }
       if (snapshot == null) {
         _snapshots.remove(folder);

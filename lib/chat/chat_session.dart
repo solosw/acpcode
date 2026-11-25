@@ -1568,7 +1568,10 @@ class _ReviewWatch implements EditWatch, TurnWatch {
   Future<void> beforeTurn() async {
     final review = await _review();
     if (session._disposed) return;
-    await review?.begin(roots: session._reviewRoots);
+    await review?.begin(
+      roots: session._reviewRoots,
+      retrySnapshot: RemoteLocation.isRemote(session.kernelContext.cwd ?? ''),
+    );
   }
 
   @override

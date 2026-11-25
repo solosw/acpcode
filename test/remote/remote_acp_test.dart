@@ -1,13 +1,19 @@
 import 'dart:io';
 
-import 'package:baocode/kernel/acp/acp_kernel.dart';
+import 'package:bao_remote/src/review/git_review_store.dart'
+    show GitReviewStore;
+import 'package:baocode/chat/chat_session.dart';
+import 'package:baocode/chat/review/change_review.dart';
+import 'package:baocode/chat/review/review_store.dart' show ReviewUnavailable;
 import 'package:baocode/kernel/acp/acp_agent.dart';
+import 'package:baocode/kernel/acp/acp_kernel.dart';
 import 'package:baocode/kernel/acp/mock_acp_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/remote/remote_acp.dart';
 import 'package:baocode/remote/remote_location.dart';
+import 'package:baocode/remote/remote_services.dart';
 import 'package:baocode/remote/ssh_host.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +40,15 @@ void main() {
         'jsonrpc': '2.0',
         'id': id,
         'result': {'protocolVersion': 1},
+      }));
+    } else if (method == 'session/prompt') {
+      File('edited.txt').writeAsStringSync('after\n');
+      File('created.txt').writeAsStringSync('new\n');
+      File('deleted.txt').deleteSync();
+      stdout.writeln(jsonEncode({
+        'jsonrpc': '2.0',
+        'id': id,
+        'result': {'stopReason': 'end_turn'},
       }));
     } else if (method == 'session/new') {
       stdout.writeln(jsonEncode({
@@ -119,6 +134,113 @@ void main() {
       }
     }
   });
+
+  for (final failBaseline in [false, true]) {
+    test(
+      failBaseline
+          ? 'SSH process writes are tracked after a temporary baseline failure'
+          : 'SSH process writes appear in the conversation and can be undone',
+      () async {
+        final temp = Directory.systemTemp.createTempSync('baocode-acp-review-');
+        final data = Directory(p.join(temp.path, 'server'))..createSync();
+        final project = Directory(p.join(temp.path, 'project'))..createSync();
+        final root = project.resolveSymbolicLinksSync();
+        final agent = File(p.join(temp.path, 'agent.dart'))
+          ..writeAsStringSync(_agent);
+        File(p.join(root, 'edited.txt')).writeAsStringSync('before\n');
+        File(p.join(root, 'deleted.txt')).writeAsStringSync('deleted\n');
+        final previous = SshHosts.instance;
+        SshHosts.instance = SshHosts(connect: MemoryConnector(data.path).call);
+        late final AcpKernel kernel;
+        late final KernelDescriptor descriptor;
+        descriptor = KernelDescriptor(
+          id: 'remote-acp-review',
+          label: 'Remote ACP',
+          icon: Icons.hub,
+          description: 'test',
+          create: (context) => kernel = AcpKernel(
+            descriptor,
+            context,
+            (_) => RemoteAcpTransport.start(
+              SshHosts.instance['dev'],
+              dartExecutable,
+              arguments: [agent.path],
+              cwd: root,
+              login: false,
+            ),
+          ),
+        );
+        final session = ChatSession(
+          kernel: descriptor,
+          kernels: [descriptor],
+          kernelContext: KernelContext(cwd: RemoteLocation.of('dev', root)),
+          historyCount: 0,
+          // The default opener is disabled under flutter test; keep its remote store.
+          openReview: (_, {session}) async => ChangeReview(
+            (await remoteReviewStore(SshHosts.instance['dev']))!,
+            root: root,
+            ownsStore: true,
+          ),
+        );
+        final run = GitReviewStore.run;
+        try {
+          session.attach();
+          await until(
+            () =>
+                kernel.health.status == KernelHealthStatus.ready &&
+                session.changeReview != null,
+          );
+          final review = session.changeReview!;
+          // Flush the attach-time work so only the pre-prompt scan can fail.
+          await review.begin();
+          if (failBaseline) {
+            GitReviewStore.run =
+                (
+                  executable,
+                  arguments, {
+                  required workingDirectory,
+                  environment = const {},
+                  input,
+                  required timeout,
+                }) async {
+                  GitReviewStore.run = run;
+                  throw const ReviewUnavailable(
+                    'temporary snapshot failure',
+                    retryable: true,
+                  );
+                };
+          }
+          session.send(const ComposerMessage(text: 'edit the files'));
+          await until(() => File(p.join(root, 'created.txt')).existsSync());
+          await until(() => !session.isStreaming);
+          await review.observe();
+          expect(review.failure, isNull);
+          expect(
+            session.fileChanges.map((change) => p.basename(change.path)),
+            unorderedEquals(['edited.txt', 'created.txt', 'deleted.txt']),
+          );
+          await review.undoAll();
+          expect(
+            File(p.join(root, 'edited.txt')).readAsStringSync(),
+            'before\n',
+          );
+          expect(
+            File(p.join(root, 'deleted.txt')).readAsStringSync(),
+            'deleted\n',
+          );
+          expect(File(p.join(root, 'created.txt')).existsSync(), isFalse);
+          expect(session.fileChanges, isEmpty);
+        } finally {
+          GitReviewStore.run = run;
+          session.dispose();
+          await kernel.stopped;
+          await SshHosts.instance.closeAll();
+          SshHosts.instance = previous;
+          temp.deleteSync(recursive: true);
+        }
+      },
+    );
+  }
 
   test(
     'host-specific transport uses only its remote command and environment',
