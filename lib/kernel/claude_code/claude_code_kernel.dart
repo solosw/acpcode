@@ -18,10 +18,12 @@ import '../../models/model_runtime.dart';
 import '../../remote/port_forwards.dart';
 import '../../remote/remote_location.dart';
 import '../../settings/user_settings.dart';
+import '../../usage/agy_usage_meter.dart';
 import '../../usage/claude_usage_meter.dart';
 import '../../usage/usage_ledger.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
+import '../antigravity/agy_quota.dart';
 import '../commit_attribution.dart';
 import '../extension_switches.dart';
 import '../kernel_event.dart';
@@ -36,6 +38,8 @@ import 'claude_numbers.dart';
 import 'claude_sdk_tools.dart';
 import 'turn_stats.dart';
 import 'control_channel.dart';
+import 'forked_runs.dart';
+import 'scheduled_jobs.dart';
 import 'local_time_zone.dart';
 import 'tool_result_tally.dart';
 import 'usage_limit.dart';
@@ -137,12 +141,15 @@ class ClaudeCodeKernel
        _usageOffBy = usageOffBy ?? _usageOn,
        _providers = providers ?? ModelProviders.current,
        _providerEnvironment = providerEnvironment ?? providerLaunchEnvironment {
-    _translator = ClaudeTranslator(
-      emit: emit,
-      nextSeq: () => nextSeq,
-      goalSaid: _syncGoal,
-      ownModel: _ownModel,
-    );
+    _translator =
+        ClaudeTranslator(
+            emit: emit,
+            nextSeq: () => nextSeq,
+            goalSaid: _syncGoal,
+            ownModel: _ownModel,
+          )
+          ..onForkedCommand = _followForked
+          ..onForkedCommandEnded = _forkedEnded;
     _providers.addListener(_providersChanged);
     ExtensionSwitches.changes?.addListener(_applySwitches);
     _live.add(this);
@@ -283,6 +290,9 @@ class ClaudeCodeKernel
   /// CLI says it is idle.
   bool _releaseWanted = false;
 
+  /// What the session scheduled itself, which only a running process keeps.
+  final _scheduled = ScheduledJobs();
+
   String? _turn;
 
   /// When [_turn] began, to time it if the CLI does not.
@@ -324,6 +334,42 @@ class ClaudeCodeKernel
   /// its footer to show again when the session is opened later; none
   /// kept when null. This machine's sessions only.
   static TurnStats? turnStats;
+
+  /// Where a skill run from a slash command is read as it goes (main.dart
+  /// sets it); not read, shown once done, when null (see [ForkedRuns]).
+  static ForkedRuns? forkedRuns;
+
+  /// The runs read as they go, by their messages' parent.
+  final Map<String, ForkedRun> _followedRuns = {};
+
+  /// The environment the CLI last started with, besides the machine's:
+  /// where it keeps its sessions may be in it.
+  Map<String, String>? _launchEnv;
+
+  /// Reads the run [command] as it goes: this machine's sessions only.
+  void _followForked(String command) {
+    final runs = forkedRuns;
+    final session = _sessionId;
+    if (runs == null || session == null || _remoteHost != null) return;
+    _followedRuns.remove(command)?.cancel();
+    _followedRuns[command] = runs.watch(
+      cwd: _cwd,
+      sessionId: session,
+      env: _launchEnv,
+      onLine: (line) {
+        if (!_disposed) _translator.forkedLine(command, line);
+      },
+    );
+  }
+
+  void _forkedEnded(String command) => _followedRuns.remove(command)?.finish();
+
+  void _stopFollowing() {
+    for (final run in _followedRuns.values) {
+      run.cancel();
+    }
+    _followedRuns.clear();
+  }
 
   /// [turnStats] for this session's history: none for a remote one's.
   TurnStats? get _turnStats => _remoteHost == null ? turnStats : null;
@@ -491,9 +537,6 @@ class ClaudeCodeKernel
     final detail => detail,
   };
 
-  /// The models' own windows, by the model the CLI resolved them to, as
-  /// reported while they were in use.
-  static final Map<String, int> _modelWindows = {};
   double? _cost;
 
   /// The conversation's requests to the model, by their message's id, and
@@ -597,8 +640,12 @@ class ClaudeCodeKernel
       // Through the proxy, the effort goes with the model's name; to
       // Anthropic's API, as Claude Code's own, if it is one of its.
       final direct = custom == null || !custom.$1.protocolOf(custom.$2).proxied;
+      // Antigravity's: on its CLI, which needs no environment of ours.
+      final agy =
+          custom != null &&
+          custom.$1.protocolOf(custom.$2) == ProviderProtocol.agy;
       Map<String, String>? env;
-      if ((custom, model) case ((final provider, _), final model?)) {
+      if ((custom, model) case ((final provider, _), final model?) when !agy) {
         try {
           env = {
             // The window picked, as the model's own: else the CLI holds
@@ -618,8 +665,11 @@ class ClaudeCodeKernel
       _launchedModel = custom != null ? _model : null;
       _modelRefused = false;
       _launchedWindow = _autocompact;
+      // Counted again by the CLI it starts: until then, the window it has.
+      _contextReported = false;
       _appliedSwitches = ExtensionSwitches.current();
       final sdkServers = ClaudeSdkTools.serversFor(_cwd);
+      _launchEnv = env;
       final transport = await _start(
         _launched = ClaudeLaunch(
           cwd: _cwd,
@@ -629,7 +679,9 @@ class ClaudeCodeKernel
           // Plan is entered once started.
           permissionMode: _cliMode = _cliApproval,
           autoModeDuringPlan: _planReviewed = _reviewsPlan,
-          effort: direct && (custom == null || _cliEfforts.contains(effort))
+          effort:
+              agy ||
+                  (direct && (custom == null || _cliEfforts.contains(effort)))
               ? effort
               : null,
           thinking: custom != null && direct && effort == 'none' ? false : null,
@@ -640,6 +692,7 @@ class ClaudeCodeKernel
           // Antigravity's models on BaoCode's own core alone: the session's,
           // or those its roles pick (a subagent's).
           builtinCore: custom != null && _providers.builtinCoreOnly(custom.$1),
+          agy: agy,
           directories: [...?workspace?.folders, ...?workspace?.reaches],
           folderInstructions: workspace?.folders.isNotEmpty ?? false,
           // Long pastes are kept on this machine: only its agent reads them.
@@ -673,23 +726,33 @@ class ClaudeCodeKernel
       }
       _transport = transport;
       // Share the request merger; custom providers record their calls already.
-      _usage = custom == null
-          ? ClaudeUsageMeter(
-              record: (call, {trace}) =>
-                  UsageLedger.current.record(call, trace: trace),
-              tracing: () => UsageLedger.current.trace,
-              underway: (key, progress) => progress == null
-                  ? UsageLedger.current.end(key)
-                  : UsageLedger.current.begin(key, progress),
-              makeup: () => _shownDetail,
-              session: () => _sessionId,
-              providerName: 'Claude Code',
-              quota: () => _quota,
-            )
-          : ClaudeUsageMeter(
-              record: (call, {trace}) {},
-              session: () => _sessionId,
-            );
+      _usage = switch (custom) {
+        // The CLI's calls are not through the proxy: kept a turn each.
+        (final provider, _) when agy => AgyUsageMeter(
+          record: (call, {trace}) => UsageLedger.current.record(call),
+          session: () => _sessionId,
+          provider: provider.id,
+          providerName: provider.name,
+          effort: effort,
+        ),
+        null => ClaudeUsageMeter(
+          record: (call, {trace}) =>
+              UsageLedger.current.record(call, trace: trace),
+          tracing: () => UsageLedger.current.trace,
+          underway: (key, progress) => progress == null
+              ? UsageLedger.current.end(key)
+              : UsageLedger.current.begin(key, progress),
+          makeup: () => _shownDetail,
+          session: () => _sessionId,
+          providerName: 'Claude Code',
+          quota: () => _quota,
+        ),
+        // Its provider records its calls already, through the proxy.
+        _ => ClaudeUsageMeter(
+          record: (call, {trace}) {},
+          session: () => _sessionId,
+        ),
+      };
       final control = _control = ControlChannel(transport.write);
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
@@ -877,9 +940,12 @@ class ClaudeCodeKernel
 
   /// Frees the process now if idle, else once it has started or the CLI
   /// says it is idle (one that does not say keeps it until asked again).
+  ///
+  /// Not with jobs scheduled (CronCreate, ScheduleWakeup): they live in the
+  /// process, and would not come (#994).
   @override
   void release() {
-    if (_busy) {
+    if (_busy || _scheduled.pending) {
       _releaseWanted = true;
       return;
     }
@@ -934,6 +1000,7 @@ class ClaudeCodeKernel
     ExtensionSwitches.changes?.removeListener(_applySwitches);
     _live.remove(this);
     _cancelSdkCalls();
+    _stopFollowing();
     _teardown();
     closeEvents();
   }
@@ -1143,6 +1210,14 @@ class ClaudeCodeKernel
         tokensPerSecond: streamed.tokensPerSecond,
         costUsd: usage?.costUsd,
       );
+    } else if (usage != null && usage.tokensPerSecond == null) {
+      // Counted by the result alone: timed as it streamed all the same.
+      usage = TurnUsage(
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        tokensPerSecond: _translator.averageSpeed,
+        costUsd: usage.costUsd,
+      );
     }
     for (final MapEntry(key: id, value: permission) in _permissions.entries) {
       emit(InteractionResolved(nextSeq, id));
@@ -1151,6 +1226,8 @@ class ClaudeCodeKernel
       }
     }
     _permissions.clear();
+    // What the turn spent of Antigravity's limits.
+    if (_onAgy) unawaited(_agyQuota.refresh());
     // Stopped too: its work folds all the same (the session file tells it
     // was stopped).
     if (worked != null) {
@@ -1930,6 +2007,7 @@ class ClaudeCodeKernel
         when _results.add(message) && _resultsKnown) {
       _reportContext();
     }
+    if (message['type'] case 'assistant' || 'user') _scheduled.receive(message);
     switch (message['type']) {
       case ClaudeExit.type:
         _exited(
@@ -1982,6 +2060,7 @@ class ClaudeCodeKernel
         // prompt of its own (a background task's notice, a scheduled one).
         // It is at work all the same: shown, and stopped, as any turn.
         if (message['status'] == 'requesting' && _turn == null) {
+          _scheduled.woke();
           _beginTurn('${message['uuid'] ?? 'own:$nextSeq'}', unprompted: true);
         }
         _translator.translate(message);
@@ -2250,18 +2329,6 @@ class ClaudeCodeKernel
       _cost = cost.toDouble();
       turnCost = _cost! >= before ? _cost! - before : _cost;
       _reportStats();
-    }
-    // The models' own windows: the conversation's may be less (see
-    // _window), as get_context_usage reports next.
-    if (message['modelUsage'] case final Map<Object?, Object?> usage) {
-      for (final MapEntry(:key, :value) in usage.entries) {
-        if ((key, value) case (
-          final String model,
-          {'contextWindow': final int window},
-        )) {
-          _modelWindows[model] = window;
-        }
-      }
     }
     if (message['is_error'] == true && message['result'] is String) {
       final error = message['result'] as String;
@@ -2558,7 +2625,8 @@ class ClaudeCodeKernel
   }
 
   @override
-  List<RateLimitWindow> get accountLimits => _limits;
+  List<RateLimitWindow> get accountLimits =>
+      _onAgy ? AgyQuota.current.windows : _limits;
 
   // The account's usage, asked for (as `/usage` does): no more than once in
   // [_usageFresh], and one request at a time for all sessions.
@@ -2586,6 +2654,8 @@ class ClaudeCodeKernel
 
   @override
   Future<void> refreshUsage() {
+    // Antigravity's account, on its model: its own limits.
+    if (_onAgy) return _agyQuota.refresh();
     if (_usageFetchedAt case final at?
         when DateTime.now().difference(at) < _usageFresh) {
       return Future.value();
@@ -2691,14 +2761,17 @@ class ClaudeCodeKernel
     return true;
   }
 
+  /// Antigravity's limits, told to every session as they are read.
+  static final AgyQuota _agyQuota = AgyQuota.current..addListener(_reportAll);
+
   void _reportStats() => emit(
     StatsReported(
       nextSeq,
       UsageStats(
         costUsd: _cost,
-        limits: _limits,
-        limitsState: _limitsState,
-        limitsOffBy: _limitsOffBy,
+        limits: _onAgy ? _agyQuota.windows : _limits,
+        limitsState: _onAgy ? _agyQuota.state : _limitsState,
+        limitsOffBy: _onAgy ? null : _limitsOffBy,
         cache: switch (_requests[_lastRequest]) {
           final last? when _cachingModels.contains(_lastModel) => PromptCache(
             last: last,
@@ -2791,13 +2864,6 @@ class ClaudeCodeKernel
       final max = usage['maxTokens'] as int? ?? _contextWindow;
       _contextWindow = max;
       _contextReported = true;
-      // No more than the window it compacts at (the CLI reports that as
-      // raw too): the model holds at least that.
-      if ((usage['rawMaxTokens'], _reportedModel)
-          case (final int raw, final model?)
-          when raw > (_modelWindows[model] ?? 0)) {
-        _modelWindows[model] = raw;
-      }
       emitInfoChanged();
       _contextDetail = ContextDetail.parse(usage);
       _counted = (
@@ -3163,8 +3229,13 @@ class ClaudeCodeKernel
   ];
   List<KernelCommand>? _commandCache;
 
+  /// What the CLI counted, once it runs with the window now picked; before
+  /// that, the window it is to start with (200K when none is picked), so
+  /// the context reads the same before the first message as after it.
   @override
-  int get contextWindow => _contextWindow;
+  int get contextWindow => _contextReported && _launchedWindow == _autocompact
+      ? _contextWindow
+      : _autocompact ?? 200000;
 
   _ModelInfo? get _currentModel {
     final models = _catalog.models;
@@ -3291,6 +3362,20 @@ class ClaudeCodeKernel
 
   /// The provider and model of the user's [_model] picks, if it is one.
   (ModelProvider, ProviderModel)? get _custom => _providers.resolve(_model);
+
+  /// Whether the model picked is Antigravity's, run on its CLI.
+  bool get _onAgy => switch (_custom) {
+    (final provider, final info) =>
+      provider.protocolOf(info) == ProviderProtocol.agy,
+    null => false,
+  };
+
+  /// Whether Antigravity's models are offered here: on this machine's
+  /// projects, not over SSH; not to a bot, which works unwatched.
+  bool get _agyOffered =>
+      !RemoteLocation.isRemote(_cwd) &&
+      _workspace?.tools == null &&
+      !(_workspace?.approvesAll ?? false);
 
   /// What a session on [model] is started on: '' for Claude Code as the
   /// user set it up, else the provider and its setup.
@@ -3522,7 +3607,11 @@ class ClaudeCodeKernel
   @override
   late final KernelChoiceSource model = _Choice(
     options: () {
-      final providers = _providers.enabled;
+      final providers = [
+        for (final provider in _providers.enabled)
+          if (provider.protocol != ProviderProtocol.agy || _agyOffered)
+            provider,
+      ];
       return [
         // Shown unless turned off in Settings → Models; never on BaoCode's
         // own core, which runs on the upstreams alone.
@@ -3590,19 +3679,6 @@ class ClaudeCodeKernel
   /// The contexts offered, by option id.
   static const _windows = {'200k': 200000, '400k': 400000, _long: 1000000};
 
-  /// The most context [model] (a model as picked) holds: 1M with a 1M
-  /// variant, else as reported while in use; 1M while not known.
-  int _modelWindowOf(String model) {
-    final variants = _models[model] ?? const <_ModelInfo>[];
-    if (variants.any((v) => v.long)) return _windows[_long]!;
-    for (final variant in variants) {
-      if (_modelWindows[variant.resolved ?? variant.value] case final w?) {
-        return w;
-      }
-    }
-    return _windows[_long]!;
-  }
-
   /// The context the conversation fills before it is compacted: up to the
   /// model's own window. A model with a 1M variant uses it past 200K.
   @override
@@ -3621,13 +3697,12 @@ class ClaudeCodeKernel
         ];
       }
       if (parseModelRef(model) != null) return const [];
-      final most = _modelWindowOf(model);
-      final options = [
-        for (final MapEntry(key: id, value: tokens) in _windows.entries)
-          if (tokens <= most)
-            KernelOption(id, id.toUpperCase(), Icons.notes_rounded, ''),
+      // Claude Code's own: each holds 1M, its window as `--autocompact`
+      // has it (the window it reports is the one it was started with).
+      return [
+        for (final id in _windows.keys)
+          KernelOption(id, id.toUpperCase(), Icons.notes_rounded, ''),
       ];
-      return options.length > 1 ? options : const [];
     },
     selected: () {
       if (_custom case (_, final info)) return '${_windowFor(info)}';
@@ -3637,7 +3712,7 @@ class ClaudeCodeKernel
           ? _window
           : _contextReported
           ? _contextWindow
-          : null;
+          : _launchedWindow;
       return _windows.entries
           .where((entry) => entry.value == window)
           .firstOrNull
@@ -3773,7 +3848,7 @@ class ClaudeCodeKernel
 
   /// The CLI's permission mode for what is picked: the approvals, but in
   /// Plan.
-  String get _mode => _work == 'plan' ? 'plan' : _cliApproval;
+  String get _mode => _work == 'plan' && !_onAgy ? 'plan' : _cliApproval;
 
   /// The CLI's mode for the approvals picked. Full access is not the
   /// CLI's bypassPermissions, which it refuses as root and cannot switch
@@ -3851,7 +3926,11 @@ class ClaudeCodeKernel
 
   @override
   late final KernelChoiceSource mode = _Choice(
-    options: () => _works,
+    // No Plan on Antigravity's models yet.
+    options: () => [
+      for (final option in _works)
+        if (option.id != 'plan' || !_onAgy) option,
+    ],
     selected: () => _work,
     select: (id) {
       _work = id;

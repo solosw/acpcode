@@ -37,6 +37,7 @@ import '../../chat/widgets/hover_builder.dart';
 import '../../chat/widgets/pixel_loader.dart';
 import '../../workspace/workspace.dart';
 import '../../workspace/window_controls.dart';
+import 'agy_settings.dart';
 import 'codex_import_dialog.dart';
 import 'featured_upstreams_strip.dart';
 import 'model_dialogs.dart';
@@ -135,6 +136,7 @@ class ModelsSettingsPage extends StatefulWidget {
       ProviderProtocol.openaiResponses => 'OpenAI Responses',
       ProviderProtocol.codex => 'ChatGPT (Codex)',
       ProviderProtocol.antigravity => 'Antigravity',
+      ProviderProtocol.agy => 'Antigravity ACP',
     };
   }
 
@@ -475,6 +477,8 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
                         : _hostAndPort(provider)
                   else if (provider.protocol.usesAccounts)
                     l10n.modelsAccountCount(provider.accounts.length)
+                  else if (provider.protocol == ProviderProtocol.agy)
+                    'ACP'
                   else if (provider.host.isEmpty)
                     l10n.modelsProviderNoUrl
                   else
@@ -1091,6 +1095,22 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     await _providers.remove(_provider.id);
   }
 
+  /// Deletes this upstream, once confirmed. Shown in its advanced section,
+  /// or at its foot for Antigravity, which has none.
+  Widget _deleteRow(BuildContext context) {
+    final l10n = context.l10n;
+    return SettingsRow(
+      label: l10n.modelsDelete,
+      description: l10n.modelsDeleteDescription,
+      trailing: IdeButton(
+        label: l10n.modelsDelete,
+        icon: Codicons.trash,
+        secondary: true,
+        onPressed: () => unawaited(_delete()),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => MouseNavigation(
     // The mouse's back button: back to the models, as the arrow.
@@ -1118,6 +1138,30 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         Text(provider.name, style: SettingsText.title),
         const SizedBox(height: 16),
         _connection(context),
+        if (provider.protocol == ProviderProtocol.agy) ...[
+          const SizedBox(height: 16),
+          AgySettingsGroup(
+            key: ValueKey(provider.id),
+            onModels: (listed) {
+              final now = _providerNow;
+              unawaited(
+                _save(
+                  now.copyWith(
+                    models: mergeModelList(
+                      now.models,
+                      listed,
+                      // Listed first: all of them on.
+                      enable: now.models.isEmpty
+                          ? {for (final model in listed) model.id}
+                          : const {},
+                      follow: true,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
         if (provider.protocol.usesAccounts) ...[
           const SizedBox(height: 16),
           ListenableBuilder(
@@ -1127,21 +1171,27 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         ],
         const SizedBox(height: 16),
         _models(context),
-        const SizedBox(height: 16),
-        SettingsFolding(
-          title: l10n.modelsRoles,
-          description: l10n.modelsRolesDescription,
-          open: _rolesOpen,
-          onToggle: () => setState(() => _rolesOpen = !_rolesOpen),
-          children: _roles(context),
-        ),
-        const SizedBox(height: 16),
-        SettingsFolding(
-          title: l10n.modelsAdvanced,
-          open: _advancedOpen,
-          onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
-          children: _advanced(context),
-        ),
+        // Antigravity's models are its CLI's alone: no roles to give them.
+        if (provider.protocol != ProviderProtocol.agy) ...[
+          const SizedBox(height: 16),
+          SettingsFolding(
+            title: l10n.modelsRoles,
+            description: l10n.modelsRolesDescription,
+            open: _rolesOpen,
+            onToggle: () => setState(() => _rolesOpen = !_rolesOpen),
+            children: _roles(context),
+          ),
+          const SizedBox(height: 16),
+          SettingsFolding(
+            title: l10n.modelsAdvanced,
+            open: _advancedOpen,
+            onToggle: () => setState(() => _advancedOpen = !_advancedOpen),
+            children: _advanced(context),
+          ),
+        ] else ...[
+          const SizedBox(height: 16),
+          _deleteRow(context),
+        ],
       ],
     );
   }
@@ -1154,7 +1204,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
       switch (protocol) {
         case ProviderProtocol.codex:
           provider = provider.copyWith(name: 'ChatGPT');
-        case ProviderProtocol.antigravity:
+        case ProviderProtocol.antigravity || ProviderProtocol.agy:
           provider = provider.copyWith(name: 'Antigravity');
         default:
           break;
@@ -1487,7 +1537,9 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
     return [
       SettingsRow(
         label: l10n.modelsProtocol,
-        description: l10n.modelsProtocolDescription,
+        description: provider.protocol == ProviderProtocol.agy
+            ? l10n.agyProtocolDescription
+            : l10n.modelsProtocolDescription,
         trailing: SettingsDropdown(
           current: protocol,
           semanticLabel: l10n.modelsChoiceLabel(l10n.modelsProtocol, protocol),
@@ -1495,13 +1547,15 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
             for (final value in ProviderProtocol.values)
               IdeMenuAction(
                 ModelsSettingsPage.protocolName(context, value),
+                enabled: value.selectable || value == provider.protocol,
                 checked: value == provider.protocol,
                 onSelected: () => unawaited(_setProtocol(value)),
               ),
           ],
         ),
       ),
-      if (!provider.protocol.usesAccounts) ...[
+      if (!provider.protocol.usesAccounts &&
+          provider.protocol != ProviderProtocol.agy) ...[
         SettingsRow(
           label: l10n.modelsBaseUrl,
           description: provider.protocol.proxied
@@ -1553,30 +1607,31 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
         ),
         ..._customUrls(context),
       ],
-      SettingsRow(
-        label: l10n.modelsTest,
-        below: [
-          if (_testing)
-            Text(l10n.modelsTesting, style: SettingsText.description)
-          else if (_testResult case final result?)
-            SelectableText(
-              result,
-              style: SettingsText.description.copyWith(
-                color: _testFailed
-                    ? themeColors['errorForeground']
-                    : AppColors.added,
-              ),
-            ),
-        ],
-        trailing: IdeButton(
+      if (provider.protocol != ProviderProtocol.agy)
+        SettingsRow(
           label: l10n.modelsTest,
-          icon: Codicons.plug,
-          secondary: true,
-          onPressed: _testing || !provider.connected
-              ? null
-              : () => unawaited(_test()),
+          below: [
+            if (_testing)
+              Text(l10n.modelsTesting, style: SettingsText.description)
+            else if (_testResult case final result?)
+              SelectableText(
+                result,
+                style: SettingsText.description.copyWith(
+                  color: _testFailed
+                      ? themeColors['errorForeground']
+                      : AppColors.added,
+                ),
+              ),
+          ],
+          trailing: IdeButton(
+            label: l10n.modelsTest,
+            icon: Codicons.plug,
+            secondary: true,
+            onPressed: _testing || !provider.connected
+                ? null
+                : () => unawaited(_test()),
+          ),
         ),
-      ),
     ];
   }
 
@@ -2011,16 +2066,7 @@ class _ProviderSettingsPageState extends State<ProviderSettingsPage> {
             onPressed: () => unawaited(_duplicate()),
           ),
         ),
-      SettingsRow(
-        label: l10n.modelsDelete,
-        description: l10n.modelsDeleteDescription,
-        trailing: IdeButton(
-          label: l10n.modelsDelete,
-          icon: Codicons.trash,
-          secondary: true,
-          onPressed: () => unawaited(_delete()),
-        ),
-      ),
+      _deleteRow(context),
     ];
   }
 }
@@ -2222,6 +2268,14 @@ class _ModelRow extends StatelessWidget {
                             !model.kind.generatesImages,
                         onSelected: onTest,
                       ),
+                      // To ask about it, or to take a new address from it.
+                      if (test?.error case final error?)
+                        IdeMenuAction(
+                          l10n.modelsCopyTestError,
+                          onSelected: () => unawaited(
+                            Clipboard.setData(ClipboardData(text: error)),
+                          ),
+                        ),
                     ],
                   ),
                 );
@@ -2246,7 +2300,7 @@ class _ModelTest {
 }
 
 /// How soon a model's first text came and how fast the rest, or that it
-/// failed; the reply, or the error, on hover.
+/// failed; the reply, or the error, on hover (a click copies the error).
 class _ModelTestResult extends StatelessWidget {
   const _ModelTestResult(this.test);
 
@@ -2262,9 +2316,16 @@ class _ModelTestResult extends StatelessWidget {
     if (test.error case final error?) {
       return IdeHover(
         message: error,
-        child: Text(
-          l10n.modelsTestModelFailed,
-          style: SettingsText.description,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: () =>
+                unawaited(Clipboard.setData(ClipboardData(text: error))),
+            child: Text(
+              l10n.modelsTestModelFailed,
+              style: SettingsText.description,
+            ),
+          ),
         ),
       );
     }

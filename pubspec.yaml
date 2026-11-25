@@ -33,6 +33,7 @@ workspace:
   - packages/bao_pty
   - packages/bao_remote
   - packages/bao_sampler
+  - packages/bao_websearch
   - packages/bao_xterm
 
 # Dependencies specify other packages that your package needs in order to work.
@@ -54,6 +55,8 @@ dependencies:
     path: packages/bao_remote
   bao_sampler:
     path: packages/bao_sampler
+  bao_websearch:
+    path: packages/bao_websearch
   bao_xterm:
     path: packages/bao_xterm
   # The names project icons are kept under (lib/icons/icon_library.dart).
@@ -61,6 +64,9 @@ dependencies:
   clock: ^1.1.2
   crypto: ^3.0.6
   csslib: ^1.0.2
+  # The Windows Credential Manager, where agy keeps its sign-in
+  # (lib/kernel/antigravity/agy_quota_io.dart).
+  ffi: ^2.1.0
   flutter:
     sdk: flutter
   flutter_localizations:
@@ -126,6 +132,9 @@ flutter:
     # Models' and their makers' logos, in one color (lib/icons/brand_logos.dart;
     # each says where it is from).
     - assets/model_icons/
+    # Antigravity's own logo, in its colors (antigravity.google's
+    # assets/image/antigravity-logo.png; lib/models/model_icons.dart).
+    - assets/provider_logos/
     # The app's icon (macos/Runner/Assets.xcassets' 128 px one), for About.
     - assets/branding/
     # Built-in keymaps: VS Code keymap extensions' keybindings (lib/keybindings/keymap.dart).

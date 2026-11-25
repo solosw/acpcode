@@ -147,6 +147,16 @@ class ClaudeTranslator {
   /// own (`context: fork`), by the id its messages give as their parent
   /// (`forked-command-<name>`): no call started it (see [_forkedSkill]).
   final Map<String, String> _forkedCommands = {};
+
+  /// Told of a skill run from a slash command as it starts, and as it ends,
+  /// by its messages' parent (`forked-command-<name>`): its messages may be
+  /// read as it goes ([forkedLine]), the CLI sending them only once done.
+  void Function(String command)? onForkedCommand;
+  void Function(String command)? onForkedCommandEnded;
+
+  /// Those whose messages came as they went ([forkedLine]): the same, sent
+  /// all at once at the end, are not shown again.
+  final Set<String> _followed = {};
   final Set<String> _denied = {};
 
   /// Calls made and not answered yet: those of a stopped turn never are.
@@ -364,6 +374,10 @@ class ClaudeTranslator {
 
   void translate(Map<String, Object?> message) {
     final given = message['parent_tool_use_id'] as String?;
+    if (_followed.contains(given) &&
+        (message['type'] == 'assistant' || message['type'] == 'user')) {
+      return;
+    }
     final parent = _forkedCommands[given] ?? given;
     switch (message['type']) {
       case 'stream_event' when parent == null:
@@ -758,6 +772,10 @@ class ClaudeTranslator {
           outputTokens: _turnOutput,
           tokensPerSecond: _meter.averageSpeed,
         );
+
+  /// How fast the turn wrote, on average, as streamed: for a turn whose
+  /// messages told no usage (Antigravity's), whose result alone counts it.
+  double? get averageSpeed => _meter.averageSpeed;
 
   void _completeThought(String id, String? whole) {
     final streamed = _thoughts.remove(id)?.toString() ?? '';
@@ -1297,8 +1315,10 @@ class ClaudeTranslator {
         target: _string(input['skill']) ?? _string(input['command']) ?? '',
         status: status,
       ),
+      // Loads tools' definitions, MCP tools' mostly: drawn with their mark.
       'ToolSearch' => ToolCallItem(
         kind: ToolKind.search,
+        tool: name,
         label: tense('Looked up tools', 'Looking up tools'),
         target: _string(input['query']) ?? '',
         status: status,
@@ -1587,7 +1607,11 @@ class ClaudeTranslator {
       _toolItem(
         tool,
         outcome,
-        output: outcome == _Outcome.done ? _short(text) : _tail(text),
+        output: outcome != _Outcome.done
+            ? _tail(text)
+            : tool.name == 'WebSearch'
+            ? _searchOutput(text)
+            : _short(text),
         images: _resultImages(block['content']),
         imageFiles: _savedImages(block['content']),
       ),
@@ -2076,7 +2100,9 @@ class ClaudeTranslator {
     if (call == null) {
       if (description == null || !description.startsWith('/')) return null;
       id = taskId;
-      _forkedCommands['forked-command-${description.substring(1)}'] = id;
+      final command = 'forked-command-${description.substring(1)}';
+      _forkedCommands[command] = id;
+      if (!replaying) onForkedCommand?.call(command);
     } else if (skill?.name == 'Skill') {
       id = call;
     } else {
@@ -2093,6 +2119,21 @@ class ClaudeTranslator {
     );
     _putAgent(id);
     return id;
+  }
+
+  /// A line the subagent of the skill run from a slash command [command]
+  /// wrote, as it went (see [onForkedCommand]): into its card.
+  void forkedLine(String command, Map<String, Object?> line) {
+    final card = _forkedCommands[command];
+    if (card == null) return;
+    switch (line['type']) {
+      case 'assistant':
+        _followed.add(command);
+        _assistant(line, card);
+      case 'user':
+        _followed.add(command);
+        _user(line, card);
+    }
   }
 
   /// The subagent [toolUseId] started, if one did, now runs on its own.
@@ -2130,6 +2171,9 @@ class ClaudeTranslator {
     String? outputFile,
     Map<String, Object?> usage = const {},
   }) {
+    for (final MapEntry(key: command, value: card) in _forkedCommands.entries) {
+      if (card == taskId) onForkedCommandEnded?.call(command);
+    }
     if (_tasks[taskId] case final task?) {
       _tasks[taskId] = task.copyWith(
         status: status,
@@ -2398,6 +2442,20 @@ class ClaudeTranslator {
   static String? _short(String text) {
     if (text.isEmpty) return null;
     return text.length > 2000 ? '${text.substring(0, 2000)}…' : text;
+  }
+
+  /// A web search's output shortened as [_short], but its `Links: [...]`
+  /// line kept whole however long: the sites' icons are read from it, and
+  /// fifteen results with redirect URLs run past 2000 characters.
+  static String? _searchOutput(String text) {
+    if (text.isEmpty) return null;
+    if (text.length <= 2000) return text;
+    final lines = text.split('\n');
+    final at = lines.indexWhere((line) => line.startsWith('Links:'));
+    if (at < 0) return _short(text);
+    final links = lines[at];
+    final rest = _short([...lines.take(at), ...lines.skip(at + 1)].join('\n'));
+    return rest == null ? links : '$rest\n$links';
   }
 
   /// The end of a long output, where errors are.

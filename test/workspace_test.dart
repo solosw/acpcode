@@ -25,6 +25,8 @@ import 'package:baocode/workspace/editor_launcher.dart';
 import 'package:baocode/workspace/preference_store.dart';
 import 'package:baocode/workspace/workspace.dart';
 
+import 'kernel_test.dart' show FakeCli;
+
 /// Sessions as Claude Code keeps them: one recorded, in one project, and
 /// any [started] since (e.g. in a terminal).
 class _CountingPreferenceStore extends MemoryPreferenceStore {
@@ -397,6 +399,59 @@ void main() {
     expect((await drafts.read()).keys, {'new:/tmp/project'});
   });
 
+  testWidgets('messages queued as the app quits are back in the composer '
+      'the next run, after what was typed', (tester) async {
+    final drafts = MemoryPreferenceStore();
+    // A CLI that keeps at its turn: the messages after it wait.
+    final cli = FakeCli();
+    late final KernelDescriptor busy;
+    busy = KernelDescriptor(
+      id: 'claude-code',
+      label: 'Claude Code',
+      icon: Icons.auto_awesome_rounded,
+      description: '',
+      catalog: FakeCatalog(),
+      create: (context) => ClaudeCodeKernel(
+        busy,
+        context,
+        start: (_) async => cli,
+        readHistory: _readHistory,
+      ),
+    );
+    var workspace = await pumpLoaded(tester, drafts: drafts, kernel: busy);
+    AgentThread keptThread() => workspace.threads.firstWhere(
+      (thread) => thread.id == FakeCatalog.kept.id,
+    );
+    workspace.select(keptThread());
+    await tester.pump();
+    final session = keptThread().session;
+    session.send(const ComposerMessage(text: 'Fix the build'));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(session.isStreaming, isTrue);
+    session
+      ..send(const ComposerMessage(text: 'and lint'))
+      ..send(const ComposerMessage(text: 'then commit'));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(
+      [for (final (_, item) in session.queued) item.text],
+      ['and lint', 'then commit'],
+    );
+    session.draft.save(
+      'Half typed',
+      const TextSelection.collapsed(offset: 4),
+      const [],
+    );
+
+    await tester.runAsync(workspace.keepQueued);
+    await tester.pumpWidget(const SizedBox());
+    workspace = await pumpLoaded(tester, drafts: drafts);
+    expect(
+      keptThread().session.draft.content,
+      'Half typed\n\nand lint\n\nthen commit',
+    );
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('a draft kept by a version before, as the old editor\'s '
       'operations, comes back as text, its tags tags', (tester) async {
     final tag = ComposerTokenEmbed.file('/tmp/project/lib/main.dart');
@@ -725,10 +780,7 @@ void main() {
       isNot(contains(modelSettingKey(KernelChoiceKind.context, '@gw/m'))),
     );
     expect(settings[modelSettingKey(KernelChoiceKind.context, 'opus')], '1m');
-    expect(
-      settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')],
-      'high',
-    );
+    expect(settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')], 'high');
 
     // Once: one picked since stays.
     (store.preferences['settings'] as Map)[modelSettingKey(
@@ -1207,8 +1259,8 @@ void main() {
         await tester.pumpWidget(const SizedBox());
         workspace = await pumpLoaded(tester, preferences: store);
         expect(workspace.grid.panes, hasLength(2));
-        expect(workspace.grid.at(0)?.id, isNull);
-        expect(workspace.grid.at(2)?.id, FakeCatalog.kept.id);
+        expect(workspace.grid.panes.first.id, isNull);
+        expect(workspace.grid.panes.last.id, FakeCatalog.kept.id);
         expect(workspace.grid.rowsSplit, isTrue);
         expect(workspace.grid.columnsSplit, isFalse);
         expect(workspace.current?.id, FakeCatalog.kept.id);
@@ -1224,7 +1276,7 @@ void main() {
         (thread) => thread.record?.id == FakeCatalog.kept.id,
       );
       workspace.openBeside(kept, draft, PaneSide.right);
-      workspace.grid.setColumnRatioIn(0, .3);
+      workspace.grid.setRatio((group: null, index: 0), .3);
       workspace.keepGridLines();
 
       // The next run.
@@ -1236,10 +1288,10 @@ void main() {
       expect(panes.first.id, isNull);
       expect(panes.first.project.path, '/tmp/project');
       expect(panes.last.record?.id, FakeCatalog.kept.id);
-      expect(workspace.grid.at(0), same(panes.first));
-      expect(workspace.grid.at(1), same(panes.last));
+      expect(workspace.grid.topLeft, same(panes.first));
+      expect(workspace.grid.topRight, same(panes.last));
       expect(workspace.selected, same(panes.last));
-      expect(workspace.grid.columnRatios, [.3, .3]);
+      expect(workspace.grid.ratioOf((group: null, index: 0)), .3);
     });
 
     testWidgets("each pane's tabs, and the one shown, survive a restart", (
@@ -1267,19 +1319,19 @@ void main() {
         ..openInPlaceOf(byId('tab-a'), byId('tab-b'))
         ..raiseCovered(byId('tab-b'), byId('tab-a'));
       List<String?> tabs() => [
-        for (final tab in workspace.grid.tabs(workspace.grid.at(1)!)) tab.id,
+        for (final tab in workspace.grid.tabs(workspace.grid.topRight!)) tab.id,
       ];
       expect(tabs(), [FakeCatalog.kept.id, 'tab-a', 'tab-b']);
-      expect(workspace.grid.at(1)?.id, 'tab-a');
+      expect(workspace.grid.topRight?.id, 'tab-a');
 
       await tester.pumpWidget(const SizedBox());
       workspace = await pumpLoaded(tester, preferences: store);
       expect(workspace.grid.panes, hasLength(2));
       expect(tabs(), [FakeCatalog.kept.id, 'tab-a', 'tab-b']);
-      expect(workspace.grid.at(1)?.id, 'tab-a');
-      expect(workspace.grid.tabs(workspace.grid.at(0)!), hasLength(1));
+      expect(workspace.grid.topRight?.id, 'tab-a');
+      expect(workspace.grid.tabs(workspace.grid.topLeft!), hasLength(1));
       // The one covered last shows when the shown one closes.
-      expect(workspace.grid.uncover(workspace.grid.at(1)!)?.id, 'tab-b');
+      expect(workspace.grid.uncover(workspace.grid.topRight!)?.id, 'tab-b');
     });
 
     testWidgets("an agent that is no more leaves its pane to the others", (
@@ -1295,7 +1347,9 @@ void main() {
       });
       final workspace = await pumpLoaded(tester, preferences: store);
       expect(workspace.grid.panes.single.record?.id, FakeCatalog.kept.id);
-      expect(workspace.grid.at(3), same(workspace.grid.panes.single));
+      expect(workspace.grid.groups, [
+        [workspace.grid.panes.single],
+      ]);
       expect(workspace.selected, same(workspace.grid.panes.single));
     });
   });

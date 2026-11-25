@@ -31,12 +31,20 @@ ProjectIcon? providerIconOf(ModelProvider provider) =>
     };
 
 /// The site [provider] is of, whose icon it shows without another:
-/// ChatGPT's for Codex, Antigravity's for it, else its base URL's.
+/// ChatGPT's for Codex, Antigravity's for it (the legacy one and the ACP
+/// one alike), else its base URL's.
 Uri? providerSite(ModelProvider provider) => switch (provider.protocol) {
   ProviderProtocol.codex => Uri.https('chatgpt.com'),
-  ProviderProtocol.antigravity => Uri.https('antigravity.google'),
+  ProviderProtocol.antigravity ||
+  ProviderProtocol.agy => Uri.https('antigravity.google'),
   _ => UpstreamUrls.parse(provider.baseUrl),
 };
+
+/// The logo bundled for [site], in its colors, if there is one: Antigravity's
+/// (the ACP and the legacy upstream alike). Null otherwise.
+String? bundledSiteLogo(Uri? site) => site?.host == 'antigravity.google'
+    ? 'assets/provider_logos/antigravity.png'
+    : null;
 
 /// Fetches, in the background, the icons of [providers]' sites that show
 /// no other: now, and as one is added or its base URL changes, so that
@@ -104,6 +112,10 @@ class ProviderIconView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => switch (icon) {
+    // Its own maker's logo, unless an icon is picked for it.
+    null when bundledSiteLogo(site) != null => _spilling(
+      Image.asset(bundledSiteLogo(site)!, width: size + 2, height: size + 2),
+    ),
     null => ListenableBuilder(
       listenable: Listenable.merge([SiteIcons.current, FeaturedUpstream.known]),
       builder: (context, _) {

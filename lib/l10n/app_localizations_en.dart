@@ -3237,6 +3237,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get turnFork => 'Fork from here';
 
   @override
+  String get turnRetry => 'Run this turn again';
+
+  @override
   String get turnCopied => 'Copied';
 
   @override
@@ -7718,6 +7721,65 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get agyCli => 'Antigravity ACP';
+
+  @override
+  String get agyProtocolDescription =>
+      'BaoCode drives the Antigravity CLI on this machine over ACP, the Agent Client Protocol: not through the local proxy.';
+
+  @override
+  String get agyCliDescription =>
+      'Google\'s own Antigravity CLI, which BaoCode installs and keeps up to date. BaoCode talks to it only over its official ACP, entirely within Google\'s ACP policy: no risk of an account ban.';
+
+  @override
+  String agyVersion(String version) {
+    return 'Version $version';
+  }
+
+  @override
+  String get agyNotInstalled => 'Not installed';
+
+  @override
+  String agyUpdateAvailable(String version) {
+    return 'Version $version is out';
+  }
+
+  @override
+  String get agyInstall => 'Install';
+
+  @override
+  String get agyUpdate => 'Update';
+
+  @override
+  String agyInstalling(int percent) {
+    return 'Installing… $percent%';
+  }
+
+  @override
+  String get agyAccount => 'Google Account';
+
+  @override
+  String get agyAccountDescription =>
+      'Signing in opens the browser. The sign-in is the terminal\'s agy\'s too: signing out signs it out as well.';
+
+  @override
+  String get agySignIn => 'Sign In';
+
+  @override
+  String get agySignOut => 'Sign Out';
+
+  @override
+  String get agySigningIn => 'Waiting for the browser…';
+
+  @override
+  String agySignedIn(int count) {
+    return 'Signed in: $count models';
+  }
+
+  @override
+  String get agyNotSignedIn => 'Not signed in';
+
+  @override
   String get modelsTest => 'Test Connection';
 
   @override
@@ -7808,6 +7870,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsTestModelFailed => 'Failed';
+
+  @override
+  String get modelsCopyTestError => 'Copy Error';
 
   @override
   String modelsTestFirstText(String seconds) {

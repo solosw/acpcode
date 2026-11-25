@@ -17,6 +17,7 @@ import '../../ide/git/ide_git_log_view.dart'
     show IdeGitLogView, IdeGitWorktreeChoice;
 import '../../ide/git/ide_git_commit_panel.dart';
 import '../../ide/git/scm_host.dart';
+import '../../ide/ide_button.dart';
 import '../../ide/ide_dialog.dart';
 import '../../ide/ide_explorer.dart';
 import '../../ide/ide_agent_edits.dart' show IdeAgentEdit;
@@ -815,23 +816,31 @@ class AgentSidePanelView extends StatelessWidget {
                   ],
                 ),
                 Expanded(
-                  child: IdeExplorer(
-                    key: ObjectKey(explorer),
-                    background: AppColors.code,
-                    controller: explorer,
-                    local: local,
-                    git: git,
-                    repositories: [for (final (_, git) in repositories) git],
-                    onAddFolder: _isWorkspace ? onAddFolder : null,
-                    onRemoveFolder: _isWorkspace ? onRemoveFolder : null,
-                    trash: local && WindowControls.canMoveToTrash
-                        ? WindowControls.moveToTrash
-                        : null,
-                    onOpen: (path, _) =>
-                        panel.open(session, FileOpenRequest(path)),
-                    // A paste, rename or delete that failed.
-                    onError: (error) => _showFileError(context, error),
-                  ),
+                  child: _isWorkspace && roots.isEmpty
+                      ? _EmptyWorkspace(onAddFolder: onAddFolder)
+                      : IdeExplorer(
+                          key: ObjectKey(explorer),
+                          background: AppColors.code,
+                          controller: explorer,
+                          local: local,
+                          // The rows' colors and letters, as the IDE's.
+                          git: git,
+                          repositories: [
+                            for (final (_, git) in repositories) git,
+                          ],
+                          onAddFolder: _isWorkspace ? onAddFolder : null,
+                          onRemoveFolder: _isWorkspace ? onRemoveFolder : null,
+                          trash: local && WindowControls.canMoveToTrash
+                              ? WindowControls.moveToTrash
+                              : null,
+                          onOpen: (path, _) =>
+                              panel.open(session, FileOpenRequest(path)),
+                          // A paste, rename or delete that failed.
+                          onError: (error) => _showFileError(context, error),
+                          onOpenInTerminal: terminals == null
+                              ? null
+                              : _openInTerminal,
+                        ),
                 ),
               ],
             ),
@@ -1088,6 +1097,17 @@ class AgentSidePanelView extends StatelessWidget {
       skipShell: terminalSkipShell,
       onOpenLink: onOpenTerminalLink,
     );
+  }
+
+  /// Open in Terminal, from the files' menu: a terminal started in
+  /// [folder], on the terminal page beside it, focused (as the IDE's
+  /// explorer opens one in its panel).
+  void _openInTerminal(String folder) {
+    final shell = terminals?.create(cwd: folder, activate: false);
+    if (shell == null) return;
+    (terminalHosts ?? _pageHosts).claim(shell, session);
+    panel.openTerminal(session, shell);
+    WidgetsBinding.instance.addPostFrameCallback((_) => shell.focus());
   }
 
   /// The plan the agent wrote, on its own: no list, its tab over it.
@@ -2230,6 +2250,43 @@ class _Tab extends StatelessWidget {
         ),
         null => null,
       },
+    );
+  }
+}
+
+/// The files page of a workspace with no folders yet: a button to add
+/// one.
+class _EmptyWorkspace extends StatelessWidget {
+  const _EmptyWorkspace({this.onAddFolder});
+
+  final VoidCallback? onAddFolder;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l10n.ideEmptyWorkspace,
+            style: TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              color: AppColors.textMuted,
+            ),
+          ),
+          if (onAddFolder case final add?) ...[
+            const SizedBox(height: 12),
+            IdeButton(
+              label: l10n.ideAddFolderToWorkspace,
+              expand: true,
+              onPressed: add,
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -1764,6 +1764,7 @@
     "description": "Hint of the button at the end of a finished turn that copies its answer."
   },
   "turnFork": "Fork from here",
+  "turnRetry": "Run this turn again",
   "@turnFork": {
     "description": "Hint of the button at the end of a finished turn that copies the conversation up to there into a new one."
   },
@@ -5285,6 +5286,26 @@
       }
     }
   },
+  "agyCli": "Antigravity ACP",
+  "agyProtocolDescription": "BaoCode drives the Antigravity CLI on this machine over ACP, the Agent Client Protocol: not through the local proxy.",
+  "agyCliDescription": "Google's own Antigravity CLI, which BaoCode installs and keeps up to date. BaoCode talks to it only over its official ACP, entirely within Google's ACP policy: no risk of an account ban.",
+  "agyVersion": "Version {version}",
+  "@agyVersion": {"placeholders": {"version": {"type": "String"}}},
+  "agyNotInstalled": "Not installed",
+  "agyUpdateAvailable": "Version {version} is out",
+  "@agyUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
+  "agyInstall": "Install",
+  "agyUpdate": "Update",
+  "agyInstalling": "Installing… {percent}%",
+  "@agyInstalling": {"placeholders": {"percent": {"type": "int"}}},
+  "agyAccount": "Google Account",
+  "agyAccountDescription": "Signing in opens the browser. The sign-in is the terminal's agy's too: signing out signs it out as well.",
+  "agySignIn": "Sign In",
+  "agySignOut": "Sign Out",
+  "agySigningIn": "Waiting for the browser…",
+  "agySignedIn": "Signed in: {count} models",
+  "@agySignedIn": {"placeholders": {"count": {"type": "int"}}},
+  "agyNotSignedIn": "Not signed in",
   "modelsTest": "Test Connection",
   "modelsTesting": "Connecting…",
   "modelsTestOk": "Connected: the upstream lists {count} models.",
@@ -5346,6 +5367,7 @@
   "modelsTestModel": "Test",
   "modelsTestModels": "Test All",
   "modelsTestModelFailed": "Failed",
+  "modelsCopyTestError": "Copy Error",
   "modelsTestFirstText": "First token {seconds}s",
   "@modelsTestFirstText": {
     "placeholders": {

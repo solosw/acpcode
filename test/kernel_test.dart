@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:baocode/chat/widgets/web_step_icons.dart';
+
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -656,6 +659,61 @@ void main() {
       expect(toolVerb(ToolKind.message), 'Said');
     });
 
+    test("a web search's long result keeps its Links line whole", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      // Fifteen results with long redirect URLs: the list alone runs past
+      // the 2000 characters an output is cut to.
+      final links = jsonEncode([
+        for (var i = 0; i < 15; i++)
+          {
+            'title': 'Result $i',
+            'url': 'https://site$i.example/go/${'x' * 180}',
+          },
+      ]);
+      final result =
+          'Web search results for query: "q"\n\nLinks: $links\n\n'
+          '${'Summary line.\n' * 200}';
+      translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-w1',
+            'role': 'assistant',
+            'content': [
+              {
+                'type': 'tool_use',
+                'id': 'w1',
+                'name': 'WebSearch',
+                'input': {'query': 'q'},
+              },
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': 'w1', 'content': result},
+            ],
+          },
+        });
+      final item = [
+        for (var i = 0; i < transcript.length; i++) transcript.itemAt(i),
+      ].whereType<ToolCallItem>().single;
+      expect(item.output, contains('Links: $links'));
+      expect(item.output, endsWith(links));
+      expect(item.output!.length, lessThan(result.length));
+      expect(webSearchResultSites(item.output), hasLength(15));
+    });
+
     test('todos written read as a step: the list its text', () {
       final transcript = Transcript();
       var seq = 0;
@@ -1049,6 +1107,55 @@ void main() {
         ]);
         expect(card(transcript).status, CommandStatus.succeeded);
         expect(card(transcript).children, hasLength(2));
+      });
+
+      test('run from a slash command, read as it goes: its lines in its '
+          'card while it works, not shown again once done (#1131)', () {
+        final transcript = Transcript();
+        var seq = 0;
+        final told = <String>[];
+        final translator =
+            ClaudeTranslator(emit: transcript.apply, nextSeq: () => ++seq)
+              ..turnId = '11111111-1111-4111-8111-111111111111'
+              ..onForkedCommand = ((command) => told.add('start $command'))
+              ..onForkedCommandEnded = ((command) => told.add('end $command'));
+        translator.translate(started('a4'));
+        expect(told, ['start forked-command-count-lines']);
+
+        // As the subagent's transcript has them: no parent of the CLI's.
+        Map<String, Object?> line(String uuid, String text) => {
+          'type': 'assistant',
+          'uuid': uuid,
+          'isSidechain': true,
+          'message': {
+            'id': 'msg-$uuid',
+            'role': 'assistant',
+            'content': [
+              {'type': 'text', 'text': text},
+            ],
+          },
+        };
+        translator.forkedLine(
+          'forked-command-count-lines',
+          line('u1', 'Counting'),
+        );
+        expect(card(transcript).status, CommandStatus.running);
+        expect(card(transcript).children, hasLength(1));
+        translator.forkedLine('forked-command-count-lines', line('u2', '7'));
+        expect(card(transcript).children, hasLength(2));
+
+        translator.translate(ended('a4'));
+        expect(told.last, 'end forked-command-count-lines');
+        translator
+          ..translate(said('forked-command-count-lines', 'Counting'))
+          ..translate(said('forked-command-count-lines', '7'))
+          ..translate(said(null, 'a.py has 7 lines.'));
+        expect(card(transcript).status, CommandStatus.succeeded);
+        expect(card(transcript).children, hasLength(2));
+        expect(shown(transcript), [
+          'agent: /count-lines',
+          'text: a.py has 7 lines.',
+        ]);
       });
 
       test(
@@ -2251,6 +2358,52 @@ void main() {
         for (final (_, item) in transcript.liveItems)
           if (item is NoticeItem && item.kind == NoticeKind.error) item,
       ], isEmpty);
+      kernel.dispose();
+    });
+
+    test('a turn its result alone counts (Antigravity\'s) keeps the speed '
+        'it streamed at', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      Future<void> stream(Map<String, Object?> event) async {
+        cli.push({'type': 'stream_event', 'event': event});
+        await pumpEventQueue();
+      }
+
+      // As agy's are told: no usage on the message.
+      await stream({
+        'type': 'message_start',
+        'message': {'id': 'm1', 'role': 'assistant'},
+      });
+      await stream({
+        'type': 'content_block_start',
+        'index': 0,
+        'content_block': {'type': 'text', 'text': ''},
+      });
+      for (var i = 0; i < 6; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        await stream({
+          'type': 'content_block_delta',
+          'index': 0,
+          'delta': {'type': 'text_delta', 'text': 'word ' * 12},
+        });
+      }
+      await stream({'type': 'content_block_stop', 'index': 0});
+      await stream({'type': 'message_stop'});
+      cli.push({
+        'type': 'result',
+        'subtype': 'success',
+        'usage': {'input_tokens': 9000, 'output_tokens': 120},
+      });
+      await pumpEventQueue();
+      final usage = (transcript.itemAt(
+        transcript.indexOf('u1')!,
+      ) as UserMessageItem).usage!;
+      expect(usage.inputTokens, 9000);
+      expect(usage.outputTokens, 120);
+      expect(usage.tokensPerSecond, isNotNull);
       kernel.dispose();
     });
 
@@ -3832,6 +3985,81 @@ void main() {
       kernel.send(const KernelTurn(id: 'u3', text: 'again'));
       await pumpEventQueue();
       cli.push(result);
+      await pumpEventQueue();
+      kernel.release();
+      expect(cli.closed, isTrue);
+      kernel.dispose();
+    });
+
+    test('out of view, a process with jobs scheduled is kept until they are '
+        'deleted, a loop\'s round until it comes (#994)', () async {
+      final cli = FakeCli();
+      final (:kernel, transcript: _, events: _) = claude(cli);
+      const result = {
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': false,
+      };
+      Future<void> called(
+        String turn,
+        String call,
+        String tool,
+        Map<String, Object?> input, {
+        Map<String, Object?>? answered,
+      }) async {
+        kernel.send(KernelTurn(id: turn, text: 'schedule it'));
+        await pumpEventQueue();
+        cli
+          ..push({
+            'type': 'assistant',
+            'parent_tool_use_id': null,
+            'message': {
+              'id': 'msg-$call',
+              'role': 'assistant',
+              'content': [
+                {'type': 'tool_use', 'id': call, 'name': tool, 'input': input},
+              ],
+            },
+          })
+          ..push({
+            'type': 'user',
+            'parent_tool_use_id': null,
+            'message': {
+              'role': 'user',
+              'content': [
+                {'type': 'tool_result', 'tool_use_id': call, 'content': 'ok'},
+              ],
+            },
+            'tool_use_result': ?answered,
+          })
+          ..push(result);
+        await pumpEventQueue();
+      }
+
+      await called(
+        'u1',
+        'toolu_1',
+        'CronCreate',
+        {'cron': '0 23 * * *', 'prompt': 'report', 'recurring': false},
+        answered: {'id': 'job1'},
+      );
+      kernel.release();
+      expect(cli.closed, isFalse, reason: 'its job comes at 23:00');
+      await called('u2', 'toolu_2', 'CronDelete', {'id': 'job1'});
+      kernel.release();
+      expect(cli.closed, isTrue);
+
+      cli.closed = false;
+      await called('u3', 'toolu_3', 'ScheduleWakeup', {
+        'delaySeconds': 1200,
+        'prompt': '/loop check',
+      });
+      kernel.release();
+      expect(cli.closed, isFalse, reason: 'the next round is to come');
+      // The round comes: a prompt of the CLI's own.
+      cli
+        ..push({'type': 'system', 'subtype': 'status', 'status': 'requesting'})
+        ..push(result);
       await pumpEventQueue();
       kernel.release();
       expect(cli.closed, isTrue);
@@ -5637,8 +5865,9 @@ void main() {
         for (final option in options) option.label,
       ];
 
-      // Shown as picked before it starts.
+      // Shown as picked before it starts, the context too.
       expect(kernel.contextSize.selected, '400k');
+      expect(kernel.contextWindow, 400000);
       kernel.prepare();
       await pumpEventQueue();
       expect(launches.single.model, 'opus');
@@ -5661,6 +5890,13 @@ void main() {
       ]);
       expect(kernel.model.selected, 'opus');
       expect(labels(kernel.contextSize.optionsFor('opus')), [
+        '200K',
+        '400K',
+        '1M',
+      ]);
+      // One with no 1M variant listed holds 1M too (the CLI no longer
+      // lists them).
+      expect(labels(kernel.contextSize.optionsFor('haiku')), [
         '200K',
         '400K',
         '1M',

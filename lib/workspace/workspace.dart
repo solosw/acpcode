@@ -707,7 +707,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// Has [thread], a new agent nothing was sent to yet, work in [path]
   /// instead: a new agent there (an untouched one reused) takes its pane,
-  /// and it goes. [path] is opened as a project if it was not one.
+  /// and it goes. [path] is opened as a project if it was not one. What is
+  /// typed goes along: the project is often picked after it.
   AgentThread moveNew(AgentThread thread, String path) {
     final project = _openProject(path);
     if (project == thread.project || !_threads.contains(thread)) {
@@ -716,6 +717,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     // Into its pane: the focused one is what [create] shows the new in.
     if (_grid.contains(thread)) _focus(thread);
     final moved = create(project: project);
+    final draft = thread.session.draft;
+    if (draft.content?.trim().isNotEmpty ?? false) {
+      moved.session.draft.save(draft.content!, draft.selection, draft.images);
+    }
     if (_isUntouched(thread)) _discard(thread);
     return moved;
   }
@@ -2860,6 +2865,42 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _saveDrafts();
   }
 
+  /// As the app quits: the messages queued in each conversation would go
+  /// with the turn the quit stops. Each goes back in its composer instead,
+  /// after what is typed there, to be sent again; kept before this returns.
+  Future<void> keepQueued() async {
+    var kept = false;
+    for (final thread in _threads) {
+      if (!thread.isOpen) continue;
+      final queued = [
+        for (final (_, message) in thread.session.queued)
+          // Typed by the user; not a report another agent sent.
+          if (message.fromAgent == null && message.fromSession == null) message,
+      ];
+      if (queued.isEmpty) continue;
+      final draft = thread.session.draft;
+      final typed = draft.content ?? '';
+      final text = [
+        if (typed.trim().isNotEmpty) typed,
+        for (final message in queued) message.text,
+      ].join('\n\n');
+      draft
+        ..content = text
+        ..selection = TextSelection.collapsed(offset: text.length)
+        ..images = [
+          ...draft.images,
+          for (final message in queued) ...message.images,
+        ];
+      _draftChanged(thread);
+      kept = true;
+    }
+    if (!kept) return;
+    _draftTimer?.cancel();
+    await _draftStore?.write({..._drafts}).catchError((Object error) {
+      debugPrint('Workspace drafts not kept: $error');
+    });
+  }
+
   void _forgetDraft(String id) {
     if (_drafts.remove(id) != null) _saveDrafts();
   }
@@ -3632,9 +3673,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// What [_chatView] was last saved as.
   String? _chatViewSaved;
 
-  /// The agents shown side by side, the grid's cells, the one focused and
-  /// where the lines are; an agent by its session's id, a new one by its
-  /// folder. Each pane's other tabs too, by id: those under it ([ChatGrid.
+  /// The agents shown side by side, the grid's layout (see [ChatGrid.
+  /// toJson]), the one focused and where the lines are; an agent by its
+  /// session's id, a new one by its folder. Each pane's other tabs too, by id: those under it ([ChatGrid.
   /// under]'s order) and all its tabs in their order.
   Map<String, Object?>? get _chatView {
     if (_grid.isEmpty) return null;
@@ -3647,16 +3688,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       'panes': [
         for (final thread in panes) thread.id ?? {'new': thread.project.path},
       ],
-      'cells': [for (final pane in _grid.cells) panes.indexOf(pane)],
+      ..._grid.toJson(panes.indexOf),
       if (panes.any((pane) => _grid.under(pane).isNotEmpty)) ...{
         'under': ids(_grid.under),
         'tabs': ids(_grid.tabs),
       },
       if (focused != null && panes.contains(focused))
         'focused': panes.indexOf(focused),
-      'columnRatios': _grid.columnRatios,
-      'rowRatios': _grid.rowRatios,
-      'columnsFirst': _grid.columnsFirst,
     };
   }
 
@@ -3671,10 +3709,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       final List<Object?> panes => panes,
       _ => const <Object?>[],
     };
-    final cells = ChatGrid<int>();
-    if (kept['cells'] case final List<Object?> kept) {
-      cells.restore(kept.whereType<int>().toList());
-    }
+    final cells = ChatGrid.fromJson(kept) ?? ChatGrid<int>();
     final shown = <int, AgentThread>{};
     for (final pane in cells.panes) {
       final thread = switch (panes.elementAtOrNull(pane)) {
@@ -3707,7 +3742,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (!shown.containsKey(pane)) cells.remove(pane);
     }
     if (cells.isEmpty) return;
-    _grid.restore([for (final cell in cells.cells) shown[cell]!]);
+    _grid.adopt(cells, (pane) => shown[pane]!);
     // Each pane's other tabs, those whose agent is gone left out.
     List<AgentThread> keptTabs(String key, int pane) => [
       if (kept[key] case final List<Object?> lists)
@@ -3727,33 +3762,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         keptTabs('under', pane),
       );
     }
-    if (kept['columnsFirst'] case final bool columnsFirst) {
-      _grid.columnsFirst = columnsFirst;
-    }
-    if (_keptRatios(kept, 'columnRatio') case final ratios?) {
-      _grid.columnRatios = ratios;
-    }
-    if (_keptRatios(kept, 'rowRatio') case final ratios?) {
-      _grid.rowRatios = ratios;
-    }
     final focused = switch (kept['focused']) {
       final int pane => shown[pane],
       _ => null,
     };
-    _focus(focused ?? _grid.at(0)!);
-  }
-
-  /// A line's ratios as [_chatView] kept them under [name]`s`, one for each
-  /// of its parts; an earlier run's one ratio under [name], for both.
-  static List<double>? _keptRatios(Map<Object?, Object?> kept, String name) {
-    bool valid(Object? ratio) => ratio is num && ratio > 0 && ratio < 1;
-    if (kept['${name}s'] case [final a, final b] when valid(a) && valid(b)) {
-      return [(a as num).toDouble(), (b as num).toDouble()];
-    }
-    if (kept[name] case final num ratio when valid(ratio)) {
-      return [ratio.toDouble(), ratio.toDouble()];
-    }
-    return null;
+    _focus(focused ?? _grid.topLeft!);
   }
 
   /// A line between the panes moved: kept where it is now.

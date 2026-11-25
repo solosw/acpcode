@@ -3119,6 +3119,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get turnFork => '从这里 Fork';
 
   @override
+  String get turnRetry => '重试本轮';
+
+  @override
   String get turnCopied => '已复制';
 
   @override
@@ -7263,6 +7266,65 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get agyCli => 'Antigravity ACP';
+
+  @override
+  String get agyProtocolDescription =>
+      'BaoCode 通过 ACP（Agent Client Protocol）驱动本机的 Antigravity CLI，不经本地代理。';
+
+  @override
+  String get agyCliDescription =>
+      'Google 官方的 Antigravity CLI，由 BaoCode 安装并保持最新。BaoCode 只通过官方 ACP 和它通信，完全符合官方 ACP 策略，不会导致封号。';
+
+  @override
+  String agyVersion(String version) {
+    return '版本 $version';
+  }
+
+  @override
+  String get agyNotInstalled => '未安装';
+
+  @override
+  String agyUpdateAvailable(String version) {
+    return '有新版本 $version';
+  }
+
+  @override
+  String get agyInstall => '安装';
+
+  @override
+  String get agyUpdate => '更新';
+
+  @override
+  String agyInstalling(int percent) {
+    return '正在安装… $percent%';
+  }
+
+  @override
+  String get agyAccount => 'Google 账号';
+
+  @override
+  String get agyAccountDescription =>
+      '登录会打开浏览器。登录状态和终端里的 agy 共用：退出登录时终端那边也会退出。';
+
+  @override
+  String get agySignIn => '登录';
+
+  @override
+  String get agySignOut => '退出登录';
+
+  @override
+  String get agySigningIn => '等待浏览器完成登录…';
+
+  @override
+  String agySignedIn(int count) {
+    return '已登录：$count 个模型';
+  }
+
+  @override
+  String get agyNotSignedIn => '未登录';
+
+  @override
   String get modelsTest => '测试连接';
 
   @override
@@ -7349,6 +7411,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get modelsTestModelFailed => '失败';
+
+  @override
+  String get modelsCopyTestError => '复制错误信息';
 
   @override
   String modelsTestFirstText(String seconds) {

@@ -699,6 +699,40 @@ void main() {
       findsOneWidget,
     );
 
+    // Its error copied: from the result, or from its row's menu (#1267).
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.text('Failed'));
+    await tester.pump();
+    expect(copied.single, contains('401 Unauthorized'));
+    await tester.tap(
+      find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is IdeActionButton && widget.tooltip == 'More Actions',
+          )
+          .last,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy Error'));
+    await tester.pumpAndSettle();
+    expect(copied, hasLength(2));
+    expect(copied.last, copied.first);
+
     // A test under way stops as the page closes.
     await tester.tap(find.text('Test All'));
     await tester.pump();
@@ -1086,6 +1120,29 @@ void main() {
     expect(providers.providers, isEmpty);
     expect(await secrets.read('provider.gw'), isNull);
     expect(find.text('Add Upstream'), findsWidgets);
+  });
+
+  testWidgets('an Antigravity upstream is deleted at its foot, no advanced', (
+    tester,
+  ) async {
+    await providers.save(
+      const ModelProvider(
+        id: 'agy',
+        name: 'Antigravity',
+        protocol: ProviderProtocol.agy,
+      ),
+    );
+    await pump(tester);
+    await tester.tap(find.text('Antigravity'));
+    await tester.pumpAndSettle();
+    expect(find.text('Advanced'), findsNothing);
+    await tester.ensureVisible(find.text('Delete Upstream').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete Upstream').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(providers.providers, isEmpty);
   });
 
   testWidgets('an upstream duplicated: its models, settings and key, '
