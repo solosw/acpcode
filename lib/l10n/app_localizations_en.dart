@@ -8962,6 +8962,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String remoteUploadingAcp(String agent, String host, int percent) {
+    return 'Sending $agent to $host… $percent%';
+  }
+
+  @override
+  String remoteStatusUploadingAcp(
+    String kind,
+    String host,
+    String agent,
+    int percent,
+  ) {
+    return '$kind: $host (sending $agent $percent%)';
+  }
+
+  @override
   String remoteStatusTooltip(String kind, String host) {
     return 'Connected to $host over $kind';
   }

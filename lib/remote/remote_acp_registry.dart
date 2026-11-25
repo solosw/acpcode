@@ -62,8 +62,10 @@ class RemoteAcpRegistry extends AcpRegistry {
     this.client, {
     this.local = const AcpRegistry(),
     this.useNetworkSettings = true,
+    this.host,
   });
   final RemoteClient client;
+  final SshHost? host;
   final AcpRegistry local;
   final bool useNetworkSettings;
   RemoteHello get _hello =>
@@ -73,11 +75,15 @@ class RemoteAcpRegistry extends AcpRegistry {
     String host,
     AcpRegistry local,
     bool useNetworkSettings,
-  ) async => RemoteAcpRegistry(
-    await SshHosts.instance[host].ready,
-    local: local,
-    useNetworkSettings: useNetworkSettings,
-  );
+  ) async {
+    final sshHost = SshHosts.instance[host];
+    return RemoteAcpRegistry(
+      await sshHost.ready,
+      local: local,
+      useNetworkSettings: useNetworkSettings,
+      host: sshHost,
+    );
+  }
 
   @override
   String get platform {
@@ -227,7 +233,13 @@ class RemoteAcpRegistry extends AcpRegistry {
           'Missing local ACP package. Download it again in Settings → Agents.',
         );
       }
-      return _upload(root, plan, destination: destination, runnerCache: cache);
+      return _upload(
+        entry,
+        root,
+        plan,
+        destination: destination,
+        runnerCache: cache,
+      );
     }
     final cache = local.cachedBinary(plan);
     if (!await cache.exists()) {
@@ -237,7 +249,7 @@ class RemoteAcpRegistry extends AcpRegistry {
     }
     final bytes = await cache.readAsBytes();
     local.verifyBinary(plan, bytes);
-    return _upload(root, plan, bytes: bytes, destination: destination);
+    return _upload(entry, root, plan, bytes: bytes, destination: destination);
   }
 
   bool get _windows => _hello.platform.os == 'win';
@@ -258,7 +270,7 @@ class RemoteAcpRegistry extends AcpRegistry {
 
   @override
   Future<String> installBinary(AcpRegistryEntry entry, AcpInstallPlan plan) =>
-      _upload(_root(entry), plan);
+      _upload(entry, _root(entry), plan);
 
   Future<void> _mkdir(String path) async {
     if (await client.stat(path) == 'directory') return;
@@ -269,14 +281,31 @@ class RemoteAcpRegistry extends AcpRegistry {
     }
   }
 
-  Stream<FileSystemEntity> _packageFiles(FileSystemEntity entity) async* {
-    yield entity;
-    if (entity is Directory) {
-      yield* entity.list(recursive: true, followLinks: false);
+  Stream<FileSystemEntity> _packageFiles(
+    Directory staging, {
+    required bool runner,
+    required String kind,
+  }) async* {
+    await for (final entity in staging.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      // Runner environments and interpreter paths are specific to this machine.
+      if (runner &&
+          (kind == 'npx' &&
+                  name != '_cacache' &&
+                  name != AcpRegistry.runnerReady ||
+              name.startsWith('environments-') ||
+              name.startsWith('interpreter-'))) {
+        continue;
+      }
+      yield entity;
+      if (entity is Directory) {
+        yield* entity.list(recursive: true, followLinks: false);
+      }
     }
   }
 
   Future<String> _upload(
+    AcpRegistryEntry entry,
     String root,
     AcpInstallPlan plan, {
     Uint8List? bytes,
@@ -290,6 +319,8 @@ class RemoteAcpRegistry extends AcpRegistry {
     final nonce = Random.secure().nextInt(1 << 32).toRadixString(16);
     final temporary = _paths.join(root, 'install-$nonce');
     final dataDir = _hello.dataDir;
+    final host = this.host;
+    final transfer = Object();
     var cleanup = false;
     try {
       final executablePaths = <String>{};
@@ -311,6 +342,19 @@ class RemoteAcpRegistry extends AcpRegistry {
           resolved,
         ]);
       }
+      final entities = await _packageFiles(
+        staging,
+        runner: runnerCache != null,
+        kind: plan.kind,
+      ).toList();
+      var size = 0;
+      if (host != null) {
+        for (final file in entities.whereType<File>()) {
+          size += await file.length();
+        }
+        host.setAcpUpload(transfer, AcpUploadProgress(entry.name, 0, size));
+      }
+      var sent = 0;
       await _mkdir(_paths.dirname(root));
       await _mkdir(root);
       await client.create(dataDir, temporary, directory: true);
@@ -324,70 +368,59 @@ class RemoteAcpRegistry extends AcpRegistry {
         directories.add(path);
       }
 
-      final contents = staging.list(followLinks: false);
-      await for (final rootEntity in contents) {
-        final name = p.basename(rootEntity.path);
-        // Runner environments and interpreter paths are specific to this machine.
-        if (runnerCache != null &&
-            (plan.kind == 'npx' &&
-                    name != '_cacache' &&
-                    name != AcpRegistry.runnerReady ||
-                name.startsWith('environments-') ||
-                name.startsWith('interpreter-'))) {
-          continue;
+      for (final entity in entities) {
+        final relative = p.split(p.relative(entity.path, from: staging.path));
+        if (_windows &&
+            relative.any(
+              (part) =>
+                  part.contains('\\') ||
+                  part.contains(':') ||
+                  part.endsWith('.') ||
+                  part.endsWith(' '),
+            )) {
+          throw const FormatException('Invalid Windows archive path');
         }
-        final entities = _packageFiles(rootEntity);
-        await for (final entity in entities) {
-          final relative = p.split(p.relative(entity.path, from: staging.path));
-          if (_windows &&
-              relative.any(
-                (part) =>
-                    part.contains('\\') ||
-                    part.contains(':') ||
-                    part.endsWith('.') ||
-                    part.endsWith(' '),
+        final target = _paths.joinAll([temporary, ...relative]);
+        if (!_paths.isWithin(temporary, target)) {
+          throw const FormatException('Archive file escapes installation');
+        }
+        if (entity is Directory) {
+          await ensureParent(target);
+        } else if (entity is Link) {
+          final link = (await entity.target()).replaceAll('\\', '/');
+          if (_windows ||
+              p.posix.isAbsolute(link) ||
+              !p.posix.isWithin(
+                temporary,
+                p.posix.normalize(p.posix.join(p.posix.dirname(target), link)),
               )) {
-            throw const FormatException('Invalid Windows archive path');
+            throw const FormatException('Unsupported link in agent archive');
           }
-          final target = _paths.joinAll([temporary, ...relative]);
-          if (!_paths.isWithin(temporary, target)) {
-            throw const FormatException('Archive file escapes installation');
+          await ensureParent(_paths.dirname(target));
+          await _run('ln', ['-s', '--', link, target]);
+        } else if (entity is File) {
+          await ensureParent(_paths.dirname(target));
+          // Offset-checked chunks keep the RPC bounded on all platforms.
+          await client.writeBytes(dataDir, target, const []);
+          final file = await entity.open();
+          try {
+            var offset = 0;
+            while (true) {
+              final chunk = await file.read(1 << 20);
+              if (chunk.isEmpty) break;
+              await client.appendBytes(dataDir, target, offset, chunk);
+              offset += chunk.length;
+              sent += chunk.length;
+              host?.setAcpUpload(
+                transfer,
+                AcpUploadProgress(entry.name, sent, size),
+              );
+            }
+          } finally {
+            await file.close();
           }
-          if (entity is Directory) {
-            await ensureParent(target);
-          } else if (entity is Link) {
-            final link = (await entity.target()).replaceAll('\\', '/');
-            if (_windows ||
-                p.posix.isAbsolute(link) ||
-                !p.posix.isWithin(
-                  temporary,
-                  p.posix.normalize(
-                    p.posix.join(p.posix.dirname(target), link),
-                  ),
-                )) {
-              throw const FormatException('Unsupported link in agent archive');
-            }
-            await ensureParent(_paths.dirname(target));
-            await _run('ln', ['-s', '--', link, target]);
-          } else if (entity is File) {
-            await ensureParent(_paths.dirname(target));
-            // Offset-checked chunks keep the RPC bounded on all platforms.
-            await client.writeBytes(dataDir, target, const []);
-            final file = await entity.open();
-            try {
-              var offset = 0;
-              while (true) {
-                final chunk = await file.read(1 << 20);
-                if (chunk.isEmpty) break;
-                await client.appendBytes(dataDir, target, offset, chunk);
-                offset += chunk.length;
-              }
-            } finally {
-              await file.close();
-            }
-            if (!_windows && executablePaths.contains(entity.path)) {
-              await _run('chmod', ['700', target]);
-            }
+          if (!_windows && executablePaths.contains(entity.path)) {
+            await _run('chmod', ['700', target]);
           }
         }
       }
@@ -411,6 +444,7 @@ class RemoteAcpRegistry extends AcpRegistry {
       }
       return runnerCache == null ? ready : destination;
     } finally {
+      host?.setAcpUpload(transfer, null);
       if (cleanup) {
         try {
           await client.delete(dataDir, temporary);

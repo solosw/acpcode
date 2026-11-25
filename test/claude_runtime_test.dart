@@ -373,7 +373,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
-          body: ClaudeInstallBanner(location: home.path, local: local),
+          body: AgentInstallBanner(location: home.path, local: local),
         ),
       ),
     );

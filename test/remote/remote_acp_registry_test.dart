@@ -8,10 +8,10 @@ import 'dart:typed_data';
 import 'package:bao_remote/client.dart';
 import 'package:baocode/kernel/acp/acp_agent.dart';
 import 'package:baocode/kernel/acp_registry.dart';
-import 'package:baocode/remote/ssh_host.dart';
 import 'package:baocode/network/network_proxy_io.dart';
 import 'package:baocode/network/proxy_settings.dart';
 import 'package:baocode/remote/remote_acp_registry.dart';
+import 'package:baocode/remote/ssh_host.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -70,6 +70,25 @@ class _Client extends RemoteClient {
       localHost: localHost,
       remotePort: remotePort,
     );
+  }
+}
+
+class _UploadClient extends RemoteClient {
+  _UploadClient(RemoteClient client) : super(client.peer) {
+    hello = client.hello;
+  }
+
+  bool interrupt = false;
+
+  @override
+  Future<void> appendBytes(
+    String root,
+    String path,
+    int offset,
+    List<int> bytes,
+  ) async {
+    if (interrupt && offset > 0) throw StateError('Upload interrupted');
+    await super.appendBytes(root, path, offset, bytes);
   }
 }
 
@@ -279,18 +298,25 @@ void main() {
         },
       );
       final config = await local.cache(entry);
+      final host = hosts['dev'];
+      final updates = <int>[];
+      host.addListener(() {
+        updates.addAll(host.acpUploads.map((upload) => upload.percent));
+      });
       final synced = Completer<void>();
-      hosts.onConnect = (host, client) {
-        final registry = RemoteAcpRegistry(client, local: local);
+      hosts.onConnect = (name, client) {
+        final registry = RemoteAcpRegistry(client, local: local, host: host);
         synced.complete(
-          registry.sync([config], host, onError: (error) => fail('$error')),
+          registry.sync([config], name, onError: (error) => fail('$error')),
         );
       };
-      final client = await hosts['dev'].ready;
-      final registry = RemoteAcpRegistry(client, local: local);
+      final client = await host.ready;
+      final registry = RemoteAcpRegistry(client, local: local, host: host);
       final running = await registry.resolve(entry);
       await synced.future;
       expect(local.plans.map((plan) => plan.platform), [target]);
+      expect(updates, [0, 100]);
+      expect(host.acpUploads, isEmpty);
       expect(
         await File(running.command).readAsString(),
         contains('remote-binary'),
@@ -305,7 +331,9 @@ void main() {
       );
       expect(result.exitCode, 0);
       expect(result.stdout.trim(), 'remote-binary');
+      updates.clear();
       expect((await registry.resolve(entry)).command, running.command);
+      expect(updates, isEmpty);
       expect(local.plans, hasLength(1));
       await File(running.command).delete();
       final repaired = await registry.resolve(entry);
@@ -316,61 +344,115 @@ void main() {
     },
   );
 
-  test('runner sync copies versioned cache and launches offline', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'acp-runner-cache-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final local = _Binary(testCache: directory);
-    final registry = RemoteAcpRegistry(harness.client, local: local);
+  test(
+    'runner sync reports only uploaded bytes and launches offline',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'acp-runner-cache-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final local = _Binary(testCache: directory);
+      final hosts = SshHosts(
+        connect: MemoryConnector(harness.dataDir.path).call,
+      );
+      addTearDown(hosts.closeAll);
+      final host = hosts['dev'];
+      final client = _UploadClient(await host.ready);
+      final registry = RemoteAcpRegistry(client, local: local, host: host);
+      final uploads = <AcpUploadProgress?>[];
+      host.addListener(() => uploads.add(host.acpUploads.singleOrNull));
+      const chunk = 1 << 20;
 
-    Future<String> syncVersion(String version) async {
-      final entry = AcpRegistryEntry(
-        id: _entry.id,
-        name: _entry.name,
-        description: _entry.description,
-        version: version,
-        distribution: _entry.distribution,
-      );
-      final plan = entry.runnerPlan!;
-      final cache = local.cachedRunner(plan);
-      await cache.create(recursive: true);
-      await Directory(p.join(cache.path, '_cacache')).create();
-      await File(p.join(cache.path, '_cacache', 'payload'))
-          .writeAsString(version);
-      await File(p.join(cache.path, AcpRegistry.runnerReady)).create();
-      await File(p.join(cache.path, 'native-only')).create();
-      await registry.sync(
-        [
-          AcpAgentConfig(
-            id: entry.id,
-            label: entry.name,
-            command: '',
-            registry: entry,
-          ),
-        ],
-        'dev',
-        onError: (error) => fail('$error'),
-      );
-      await cache.delete(recursive: true);
-      final result = await registry.resolve(entry);
-      expect(result.command, 'npx');
-      expect(result.arguments.first, '--offline');
-      final destination =
-          result.arguments[result.arguments.indexOf('--cache') + 1];
-      expect(
-        await File(p.join(destination, '_cacache', 'payload')).readAsString(),
-        version,
-      );
-      expect(await File(p.join(destination, 'native-only')).exists(), isFalse);
-      return destination;
-    }
+      Future<String> syncVersion(
+        String version, {
+        bool interrupt = false,
+      }) async {
+        final entry = AcpRegistryEntry(
+          id: _entry.id,
+          name: _entry.name,
+          description: _entry.description,
+          version: version,
+          distribution: _entry.distribution,
+        );
+        final plan = entry.runnerPlan!;
+        final cache = local.cachedRunner(plan);
+        await cache.create(recursive: true);
+        await Directory(p.join(cache.path, '_cacache')).create();
+        final payload = Uint8List(2 * chunk + 5)..[0] = int.parse(version);
+        await File(p.join(cache.path, '_cacache', 'payload'))
+            .writeAsBytes(payload);
+        await File(p.join(cache.path, AcpRegistry.runnerReady)).create();
+        await File(p.join(cache.path, 'native-only')).writeAsString('excluded');
+        if (interrupt) {
+          client.interrupt = true;
+          await expectLater(
+            registry.resolve(entry),
+            throwsA(
+              isA<StateError>().having(
+                (error) => error.message,
+                'message',
+                'Upload interrupted',
+              ),
+            ),
+          );
+          client.interrupt = false;
+          expect(uploads.map((upload) => upload?.sent), [0, chunk, null]);
+          expect(host.acpUploads, isEmpty);
+          uploads.clear();
+        }
+        await registry.sync(
+          [
+            AcpAgentConfig(
+              id: entry.id,
+              label: entry.name,
+              command: '',
+              registry: entry,
+            ),
+          ],
+          'dev',
+          onError: (error) => fail('$error'),
+        );
+        expect(uploads.map((upload) => upload?.sent), [
+          0,
+          chunk,
+          2 * chunk,
+          payload.length,
+          null,
+        ]);
+        expect(
+          uploads.whereType<AcpUploadProgress>().map((upload) => upload.size),
+          everyElement(payload.length),
+        );
+        expect(
+          uploads.whereType<AcpUploadProgress>().map((upload) => upload.agent),
+          everyElement(entry.name),
+        );
+        expect(host.acpUploads, isEmpty);
+        uploads.clear();
+        await cache.delete(recursive: true);
+        final result = await registry.resolve(entry);
+        expect(uploads, isEmpty);
+        expect(result.command, 'npx');
+        expect(result.arguments.first, '--offline');
+        final destination =
+            result.arguments[result.arguments.indexOf('--cache') + 1];
+        expect(
+          await File(p.join(destination, '_cacache', 'payload')).readAsBytes(),
+          payload,
+        );
+        expect(
+          await File(p.join(destination, 'native-only')).exists(),
+          isFalse,
+        );
+        return destination;
+      }
 
-    final first = await syncVersion('1');
-    final second = await syncVersion('2');
-    expect(first, isNot(second));
-    expect(await Directory(first).exists(), isTrue);
-  });
+      final first = await syncVersion('1', interrupt: true);
+      final second = await syncVersion('2');
+      expect(first, isNot(second));
+      expect(await Directory(first).exists(), isTrue);
+    },
+  );
 
   test(
     'binary chooses remote architecture, uploads privately, never launches it',

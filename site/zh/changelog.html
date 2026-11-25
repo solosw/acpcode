@@ -29,6 +29,31 @@
   <h1>更新日志</h1>
   <p class="subtitle">BaoCode 每个版本的变化。</p>
 
+  <section class="release" id="v2.0.9">
+    <h2 class="plain"><a href="#v2.0.9">2.0.9</a></h2>
+    <p>BaoCode 2.0.9 增加 Antigravity CLI 支持，并改进日常使用体验。</p>
+    <p>新功能</p>
+    <ul>
+    <li>通过 ACP 使用 Antigravity CLI，并在 BaoCode 中查看它的会话、上下文和用量。</li>
+    <li>slash 命令运行 skill 时可查看实时进展；支持重试停止或失败的上一轮。</li>
+    <li>将图片作为文件发送给 Agent，并可从文件面板直接打开终端。</li>
+    <li>对话支持最多四列或两行排列；退出再打开后仍保留排队消息。</li>
+    <li>切换新对话的项目时保留草稿。</li>
+    </ul>
+    <p>改进</p>
+    <ul>
+    <li>可在侧边栏中打开命令面板和终端里的文件；网页搜索步骤显示来源网站。</li>
+    <li>有大量子 Agent 时，用量页面仍保持流畅；更容易复制模型测试错误。</li>
+    <li>将工具读取的 PDF 文件转发给兼容 OpenAI 的模型服务。</li>
+    </ul>
+    <p>修复</p>
+    <ul>
+    <li>不再把有定时任务的会话显示成可见进程；没有托盘图标时关闭窗口会最小化。</li>
+    <li>窄窗口下消息编辑器仍保持可见，回复建议中的代码示例不会破坏格式。</li>
+    <li>修复 Windows PowerShell Store 别名识别，以及 Linux 图形库声明和带杂字节证书的读取问题。</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.8">
     <h2 class="plain"><a href="#v2.0.8">2.0.8</a></h2>
     <p>BaoCode 现在可以发现已有的 ACP 会话，并在对应项目中打开。</p>

@@ -29,6 +29,31 @@
   <h1>Changelog</h1>
   <p class="subtitle">What changed in each version of BaoCode.</p>
 
+  <section class="release" id="v2.0.9">
+    <h2 class="plain"><a href="#v2.0.9">2.0.9</a></h2>
+    <p>BaoCode 2.0.9 adds Antigravity CLI support and improves everyday agent workflows.</p>
+    <p>New</p>
+    <ul>
+    <li>Use Antigravity CLI through ACP, with its conversations, context, and usage available in BaoCode.</li>
+    <li>See slash-command skills work as they run, and retry a stopped or failed last turn.</li>
+    <li>Send images to agents as files, and open a terminal directly from the Files panel.</li>
+    <li>Arrange conversations in up to four columns or two rows; queued messages survive quitting and reopening the app.</li>
+    <li>Keep a new-chat draft when switching its project.</li>
+    </ul>
+    <p>Improved</p>
+    <ul>
+    <li>Open files from the palette and terminal in the side panel; web-search steps show their source sites.</li>
+    <li>Keep usage pages responsive with many subagents, and copy model-test errors more easily.</li>
+    <li>Forward PDFs read by tools to OpenAI-compatible providers.</li>
+    </ul>
+    <p>Fixed</p>
+    <ul>
+    <li>Keep scheduled-job conversations out of the visible process list; closing a window without a tray icon minimizes it.</li>
+    <li>Keep the message editor visible in short windows and prevent code examples from breaking reply suggestions.</li>
+    <li>Recognize Windows PowerShell Store aliases and handle Linux GL libraries and certificates with stray bytes.</li>
+    </ul>
+  </section>
+
   <section class="release" id="v2.0.8">
     <h2 class="plain"><a href="#v2.0.8">2.0.8</a></h2>
     <p>BaoCode can now discover existing ACP conversations and reopen them in the right project.</p>

@@ -290,8 +290,8 @@ void main() {
         home: Scaffold(
           body: Column(
             children: [
-              ClaudeInstallBanner(location: RemoteLocation.of('dev', root)),
-              ClaudeInstallBanner(location: root),
+              AgentInstallBanner(location: RemoteLocation.of('dev', root)),
+              AgentInstallBanner(location: root),
             ],
           ),
         ),
@@ -317,6 +317,54 @@ void main() {
     host.installingClaude = null;
     await tester.pump();
     expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets('ACP upload bars stay with their host and clear independently', (
+    tester,
+  ) async {
+    final host = hosts['dev'];
+    final first = Object();
+    final second = Object();
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Column(
+            children: [
+              AgentInstallBanner(location: RemoteLocation.of('dev', root)),
+              AgentInstallBanner(location: RemoteLocation.of('other', root)),
+              AgentInstallBanner(location: root),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    host.setAcpUpload(first, const AcpUploadProgress('Codex', 25, 200));
+    await tester.pump();
+    final bar = find.byType(LinearProgressIndicator);
+    expect(bar, findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(bar).value, .125);
+    expect(find.text('Sending Codex to dev… 12%'), findsOneWidget);
+    final context = tester.element(find.byType(Column).first);
+    expect(
+      SshStatusIndicator(host).item(context).text,
+      'SSH: dev (sending Codex 12%)',
+    );
+
+    host.setAcpUpload(second, const AcpUploadProgress('Gemini', 42, 100));
+    await tester.pump();
+    expect(bar, findsNWidgets(2));
+    host.setAcpUpload(first, null);
+    await tester.pump();
+    expect(bar, findsOneWidget);
+    expect(find.text('Sending Gemini to dev… 42%'), findsOneWidget);
+    host.setAcpUpload(second, null);
+    await tester.pump();
+    expect(bar, findsNothing);
+    expect(SshStatusIndicator(host).item(context).text, 'SSH: dev');
   });
 
   group('the server of a development run', () {

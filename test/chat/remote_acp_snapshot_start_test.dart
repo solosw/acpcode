@@ -39,9 +39,12 @@ class _Review extends ChangeReview {
   _Gate? gate;
 
   @override
-  Future<void> begin({Iterable<String>? roots}) async {
+  Future<void> begin({
+    Iterable<String>? roots,
+    bool retrySnapshot = false,
+  }) async {
     await gate?.wait();
-    await super.begin(roots: roots);
+    await super.begin(roots: roots, retrySnapshot: retrySnapshot);
   }
 }
 

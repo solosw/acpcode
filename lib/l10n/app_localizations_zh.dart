@@ -8464,6 +8464,21 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String remoteUploadingAcp(String agent, String host, int percent) {
+    return '正在将 $agent 传到 $host… $percent%';
+  }
+
+  @override
+  String remoteStatusUploadingAcp(
+    String kind,
+    String host,
+    String agent,
+    int percent,
+  ) {
+    return '$kind: $host（正在传输 $agent $percent%）';
+  }
+
+  @override
   String remoteStatusTooltip(String kind, String host) {
     return '已通过 $kind 连接到 $host';
   }

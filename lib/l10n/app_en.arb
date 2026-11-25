@@ -6215,6 +6215,24 @@
       }
     }
   },
+  "remoteUploadingAcp": "Sending {agent} to {host}… {percent}%",
+  "@remoteUploadingAcp": {
+    "description": "An ACP agent package is being copied from this machine to the remote host.",
+    "placeholders": {
+      "agent": { "type": "String" },
+      "host": { "type": "String" },
+      "percent": { "type": "int" }
+    }
+  },
+  "remoteStatusUploadingAcp": "{kind}: {host} (sending {agent} {percent}%)",
+  "@remoteStatusUploadingAcp": {
+    "placeholders": {
+      "kind": { "type": "String" },
+      "host": { "type": "String" },
+      "agent": { "type": "String" },
+      "percent": { "type": "int" }
+    }
+  },
   "remoteStatusTooltip": "Connected to {host} over {kind}",
   "@remoteStatusTooltip": {
     "placeholders": {

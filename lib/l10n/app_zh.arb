@@ -2412,6 +2412,8 @@
   "remoteInstallingClaudeProgress": "正在 {host} 上安装 Claude Code… {percent}%",
   "localDownloadingClaude": "正在下载 Claude Code… {percent}%",
   "remoteUploadingClaude": "正在把 Claude Code 传到 {host}… {percent}%",
+  "remoteUploadingAcp": "正在将 {agent} 传到 {host}… {percent}%",
+  "remoteStatusUploadingAcp": "{kind}: {host}（正在传输 {agent} {percent}%）",
   "remoteStatusTooltip": "已通过 {kind} 连接到 {host}",
   "remoteStatusSystem": "系统：{platform}",
   "remoteStatusTooltipLost": "与 {host} 的连接已断开：点击立即重连",
