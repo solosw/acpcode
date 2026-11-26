@@ -1065,6 +1065,56 @@ void main() {
     expect(tester.getSize(find.byType(Sidebar)).width, 200);
   });
 
+  for (final hover in [false, true]) {
+    testWidgets(
+      'a lost sidebar resize release recovers on ${hover ? 'hover' : 'press'}',
+      (tester) async {
+        final workspace = await pumpApp(tester);
+        final target = threadNamed(workspace, 'Rate limit per API key');
+        final border = Offset(
+          tester.getTopRight(find.byType(Sidebar)).dx + 2,
+          400,
+        );
+        final original = await tester.startGesture(
+          border,
+          kind: PointerDeviceKind.mouse,
+        );
+        await original.moveBy(const Offset(80, 0));
+        await tester.pump();
+        final width = tester.getSize(find.byType(Sidebar)).width;
+        expect(width, closeTo(340, 20));
+        // The original resize pointer never sends up or cancel.
+        final next = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        final row = tester.getCenter(
+          inSidebar(find.textContaining(target.title)),
+        );
+        if (hover) {
+          await next.moveTo(row);
+          await tester.pump();
+        }
+        await next.down(row);
+        await next.up();
+        await tester.pump();
+        expect(workspace.selected, target);
+        // Late events from the old pointer cannot keep resizing the sidebar.
+        await original.moveBy(const Offset(40, 0));
+        await tester.pump();
+        expect(tester.getSize(find.byType(Sidebar)).width, width);
+        await original.up();
+        await next.removePointer();
+        await tester.dragFrom(
+          Offset(tester.getTopRight(find.byType(Sidebar)).dx + 2, 400),
+          const Offset(40, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.getSize(find.byType(Sidebar)).width,
+          closeTo(width + 40, 1),
+        );
+      },
+    );
+  }
+
   testWidgets('in a narrow window it is a drawer', (tester) async {
     final workspace = await pumpApp(tester, width: 700);
     expect(find.byType(Sidebar), findsNothing);

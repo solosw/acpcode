@@ -995,6 +995,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       git.dispose();
     }
     _drag.dispose();
+    if (_dragging) {
+      GestureBinding.instance.pointerRouter.removeGlobalRoute(_routeResize);
+    }
     _width.dispose();
     _looseChatFolder.dispose();
     _ideHistory.dispose();
@@ -3387,6 +3390,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// cursor everywhere, and no hover effects under it.
   static const _resizeCursorLayer = MouseRegion(
     cursor: SystemMouseCursors.resizeColumn,
+    hitTestBehavior: HitTestBehavior.translucent,
   );
 
   /// On the window's own color: over the system's material (see
@@ -3702,7 +3706,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// [_reloadedElsewhere]).
   final Expando<ChatSession> _chatSessions = Expando();
 
+  // A resize may lose its release when the window loses the pointer.
+  void _routeResize(PointerEvent event) {
+    if (event is PointerDownEvent ||
+        (event.kind == PointerDeviceKind.mouse &&
+            (event is PointerHoverEvent || event is PointerMoveEvent) &&
+            event.buttons & kPrimaryMouseButton == 0)) {
+      _endDrag();
+    }
+  }
+
   void _endDrag() {
+    if (!_dragging) return;
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_routeResize);
     setState(() {
       _dragging = false;
       _dragOrigin = null;
@@ -3721,15 +3737,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         // From the press, not from where the drag was recognized, so the
         // border stays under the pointer.
         dragStartBehavior: DragStartBehavior.down,
-        onHorizontalDragStart: (details) => setState(() {
-          _dragging = true;
-          _dragOrigin = (x: details.globalPosition.dx, width: _shownWidth);
-        }),
+        onHorizontalDragStart: (details) {
+          GestureBinding.instance.pointerRouter.addGlobalRoute(_routeResize);
+          setState(() {
+            _dragging = true;
+            _dragOrigin = (x: details.globalPosition.dx, width: _shownWidth);
+          });
+        },
         // Where the pointer is relative to where it was pressed, not the
         // sum of the moves: past the min or max the border waits there, and
         // follows again only once the pointer is back at it.
         onHorizontalDragUpdate: (details) {
-          final origin = _dragOrigin!;
+          final origin = _dragOrigin;
+          if (origin == null) return;
           // At the window's right, it grows as its left edge goes left.
           final moved = details.globalPosition.dx - origin.x;
           _width.value = (origin.width + (_sidebarAtRight ? -moved : moved))
